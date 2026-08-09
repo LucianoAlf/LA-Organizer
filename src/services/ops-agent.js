@@ -157,11 +157,22 @@ try {
   console.warn('[OpsAgent] sem drain hook de shutdown:', e.message);
 }
 
+// Governança reusa este spawn com protocolo próprio. Extraído em funções puras para o
+// zero-regressão do canal de ops ficar provado por teste, e não por leitura.
+function resolverBriefing(quem, briefing) {
+  return (typeof briefing === 'string' && briefing.trim()) ? briefing : buildBriefing(quem);
+}
+
+function resolverTimeout(timeoutMs) {
+  return (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0)
+    ? timeoutMs : OPS_TIMEOUT_MS;
+}
+
 /**
  * Roda o pedido no CLI com ferramentas. Resolve com o texto final do agente.
  * Nunca lança: devolve `{ ok:false, text }` com mensagem já pronta pro grupo.
  */
-function runOpsAgent(pedido, { quem = 'alguém do grupo' } = {}) {
+function runOpsAgent(pedido, { quem = 'alguém do grupo', briefing = null, timeoutMs = null } = {}) {
   const _idPedido = _registrarPedido(quem, pedido);
   return new Promise((_resolveRaw) => {
     // Baixa o pedido em QUALQUER saída (sucesso, erro, timeout) — um registro que vaza faria
@@ -171,7 +182,7 @@ function runOpsAgent(pedido, { quem = 'alguém do grupo' } = {}) {
       '-p', String(pedido || '').slice(0, 4000),
       '--model', OPS_MODEL,
       '--allowedTools', ...OPS_TOOLS,
-      '--append-system-prompt', buildBriefing(quem),
+      '--append-system-prompt', resolverBriefing(quem, briefing),
       '--output-format', 'json',
     ];
     const env = { ...process.env, HOME: OPS_HOME };
@@ -183,8 +194,8 @@ function runOpsAgent(pedido, { quem = 'alguém do grupo' } = {}) {
     }
 
     let out = '', err = '';
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} },
-      OPS_TIMEOUT_MS);
+    const _limite = resolverTimeout(timeoutMs);
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} }, _limite);
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
     child.on('error', (e) => {
@@ -203,7 +214,7 @@ function runOpsAgent(pedido, { quem = 'alguém do grupo' } = {}) {
         texto = out.trim();
       }
       if (!texto) {
-        const motivo = code === null ? `passou de ${Math.round(OPS_TIMEOUT_MS / 60000)} min e eu cortei`
+        const motivo = code === null ? `passou de ${Math.round(_limite / 60000)} min e eu cortei`
           : `saiu com código ${code}`;
         const cauda = String(err || '').trim().slice(-300);
         return resolve({ ok: false, text: `Não terminei esse — ${motivo}.${cauda ? `\n\n_${cauda}_` : ''}` });
@@ -216,5 +227,6 @@ function runOpsAgent(pedido, { quem = 'alguém do grupo' } = {}) {
 module.exports = {
   isOpsChannel, runOpsAgent, buildBriefing, OPS_GROUP_ID, OPS_ALLOWLIST, OPS_ENABLED,
   pedidosEmAndamento, textoDePedidosPerdidos, configurarCanalAviso,
+  resolverBriefing, resolverTimeout, OPS_TIMEOUT_MS,
   _registrarPedido, _concluirPedido,   // expostos para o teste do registro
 };

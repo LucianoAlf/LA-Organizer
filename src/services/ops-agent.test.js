@@ -148,3 +148,22 @@ test('arquivo de formato ausente não derruba o briefing', () => {
   assert.match(b, /Alf/);
   assert.match(b, /N[ÃA]O apague dado de produ[çc][ãa]o/i);
 });
+
+// O canal de ops JÁ ESTÁ EM PRODUÇÃO. Estes parâmetros existem para o agente de governança
+// reusar o spawn sem herdar o briefing genérico — e não podem mudar nada do que já roda.
+test('runOpsAgent aceita briefing próprio sem alterar o padrão', () => {
+  const m = carregar(LIGADO);
+  assert.strictEqual(typeof m.resolverBriefing, 'function');
+  assert.strictEqual(m.resolverBriefing('Alf', 'PROTOCOLO XYZ'), 'PROTOCOLO XYZ');
+  assert.match(m.resolverBriefing('Alf', null), /Alf/);
+  assert.match(m.resolverBriefing('Alf', '   '), /Alf/, 'briefing em branco cai no padrão');
+});
+
+test('runOpsAgent aceita timeout próprio, com o default intacto', () => {
+  const m = carregar(LIGADO);
+  assert.strictEqual(m.resolverTimeout(1800000), 1800000);
+  assert.strictEqual(m.resolverTimeout(undefined), m.OPS_TIMEOUT_MS);
+  assert.strictEqual(m.resolverTimeout(0), m.OPS_TIMEOUT_MS, 'zero não pode virar timeout imediato');
+  assert.strictEqual(m.resolverTimeout(-5), m.OPS_TIMEOUT_MS);
+  assert.strictEqual(m.resolverTimeout('abc'), m.OPS_TIMEOUT_MS);
+});
