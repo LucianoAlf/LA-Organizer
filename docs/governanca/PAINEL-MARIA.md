@@ -25,7 +25,7 @@ A primeira prova sem ninguém olhando é a rodada automática de **10/08 às 07:
 |---|---|---|
 | — | **Conferir amanhã 07:00** se o laudo chegou sozinho (primeira rodada automática) | ALF + Claude |
 | **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | Claude — **fatia própria, precisa de plano** |
-| **A6/A7** | Rebaixar o Alfredo de root; contenção por SO na Maria | Claude — **A7 é pré-requisito do B2** |
+| **A6** | Rebaixar o Alfredo de root | Claude — **janela própria** (17 GB, 4 crons, agente principal do Alf) |
 | — | Colar o **token novo do gateway** na UI (arquivo já entregue) | **ALF** |
 | **A8** | Rotacionar a `service_role` do TOM — **adiado pelo Alf em 09/08**, chave segue viva | ALF decide quando |
 
@@ -44,8 +44,8 @@ A3, o A5, o B0, o A0-bis e o B1. Cada um tem sua linha de evidência abaixo.)*
 | **A3** | Restart único: `bind`→loopback + rotacionar token do gateway + apagar linhas mortas de PAT | ✅ **FECHADO 09/08 16:49** | Claude | escuta agora só `127.0.0.1:18789` + `[::1]:18789` (era `0.0.0.0`); `/health` local **200**; os 3 agentes visíveis pro monitor; hostname público segue **302 → Access**; `workspace/.env` só com FOLHAPAGAMENTO; token rotacionado — **provado pelo log**: navegador com o token velho recebeu `reason=token_mismatch` |
 | **A5** | Censurar `bash_history`, sessões, backups e `shell_snapshots` | ✅ **FECHADO 09/08 17:04** | Claude | **168 arquivos, 641 ocorrências** substituídas por `<REDACTED:sha256-…>`. Token sobrou **só nos 4 configs vivos**. Zero erro nos gateways; `.jsonl` com **0 linhas quebradas**; MCP com valor intacto. Backup: `/root/redact-backup-20260809T170445.tar.gz` (600) |
 | **A4** | Revogar os 5 PATs sem consumidor | ⏸️ **ESTACIONADO** — manutenção, sem urgência | ALF, quando quiser | Motivo do estacionamento: **medido que nenhum token vivo escapou da VPS.** Dos 3 repos com remote no GitHub, o único token commitado (`ad5703…`) já estava **morto (401)**. Com o A5 feito, os tokens saíram do alcance de qualquer agente. Revogar virou higiene, não contenção |
-| **A6** | Rebaixar o Alfredo: usuário próprio, sem sudo, copiando a Maria | 🔶 **ABERTO — MAIOR ITEM QUE SOBROU** | Claude, precisa de plano próprio | `ps -o user=` mostra não-root |
-| **A7** | Contenção por SO na Maria (`maria-ingest`) | 🔶 **ABERTO** (risco menor: `maria` não tem sudo) | Claude | agente da Maria não lê o env |
+| **A6** | Rebaixar o Alfredo: usuário próprio, sem sudo, copiando a Maria | 🔶 **ABERTO — dimensionado em 09/08, precisa de janela própria** | Claude | `ps -o user=` mostra não-root |
+| **A7** | Contenção do agente do laudo | ✅ **FECHADO 09/08 19:45 BRT** — o agente respondia `68` linhas do `maria.env`, agora responde `NEGADO` | Claude | ver detalhe abaixo |
 | **A8** | **`service_role` do TOM vazada em repo PÚBLICO** | 🔶 **ABERTO — sangramento estancado, chave ainda viva** | ALF decidiu adiar a rotação em 09/08 | chave vazada devolvendo **401** |
 
 ### A8 — o achado de 09/08 (detalhe, porque é o item mais grave em aberto)
@@ -95,6 +95,60 @@ olhando. O buraco mora no lado sem irmão — sempre perguntar "e o outro lado?"
 induzido a agir errado — por uma mensagem, uma página que leia, um documento — ele age como root,
 com acesso a tudo na máquina, inclusive os arquivos da Maria. Não é hipótese: em 09/08 o agente do
 laudo foi **sozinho** atrás do arquivo de credenciais, sem instrução para isso.
+
+### A6 — dimensionado em 09/08 (por que NÃO foi feito no mesmo turno)
+
+Medido, não estimado:
+
+| fato | medida |
+|---|---|
+| como roda | `systemd --user` para **uid 0**, unit `openclaw-gateway.service`, `Linger=yes` |
+| workspace a mover | **17 GB** em `/root/.openclaw` |
+| crons ativos que dependem dele | **4** — Evolution Loop Alfredo (03h30), Memory bootstrap watchdog, Revisão semanal Hugo+Alfredo, e o `sol-openclaw-report-bridge.cjs` (também root) |
+| o que quebra se der errado | o **agente principal do Alf** — Telegram, WhatsApp e os crons acima |
+
+Mover 17 GB, recriar a unit para um usuário novo, reescrever todo caminho `/root/...` espalhado em
+config, crons e scripts, migrar credenciais e revalidar 4 crons + dois canais **não é ajuste, é
+migração**. Feito às pressas no fim de um turno que já mexeu em seis coisas, o modo de falha é o
+Alf acordar sem o agente dele.
+
+**Recomendação:** janela própria, com plano escrito, rollback testado (a unit antiga fica parada,
+não apagada) e o Alf sabendo a hora. Não é adiar por medo — é que o A6 tem tamanho de projeto e
+merece o mesmo cuidado que o A3 teve.
+
+**Mitigação já em pé:** o gateway do Alfredo está atrás do Cloudflare Access (A2) e escutando só
+em loopback (A3). O que sobra é o raio *interno* — se aquele agente for induzido a agir errado, ele
+age como root. Real, mas não exposto à internet.
+
+### A7 — como ficou (09/08/2026, 19:45 BRT)
+
+**O buraco, provado antes de projetar a solução:** pedi ao agente do laudo que tentasse ler
+`/home/maria/.openclaw/private/maria.env`. Ele respondeu **`68`** — o número de linhas.
+
+O arquivo é `-rw------- maria:maria`. A permissão está certa. O problema é que **o agente roda
+dentro do gateway, que roda como `maria`** — então herda tudo que a `maria` pode ler. Permissão de
+arquivo não contém um agente que executa com a identidade do dono do arquivo.
+
+**Por que a solução óbvia não servia:** "tirar o env do alcance" quebraria o laudo, porque o
+`superfolha_sql.py` lê justamente daquele arquivo a credencial do Super Folha. A separação certa
+não é o *arquivo*, é a *capacidade*: o agente não precisa **ler** o env — precisa **rodar** o
+script que lê.
+
+**O que foi feito:** `agents.list[laudo].tools.exec = {"security": "allowlist"}`.
+
+| | |
+|---|---|
+| antes | `68` (leu o arquivo de credenciais inteiro) |
+| depois | **`NEGADO`** |
+
+⚠️ **Pegadinha do schema:** `tools.exec.mode` **não pode** coexistir com `tools.exec.security` —
+`openclaw config validate` recusa com *"cannot be combined"*. Usar só `security`.
+
+**O que isto NÃO resolve** (para não confundir contenção com teatro): o bridge e o gateway seguem
+rodando como o mesmo usuário `maria`. A contenção aqui é da ferramenta `exec` do agente do laudo,
+não do usuário de SO. Um agente com `exec: full` na mesma máquina continuaria alcançando o arquivo.
+A separação por usuário (`maria-agent` × `maria`) continua sendo o passo forte — mas é
+rearquitetura de produção, e esta versão é barata, reversível e fecha o vetor que existe hoje.
 
 ### Detalhe do A3 — as três mudanças do restart
 
