@@ -74,6 +74,12 @@ Era comportamento emergente do modelo `openai/gpt-5.6-terra`. A cota da OpenAI e
 efetivo mudou **sem ninguém alterar configuração**, e o comportamento evaporou junto. Sonnet 4.6
 depois falhou 7/7 mesmo com few-shot; DeepSeek V4 Flash acertou 2/2 e virou primary.
 
+**Desfecho: resolvido.** O Alf confirmou em 09/08 que a Rose validou o DeepSeek e a Maria voltou
+a acertar. O formato está correto em produção hoje. (Registro de método: a auditoria não achou a
+confirmação da Rose nos logs e reportou como "não validado" — era lacuna de registro, não
+ausência do fato. Ausência de evidência não é evidência de ausência; perguntar ao dono é mais
+barato que inferir do log.)
+
 A lição registrada pelo Alfredo é a tese desta spec em uma frase:
 
 > *"Comportamento que depende de 'sorte do modelo' quebra na primeira troca de modelo. Se o
@@ -92,7 +98,6 @@ só código garante.
 | Guardrails perdidos no rollback e ainda não reaplicados | lista do próprio Alfredo | `maintenance_watchdog_observe`, `empty reply recovery`, regra de plano `5.5.1`, semântica `sem_match` × `baixa_pendente` |
 | Inconsistência bridge × skill | skill mantém `5.5.1`, bridge perdeu o padrão | vai reaparecer como "bug de classificação" |
 | Backup no GitHub morto há +1 mês | último commit 08/08 10:57 UTC; 9 repos abandonados | **sem rede de segurança para rollback** |
-| Modelo em produção nunca validado pela Rose | DEC-MARIA-07 exige validar formato a cada troca | risco de regressão silenciosa |
 | `cashflow_reconciler_failed` 479× | timeouts hoje 09/08 | reconciliação degradada |
 | Fallback silencioso mascara janela de teste | token xAI revogado ⇒ ~3h de "teste do Grok" rodaram Sonnet | **teste inválido sem ninguém saber** |
 
@@ -193,10 +198,20 @@ O corretor tem Bash e alcance de máquina. Se alcançar `MARIA_UAZAPI_BRIDGE_SEC
 mensagem no webhook **como owner** e a matriz de autonomia vira decoração — entra pela porta da
 frente com o crachá certo.
 
-- O `SECRET` de produção **não existe** no ambiente do processo do corretor.
-- Endpoint separado de sonda, que só sabe cunhar identidade de **classe SONDA** — incapaz de
-  emitir `owner`, `rose` ou `ana` por construção, não por validação.
-- O ator de QA entra na allowlist com papel que cai em `readonly_prepare`.
+**Fase 1 — sem tocar no bridge (seção 7).** A defesa é por isolamento, e é suficiente porque
+o segredo é a única chave da porta:
+
+- O `SECRET` de produção **não existe** no ambiente do processo do corretor: env separado,
+  usuário de SO separado, e o arquivo `private/maria.env` fora do alcance de leitura dele.
+- O ator de QA entra por **`MARIA_UAZAPI_ALLOWED_NUMBERS`**, que é variável de ambiente — nenhuma
+  linha de `bridge.js` muda. Como não é owner, Rose nem Ana, ele cai automaticamente em
+  `NON_OWNER_MODE = readonly_prepare` (`bridge.js:29`, `:5114-5116`), por código já existente.
+- O verificador recebe o `SECRET` por canal que o corretor não lê.
+
+**Limitação declarada:** isto é defesa por posse de segredo, não por construção. Se o corretor
+comprometer o ambiente do verificador, ele volta a poder se passar por owner. A versão forte
+(endpoint que só sabe cunhar classe SONDA, incapaz de emitir `owner`/`rose`/`ana`) fica para
+quando houver autorização para tocar no bridge — registrar como degrau da escada, não esquecer.
 
 ### 5.3 Buraco 2 — held-out fora do alcance
 
@@ -295,8 +310,17 @@ que mapeia Rose/Ana/sócios/Hugo-Alfredo para tom e frase-exemplo); `workspace/I
 **Prompt dentro do bridge:** `bridge.js:5759`, `:5761`, `:5771` — blocos `CONTRATO OBRIGATÓRIO`.
 São prompt, não lógica. Refatoração que os trate como string comum mexe na personalidade.
 
+**Congelamento decidido pelo Alf em 09/08/2026:** *"Maria tá perfeita, não vou mexer em nada em
+tom de voz, em bridge, skill."* Portanto, na fase 1, **`bridge.js` e as skills `.md` estão
+congelados por inteiro** — não só os trechos listados acima. A Maria está acertando em produção e
+o custo de errar aqui já foi pago uma vez (seção 1.3).
+
 **Regra operacional:** o loop **pode propor** mudança nessa zona, com evidência, mas **nunca
 aplica sozinho**. Vale o veto do dono, igual ao `soul/` e `skills/` do TOM.
+
+**Consequência de projeto (importante):** o desenho original previa um endpoint separado de sonda
+dentro do bridge para fechar o buraco 1 por construção. Isso exigiria editar `bridge.js` — está
+fora. A fase 1 fecha o buraco por **isolamento de credencial** em vez de por construção: ver 5.2.
 
 ---
 
