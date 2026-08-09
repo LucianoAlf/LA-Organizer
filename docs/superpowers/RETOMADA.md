@@ -43,11 +43,16 @@ contestado** (a pessoa corrigindo em <6 min) ou se instrumenta o turno para a fr
 **Aberto sem caso real (não corrigir no escuro):** `EVENT_CREATE` tem o mesmo buraco de rótulo
 na escrita. O helper já serve — é só ligar quando aparecer reprodução.
 
-**⚠️ Estado da VPS ao fechar:** o `pm2` roda o processo iniciado às 16:20 UTC pelo restart deste
-chat. O auto-deploy do OUTRO chat (16:22) fez `reset --hard` mas **não reiniciou** — o trabalho
-dele (`src/lib/entrega.js` + governança) está **no disco e fora do processo**. Não reiniciei de
-propósito: pode estar pela metade. Quem retomar aquilo precisa reiniciar e provar por
-`ps -o lstart=`.
+**Estado da VPS ao fechar (17:36 UTC / 14:36 BRT):** local = origin = VPS em `ff4ed4e3`,
+`pm2 online`, `unstable=0`, sem commit não empurrado na VPS. `md5` do `engine.js` e do
+`write-date-label.js` idênticos ao local. Processo iniciado **16:51:23 UTC** (`✅ TOM pronto` +
+Realtime conectado no log) — o fix de data está carregado.
+
+⚠️ **O processo é mais VELHO que o disco.** Três auto-deploys do outro chat (14:06/14:09/14:21
+BRT) fizeram `reset --hard` **sem reiniciar** — o que ele produziu depois das 13:51 BRT está no
+disco e **fora do processo**. Não reiniciei de propósito: pode estar pela metade, e é dele a
+decisão. Quem retomar aquilo reinicia e prova por `ps -o lstart=`. (Os `ReferenceError:
+prefsRes` no `tom-error.log` são de 30/06, não desta janela.)
 
 ---
 
