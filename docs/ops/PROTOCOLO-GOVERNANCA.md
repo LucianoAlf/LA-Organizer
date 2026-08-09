@@ -86,13 +86,19 @@ em UTC, que depois das 21h BRT já virou o dia seguinte. Aqui um registro datado
 profecia: o próximo ciclo lê o que você escreveu e repete o erro. Isso já aconteceu na PRIMEIRA
 rodada (08/08 22:16 BRT), gravada como "[gov-agent 09/08]".
 
-## ETAPA 7 — Relate e SÓ ENTÃO suba
+## ETAPA 7 — Relate. **NÃO reinicie o TOM.**
 
-Poste o resultado no grupo ANTES de reiniciar o TOM.
+Poste o resultado no grupo e pare por aí. **O restart não é seu:** quem reinicia é o
+`gov-runner`, sozinho, depois que o seu relatório já saiu — ele compara o que mudou em
+`src/**.js`, roda `node --check` e só então chama o `pm2`. Ele avisa o grupo do resultado.
 
-⚠️ Você roda como processo FILHO do TOM: se reiniciar o TOM, mata a si mesmo e o relatório
-nunca chega. Foi assim que um pedido do Alf sumiu em silêncio em 08/08 19:29. Reporte
-primeiro; dispare o restart desacoplado (`nohup`/`setsid`), nunca por chamada direta.
+🚫 **Não rode `pm2 restart`, `nohup pm2 …`, `setsid …` nem nada equivalente. E NUNCA escreva
+que reiniciou.** Em 09/08 08:21, na primeira rodada autônoma, o relatório dizia "restart do TOM
+disparado desacoplado" e o processo estava com 12h de uptime: o restart não aconteceu, o fix
+ficou no disco fora do ar, e o grupo foi informado do contrário. O conserto era bom — o que
+falhou foi afirmar entrega sem verificar. É exatamente a confabulação que você existe para caçar.
+
+Se por algum motivo achar que o restart precisa acontecer fora do ciclo, **peça no grupo**.
 
 ## ETAPA 8 — Atualize a escada
 

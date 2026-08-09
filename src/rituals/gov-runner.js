@@ -21,16 +21,76 @@
 // entra. O gate de idempotência aqui dentro é a segunda trava, para o caso do lock estar livre
 // porque o ciclo do dia já terminou.
 
-const supabase = require('../supabase/client');
-const { rodarCicloGovernanca } = require('../services/governance-agent');
-const { postOpsResult } = require('../services/group-chat-engine');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+const REPO = path.join(__dirname, '..', '..');
+const GIT = process.env.TOM_GIT_BIN || '/usr/bin/git';
+const PM2 = process.env.TOM_PM2_BIN || '/usr/bin/pm2';
 
 function arg(nome) {
   const p = process.argv.find((a) => a.startsWith(`--${nome}=`));
   return p ? p.slice(nome.length + 3) : '';
 }
 
+// ── O RESTART NÃO FICA COM O LLM ───────────────────────────────────────────────────────────
+// Primeira rodada autônoma (09/08 08:21): o agente consertou de verdade, commitou (f368e3b) e
+// escreveu no grupo "restart do TOM disparado desacoplado". O processo estava com 12h de
+// uptime — o restart não aconteceu, e o fix ficou no disco, fora do processo que atende as
+// pessoas. O relatório dizia o contrário.
+//
+// A ETAPA 7 manda ele disparar desacoplado porque ele é FILHO do processo que reiniciaria.
+// Aqui isso deixa de ser problema: o runner é descendente do cron, não do pm2, então pode
+// reiniciar o TOM direto — depois de o relatório já ter sido postado.
+//
+// Só `.js` sob `src/` conta: é o que o processo carrega. Doc e teste mudam sem reiniciar, e
+// mexer em `skills/`/`soul/` é violação de limite, não deploy — não vira restart.
+function decidirRestart({ arquivosMudados = [], sintaxeOk = true } = {}) {
+  const lista = Array.isArray(arquivosMudados) ? arquivosMudados : [];
+  const codigo = lista.filter((f) => typeof f === 'string'
+    && /^src\/.+\.js$/.test(f.replace(/\\/g, '/'))
+    && !/\.test\.js$/.test(f));
+  if (!codigo.length) return { restart: false, motivo: 'sem_mudanca_de_codigo', arquivos: [] };
+  // Sintaxe quebrada + restart = pm2 em crash-loop e ninguém atendido. É o único desfecho
+  // pior do que o fix não subir.
+  if (!sintaxeOk) return { restart: false, motivo: 'sintaxe_quebrada', arquivos: codigo };
+  return { restart: true, motivo: 'codigo_mudou', arquivos: codigo };
+}
+
+function git(args) {
+  try { return execFileSync(GIT, args, { cwd: REPO, encoding: 'utf8' }).trim(); }
+  catch (e) { console.error(`[GovRunner] git ${args.join(' ')} falhou: ${e.message}`); return ''; }
+}
+
+/** Committed durante o ciclo + o que ficou sem commitar. O processo carrega os dois. */
+function arquivosAlterados(headAntes) {
+  const set = new Set();
+  if (headAntes) {
+    for (const f of git(['diff', '--name-only', `${headAntes}`, 'HEAD']).split('\n')) {
+      if (f.trim()) set.add(f.trim());
+    }
+  }
+  for (const l of git(['status', '--porcelain']).split('\n')) {
+    const f = l.slice(3).trim();
+    if (f) set.add(f);
+  }
+  return [...set];
+}
+
+function sintaxeOkDe(arquivos) {
+  for (const f of arquivos) {
+    try { execFileSync(process.execPath, ['--check', path.join(REPO, f)], { stdio: 'ignore' }); }
+    catch (e) { console.error(`[GovRunner] node --check reprovou ${f}`); return false; }
+  }
+  return true;
+}
+
 async function main() {
+  // Requires tardios: o teste da decisão de restart não precisa de banco nem do engine.
+  const supabase = require('../supabase/client');
+  const { rodarCicloGovernanca } = require('../services/governance-agent');
+  const { postOpsResult } = require('../services/group-chat-engine');
+
   const grupo = (process.env.TOM_OPS_GROUP_ID || '').trim();
   const ymd = arg('ymd');
   if (!grupo) return console.error('[GovRunner] sem TOM_OPS_GROUP_ID — nada a fazer');
@@ -39,10 +99,12 @@ async function main() {
   // quiet-exempt: canal de engenharia do Alf e do Hugo, não é envio a colaborador.
   const postar = (txt) => postOpsResult(supabase, grupo, txt);
   const force = process.argv.includes('--force');
+  const headAntes = git(['rev-parse', 'HEAD']) || null;
 
   try {
     const r = await rodarCicloGovernanca(supabase, { ymd, force, postar });
     console.log(`[GovRunner] ${ymd} ${JSON.stringify(r)}`);
+    if (r && r.rodou) await aplicarRestart(headAntes, postar);
   } catch (e) {
     // Falhar calado é o pior desfecho: ninguém olha log, e o grupo assume que rodou.
     console.error('[GovRunner] ciclo quebrou:', e.stack || e.message);
@@ -55,6 +117,44 @@ async function main() {
   }
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((e) => { console.error('[GovRunner] erro fatal:', e); process.exit(1); });
+/** Roda DEPOIS do relatório já postado. Só fala com o grupo quando houve mudança de código. */
+async function aplicarRestart(headAntes, postar) {
+  const mudados = arquivosAlterados(headAntes);
+  const previa = decidirRestart({ arquivosMudados: mudados });
+  if (!previa.restart && previa.motivo === 'sem_mudanca_de_codigo') {
+    console.log('[GovRunner] nada de código mudou — sem restart');
+    return;
+  }
+
+  const d = decidirRestart({ arquivosMudados: mudados, sintaxeOk: sintaxeOkDe(previa.arquivos) });
+  const lista = d.arquivos.join(', ');
+  if (!d.restart) {
+    console.error(`[GovRunner] restart RECUSADO (${d.motivo}): ${lista}`);
+    try {
+      await postar(`⚠️ Mexi em ${lista} mas *não reiniciei*: o arquivo não passa no `
+        + '`node --check`. Reiniciar assim derrubaria o TOM em crash-loop. '
+        + 'O código está no disco e fora do ar — precisa de olho humano.');
+    } catch (_) {}
+    return;
+  }
+
+  try {
+    execFileSync(PM2, ['restart', 'tom'], { stdio: 'ignore' });
+    console.log(`[GovRunner] TOM reiniciado — ${lista}`);
+    try { await postar(`♻️ TOM reiniciado, o fix está no ar (${lista}).`); } catch (_) {}
+  } catch (e) {
+    console.error('[GovRunner] pm2 restart falhou:', e.message);
+    try {
+      await postar(`⚠️ Corrigi ${lista} e commitei, mas *o restart falhou* (${e.message}). `
+        + 'O fix está no disco e NÃO está no ar.');
+    } catch (_) {}
+  }
+}
+
+module.exports = { decidirRestart, arquivosAlterados, sintaxeOkDe };
+
+if (require.main === module) {
+  main()
+    .then(() => process.exit(0))
+    .catch((e) => { console.error('[GovRunner] erro fatal:', e); process.exit(1); });
+}
