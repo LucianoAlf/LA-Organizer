@@ -331,11 +331,16 @@ provado — em 09/08 o envio devolveu `id` e a consulta `/message/find` devolveu
 (`Pending` → `Read`). `Sent`/`Delivered` já basta como prova da última milha; não é preciso que
 alguém leia.
 
-**Buraco declarado da v1, agora explícito:** para haver artefato de saída, o outbound da SONDA
-precisa de **um número real que exista no WhatsApp** — a spec anterior não dizia qual. Duas
-opções: um chip pré-pago dedicado, ou um número secundário já existente do Alf. **Decisão
-pendente.** Enquanto não houver número, a sonda roda só por sessão e a cobertura da última milha
-fica declarada como ausente — nunca presumida.
+**Número do outbound — DECIDIDO em 09/08: chip pré-pago dedicado.** A razão não é custo, é
+**resolução de papel**. Um número secundário do Alf continua sendo um número do Alf: se ele
+encostar em qualquer lista de principal, hoje ou daqui a seis meses, a sonda passa a resolver
+como `owner` e o buraco 1 reabre — por acidente administrativo, não por ataque. Um chip novo não
+tem histórico, não pode ser confundido com principal, e o outbound fica cem por cento contido:
+zero chance de a Rose ou a Ana receberem algo que não pediram.
+
+E a barra é baixa: como `Sent`/`Delivered` já basta, **ninguém precisa ler** — o chip pode viver
+na gaveta. O status prova que a mensagem saiu; o payload do envio prova o formato. As duas provas
+da última milha, sem depender de humano nenhum.
 
 ### 6.2 A contenção da sonda é asserção, não herança
 
@@ -343,9 +348,15 @@ Cair em `readonly_prepare` por não ser owner é elegante e evita tocar no bridg
 colateral de semântica herdada**, não trava. Se alguém mexer em `NON_OWNER_MODE` ou puser o número
 da QA em outra lista, a sonda ganha escrita **em silêncio**.
 
-**Requisito:** asserção própria na suíte negativa, rodando **toda rodada** — o ator SONDA tenta
-uma escrita e precisa ser recusado. É barato e é a única forma de a contenção continuar sendo
-verdade amanhã.
+**Requisito — duas asserções, rodando toda rodada:**
+
+1. O ator SONDA tenta uma escrita e **precisa ser recusado**.
+2. O número da sonda **nunca resolve como `owner`, `rose` ou `ana`** — asserção direta sobre a
+   resolução de papel, não sobre o efeito.
+
+O número entra **apenas** na lista de classe SONDA. As duas asserções são baratas e são a única
+forma de a contenção continuar sendo verdade amanhã, quando alguém mexer numa lista sem lembrar
+desta seção.
 
 ### 6.3 `pass^k` precisa de linha de base antes de virar veredito
 
