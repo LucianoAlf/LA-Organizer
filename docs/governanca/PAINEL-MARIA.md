@@ -1,7 +1,7 @@
 # 🧭 PAINEL — Governança da Maria
 
 > **Documento único de controle.** Se você está perdido, leia só as duas primeiras seções.
-> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 16:25 BRT**.
+> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 16:36 BRT**.
 
 ---
 
@@ -21,9 +21,6 @@ propósito.
 |---|---|---|
 | **A3** | Restart único com 3 mudanças — **esperando o sinal do Alf** | Claude, sob autorização |
 
-**Pendência do A2:** o Alf ainda precisa confirmar que **consegue entrar** — a medição provou que
-estranho é barrado, não que a chave dele funciona.
-
 Na VPS, nada foi alterado até aqui: tudo na Trilha A foi leitura. A única mudança em produção foi
 o Access, feita pelo Alf no dashboard da Cloudflare.
 
@@ -33,9 +30,9 @@ o Access, feita pelo Alf no dashboard da Cloudflare.
 
 | ID | Checkpoint | Estado | Quem | Prova de fechamento |
 |---|---|---|---|---|
-| **A0** | Fechar `toolsAllow` do laudo V1A | ✅ **FECHADO** | Claude | 32 → 3 ferramentas, validado por execução forçada |
+| **A0** | Fechar `toolsAllow` do laudo V1A | ✅ **FECHADO** | Claude | 32 → 3 ferramentas. Rodada forçada de 09/08 14:43 saiu com as **9 seções inteiras** e números reais — confirmado visualmente pelo Alf no Telegram do Alfredo. Cortar as ferramentas **não** degradou o laudo |
 | **A1** | Auditoria de acesso e raio de credencial | ✅ **FECHADO** | Claude | Inventário na §6 |
-| **A2** | Cloudflare Access no hostname do gateway | ✅ **FECHADO 09/08 16:23** | ALF | Medido de fora: `/` e `/health` passaram de **200** para **302 → old-mountain-a6b3.cloudflareaccess.com/cdn-cgi/access/login/**. Controle negativo: `maria-whatsapp…` inalterado. ⚠️ falta o Alf confirmar que **entra** |
+| **A2** | Cloudflare Access no hostname do gateway | ✅ **FECHADO 09/08 16:34** | ALF | **(a)** Medido de fora: `/` e `/health` passaram de **200** para **302 → old-mountain-a6b3.cloudflareaccess.com/cdn-cgi/access/login/**. **(b)** Controle negativo: `maria-whatsapp…` inalterado. **(c)** Alf autenticou e chegou na UI do gateway — a chave dele funciona |
 | **A3** | Restart único: `bind`→loopback + rotacionar token do gateway + apagar linhas mortas de PAT | 🔴 **ABERTO** | Claude, **espera sinal** | curl no hostname público volta 200; `check-agentes.py` segue ok; grep prova linhas ausentes |
 | **A4** | Revogar os 7 PATs sem consumidor (usando a digital da §7) | 🔴 **ABERTO** — esta semana | **ALF** | Claude re-roda liveness e mostra **401** |
 | **A5** | Limpar `bash_history`, sessões e backups com token em claro | ⏸️ depois do A4 | Claude | grep volta vazio. **Exige OK explícito — é apagar dado** |
@@ -92,6 +89,14 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 | D-06 | 09/08 | **Access primeiro, sem esperar restart.** Hostname fica público, mas atrás do Access | Sem downtime; tirar o ingress custaria o acesso pelo celular, que é uso real |
 | D-07 | 09/08 | **Cloudflare NÃO vai para o Alfredo** | Não existe credencial Cloudflare na máquina nem MCP; e ele é o objeto da mudança. Delegar execução **e** verificação ao mesmo agente é o modo de falha conhecido |
 | D-08 | 09/08 | **Comportamento e tom da Maria: zona congelada** | Veto do Alf. `bridge.js` e `skills/*.md` não se tocam |
+
+### Aprendizado do A2 (registrado para não repetir)
+Ao ver a UI falhar com *"Não foi possível conectar"*, o Claude atribuiu à camada Cloudflare. **O "Erro
+bruto" refutou:** `unauthorized: gateway token missing` — mensagem do **OpenClaw**, não do Cloudflare.
+A conexão atravessou Access e túnel e chegou no gateway; quem recusou foi o gateway. Antes de culpar
+a camada que acabou de mudar, **abrir o erro bruto**. E o teste que isolou a camada foi o handshake
+WebSocket direto no `localhost:18789` (devolveu `101` + `connect.challenge`), provando que o servidor
+estava intacto.
 
 ---
 
