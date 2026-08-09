@@ -40,8 +40,16 @@ o Access, feita pelo Alf no dashboard da Cloudflare.
 | **A3** | Restart único: `bind`→loopback + rotacionar token do gateway + apagar linhas mortas de PAT | ✅ **FECHADO 09/08 16:49** | Claude | escuta agora só `127.0.0.1:18789` + `[::1]:18789` (era `0.0.0.0`); `/health` local **200**; os 3 agentes visíveis pro monitor; hostname público segue **302 → Access**; `workspace/.env` só com FOLHAPAGAMENTO; token rotacionado — **provado pelo log**: navegador com o token velho recebeu `reason=token_mismatch` |
 | **A5** | Censurar `bash_history`, sessões, backups e `shell_snapshots` | ✅ **FECHADO 09/08 17:04** | Claude | **168 arquivos, 641 ocorrências** substituídas por `<REDACTED:sha256-…>`. Token sobrou **só nos 4 configs vivos**. Zero erro nos gateways; `.jsonl` com **0 linhas quebradas**; MCP com valor intacto. Backup: `/root/redact-backup-20260809T170445.tar.gz` (600) |
 | **A4** | Revogar os 5 PATs sem consumidor | ⏸️ **ESTACIONADO** — manutenção, sem urgência | ALF, quando quiser | Motivo do estacionamento: **medido que nenhum token vivo escapou da VPS.** Dos 3 repos com remote no GitHub, o único token commitado (`ad5703…`) já estava **morto (401)**. Com o A5 feito, os tokens saíram do alcance de qualquer agente. Revogar virou higiene, não contenção |
-| **A6** | Rebaixar o Alfredo: usuário próprio, sem sudo, copiando a Maria | ⏸️ plano próprio | Claude | `ps -o user=` mostra não-root |
-| **A7** | Contenção por SO na Maria (`maria-ingest`) | ⏸️ pode virar dispensável se B entrar | Claude | agente da Maria não lê o env |
+| **A6** | Rebaixar o Alfredo: usuário próprio, sem sudo, copiando a Maria | 🔶 **ABERTO — MAIOR ITEM QUE SOBROU** | Claude, precisa de plano próprio | `ps -o user=` mostra não-root |
+| **A7** | Contenção por SO na Maria (`maria-ingest`) | 🔶 **ABERTO** (risco menor: `maria` não tem sudo) | Claude | agente da Maria não lê o env |
+
+**Legenda dos estados** — ⏸️ *ESTACIONADO* é escolha deliberada de adiar algo opcional.
+🔶 *ABERTO* é trabalho real que ainda falta. **Não confundir os dois.**
+
+**O que o A6 ainda deixa exposto:** o gateway do Alfredo roda como **root**. Se aquele agente for
+induzido a agir errado — por uma mensagem, uma página que leia, um documento — ele age como root,
+com acesso a tudo na máquina, inclusive os arquivos da Maria. Não é hipótese: em 09/08 o agente do
+laudo foi **sozinho** atrás do arquivo de credenciais, sem instrução para isso.
 
 ### Detalhe do A3 — as três mudanças do restart
 
