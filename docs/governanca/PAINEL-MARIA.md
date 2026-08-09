@@ -58,10 +58,14 @@ sangramento estancado, chave ainda viva, o Alf adiou). O **A7 fechou em 09/08**.
 
 ## 2. PRÓXIMO PASSO — **B2, a sonda**
 
+> **PLANO ESCRITO em 09/08/2026 19:57 BRT:** [`plans/2026-08-09-loop-maria-fase2-sonda.md`](plans/2026-08-09-loop-maria-fase2-sonda.md)
+> — 9 tarefas, estado da VPS medido no §0 do plano, critério de fechamento com 10 provas.
+> **Executar a partir dele**, não a partir do resumo abaixo.
+
 Antes de tudo: **conferir a rodada automática de 10/08 às 07:00 BRT** — é a primeira sem ninguém
 olhando.
 
-**O B2 começa escrevendo o plano, não executando.** A spec (§6) já fixou o desenho; o que falta é
+**O B2 começa escrevendo o plano, não executando.** *(feito — link acima)* A spec (§6) já fixou o desenho; o que falta é
 o plano de execução, que a `plans/2026-08-09-loop-maria-fase1.md` deixou de fora de propósito
 ("Fatias 2 a 5 ganham planos próprios"). O pré-requisito caiu: o **A7 fechou**, então o corretor
 já não alcança o `maria.env`.
