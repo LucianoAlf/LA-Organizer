@@ -715,6 +715,27 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
    materializador recriava o domingo. Prova: rrule real gera 45 ocorrências dias 1–6, **zero
    domingo**; os dois cobradores de lembrete filtram `cancelled` (dispatcher.js:5415 e :5345).
    Fora do mandato e NÃO tocados: Rafinha (2 avulsas de evento), Anne Susan (7), Krissya (1).
+
+   **✅ 2ª ONDA — DOMINGO FECHADO PARA TODOS (09/08), ordem do Alf:** "Rafinha, Anne e
+   Cristhia também… pode deixar inclusive para os outros. **Isso a gente só tá falando de
+   coisa de trabalho** — coisas pessoais que a pessoa colocou a gente não pode silenciar."
+   ("Cristhia" = **Krissya**, único nome próximo no cadastro — confirmar.) Executado:
+   `quiet_days_work=[0]` nos **25 ativos** que faltavam (37 no total agora) · 3 templates
+   `FREQ=DAILY` de trabalho convertidos (Clayton + 2 de GRUPO: "Professores"/recreio e
+   "Ligar para aluno"/ADM CG) · 4 avulsas de domingo **movidas** pra segunda (não canceladas —
+   eram reais: cheques da Anne, recarga da Krissya, 2 da Rafinha).
+   **`personal` INTOCADO e verificado:** 1 template pessoal (`Marcar endócrino`, Anne) e 6
+   tarefas pessoais de domingo preservadas; `quiet_days_personal` inalterado nas 5 que tinham.
+   **Tarefa de GRUPO também respeita** — `remindGroupTasks` (dispatcher.js:1135) gateia por
+   MEMBRO com `isQuietNow(...,'work')`, então não há buraco pelo fan-out.
+
+   ⚠️ **4 PENDENTES DE DECISÃO — grupo Financeiro, prazo-dirigidas, NÃO movi:** "Venc 05
+   (prazo dia 06)" (dom 06/09), "Depósito de Cheques" (06/09), "Conciliação de Cartões"
+   (30/08), "Cartão Mercado Pago (Barra)" (27/09). Empurrar pra segunda passa do prazo e pode
+   dar juros/multa. Com o domingo fechado elas ficam **silenciosas no dia e aparecem atrasadas
+   na segunda**. Decisão do Alf: antecipar pro sábado, deixar como está, ou tratar caso a caso.
+   ⚠️ **Luciano Alf entrou na varredura** (é "os outros"): 43 mensagens de domingo em 60 dias.
+   Só o proativo de TRABALHO dele cala; reverter é 1 comando.
 3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima. Junto: (a) conferir se o
    digest das 07:30 chegou nos dias em que houve achado; (b) contar `AUTO_RETRY_DATE_POISON`
    em `marker_logs` — se aparecer, o guard está pegando envenenamento de verdade; se ficar
