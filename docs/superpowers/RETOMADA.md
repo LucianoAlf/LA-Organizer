@@ -622,8 +622,20 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
    em `marker_logs` — se aparecer, o guard está pegando envenenamento de verdade; se ficar
    zero, ou o TOM parou de errar data ou o auto-retry (9 em 45 dias) simplesmente não rodou.
 5. **3 de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
-6. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
-   `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.
+6. **Medir a Fatia A** — MEDIDA em 09/08, **cedo demais para fechar a Task 7. Refazer em
+   15/08.** O que já está provado e o que não está:
+   - ✅ **Flag LIGADA**, com prova indireta: `TOM_TASK_TARGET_SERIES=1` está no `.env` e o pm2
+     sobe com `node_args:['--env-file=.env']`. **Não procure a flag em `/proc/<pid>/environ`
+     nem no `env` do `pm2 jlist` — ela não aparece nos dois**, porque `--env-file` injeta em
+     runtime. O controle que fecha o argumento: `SUPABASE_URL` também está ausente dos dois e
+     o TOM obviamente funciona. Gastei dois falso-negativos aqui.
+   - ⏳ **Sem sinal ainda:** `TASK_TARGET_AMBIGUOUS` = 1 no histórico inteiro, e essa 1 é
+     `preflight` (0 reais). Zero linhas `[TaskTarget]` nos logs. Só **5 `TASK_UPDATE` desde o
+     deploy, 0 rejeitados** — amostra pequena demais (fim de semana; a base é ~13/dia).
+   - 📉 **Macro, normalizado por tráfego:** `dropped_request` por mil inbounds — 41,7 (29/06) ·
+     58,1 · 62,3 · 81,4 · 56,4 · **31,7 (semana de 03/08)**. Menor da série COM tráfego maior
+     (284 vs 195), então não é artefato de volume. **Mas o deploy tem 1 dia: o ganho é das
+     outras correções da semana, não da Fatia A.** Atribuir isso a ela seria chute.
 7. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
 8. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
