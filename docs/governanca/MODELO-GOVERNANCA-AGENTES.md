@@ -171,7 +171,7 @@ corrigido_em timestamptz            -- ⚠️ MUTÁVEL: reconserto sobrescreve (
 
 ```
 collaborator_id uuid · ritual_type text ('gov_agent'|'ops_digest'|...) · reference_date date
-status text · sent_at timestamptz · detail text   -- ex.: "fechados=0 reincidentes=0 parada=0 acervo=206"
+status text · sent_at timestamptz · detail text   -- ex.: "fechados=0 reincidentes=0 parada=0 acervo=206 custo=0.8123"
 ```
 
 Regra: **grava só com a entrega CONFIRMADA** — quem posta devolve comprovante
@@ -304,6 +304,15 @@ exige julgamento. Subida é aprovada por humano — é mudança no próprio agen
 
 - Ciclo diário: 1 spawn de **Opus 5** com teto de 30 min (`--output-format json` devolve
   `total_cost_usd` por rodada — base do futuro painel de custos).
+- **Onde esse número fica** (09/08): `ritual_logs.detail`, sufixo ` custo=<usd>`. Não virou
+  coluna (a tabela é de idempotência: nasceria NULL em todo o resto) nem tabela própria
+  (`agent_run_costs` é o alvo quando o painel existir de fato — até lá seria feature sob o
+  freeze). O histórico é backfillável a partir da string:
+  `substring(detail from 'custo=([0-9.]+)')::numeric`.
+  O canal de ops **interativo** não tem linha em `ritual_logs` (pedido sob demanda não tem
+  `reference_date`), então o custo dele fica no log com o mesmo dialeto: `grep 'custo=' nos
+  logs + a coluna cobrem os dois. Ausência do campo ≠ rodada de graça: sem número o sufixo
+  não entra, e zero é gravado como `custo=0`.
 - Digest 07:30: **zero LLM** (SQL + template).
 - Auditoria 03h: já existia (acoplada ao Dream).
 - O agente-fim (TOM) continua no modelo dele (Sonnet); governança não muda isso.
