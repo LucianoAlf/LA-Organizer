@@ -641,11 +641,10 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 8. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
 8b. ~~`incident_at` com hora BRT rotulada como UTC~~ — **REFUTADO em 09/08**, o campo está
    certo; era o agente lendo UTC. Protocolo corrigido.
-8c. **O acervo de 206 achados é invisível pro agente** (medido 09/08): a janela dele é de 2
-   dias e só 1 achado cai nela; 106 têm +30 dias, 83 têm 8-30. Ele vai rodar a seco. Proposta:
-   separar o teto — **1 CORREÇÃO por rodada** (a restrição real é banda de revisão de código)
-   mas **refutação sem limite**, priorizando por severidade e não por recência. Refutar não
-   muda código, então não consome revisão.
+8c. ~~O acervo de 206 achados é invisível pro agente~~ — **FEITO em 09/08** (`e0127aa`). Teto
+   separado: 1 CORREÇÃO por rodada, refutação sem teto (dos mais antigos), severidade `alto`
+   fora da varredura em massa, relatório da varredura em números. `carregarAcervo()` mede
+   206/8 altos/1 em 2d/106 com +30d e o pedido carrega o número.
 9. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
    Hostinger; confirmação ao cancelar tarefa recorrente (é UI, esbarra no freeze).
 
