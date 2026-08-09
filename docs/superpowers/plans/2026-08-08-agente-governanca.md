@@ -30,6 +30,7 @@
 | `src/lib/placar-governanca.js` *(criar)* | função pura: dos KIs do agente, quantos voltaram; quais famílias entram em parada |
 | `docs/ops/PROTOCOLO-GOVERNANCA.md` *(criar)* | as 8 etapas, editável sem deploy |
 | `docs/ops/ESCADA-GOVERNANCA.md` *(criar)* | degraus de evolução; o agente lê e atualiza |
+| `docs/ops/PEDIDOS-DE-PRODUTO.md` *(criar)* | fila do que é feature, não bug (etapa 2.5) |
 | `src/services/governance-agent.js` *(criar)* | orquestra o ciclo, idempotência, entrega no grupo |
 | `src/rituals/dispatcher.js` *(modificar)* | gancho diário 08:00 com janela de retry |
 
@@ -325,6 +326,7 @@ git commit -m "feat(gov): placar de eficácia — dos KIs do agente, quantos vol
 **Files:**
 - Create: `docs/ops/PROTOCOLO-GOVERNANCA.md`
 - Create: `docs/ops/ESCADA-GOVERNANCA.md`
+- Create: `docs/ops/PEDIDOS-DE-PRODUTO.md`
 
 **Interfaces:**
 - Produces: dois arquivos `.md` lidos em runtime pelo `governance-agent.js` (Task 4). Ficam **fora de `skills/`** de propósito: o loader de skills varre aquele diretório e isto não pode vazar pro TOM que fala com o time.
@@ -352,6 +354,32 @@ Dos known-issues que VOCÊ fechou (`fix_resumo` começa com `[gov-agent]`), quan
 
 Prioridade: regressão > severidade alta > o que tem literal claro. **Um por rodada.** Ninguém
 revisa cinco mudanças de engine por dia.
+
+## ETAPA 2.5 — Isto é bug, ou é pedido de coisa nova?
+
+Os findings misturam três naturezas. Tratar as três como bug é o caminho mais curto pra você
+implementar funcionalidade sozinho e furar o feature freeze — o que é proibido aqui.
+
+**O teste é verificável, não é opinião: existe handler/marker no código pra essa capacidade?**
+
+- **Existe** → é BUG. Siga para a etapa 3.
+- **Não existe** → é FEATURE. **Não implemente.** Registre em `docs/ops/PEDIDOS-DE-PRODUTO.md`
+  (data, pessoa, o LITERAL do pedido, quantas vezes já apareceu), feche o finding como "não é
+  bug" e avise no grupo. Encerre a rodada.
+- **Existe, mas consertar mudaria o desenho** → LIMITAÇÃO DE ARQUITETURA. Mesmo destino da
+  feature, marcada como tal.
+
+Casos reais que criaram esta etapa (Rose):
+
+- BUG — TOM: "não consigo executar o lançamento por aqui" / Rose: "você já lançou pra mim
+  várias vezes". A capacidade existe.
+- FEATURE — "mas tá td misturado trabalho e pessoal aí né, organiza melhor pf".
+- FEATURE — "já que vc n pode apagar por aqui" (estorno em lote).
+- LIMITAÇÃO — "não tenho os outros 7 lançamentos no meu contexto atual — o extrato veio de uma
+  injeção que não persiste entre mensagens". **Cuidado: soa como bug técnico e não é.**
+
+Na dúvida entre bug e feature, trate como FEATURE e pergunte no grupo. Errar pra esse lado
+custa uma mensagem; errar pro outro coloca funcionalidade não pedida em produção.
 
 ## ETAPA 3 — Refute antes de acreditar
 
@@ -451,6 +479,32 @@ do próprio erro medido, com o caso na mão:
 _(vazio — o agente preenche conforme errar)_
 ```
 
+- [ ] **Step 2b: Crie a fila de produto**
+
+Crie `docs/ops/PEDIDOS-DE-PRODUTO.md`:
+
+```markdown
+# Pedidos de produto vindos da conversa
+
+Achado que **não é bug** — o usuário está pedindo capacidade que o TOM não tem (feature) ou
+esbarrando em limitação de arquitetura. O agente de governança registra aqui na ETAPA 2.5 e
+**não implementa**: estamos em feature freeze desde 27/07.
+
+Isto existe porque hoje esse pedido morre dentro do finding e ninguém vê a demanda acumulada.
+Com a fila, dá pra ver que a mesma pessoa pediu a mesma coisa três vezes.
+
+Uma linha por pedido. Se já existir a linha, **incremente a contagem** em vez de duplicar.
+
+| data | pessoa | o que pediu (literal) | natureza | vezes |
+|---|---|---|---|---|
+| 31/07 | Rose | "mas ta td misturado trabalho e pessoal ai né, organiza melhor pf" | feature | 1 |
+| 25/07 | Rose | "Completo" — queria os 7 lançamentos restantes do extrato | limitação (contexto não persiste entre turnos) | 1 |
+| 16/07 | Rose | "já que vc n pode apagar por aqui" — estorno em lote | feature (Fase B do roadmap financeiro) | 1 |
+```
+
+As três linhas iniciais vêm da auditoria da Rose feita em 08/08 — o agente nasce com a fila
+já populada, em vez de com uma tabela vazia que ninguém sabe se funciona.
+
 - [ ] **Step 3: Confirme que os arquivos não vazam para o prompt do TOM**
 
 ```bash
@@ -461,8 +515,8 @@ Esperado: nenhuma linha. O loader de skills varre `skills/`, e estes arquivos es
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/ops/PROTOCOLO-GOVERNANCA.md docs/ops/ESCADA-GOVERNANCA.md
-git commit -m "docs(gov): protocolo em 8 etapas e escada de evolução do agente"
+git add docs/ops/PROTOCOLO-GOVERNANCA.md docs/ops/ESCADA-GOVERNANCA.md docs/ops/PEDIDOS-DE-PRODUTO.md
+git commit -m "docs(gov): protocolo, escada e fila de produto do agente"
 ```
 
 ---
@@ -834,7 +888,7 @@ Esperado: as duas linhas listadas.
 - [ ] **Step 3: Suba os arquivos e reinicie**
 
 ```bash
-cd /d/la-organizer/_remote && ssh tom "mkdir -p /opt/LA-Organizer/src/lib /opt/LA-Organizer/docs/ops" && scp -q src/lib/placar-governanca.js tom:/opt/LA-Organizer/src/lib/ && scp -q src/services/governance-agent.js src/services/ops-agent.js tom:/opt/LA-Organizer/src/services/ && scp -q src/rituals/dispatcher.js tom:/opt/LA-Organizer/src/rituals/ && scp -q docs/ops/PROTOCOLO-GOVERNANCA.md docs/ops/ESCADA-GOVERNANCA.md tom:/opt/LA-Organizer/docs/ops/ && ssh tom "cd /opt/LA-Organizer && node --check src/rituals/dispatcher.js && pm2 restart tom >/dev/null 2>&1 && sleep 4 && pm2 describe tom | grep -E '│ status'"
+cd /d/la-organizer/_remote && ssh tom "mkdir -p /opt/LA-Organizer/src/lib /opt/LA-Organizer/docs/ops" && scp -q src/lib/placar-governanca.js tom:/opt/LA-Organizer/src/lib/ && scp -q src/services/governance-agent.js src/services/ops-agent.js tom:/opt/LA-Organizer/src/services/ && scp -q src/rituals/dispatcher.js tom:/opt/LA-Organizer/src/rituals/ && scp -q docs/ops/PROTOCOLO-GOVERNANCA.md docs/ops/ESCADA-GOVERNANCA.md docs/ops/PEDIDOS-DE-PRODUTO.md tom:/opt/LA-Organizer/docs/ops/ && ssh tom "cd /opt/LA-Organizer && node --check src/rituals/dispatcher.js && pm2 restart tom >/dev/null 2>&1 && sleep 4 && pm2 describe tom | grep -E '│ status'"
 ```
 Esperado: `online`.
 

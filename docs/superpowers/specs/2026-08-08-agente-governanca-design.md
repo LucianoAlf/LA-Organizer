@@ -67,6 +67,8 @@ dispatcher (08:00 BRT, após o digest das 07:30)
   deploy**, mesmo padrão do `FORMATO-GRUPO.md`.
 - `docs/ops/ESCADA-GOVERNANCA.md` — os degraus de evolução. O agente **lê no início e
   escreve no fim** de cada rodada.
+- `docs/ops/PEDIDOS-DE-PRODUTO.md` — fila do que é feature, não bug (etapa 2.5). Zero
+  migration, versionado, e torna visível a demanda que hoje some dentro do finding.
 - `src/services/ops-agent.js` — ganha dois parâmetros opcionais: `briefing` e `timeoutMs`.
   Sem eles, comportamento idêntico ao de hoje.
 
@@ -101,6 +103,42 @@ outros como se fosse dele.
 
 Da janela do digest, com prioridade: regressão > severidade alta > o que tem literal claro.
 **Um por rodada.** Ninguém revisa cinco mudanças de engine por dia.
+
+### Etapa 2.5 — Natureza: isto é bug ou é pedido de coisa nova?
+
+**Levantado pelo Alf em 08/08, olhando os logs da Rose.** Os findings misturam três naturezas,
+e tratar as três como bug é o caminho mais curto pro agente violar o feature freeze
+implementando funcionalidade sozinho.
+
+**O critério é verificável, não julgamento:** *existe handler/marker no código para essa
+capacidade?*
+
+| natureza | teste | destino |
+|---|---|---|
+| **Bug** | a capacidade existe no código | segue o protocolo, corrige |
+| **Feature** | não existe handler/marker | **não implementa** — registra e avisa |
+| **Limitação de arquitetura** | existe, mas o conserto muda o desenho | **não implementa** — registra como tal |
+
+Casos reais que definiram a regra:
+
+- **Bug** — 16/07, TOM: *"não consigo executar o lançamento por aqui"*; Rose: *"você já lançou
+  pra mim várias vezes"*. A capacidade existe → é bug. (É a assinatura de
+  `project_tom_nega_capacidade`, usada aqui na direção normal.)
+- **Feature** — 31/07: *"mas tá td misturado trabalho e pessoal aí né, organiza melhor pf"*.
+  Não existe handler de separação trabalho/pessoal na apresentação → não é bug.
+- **Feature** — 16/07: *"já que vc n pode apagar por aqui"* (estorno em lote; é a Fase B
+  pendente do roadmap financeiro).
+- **Limitação de arquitetura** — 25/07, TOM: *"não tenho os outros 7 lançamentos no meu
+  contexto atual — o extrato veio de uma injeção que não persiste entre mensagens"*. **O mais
+  perigoso**: soa como bug técnico, mas consertar é mudar o desenho.
+
+**Destino de feature e limitação:** linha em `docs/ops/PEDIDOS-DE-PRODUTO.md` com data, pessoa,
+o **literal** do pedido e quantas vezes já apareceu; aviso no grupo. O finding é fechado como
+"não é bug".
+
+Isso fecha uma segunda lacuna de graça: hoje esse pedido morre dentro do finding e **ninguém
+vê a demanda acumulada** — só se descobre que a mesma pessoa pediu três vezes quando ela
+reclama.
 
 ### Etapa 3 — Refutar antes de acreditar
 
