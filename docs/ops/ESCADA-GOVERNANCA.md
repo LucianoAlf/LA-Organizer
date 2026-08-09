@@ -25,12 +25,16 @@ do próprio erro medido, com o caso na mão:
 
 ## Registro de falhas por etapa
 
-### ETAPA 5 — o comando de teste do protocolo não roda nesta VPS
+### ETAPA 5 — o comando de teste do protocolo não roda nesta VPS ✅ RESOLVIDO (09/08)
 
-**Ocorrências:** 1 (09/08).
+**Ocorrências:** 1 (09/08). **Corrigido no mesmo dia — o protocolo já manda `node --test src/`.**
 
-O protocolo manda `node --test "src/**/*.test.js"`. A VPS roda **Node v20.20.2**, e suporte a
-glob no `--test` só entrou no Node 21 — o comando morre com
+> ⚠️ Este registro descreve o protocolo **como ele era antes do fix**. Os dois arquivos vão
+> juntos no seu system prompt: vale o que está na ETAPA 5 do PROTOCOLO, não o literal citado
+> abaixo. Está aqui como histórico do incidente, não como instrução.
+
+O protocolo mandava `node --test "src/**/*.test.js"`. A VPS roda **Node v20.20.2**, e suporte a
+glob no `--test` só entrou no Node 21 — o comando morria com
 `Could not find '/opt/LA-Organizer/src/**/*.test.js'`. O que funciona é `node --test src/`, e
 o baseline `fail 3` (env ausente, `src/prompts/system-loadout.test.js`) se reproduz igual.
 

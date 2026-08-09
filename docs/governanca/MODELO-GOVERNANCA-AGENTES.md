@@ -174,9 +174,15 @@ collaborator_id uuid · ritual_type text ('gov_agent'|'ops_digest'|...) · refer
 status text · sent_at timestamptz · detail text   -- ex.: "fechados=0 reincidentes=0 parada=0 acervo=206"
 ```
 
-Regra: **grava só DEPOIS de postar** — se o envio falhar, o próximo tick da janela retenta.
-Exceção deliberada: "protocolo ausente" grava mesmo sem sucesso, senão o grupo leva ~48 avisos
-iguais de um problema que não se resolve sozinho.
+Regra: **grava só com a entrega CONFIRMADA** — quem posta devolve comprovante
+(`src/lib/entrega.js`); resposta falsy ou exceção conta como não entregue, e o próximo tick da
+janela retenta. Não basta o `await` ter resolvido: era exatamente assim que o dia fechava sem o
+relatório ter chegado a ninguém (lição 9.15).
+
+Exceção deliberada: "protocolo ausente" grava mesmo sem o ciclo ter rodado, senão o grupo leva
+~48 avisos iguais de um problema que não se resolve sozinho. Mas a exceção é sobre o ciclo, não
+sobre a entrega: o **aviso** ainda precisa ter chegado, senão ninguém fica sabendo que o agente
+está parado.
 
 ### 4.4 Fontes de verdade que o agente consulta
 
@@ -245,6 +251,25 @@ Sanitizador markdown→WhatsApp (só existem `*negrito*`, `_itálico_`, `~riscad
 markdown chega literal), split por parágrafo (~1200 chars), typing sustentado durante trabalho
 longo (o `composing` do WhatsApp expira em ~25s), drain hook que avisa o grupo se um restart
 matar um pedido no meio, e relatório de varredura em **números**, não lista.
+
+O drain hook só serve no processo que **instala handler de sinal e configura o canal**. O
+runner do ciclo é processo próprio: sem as duas pontas ligadas, o hook nasce órfão e um
+`pm2 restart` no meio de 30 min de trabalho morre calado (`instalarAvisoDeInterrupcao`).
+
+### 5.8 Entrega confirmada é catraca do log de idempotência
+
+O gate que impede mensagem duplicada é o mesmo que impede o retry. Se ele fechar o dia sem a
+mensagem ter saído, deixa de proteger e passa a **silenciar** — falha fechada, invisível,
+exatamente onde o modelo inteiro depende de alguém ser avisado.
+
+A trava: o envio devolve comprovante e o log só grava com ele na mão (`entregar()` em
+`src/lib/entrega.js`). Vale para o ciclo (08:00) e para o digest (07:30), que tinham o mesmo
+defeito. Entrega em partes conta como falha **parcial**: perder a parte 2 de 4 e seguir
+postando 3 e 4 deixa no grupo um relatório furado que ninguém detecta lendo, então o envio para
+no primeiro erro e diz quantas partes chegaram.
+
+**Regra para replicar:** todo par "faz o trabalho → marca como feito" precisa que o passo do
+meio devolva prova. `await` que resolveu não é prova.
 
 ---
 
@@ -361,6 +386,18 @@ falso-fire medido em **1000 respostas reais** (0,80%), suíte no baseline, KI re
 14. **O agente pode estar certo e o revisor errado.** Ele registrou que `node --test src/`
     funciona; minha nota dizia falso-vermelho; medi lado a lado — idênticos. Corrigi a MINHA
     nota. Verificação independente vale nos dois sentidos.
+15. **Gate de idempotência sem prova de entrega vira mordaça.** O invariante "posta primeiro,
+    grava o log depois" estava no código, no doc e no teste — e era falso em produção: o
+    `postar` real devolvia `null` em falha de insert em vez de lançar, o `await` resolvia, o dia
+    fechava `sent` e o retry ficava bloqueado. Relatório nenhum, aviso nenhum, log nenhum. O
+    teste passava porque injetava um `postar` que **lança** — validava um contrato que a
+    implementação real não cumpria. Regras: **o dublê tem que falhar do jeito que a produção
+    falha**, e "não sei se entregou" conta como não entregou (custo de errar pra um lado: uma
+    mensagem repetida; pro outro: o dia inteiro em silêncio).
+16. **Doc de incidente envelhece como instrução.** O registro da falha do glob no `--test`
+    continuou dizendo "o protocolo manda `src/**/*.test.js`" depois de o protocolo já ter sido
+    corrigido — e os dois arquivos vão no MESMO system prompt todo dia. Registro histórico ao
+    lado de instrução viva precisa dizer, no próprio texto, que é histórico.
 
 ---
 

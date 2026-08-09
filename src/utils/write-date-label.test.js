@@ -6,8 +6,9 @@ const { rotuloDeFala, corrigeRotuloDeEscrita, datasGravadasDasActions } = requir
 // ── PROVA DE REVERSÃO — CONFAB-WRITE-DATE-NO-RELLABEL, caso Anne 05/08 ────────────
 // Literal do banco (conversation_history 2026-08-06 01:14:14Z). Anne pediu "me lembre
 // no dia 7"; o marker gravou 07/08 CERTO e a fala saiu "pra amanhã" (era quarta 05/08).
-// Ela leu "amanhã" como "manhã", achou que ele tinha errado o que estava certo, e
-// gastou 3 turnos corrigindo. O dado nunca esteve errado — a narração esteve.
+// Do outro lado a leitura foi "manhã", não "amanhã" — a conclusão foi que o TOM tinha
+// errado o que estava certo, e o turno virou 3 turnos de correção desnecessária.
+// O dado nunca esteve errado; a narração esteve.
 test('caso Anne: "amanhã" com 07/08 gravado vira o rótulo certo', () => {
   const falaReal = '✅ Fechei os cheques do dia 5. E anotei o lembrete pra amanhã às 10h30!';
   const r = corrigeRotuloDeEscrita(falaReal, '2026-08-07', '2026-08-05');
@@ -18,9 +19,9 @@ test('caso Anne: "amanhã" com 07/08 gravado vira o rótulo certo', () => {
   assert.ok(!/amanhã/i.test(r.texto), 'o rótulo errado não pode sobreviver');
 });
 
-// Caso Krissya 01/07 23:07 BRT (banco: fala 2026-07-02 02:07Z). Ela pediu amanhã, ele
-// narrou "Hoje às 11:30" e ela respondeu "Hoje não, amanhã". Direção inversa da Anne —
-// o mesmo buraco. Maiúscula no começo da linha tem que sobreviver à troca.
+// Caso Krissya 01/07 23:07 BRT (banco: fala 2026-07-02 02:07Z). O pedido foi "amanhã",
+// o TOM narrou "Hoje às 11:30" e levou o "Hoje não, amanhã" de volta. Direção inversa
+// da Anne, mesmo buraco. Maiúscula no começo da linha tem que sobreviver à troca.
 test('caso Krissya: "Hoje" com 02/07 gravado vira "Amanhã", preservando a maiúscula', () => {
   const falaReal = '✅ Anotado, Krissya.\n\n📋 *Ler o roteiro que Luciano me mandou*\n⏰ Hoje às 11:30';
   const r = corrigeRotuloDeEscrita(falaReal, '2026-07-02', '2026-07-01');
