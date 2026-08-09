@@ -228,6 +228,12 @@ function _isCompletionClaimLine(line) {
   if (SUCCESS_EMOJI_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
   if (TOTALIZER_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
   if (PLANNING_CLAIM_RE.test(t)) return true;   // PLANNING-CONFIRM-NO-CREATE (caso Dai)
+  // CONFAB-GERUNDIO-CHOKEPOINT (Rose 09/08): o gerúndio entrou no _isOptimisticLine em 08/08
+  // mas ficou de fora daqui de propósito ("risco de falso-fire maior, sem evidência pedindo").
+  // A evidência apareceu: "lançando todas as 14 parcelas!" sem marker NENHUM — sem marker o
+  // sanitizador nem roda, então este gate era o único no caminho. Mesmos dois guards de lá
+  // (pergunta e negação), que é o que separa a promessa falsa da fala legítima.
+  if (!t.endsWith('?') && _claimSemNegacao(t, COMPLETION_GERUND_RE)) return true;
   return false;
 }
 function hasCompletionClaim(text) {

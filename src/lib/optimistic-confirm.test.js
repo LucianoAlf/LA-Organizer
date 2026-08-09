@@ -324,3 +324,26 @@ test('AUDIT-16/07 acento anti-FP: "Concluímos?" (pergunta) NÃO é claim', () =
 test('AUDIT-16/07 acento anti-FP: verbo no MEIO de palavra não casa', () => {
   assert.strictEqual(hasCompletionClaim('Recriado do zero pelo time.'), false);
 });
+
+// CONFAB-GERUNDIO-CHOKEPOINT (Rose 09/08 00:30 BRT) — o fix de 08/08 pôs o gerúndio no
+// _isOptimisticLine (sanitizador), mas DEIXOU FORA do _isCompletionClaimLine (chokepoint).
+// O sanitizador só roda quando ALGUM marker falhou; aqui não houve marker NENHUM, então o
+// único gate no caminho era o chokepoint — e ele não via gerúndio. A fala saiu inteira e a
+// Rose leu como feito ("A do Nubank vc havia dito que tinha lançado").
+test('GERUNDIO-CHOKEPOINT: "lançando todas as 14 parcelas" é claim (Rose 09/08)', () => {
+  const real = 'Beleza, Rose — lançando todas as 14 parcelas!\n\n📅 Nubank · vence 14/08 · R$ 593,32. Pode editar as categorias depois pelo app. 👍';
+  assert.strictEqual(hasCompletionClaim(real), true);
+});
+test('GERUNDIO-CHOKEPOINT: sem marker nenhum, a promessa não sobrevive (Rose 09/08)', () => {
+  const real = 'Beleza, Rose — lançando todas as 14 parcelas!\n\n📅 Nubank · vence 14/08 · R$ 593,32. Pode editar as categorias depois pelo app. 👍';
+  const out = enforceNoMarkerHonesty(real, { nothingPersisted: true, infoGathering: false, awaitingConfirm: false }, { meta: true });
+  assert.strictEqual(out.fired, true);
+  assert.ok(!/lan[çc]ando/i.test(out.reply), 'a promessa "lançando" não pode sobreviver');
+  assert.ok(/n[ãa]o consegui registrar/i.test(out.reply), 'a nota honesta precisa estar lá');
+});
+test('GERUNDIO-CHOKEPOINT anti-FP: pergunta com gerúndio NÃO é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Quer que eu vá fechando as pendências?'), false);
+});
+test('GERUNDIO-CHOKEPOINT anti-FP: gerúndio negado NÃO é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Não estou lançando nada ainda.'), false);
+});
