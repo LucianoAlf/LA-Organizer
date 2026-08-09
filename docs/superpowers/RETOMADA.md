@@ -703,6 +703,18 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
    OK do Alf/delas, converter os templates DAILY para BYDAY sem os dias de folga e cancelar as
    instâncias futuras já materializadas nos domingos** (cancelar = dado de produção → OK
    explícito). Velocímetro: a SQL desta investigação, rodável a qualquer momento.
+
+   **✅ EXECUTADO em 09/08 com ordem EXPLÍCITA do Alf** ("corta o domingo pra galera do
+   atendimento: Gabi, Fefê, Daiana, Vitória CG, Vitória Andrade/Recreio, Arthur"):
+   (1) `quiet_days_work=[0]` setado para Daiana e as duas Vitórias (as outras 3 já tinham);
+   (2) **12 templates `FREQ=DAILY` → `FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA`** (5 Daiana,
+   5 Fefê ativos, 1 Gabi, 1 Vitoria Andrade; o "Contratos" da Fefê já estava cancelled);
+   (3) **36 instâncias de domingo canceladas** (35 futuras + a PRESENÇA vencida de 02/08 da
+   Gabi) e **1 avulsa movida** (anamnese da Daiana, dom 09/08 → seg 10/08 — avulsa legítima,
+   só a data caiu no domingo). ORDEM importou: template convertido ANTES de cancelar, senão o
+   materializador recriava o domingo. Prova: rrule real gera 45 ocorrências dias 1–6, **zero
+   domingo**; os dois cobradores de lembrete filtram `cancelled` (dispatcher.js:5415 e :5345).
+   Fora do mandato e NÃO tocados: Rafinha (2 avulsas de evento), Anne Susan (7), Krissya (1).
 3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima. Junto: (a) conferir se o
    digest das 07:30 chegou nos dias em que houve achado; (b) contar `AUTO_RETRY_DATE_POISON`
    em `marker_logs` — se aparecer, o guard está pegando envenenamento de verdade; se ficar
