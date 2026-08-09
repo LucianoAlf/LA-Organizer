@@ -174,3 +174,69 @@ test('nowBrtParts: retorna {hour,minute,dow} em faixa válida (dow 0-6 BRT)', ()
   assert.ok(Number.isInteger(n.minute) && n.minute >= 0 && n.minute <= 59, `minute inválido: ${n.minute}`);
   assert.ok(Number.isInteger(n.dow) && n.dow >= 0 && n.dow <= 6, `dow inválido: ${n.dow}`);
 });
+
+// ── DND (do_not_disturb_until) NO GATE COMPARTILHADO ───────────────────────────────────────
+// Caso do Alf (09/08): "Tom, hoje é feriado, não me manda mensagem" tem que CORTAR na hora.
+// O TOM já grava `do_not_disturb_until` (applyDnd, cap 24h) — mas `isQuietNow` não lia o
+// campo. Resultado: dos 8 arquivos que gateiam por isQuietNow, 7 NUNCA checavam DND; só o
+// dispatcher checava, à mão, em 14 pontos. O pior é que `send-proativo.js` — o CHOKEPOINT
+// escrito pra "ser impossível esquecer o gate", com trava de deploy e tudo — também passava
+// batido. A pessoa pedia silêncio, o TOM confirmava e gravava, e o lembrete chegava assim
+// mesmo por qualquer caminho fora do dispatcher.
+// DND é global de propósito: "não me manda NADA hoje" não é por contexto.
+
+const AGORA_MS = Date.parse('2026-08-09T15:00:00-03:00');
+const dnd = (offsetH) => new Date(AGORA_MS + offsetH * 3600_000).toISOString();
+const TER_1500 = { hour: 15, minute: 0, dow: 2 };
+// Prefs sem NENHUM silêncio configurado: sem DND, este horário passa (não é madrugada).
+const SEM_SILENCIO = {
+  quiet_start_time_work: null, quiet_end_time_work: null, quiet_days_work: [], quiet_weekends_work: false,
+  quiet_start_time_personal: null, quiet_end_time_personal: null, quiet_days_personal: [], quiet_weekends_personal: false,
+};
+
+test('DND ativo silencia mesmo sem nenhum quiet configurado', async () => {
+  const prefs = { ...SEM_SILENCIO, do_not_disturb_until: dnd(+5) };
+  const q = await isQuietNow(prefs, TER_1500, 'work', { agoraMs: AGORA_MS });
+  assert.strictEqual(q.quiet, true, `esperava silêncio por DND, veio: ${JSON.stringify(q)}`);
+  assert.match(q.reason, /^dnd/);
+});
+
+test('DND vale nos DOIS contextos — "não me manda NADA" não é por contexto', async () => {
+  const prefs = { ...SEM_SILENCIO, do_not_disturb_until: dnd(+2) };
+  for (const ctx of ['work', 'personal']) {
+    const q = await isQuietNow(prefs, TER_1500, ctx, { agoraMs: AGORA_MS });
+    assert.strictEqual(q.quiet, true, `contexto ${ctx}: ${JSON.stringify(q)}`);
+  }
+});
+
+test('DND vencido NÃO silencia — a janela expira sozinha', async () => {
+  const prefs = { ...SEM_SILENCIO, do_not_disturb_until: dnd(-1) };
+  const q = await isQuietNow(prefs, TER_1500, 'work', { agoraMs: AGORA_MS });
+  assert.strictEqual(q.quiet, false, `DND vencido não pode silenciar: ${JSON.stringify(q)}`);
+});
+
+test('DND vence até o pedido explícito do próprio usuário (defaultNightGate=false)', async () => {
+  // task_reminders desliga a janela noturna porque o horário foi escolhido pela pessoa.
+  // Mas DND é pedido explícito MAIS RECENTE — "hoje não me manda nada" inclui o lembrete
+  // que ela mesma agendou. Senão o feriado continua chegando.
+  const prefs = { ...SEM_SILENCIO, do_not_disturb_until: dnd(+3) };
+  const q = await isQuietNow(prefs, TER_1500, 'work', { agoraMs: AGORA_MS, defaultNightGate: false });
+  assert.strictEqual(q.quiet, true);
+});
+
+test('ZERO-REGRESSÃO: sem DND, tudo se comporta como antes', async () => {
+  for (const v of [null, undefined, '', 'lixo']) {
+    const prefs = { ...SEM_SILENCIO, do_not_disturb_until: v };
+    const q = await isQuietNow(prefs, TER_1500, 'work', { agoraMs: AGORA_MS });
+    assert.strictEqual(q.quiet, false, `do_not_disturb_until=${JSON.stringify(v)} não pode silenciar`);
+  }
+  // E a janela horária normal segue funcionando com o campo presente e nulo.
+  const q = await isQuietNow({ ...QUINTELA_FULL, do_not_disturb_until: null }, SAT_0812, 'work');
+  assert.strictEqual(q.quiet, true);
+  assert.match(q.reason, /quiet_hours_work/);
+});
+
+test('a coluna do DND está no SELECT canônico — senão o caminho por UUID não a enxerga', () => {
+  assert.ok(QUIET_PREF_COLUMNS.includes('do_not_disturb_until'),
+    'sem isso, isQuietNow(uuid) busca prefs sem o DND e o silêncio some sem erro');
+});

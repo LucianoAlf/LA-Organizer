@@ -29,6 +29,9 @@ const QUIET_PREF_COLUMNS = [
   'quiet_start_time', 'quiet_end_time',
   'quiet_start_time_work', 'quiet_end_time_work', 'quiet_days_work', 'quiet_weekends_work',
   'quiet_start_time_personal', 'quiet_end_time_personal', 'quiet_days_personal', 'quiet_weekends_personal',
+  // DND pontual ("hoje é feriado, não me manda nada"). Sem esta coluna aqui, o caminho por
+  // UUID busca prefs sem o DND e o silêncio some sem erro nenhum.
+  'do_not_disturb_until', 'do_not_disturb_reason',
 ];
 
 // Detecta o "footgun": um objeto que parece de preferências (tem marcador de
@@ -153,6 +156,23 @@ async function isQuietNow(collabOrId, now, context = 'work', opts = {}) {
   // Trava defensiva: SELECT parcial nunca mais desliga o silêncio EM SILÊNCIO.
   if (isPartialQuietPrefs(prefs)) {
     console.warn('[quiet-hours] prefs sem colunas de horário (SELECT parcial?) — janela horária IGNORADA. Caller deve usar user_preferences(*)/QUIET_PREF_COLUMNS ou passar o UUID.');
+  }
+
+  // 0. DND pontual — vem ANTES de tudo, inclusive do defaultNightGate:false.
+  //    Caso do Alf (09/08): "hoje é feriado, não me manda mensagem" tem que cortar na hora.
+  //    O TOM já gravava `do_not_disturb_until` (applyDnd, cap 24h) e 14 pontos do dispatcher
+  //    o respeitavam à mão — mas ESTE gate, que 66 pontos consultam (incluindo o chokepoint
+  //    send-proativo.js, escrito pra "ser impossível esquecer o silêncio"), não lia o campo.
+  //    Dos 8 arquivos que gateiam por aqui, 7 nunca checavam DND.
+  //    É global de propósito: "não me manda NADA hoje" não é por contexto. E vence até o
+  //    lembrete que a própria pessoa agendou — o pedido de hoje é mais recente que o de ontem.
+  const _dndAte = Date.parse(prefs.do_not_disturb_until || '');
+  if (Number.isFinite(_dndAte)) {
+    const agora = typeof opts.agoraMs === 'number' ? opts.agoraMs : Date.now();
+    if (_dndAte > agora) {
+      const motivo = prefs.do_not_disturb_reason ? `:${prefs.do_not_disturb_reason}` : '';
+      return { quiet: true, reason: `dnd${motivo}` };
+    }
   }
 
   const dow = now.dow;
