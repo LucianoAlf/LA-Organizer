@@ -1,24 +1,53 @@
 # RETOMADA — leia isto primeiro
 
-## ⏸️ ESTADO EM 09/08 ~10h — SEGURADO A PEDIDO DO ALF
+## ✅ CHECKPOINT — 09/08, fim do dia (fila do dia ZERADA)
 
-**O que está no ar e funcionando:** agente de governança (08:00 BRT, ciclo diário) · digest
-07:30 · DND no gate compartilhado · regra 17b · router Fatia 3 · teto separado do agente.
+**No ar e provado:** agente de governança (08:00 BRT, teto separado) · digest 07:30 · DND no
+gate compartilhado · regra 17b · router Fatia 3 · restart determinístico · seção de governança
+no relatório das 07h · check de paridade git↔produção · domingo fechado para trabalho ·
+`WRITE_DATE_RELABEL`.
 
-**O que estamos ESPERANDO (única coisa em voo):** um ciclo FORÇADO do agente, disparado às
-09:47 para observar a primeira varredura de acervo com o teto novo. Teto de 30 min; se o
-`logs/gov-agent.log` na VPS não tiver uma 5ª linha `[GovRunner] 2026-08-09`, ele morreu no
-timeout. **Snapshot antes: 206 achados abertos, 8 de severidade alta, 12 já verificados.**
-Verificar depois: quantos fechou, se respeitou "alto fora da varredura em massa", e conferir
-NA MÃO uma amostra do que ele fechou. Se tiver fechado em massa sem prova → reverter o teto
-(`git revert e0127aa`) e voltar a 1 por rodada.
+**Fechado hoje, em ordem:** ciclo do agente com o teto novo observado (a entrega dele passou a
+ser verificada por código — ele consertou certo e afirmou um restart que não houve) · crons de
+governança (paridade virou check diário; `[GroupChat][DATE-CLAIM]` medido em **0**) · domingo
+cortado para os **37/37** ativos, só no eixo TRABALHO (pessoal jamais é silenciado) · série de
+grupo (`endSeries`) — minha hipótese REFUTADA, raiz real era a 5ª porta de materialização ·
+**`CONFAB-WRITE-DATE-NO-RELLABEL`**.
+
+**Último fix — o lado da ESCRITA das datas.** O TOM gravava a data certa e narrava a errada
+(Anne 05/08: gravou 07/08, disse "pra amanhã" numa quarta). O prompt só pré-computa rótulo do
+lado da LEITURA. `src/utils/write-date-label.js` é o **espelho do auto-align**: lá o dado é
+corrigido pela fala do usuário, aqui a fala é corrigida pelo dado gravado. Troca só o rótulo;
+na dúvida não age. Loga `WRITE_DATE_RELABEL` — corretor e velocímetro na mesma linha. 19 testes
+com literais reais; o de wiring **executa o bloco extraído do `engine.js`** (anti-verde-por-
+vacuidade). Suíte VPS 2596, `fail 3` (baseline).
+
+**Descoberta que vale para toda medição futura:** **não existe fonte imutável do que o TOM
+gravou num turno** — `tasks.due_date` é mutável e `marker_logs.raw_excerpt` só é preenchido em
+rejeição. Medir "ele gravou o que disse?" retroativamente é hipótese. O que se mede é o **dano
+contestado** (a pessoa corrigindo em <6 min) ou se instrumenta o turno para a frente.
 
 **No RADAR, em ordem:**
-1. **Projeto novo — levar o modelo de governança para a Maria** (ver seção própria abaixo).
-2. Bloco de medições de **15/08** (Fatia A/Task 7, F3, sanitizador, digest, `AUTO_RETRY_DATE_POISON`, placar do agente).
+1. **Bloco de medições de 15/08** — Fatia A/Task 7, F3, sanitizador, digest,
+   `AUTO_RETRY_DATE_POISON`, placar do agente e agora o `WRITE_DATE_RELABEL`. A janela ainda
+   não maturou; nada a fazer antes da data.
+2. **Projeto — modelo de governança para a Maria** (seção própria abaixo), em CHAT PRÓPRIO.
 3. Tarefa que VENCE em dia não-útil — metade que sobrou da família C (agendamento, não silêncio).
-4. Segunda seção no relatório das 07h · crons de governança · `CONFAB-WRITE-DATE-NO-RELLABEL`.
-5. **Rotacionar o token da Hostinger** — é do Alf, segue pendente.
+4. **Rotacionar o token da Hostinger** — é do Alf, segue pendente.
+
+**Decisões do Alf registradas (para quando o freeze abrir):**
+- **Recorrência, 5ª porta:** NÃO pôr guard de "pular molde cancelado" — isso troca um bug por
+  outro (o molde É a 1ª ocorrência; cancelar "a de hoje" mataria a série). O caminho aprovado é
+  a refatoração: no cancel sem `scope:'series'`, cancelar a INSTÂNCIA, nunca o molde.
+
+**Aberto sem caso real (não corrigir no escuro):** `EVENT_CREATE` tem o mesmo buraco de rótulo
+na escrita. O helper já serve — é só ligar quando aparecer reprodução.
+
+**⚠️ Estado da VPS ao fechar:** o `pm2` roda o processo iniciado às 16:20 UTC pelo restart deste
+chat. O auto-deploy do OUTRO chat (16:22) fez `reset --hard` mas **não reiniciou** — o trabalho
+dele (`src/lib/entrega.js` + governança) está **no disco e fora do processo**. Não reiniciei de
+propósito: pode estar pela metade. Quem retomar aquilo precisa reiniciar e provar por
+`ps -o lstart=`.
 
 ---
 
