@@ -1,7 +1,7 @@
 # 🧭 PAINEL — Governança da Maria
 
 > **Documento único de controle.** Se você está perdido, leia só as duas primeiras seções.
-> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 16:55 BRT**.
+> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 17:10 BRT**.
 
 ---
 
@@ -17,10 +17,13 @@ propósito.
 
 ## 2. PRÓXIMO PASSO
 
+**A trilha de segurança fez o que tinha que fazer.** Proposta: voltar para a **Trilha B** —
+e a decisão D-03 merece ser reaberta, porque o inventário mudou a premissa dela (ver D-09 na §5).
+
 | # | O quê | Quem faz |
 |---|---|---|
-| **A4** | Revogar os **5** PATs sem consumidor, usando a digital da §7 | **ALF** (painel Supabase) |
-| — | Colar o **token novo do gateway** na UI (está em `/root/GATEWAY-TOKEN-NOVO.txt`, modo 600) | **ALF** |
+| **D-09** | Decidir se o **B0 pode sair antes da opção B** | **ALF** |
+| — | Colar o **token novo do gateway** na UI (arquivo já entregue) | **ALF** |
 
 Na VPS, nada foi alterado até aqui: tudo na Trilha A foi leitura. A única mudança em produção foi
 o Access, feita pelo Alf no dashboard da Cloudflare.
@@ -35,8 +38,8 @@ o Access, feita pelo Alf no dashboard da Cloudflare.
 | **A1** | Auditoria de acesso e raio de credencial | ✅ **FECHADO** | Claude | Inventário na §6 |
 | **A2** | Cloudflare Access no hostname do gateway | ✅ **FECHADO 09/08 16:34** | ALF | **(a)** Medido de fora: `/` e `/health` passaram de **200** para **302 → old-mountain-a6b3.cloudflareaccess.com/cdn-cgi/access/login/**. **(b)** Controle negativo: `maria-whatsapp…` inalterado. **(c)** Alf autenticou e chegou na UI do gateway — a chave dele funciona |
 | **A3** | Restart único: `bind`→loopback + rotacionar token do gateway + apagar linhas mortas de PAT | ✅ **FECHADO 09/08 16:49** | Claude | escuta agora só `127.0.0.1:18789` + `[::1]:18789` (era `0.0.0.0`); `/health` local **200**; os 3 agentes visíveis pro monitor; hostname público segue **302 → Access**; `workspace/.env` só com FOLHAPAGAMENTO; token rotacionado — **provado pelo log**: navegador com o token velho recebeu `reason=token_mismatch` |
-| **A4** | Revogar os **5** PATs sem consumidor (digital na §7) | 🔴 **ABERTO** — esta semana | **ALF** | Claude re-roda liveness e mostra **401** |
-| **A5** | Limpar `bash_history`, sessões e backups com token em claro | ⏸️ depois do A4 | Claude | grep volta vazio. **Exige OK explícito — é apagar dado** |
+| **A5** | Censurar `bash_history`, sessões, backups e `shell_snapshots` | ✅ **FECHADO 09/08 17:04** | Claude | **168 arquivos, 641 ocorrências** substituídas por `<REDACTED:sha256-…>`. Token sobrou **só nos 4 configs vivos**. Zero erro nos gateways; `.jsonl` com **0 linhas quebradas**; MCP com valor intacto. Backup: `/root/redact-backup-20260809T170445.tar.gz` (600) |
+| **A4** | Revogar os 5 PATs sem consumidor | ⏸️ **ESTACIONADO** — manutenção, sem urgência | ALF, quando quiser | Motivo do estacionamento: **medido que nenhum token vivo escapou da VPS.** Dos 3 repos com remote no GitHub, o único token commitado (`ad5703…`) já estava **morto (401)**. Com o A5 feito, os tokens saíram do alcance de qualquer agente. Revogar virou higiene, não contenção |
 | **A6** | Rebaixar o Alfredo: usuário próprio, sem sudo, copiando a Maria | ⏸️ plano próprio | Claude | `ps -o user=` mostra não-root |
 | **A7** | Contenção por SO na Maria (`maria-ingest`) | ⏸️ pode virar dispensável se B entrar | Claude | agente da Maria não lê o env |
 
@@ -90,6 +93,16 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 | D-06 | 09/08 | **Access primeiro, sem esperar restart.** Hostname fica público, mas atrás do Access | Sem downtime; tirar o ingress custaria o acesso pelo celular, que é uso real |
 | D-07 | 09/08 | **Cloudflare NÃO vai para o Alfredo** | Não existe credencial Cloudflare na máquina nem MCP; e ele é o objeto da mudança. Delegar execução **e** verificação ao mesmo agente é o modo de falha conhecido |
 | D-08 | 09/08 | **Comportamento e tom da Maria: zona congelada** | Veto do Alf. `bridge.js` e `skills/*.md` não se tocam |
+
+### D-09 — PROPOSTA ABERTA: reabrir a D-03
+A D-03 ("opção B antes da Fatia 0") partiu de que migrar o laudo o colocaria dentro do env onde o PAT
+mora. **O inventário desmentiu a premissa:** o `FOLHAPAGAMENTO` está nos **dois** envs, e hoje o laudo
+roda no gateway do Alfredo, que é **root** e tem 3 PATs vivos ao alcance. Migrar para o gateway da
+Maria o move para um processo **sem sudo, com 1 PAT só** — e a Maria já tem um consumidor desse mesmo
+token (`maria_financeiro_email_ingest.py`), então não cria classe nova de exposição.
+
+**Recomendação: o B0 pode sair antes da opção B.** Migrar reduz o raio em vez de aumentar. A opção B
+continua valendo, mas como melhoria, não como pré-requisito. Decisão do Alf.
 
 ### Aprendizado do A2 (registrado para não repetir)
 Ao ver a UI falhar com *"Não foi possível conectar"*, o Claude atribuiu à camada Cloudflare. **O "Erro
