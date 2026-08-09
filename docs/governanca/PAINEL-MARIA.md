@@ -24,7 +24,6 @@ A primeira prova sem ninguém olhando é a rodada automática de **10/08 às 07:
 | # | O quê | Quem faz |
 |---|---|---|
 | — | **Conferir amanhã 07:00** se o laudo chegou sozinho (primeira rodada automática) | ALF + Claude |
-| — | **Comparar o conteúdo** de 2–3 rodadas: o laudo encolheu 37% com as ferramentas cortadas | Claude |
 | **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | Claude — **fatia própria, precisa de plano** |
 | **A6/A7** | Rebaixar o Alfredo de root; contenção por SO na Maria | Claude — **A7 é pré-requisito do B2** |
 | — | Colar o **token novo do gateway** na UI (arquivo já entregue) | **ALF** |
@@ -314,7 +313,23 @@ fora da numeração — 11 blocos em vez de 9. **Prompt, gate e persistidor fora
 Divergir ali é falha silenciosa: seção não reconhecida não vira finding, e ninguém vê erro.
 
 Peça nova: `verificar-contrato.py`, no baseline da suíte. Compara os três e falha se divergirem.
-Novo golden-file do prompt: `sha256:5d3cdac39d938be3` (era `80a8cdc9fbecccb6`).
+Golden-file do prompt: `sha256:0a2bbd0989a6c87f` (era `80a8cdc9fbecccb6`).
+
+**Preâmbulo — apareceu na primeira rodada com o formato novo.** O modelo abriu com
+*"Tudo verificado. Montando o laudo conforme o formato congelado:"* e aquilo foi inteiro para o
+WhatsApp do dono. **Prompt orienta, trava garante:** o prompt agora proíbe preâmbulo *e* o wrapper
+corta tudo que vier antes de `MARIA — LAUDO DIÁRIO V1A`. Só a instrução não bastaria — foi
+exatamente ignorá-la que produziu o problema.
+
+| rodada | tamanho | seções |
+|---|---|---|
+| 17:31 (agente `main`, 175 ferramentas) | 3905 | 9 |
+| 19:01 (agente `laudo`, sem formato fixado) | 2775 | 9 |
+| 19:23 (formato fixado) | **3728** | **11** |
+
+O encolhimento de 37% que eu tinha marcado para investigar **era falta de instrução de formato**,
+não perda de ferramenta: com o formato fixado o laudo voltou ao tamanho normal usando as mesmas 4
+ferramentas. Item removido da lista de pendências.
 
 ⚠️ **Ponto para o Alf decidir depois:** o formato que ele aprovou nomeia colaboradoras (*"Rose:
 enviar comprovante…"*), mas a regra de PRIVACIDADE do próprio prompt diz "nunca incluir nome de
