@@ -331,16 +331,32 @@ provado — em 09/08 o envio devolveu `id` e a consulta `/message/find` devolveu
 (`Pending` → `Read`). `Sent`/`Delivered` já basta como prova da última milha; não é preciso que
 alguém leia.
 
-**Número do outbound — DECIDIDO em 09/08: chip pré-pago dedicado.** A razão não é custo, é
-**resolução de papel**. Um número secundário do Alf continua sendo um número do Alf: se ele
-encostar em qualquer lista de principal, hoje ou daqui a seis meses, a sonda passa a resolver
-como `owner` e o buraco 1 reabre — por acidente administrativo, não por ataque. Um chip novo não
-tem histórico, não pode ser confundido com principal, e o outbound fica cem por cento contido:
-zero chance de a Rose ou a Ana receberem algo que não pediram.
+**Número do outbound — DECIDIDO em 09/08: SEM CHIP.** A entrada é pelo webhook, como o Alfredo
+já faz, e o chip nunca foi para a entrada — era só para a saída. Três fatos derrubaram a
+necessidade:
 
-E a barra é baixa: como `Sent`/`Delivered` já basta, **ninguém precisa ler** — o chip pode viver
-na gaveta. O status prova que a mensagem saiu; o payload do envio prova o formato. As duas provas
-da última milha, sem depender de humano nenhum.
+1. **A última milha já tem canário diário e gratuito: o próprio laudo.** Ele sai pelo mesmo
+   `sendWhatsapp` → `/send/text` e chega no WhatsApp do Alf todo dia às 07:00. Se o caminho de
+   saída quebrar, o laudo não chega — e o gate pode confirmar por API, como foi feito em 09/08
+   (`/message/find` devolveu `Read`). Sonda dedicada para isso seria construir um segundo
+   detector para o que o primeiro já cobre.
+2. **Na Maria essa classe de falha não é silenciosa.** O envio é o mesmo caminho para todo mundo:
+   se quebra, quebra para a Rose, e alguém reclama em minutos. Diferente do
+   `FATURA-ACK-FORA-DO-HISTORICO` do TOM, que era invisível porque o defeito era *não gravar no
+   histórico*, não *não enviar*.
+3. **O risco do outbound se resolve por verificação, não por posse.** A UAZAPI expõe
+   `/chat/check`: o número da sonda é validado como **sem WhatsApp** antes de entrar na lista, e
+   revalidado a cada rodada. Sem WhatsApp, o `/send/text` falha, o bridge registra
+   `whatsapp_send_retry` (tem try/catch com retry, `bridge.js:4898+`), e **ninguém recebe nada**.
+   A resposta da Maria já está na sessão, que é de onde a sonda lê.
+
+**Cobertura declarada:** a sonda cobre bridge → papel → sessão → agente → RPC. A última milha é
+coberta pelo laudo diário, não pela sonda. **Gatilho para reabrir o chip:** se aparecer um caso
+real em que a Maria calcula certo e a mensagem não sai sem ninguém perceber, compra-se o chip
+naquele dia. Antes disso é gasto e cerimônia para cobrir o que já está coberto.
+
+**A asserção de papel continua valendo** e fica ainda mais barata: o número da sonda entra
+somente na lista de classe SONDA e nunca pode resolver como `owner`, `rose` ou `ana` (ver 6.2).
 
 ### 6.2 A contenção da sonda é asserção, não herança
 
