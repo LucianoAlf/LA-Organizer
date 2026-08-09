@@ -90,7 +90,11 @@ E a segunda lição, igualmente cara: **a garantia de memória estava no prompt*
 em 08/08 07:06 BRT `lessons.md` ficou com 13 bytes e `decisions.md` com 15. Prompt orienta;
 só código garante.
 
-### 1.4 Dívidas abertas AGORA (entram como primeiros casos do loop, não como pré-requisito)
+### 1.4 Dívidas abertas AGORA
+
+⚠️ **Cinco destas seis são trabalho HUMANO em zona congelada — não são casos do loop.** Só o
+volume operacional do laudo (vinculações, códigos do mês, fila) entra na Fatia 3. Ver a correção
+na Fatia 3 da seção 8.
 
 | dívida | evidência | efeito |
 |---|---|---|
@@ -293,6 +297,12 @@ E — este é o ponto fino — o efetivo **não se lê do `openclaw.json`**: a l
 que a configuração dizia Grok e a execução era Sonnet. Tem de vir do log/telemetria da execução.
 Configuração é intenção; log é fato.
 
+**E o caminho de volta, que é o que falta em quase todo alarme:** se a troca de modelo foi
+deliberada, o loop abortaria todos os dias até alguém perceber — e alarme que trava sem saída
+deixa de ser lido, exatamente como o backup que passou um mês gritando a mesma linha. Por isso o
+abort vem com **ack humano de uma linha que grava o novo modelo como o esperado** e destrava a
+próxima rodada. Sem o ack, continua abortando; com ele, segue sem ninguém mexer em código.
+
 ---
 
 ## 6. A sonda, em detalhe
@@ -401,6 +411,13 @@ arquivos `.sql` em disco para contornar erros de `exec preflight: complex interp
 sai todo o resto. E não se confia na teoria: **execução forçada de validação antes das 07:00**,
 comparando o laudo com o de hoje.
 
+⚠️ **`write` é sintoma, não requisito — e sai com gatilho escrito.** Escrever `.sql` em disco é
+workaround de um caminho quebrado (`exec preflight: complex interpreter`). Manter amanhã é certo;
+manter sem prazo transforma defeito em dependência e faz o mínimo viável virar mínimo eterno.
+**Gatilho de remoção: quando `superfolha_sql.py` for instalado no workspace da Maria (Fatia 0) e
+o laudo passar a consultar por ele, `write` cai no mesmo commit.** Fica registrado como dívida
+com data de vencimento, não como decisão permanente.
+
 ### Ação imediata B — backup funcionando (pré-requisito, não paralelo)
 ✅ **Concluído em 09/08 13:40 BRT** — commit `c8cacaf` no GitHub, confirmado pela API. Era
 bloqueador: a Fatia 0 mexe em cron e permissões de agente financeiro em produção, e fazer isso
@@ -481,11 +498,33 @@ isso que o congelamento só consegue ser tudo-ou-nada. **Recuso o momento, não 
 3. O contrato de formato está **literal dentro do arquivo** (`:851`, `:395`, `:5759-5771`); mover
    código é mover contrato, e a crise cobrou caro por isso uma vez.
 
-**Contraproposta:** o loop trata Light, Pluggy e parser por **detecção, reprodução e patch
-proposto** — nunca por correção autônoma. Isso captura a maior parte do valor (descobrir que
-quebrou, reproduzir e chegar com o diagnóstico pronto) sem tocar em código congelado e sem
-exceção nominal de arquivos. A modularização entra **depois da Fatia 4**, quando existir suíte —
-aí é refatoração com rede, não aposta.
+**E a modularização é desnecessária para as três, porque JÁ ESTÁ FEITA.** Verificado no servidor
+em 09/08:
+
+- `maria_light_fetch_invoice.mjs`, `maria_light_browser.mjs`, `maria_financeiro_email_ingest.py`
+  e `maria_mercado_pago_cartoes.py` vivem em **`workspace/tools/`** — fora do `bridge.js` e fora
+  de `skills/`, portanto **fora da zona congelada** da seção 7.
+- **Nenhum arquivo de `tools/` contém frase canônica de saída** (busca por `Destrinchei` e
+  `Posso atualizar a conta` não retorna nada). O contrato de formato mora no bridge, não neles.
+- O bridge os invoca como **processo externo** — `spawn('node', [LIGHT_INVOICE_FETCHER, loja])`
+  em `bridge.js:602`, com o caminho declarado em `:42`. A interface é linha de comando e saída
+  estruturada, não acoplamento de código.
+
+**Consequência que muda o valor da Fatia 3: a superfície nº 1 (Light) pode ser AUTO-REPARO REAL,
+não alarme com diff anexado.** O loop pode corrigir o scraping, rodar o teste e provar, sem
+tocar em uma linha congelada e sem exceção nominal de arquivo. O que falta não é permissão nem
+refatoração — é **fixture**.
+
+**Gatilho de saída, escrito para não virar "depois" permanente:**
+
+> A Light passa de *propõe* para *corrige sozinha* quando (a) existir fixture cobrindo o caminho
+> de login e o de extração, capaz de falhar de verdade quando o HTML muda, e (b) **3 patches
+> propostos consecutivos tiverem sido aceitos sem correção humana**. Cumpridos os dois, a
+> promoção é automática e registrada na escada — não depende de alguém lembrar.
+
+O mesmo gatilho vale para Pluggy e parser de e-mail. O `bridge.js` segue congelado e sem exceção;
+a modularização dele continua adiada para depois da Fatia 4, agora sem urgência, porque as três
+superfícies frágeis não estão lá dentro.
 
 ---
 
@@ -498,4 +537,4 @@ aí é refatoração com rede, não aposta.
 | Corretor "consertando" a mesma coisa para sempre | placar da ETAPA 1 com regra de reincidência tolerante a `corrigido_em` mutável |
 | Correção que evapora numa rodada seguinte | snapshot do último estado verificado + regra de parada |
 | Loop verboso vira ruído e depois vira automação ignorada | relatório em números, não lista; aprovação humana rara e de alto sinal |
-| Construir governança sobre base instável | as dívidas de 1.4 são os primeiros casos do loop, com checkpoint observado |
+| Construir governança sobre base instável | backup e `toolsAllow` são ações imediatas, antes da Fatia 0; as dívidas de código de 1.4 vão para fila humana, não para o loop |
