@@ -9,7 +9,7 @@
 // A linha de reincidência é o velocímetro do próprio agente: é ela que denuncia fix pontual
 // que não pega na raiz. Ver src/lib/placar-governanca.js.
 
-const { calcularPlacar, ehDoAgente, MARCA_AGENTE } = require('./placar-governanca');
+const { calcularPlacar, ehDoAgente, temMarcaDoAgente, MARCA_AGENTE } = require('./placar-governanca');
 
 const HORAS_PADRAO = 24;
 const MAX_CODIGOS = 2;   // WhatsApp num celular; lista longa não é lida
@@ -77,7 +77,9 @@ async function carregarResumoGovernanca(sb, { horas = HORAS_PADRAO, ymd = null }
     const [kisRes, findRes, kis90Res, ritualRes] = await Promise.all([
       sb.from('tom_known_issues').select('codigo, fix_resumo, corrigido_em')
         .not('corrigido_em', 'is', null).gte('corrigido_em', desde),
-      sb.from('tom_audit_findings').select('id').gte('verified_at', desde),
+      // `verified_note` é obrigatório aqui: sem ele não dá pra separar o que o AGENTE fechou
+      // do que humano fechou à mão. Em 09/08 a diferença era 83 contra 48.
+      sb.from('tom_audit_findings').select('id, verified_note').gte('verified_at', desde),
       sb.from('tom_known_issues').select('codigo, corrigido_em, fix_resumo')
         .not('corrigido_em', 'is', null).gte('corrigido_em', desde90),
       sb.from('ritual_logs').select('id').eq('ritual_type', 'gov_agent')
@@ -93,7 +95,7 @@ async function carregarResumoGovernanca(sb, { horas = HORAS_PADRAO, ymd = null }
     return {
       cicloRodou: !!(ritualRes.data && ritualRes.data.length),
       correcoes: (kisRes.data || []).filter(ehDoAgente),
-      achadosFechados: (findRes.data || []).length,
+      achadosFechados: (findRes.data || []).filter((f) => f && temMarcaDoAgente(f.verified_note)).length,
       placar: calcularPlacar(kis90Res.data || [], findPlacar || []),
     };
   } catch (e) {

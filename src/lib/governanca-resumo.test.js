@@ -76,3 +76,47 @@ test('mais de 2 correções não vira parede — resume', () => {
   assert.ok(s.split('\n').length <= 6, `seção longa demais:\n${s}`);
   assert.match(s, /A-UM/);
 });
+
+// ── SÓ CONTA O QUE É DO AGENTE (bug meu, pego na verificação contra produção) ───────────────
+// A 1ª versão contava TODO finding com verified_at nas últimas 24h. No banco real isso deu 83
+// — mas 35 eram fechamentos MEUS, à mão, na auditoria de 08/08. A seção creditava ao agente o
+// trabalho do humano, que é exatamente o que a marca de autoria existe pra impedir (o placar
+// já filtrava os KIs; eu não apliquei o mesmo aos findings).
+const { carregarResumoGovernanca } = require('./governanca-resumo');
+
+function sbFalso({ kis = [], findings24h = [], kis90 = [], findings90 = [], rodou = true } = {}) {
+  const mk = (data) => {
+    const o = {};
+    for (const m of ['select', 'eq', 'in', 'gte', 'order', 'limit', 'not', 'ilike']) o[m] = () => o;
+    o.then = (ok) => ok({ data, error: null });
+    return o;
+  };
+  let chamadaFindings = 0;
+  return {
+    from: (t) => {
+      if (t === 'ritual_logs') return mk(rodou ? [{ id: 'x' }] : []);
+      if (t === 'tom_known_issues') return mk(chamadaKis++ === 0 ? kis : kis90);
+      chamadaFindings += 1;
+      return mk(chamadaFindings === 1 ? findings24h : findings90);
+    },
+  };
+  function chamadaKisInit() {}
+}
+let chamadaKis = 0;
+
+test('a varredura conta SÓ o que tem a marca do agente', async () => {
+  chamadaKis = 0;
+  const sb = sbFalso({
+    kis: [],
+    kis90: [],
+    findings24h: [
+      { id: 1, verified_note: '[gov-agent 09/08] refutado por execução' },
+      { id: 2, verified_note: '[gov-agent] já corrigido' },
+      { id: 3, verified_note: 'fechei na mão durante a auditoria' },   // meu
+      { id: 4, verified_note: null },                                   // sem nota
+    ],
+    findings90: [],
+  });
+  const d = await carregarResumoGovernanca(sb, { ymd: '2026-08-09' });
+  assert.strictEqual(d.achadosFechados, 2, 'contou fechamento humano como se fosse do agente');
+});

@@ -21,8 +21,15 @@ const LIMITE_PARADA = 2;   // mesmo KI voltando 2x = fix pontual não resolve; e
 // exigir que o LLM escreva exatamente igual todo dia.
 const RE_MARCA = /^\[gov-agent(\s[^\]]*)?\]/;
 
+// A marca vale para QUALQUER texto de autoria do agente, não só `fix_resumo`: o veredito de um
+// finding vive em `verified_note`. Sem isto, contar "achados fechados" pelo `verified_at`
+// credita ao agente o que humano fechou à mão — em 09/08 seriam 83 quando ele fez 48.
+function temMarcaDoAgente(texto) {
+  return typeof texto === 'string' && RE_MARCA.test(texto.trimStart());
+}
+
 function ehDoAgente(ki) {
-  return !!(ki && typeof ki.fix_resumo === 'string' && RE_MARCA.test(ki.fix_resumo.trimStart()));
+  return !!(ki && temMarcaDoAgente(ki.fix_resumo));
 }
 
 /**
@@ -77,4 +84,4 @@ function calcularPlacar(kis, findings) {
   };
 }
 
-module.exports = { calcularPlacar, ehDoAgente, MARCA_AGENTE, LIMITE_PARADA };
+module.exports = { calcularPlacar, ehDoAgente, temMarcaDoAgente, MARCA_AGENTE, LIMITE_PARADA };
