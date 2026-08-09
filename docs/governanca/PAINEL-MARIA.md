@@ -1,48 +1,45 @@
 # 🧭 PAINEL — Governança da Maria
 
 > **Documento único de controle.** Se você está perdido, leia só as duas primeiras seções.
-> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 17:40 BRT**.
+> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 19:20 BRT**.
 
 ---
 
 ## 1. ONDE ESTAMOS
 
-A missão original é o **Loop de governança da Maria** (Trilha B). Ela está **pausada** porque a
-auditoria de acesso que a antecedia encontrou um problema de segurança que precisa fechar antes —
-isso virou a **Trilha A**, que é onde estamos hoje.
+A missão é o **Loop de governança da Maria** (Trilha B). A pausa de segurança (Trilha A) acabou:
+**a Trilha B voltou a andar em 09/08 e o B0 e o B1 estão fechados.**
 
-**Motivo da pausa, em uma frase:** a Fatia 0 do Loop moveria o laudo para dentro do ambiente onde
-mora um token que alcança 6 projetos Supabase — migrar sabendo disso seria aumentar a exposição de
-propósito.
+**Em uma frase:** o laudo já é da Maria, sai pelo WhatsApp dela às 07:00 BRT com rede de segurança,
+roda com **4 ferramentas** em vez de 175, e agora **persiste o que encontra** — o acervo do Loop
+existe e tem dado real dentro.
+
+Sobrou da Trilha A: **A6** (o Alfredo roda como root), **A7** (contenção por SO na Maria) e
+**A8** (a `service_role` do TOM vazada — sangramento estancado, chave ainda viva, o Alf adiou).
 
 ## 2. PRÓXIMO PASSO
 
-**A trilha de segurança fez o que tinha que fazer.** Proposta: voltar para a **Trilha B** —
-e a decisão D-03 merece ser reaberta, porque o inventário mudou a premissa dela (ver D-09 na §5).
-
-**O B0 foi entregue em 09/08.** O laudo agora sai pelo WhatsApp da Maria às 07:00 BRT, com vigia às
-07:40. A primeira prova em produção é a rodada automática de **10/08 às 07:00**.
+A primeira prova sem ninguém olhando é a rodada automática de **10/08 às 07:00 BRT**.
 
 | # | O quê | Quem faz |
 |---|---|---|
-| **A0-bis** | **Devolver o corte de ferramentas do laudo** — agente `laudo` dedicado. O B0 desfez o A0 sem eu perceber | Claude |
-| **B1-resto** | RPCs + laudo persistir achados + custo por rodada. **O B2 depende disto** | Claude |
 | — | **Conferir amanhã 07:00** se o laudo chegou sozinho (primeira rodada automática) | ALF + Claude |
-| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | Claude, **depois do B1-resto** |
-| — | **Decidir onde o `gov/` e o `laudo/` ficam guardados** — hoje existem só na VPS (§8) | **ALF** |
+| — | **Comparar o conteúdo** de 2–3 rodadas: o laudo encolheu 37% com as ferramentas cortadas | Claude |
+| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | Claude — **fatia própria, precisa de plano** |
+| **A6/A7** | Rebaixar o Alfredo de root; contenção por SO na Maria | Claude — **A7 é pré-requisito do B2** |
 | — | Colar o **token novo do gateway** na UI (arquivo já entregue) | **ALF** |
 | **A8** | Rotacionar a `service_role` do TOM — **adiado pelo Alf em 09/08**, chave segue viva | ALF decide quando |
 
-Na VPS, nada foi alterado até aqui: tudo na Trilha A foi leitura. A única mudança em produção foi
-o Access, feita pelo Alf no dashboard da Cloudflare.
+*(A frase antiga "na VPS nada foi alterado" venceu em 09/08 — desde então mexeram, com prova, o
+A3, o A5, o B0, o A0-bis e o B1. Cada um tem sua linha de evidência abaixo.)*
 
 ---
 
-## 3. TRILHA A — Segurança (em andamento)
+## 3. TRILHA A — Segurança (3 itens em aberto)
 
 | ID | Checkpoint | Estado | Quem | Prova de fechamento |
 |---|---|---|---|---|
-| **A0** | Fechar `toolsAllow` do laudo V1A | ✅ **FECHADO** | Claude | 32 → 3 ferramentas. Rodada forçada de 09/08 14:43 saiu com as **9 seções inteiras** e números reais — confirmado visualmente pelo Alf no Telegram do Alfredo. Cortar as ferramentas **não** degradou o laudo |
+| **A0** | Fechar `toolsAllow` do laudo V1A | ✅ **FECHADO** | Claude | 32 → 3 ferramentas. Rodada forçada de 09/08 14:43 saiu com as **9 seções inteiras** e números reais — confirmado visualmente pelo Alf no Telegram do Alfredo. Cortar as ferramentas **não** degradou o laudo. ⚠️ Este corte foi DESFEITO pelo B0 e devolvido pelo **A0-bis** (§4) |
 | **A1** | Auditoria de acesso e raio de credencial | ✅ **FECHADO** | Claude | Inventário na §6 |
 | **A2** | Cloudflare Access no hostname do gateway | ✅ **FECHADO 09/08 16:34** | ALF | **(a)** Medido de fora: `/` e `/health` passaram de **200** para **302 → old-mountain-a6b3.cloudflareaccess.com/cdn-cgi/access/login/**. **(b)** Controle negativo: `maria-whatsapp…` inalterado. **(c)** Alf autenticou e chegou na UI do gateway — a chave dele funciona |
 | **A3** | Restart único: `bind`→loopback + rotacionar token do gateway + apagar linhas mortas de PAT | ✅ **FECHADO 09/08 16:49** | Claude | escuta agora só `127.0.0.1:18789` + `[::1]:18789` (era `0.0.0.0`); `/health` local **200**; os 3 agentes visíveis pro monitor; hostname público segue **302 → Access**; `workspace/.env` só com FOLHAPAGAMENTO; token rotacionado — **provado pelo log**: navegador com o token velho recebeu `reason=token_mismatch` |
@@ -115,7 +112,7 @@ laudo foi **sozinho** atrás do arquivo de credenciais, sem instrução para iss
 
 ---
 
-## 4. TRILHA B — Loop da Maria (missão original, PAUSADA)
+## 4. TRILHA B — Loop da Maria (missão original)
 
 Spec: [`specs/2026-08-09-loop-maria-design.md`](specs/2026-08-09-loop-maria-design.md)
 Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-maria-fase1.md)
@@ -123,10 +120,10 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 | ID | Fatia | Estado | Bloqueado por |
 |---|---|---|---|
 | **B-opçãoB** | Trocar o PAT por credencial de escopo estreito em `superfolha_sql.py` **e** no ingestor de e-mail | 🔴 próximo da Trilha B | — |
-| **B0** | Migrar o laudo para a Maria + entrega no WhatsApp dela | ⚠️ **FUNCIONA, mas alargou o `toolsAllow`** — ver A0-bis | — |
-| **A0-bis** | **Devolver o corte de ferramentas que o B0 desfez** | 🔴 **ABERTO — o laudo automático de amanhã 07:00 roda alargado** | — |
-| **B1** | 4 tabelas `maria_gov_*` + ator técnico + placar | 🟡 **PARCIAL** — fechou o *plano* (Tasks 6–7), não a *Fatia 1* da spec | — |
-| **B1-resto** | RPCs + o laudo persistir achados + custo por rodada | 🔴 **ABERTO — o B2 depende disto** | — |
+| **B0** | Migrar o laudo para a Maria + entrega no WhatsApp dela | ✅ **FECHADO 09/08 17:33** | — |
+| **A0-bis** | Devolver o corte de ferramentas que o B0 desfez | ✅ **FECHADO 09/08 19:10 BRT** — 175 → 4 ferramentas, medido | — |
+| **B1** | 4 tabelas `maria_gov_*` + ator técnico + placar | ✅ **FECHADO 09/08 18:30 BRT** | — |
+| **B1-resto** | RPCs + o laudo persistir achados + custo por rodada | ✅ **FECHADO 09/08 19:15 BRT** | — |
 | **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | ⏸️ | B1 |
 | **B3** | Loop operacional (só dado/estado) | ⏸️ | B2 |
 | **B4** | Suíte + golden-file + fixtures | ⏸️ | B3 |
@@ -161,7 +158,7 @@ não apagado — dá para reverter.
 - **O ingestor é a metade difícil.** Ele escreve; papel read-only não serve. Precisa de credencial
   própria com grant estreito em tabelas específicas. Não deixar a estimativa esconder isso.
 
-### B1 — como ficou (09/08/2026)
+### B1 — como ficou (09/08/2026, 18:30 BRT)
 
 Banco: Super Folha (`ubdvtjbitozhkuvvqkxj`). Código: `/home/maria/.openclaw/workspace/gov/`.
 
@@ -211,29 +208,93 @@ cron do SO. Resultado: o corte foi junto.
 `openclaw agent --help` **não tem flag de restrição de ferramentas** — só vem da config. A única
 trava que continua de pé é `tools.fs.workspaceOnly = true`.
 
-**Minha primeira proposta — agente dedicado `agents.laudo` com `toolsAllow` — NÃO EXISTE.**
-Consultado `openclaw config schema`: `toolsAllow` só aparece em `channels.clickclack` e num plugin.
-`agents` aceita apenas `defaults` e `list`, e nenhuma chave de ferramenta. Registrado aqui para
-ninguém tentar de novo.
+**FECHADO 09/08 19:10 BRT — agente dedicado `laudo` em `agents.list`.**
 
-**O que o schema realmente oferece:**
+Erro de leitura meu no meio do caminho: olhei `agents.defaults`, não achei chave de ferramenta e
+declarei que não existia. **`agents.list[].tools` existe** e tem `allow`/`deny`/`exec`/`fs`.
 
-| caminho | alcance |
+Criado em `/home/maria/.openclaw/openclaw.json`:
+
+```
+agents.list[] = { id: "laudo", workspace: <o da Maria>,
+                  tools: { allow: ["exec","read","write"], fs: { workspaceOnly: true } } }
+```
+
+O wrapper passou a chamar `--agent laudo`. Não precisou reiniciar o gateway.
+
+**Prova, perguntando ao próprio agente quais ferramentas ele tem:**
+
+| agente | ferramentas |
 |---|---|
-| `tools.allow` / `tools.deny` | **global** — atinge a Maria inteira, não só o laudo |
-| `tools.toolsBySender` | por remetente — o laudo não tem remetente, é cron |
-| `cron_jobs.payload_tools_allow_json` | **por job** — é onde o A0 morava, e **funciona** |
+| `main` | **175** — incluindo `maria_cartao_fatura_lancar_itens`, `maria_conferencia_lancamento_itens` e o resto dos MCPs de **escrita financeira** |
+| `laudo` | **4** — `read, write, apply_patch, exec` |
 
-**Caminho mais provável (a decidir, não decidido):** recriar o cron do laudo **no gateway da
-Maria (19789)** com `toolsAllow`, em vez do cron do SO. Mantém o B0 no que importa — a rotina é da
-Maria, não do Alfredo — e recupera o A0. **O custo a resolver:** o wrapper `laudo-diario.sh` é
-quem faz o gate semântico e o envio por código; um `agentTurn` de cron não passa por ele. Encaixar
-os dois é decisão de design, não ajuste — merece ser pensada, não improvisada.
+Laudo rodado de ponta a ponta com o agente restrito: `ENTREGUE chars=2441 secoes=9`, exit 0.
+
+⚠️ **A observar:** 2441 caracteres contra 3905 da rodada das 17:30. As 9 seções estão lá, mas 37%
+mais curto. Pode ser variação normal do modelo ou pode ser menos ferramenta = menos consulta =
+menos profundidade. **Comparar o conteúdo de algumas rodadas antes de concluir** — tamanho sozinho
+não decide.
+
+**Por que não foi pelo caminho do cron do openclaw:** ele também suporta `toolsAllow` por job
+(`cron_jobs.payload_tools_allow_json`, onde o A0 morava), mas um `agentTurn` de cron não passa
+pelo `laudo-diario.sh` — perderia o gate semântico e o envio por código.
 
 **Lição:** ao migrar uma rotina de lugar, a trava que morava no lugar antigo não vai junto. Perguntar
 sempre "o que estava protegendo isso lá, e quem protege aqui?".
 
-### ⚠️ B1 fechou o plano, não a Fatia 1
+### B1-resto — como ficou (09/08/2026, 19:15 BRT)
+
+O laudo passou a **persistir**. Peça nova: `laudo/persistir-laudo.py`, chamada pelo wrapper
+**depois** da entrega confirmada — se falhar, não desfaz nem mascara a entrega que já aconteceu.
+
+**RPCs** (`SECURITY DEFINER`, `search_path` fixo, `revoke` de `public`/`anon`):
+
+| RPC | o que faz |
+|---|---|
+| `maria_gov_registrar_run` | upsert por `(reference_date, tipo)` — o dia não duplica |
+| `maria_gov_registrar_finding` | devolve **`true` se gravou**, `false` se o gate barrou (e aí soma `ocorrencias`) |
+
+O `true/false` importa: **"persistiu N" é contado pelo banco**, nunca declarado pelo modelo.
+
+**A extração não passa pelo LLM.** O prompt é zona congelada, então o persistidor fatia o texto
+pelas **9 seções, achadas por nome** — não por numeração, porque o modelo alterna
+`**1. Rotinas essenciais:**`, `1. Rotinas essenciais`, `### Rotinas essenciais`. Assinatura
+`laudo-v1a:<seção>`, então rodar duas vezes no mesmo dia soma ocorrência em vez de duplicar.
+
+**`modelo_efetivo_maria` deixou de nascer vazio.** O JSON traz `executionTrace.winnerModel` — o
+modelo **efetivo**, não o configurado. A Maria tem fallback para grok e claude; agora fica gravado
+qual respondeu. Só o `usage` (tokens) existe, não custo em USD — então `custo_usd` continua nulo e
+os tokens vão em `detalhe`. **Vazio ali significa "não medido", nunca "não mudou".**
+
+**Dois bugs pegos por teste, antes de envenenar o acervo:**
+
+1. **Severidade cega a negação.** "0 pendências vencidas" saía **alto**, porque `vencid` está no
+   *título* da seção. Agora a regra lê só o **corpo** e ignora termo precedido de negação
+   (`sem`, `nenhum`, `0`, `não há`). Sem isso a seção "Pendências vencidas" nasceria alta todo dia.
+2. **O resumo comia o número.** A limpeza de marcador transformava `"0 pendências…"` em
+   `"pendências…"` — **invertendo o sentido**. Agora só remove marcador de lista de verdade.
+
+3. **Bug de contrato, pego em rodada real.** O wrapper grava o meta **reduzido**
+   (`{provider, model, usage}`) e o persistidor lia só a estrutura completa do openclaw —
+   resultado: `modelo=None` gravado. Agora aceita as duas formas, com teste para cada.
+
+`test_persistir_laudo.py`: **13 casos, 0 falha.**
+
+**Checkpoint da Fatia 1 — atingido e medido:**
+
+| exigência da spec | medido |
+|---|---|
+| rodar o laudo e ver os achados no banco | **9 findings**, severidade coerente: `pendencias_vencidas`=baixo com "0 vencidas", `contas_pendentes`=alto com "11 vencidas" |
+| o placar responde `fechados=0 reincidentes=0` sem quebrar | `PLACAR: fechados=0 reincidentes=0 emParada=0 taxa=0.00` sobre 0 KIs e 9 findings |
+| a linha de custo da rodada existe | `laudo_v1a` · `entregue` · `opencode-go/deepseek-v4-flash` · `tokens_in=25424 out=14612 total=58687` |
+| idempotência do dia | 2ª execução: `findings_novos=0 repetidos=9`, `ocorrencias` foi a 2 |
+
+**Sobrou no caminho:** o agente do laudo (que tem `write`) criou `laudo/audit-sql.jsonl` — trilha de
+auditoria do `superfolha_sql.py`. Sem credencial e sem dado financeiro, mas é **log** e foi parar
+no GitHub. `*.jsonl` entrou no exclude; hoje há **0** arquivos de log/estado versionados.
+
+### ⚠️ B1 fechou o plano, não a Fatia 1 *(resolvido acima)*
 
 A Fatia 1 da spec pede **quatro** coisas: as tabelas **e suas RPCs**; **o laudo passa a persistir
 achados**; placar com marca tolerante; **custo persistido desde a primeira rodada**. O plano da
@@ -364,7 +425,7 @@ o que sobrou está abaixo.)*
 2. **A8 — rotacionar a `service_role` do TOM.** Adiado por decisão do Alf em 09/08. O sangramento
    foi estancado (repo privado), mas **a chave continua viva**. Plano pronto na §3.
 
-### RESOLVIDO 09/08 21:30 — onde o `gov/` e o `laudo/` ficam guardados
+### RESOLVIDO 09/08 18:30 BRT — onde o `gov/` e o `laudo/` ficam guardados
 
 Estavam **em um lugar só, a VPS**: a allowlist do `backup-to-github-safe.sh`
 (`docs-inbox-applied docs scripts bridges skills tools`) não incluía nenhum dos dois.
