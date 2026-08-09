@@ -197,7 +197,33 @@ sudo ls -la /home/maria/.openclaw/workspace/tools/superfolha_sql.py'
 ssh maria 'sudo grep -oE "os\.environ[^)]{0,40}|getenv\([^)]{0,40}" /home/maria/.openclaw/workspace/tools/superfolha_sql.py | head -10'
 ```
 
-Anote os nomes das variáveis.
+🛑 **DESCOBERTA na execução de 09/08 — a premissa desta task estava errada.**
+
+O `superfolha_sql.py` **não** conecta ao Postgres com connection string. Ele executa SQL pela
+**Supabase Management API** (`https://api.supabase.com/v1/projects/{ref}/database/query`,
+linha 63) autenticando com **`FOLHAPAGAMENTO_SUPABASE_ACCESS_TOKEN`, que é um PAT `sbp_...`**
+(linha 69, header `Authorization: Bearer`).
+
+Um PAT de management é **mais poderoso que `service_role`**: executa qualquer SQL incluindo DDL
+(`DROP`, `TRUNCATE`, `ALTER`), ignora RLS por completo e administra o próprio projeto. Ou seja:
+**a rotina declarada "somente leitura" roda hoje com a credencial mais poderosa que existe sobre
+o banco financeiro** — e o "somente leitura" é garantido apenas pelo texto do prompt.
+
+Isso é mais grave que o `apply_migration` removido na Task 1, porque aquele era sobre o LA Report
+e este é sobre o Super Folha.
+
+**Consequência prática:** criar o papel `maria_gov_ro` não resolve sozinho — a ferramenta não sabe
+usar conexão direta, e o servidor **não tem `psql` nem `psycopg` instalados** (verificado). O
+caminho read-only exige uma das opções abaixo, e é decisão do dono:
+
+| opção | o que é | custo | fecha? |
+|---|---|---|---|
+| **A. Guard de SQL somente-leitura** | wrapper em `gov/` que rejeita tudo que não comece com `select`/`with`, antes de chamar a API | baixo, aditivo, reversível | defesa em profundidade — não impede `exec` chamar a API direto com o mesmo token |
+| **B. Conexão direta com papel `maria_gov_ro`** | instalar `psycopg`, criar role com login, escrever ferramenta própria em `gov/` | médio | sim, se o PAT sair do env do processo |
+| **C. Aceitar e declarar** | mantém o PAT, registra o risco | zero | não |
+
+**Recomendação:** A agora (barato e imediato) e B na Fatia 2, junto com a credencial reduzida do
+corretor — que a spec já exige de qualquer forma. C só se o dono decidir assumir o risco.
 
 ⚠️ **NÃO copie `service_role` do env do root.** A spec decidiu que o processo de governança roda
 com credencial própria e reduzida — `service_role` dá bypass de RLS e mataria o isolamento do
