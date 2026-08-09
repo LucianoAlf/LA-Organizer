@@ -143,3 +143,55 @@ test('o protocolo de verdade é encontrado e entra no briefing', () => {
   assert.match(b, /gov-agent/);
   assert.ok(b.length > 2000, `briefing curto demais (${b.length}) — o .md não entrou`);
 });
+
+// ── TETO SEPARADO: 1 CORREÇÃO por rodada, refutação sem limite ──────────────────────────────
+// Medido em 09/08: 206 achados abertos e só 1 na janela de 2 dias (106 com +30 dias, 83 com
+// 8-30). O agente ia rodar a seco enquanto o acervo apodrecia. O "um por rodada" foi decidido
+// porque ninguém revisa cinco mudanças de engine por dia — a restrição real é banda de revisão
+// de CÓDIGO. Refutar não muda código, então não consome revisão.
+const ACERVO = { total: 206, alto: 8, ate2d: 1, ate7d: 17, mais30d: 106 };
+
+test('o pedido separa o teto: UMA correção, refutação sem limite', () => {
+  const m = carregar();
+  const p = m.montarPedido({ fechados: 0, reincidentes: [], emParada: [], taxa: 0 }, ACERVO);
+  assert.match(p, /UMA? corre[çc][ãa]o/i, 'tem que dizer que o teto de correção é 1');
+  assert.match(p, /sem limite|quantos conseguir|o quanto conseguir/i, 'refutação não pode herdar o teto de 1');
+});
+
+test('o pedido mostra o tamanho do acervo — senão ele só olha a janela curta', () => {
+  const m = carregar();
+  const p = m.montarPedido({ fechados: 0, reincidentes: [], emParada: [], taxa: 0 }, ACERVO);
+  assert.match(p, /206/);
+  assert.match(p, /106/, 'o volume antigo é o que justifica a varredura');
+});
+
+// Sem esta trava a varredura vira uma faxina de 8 achados graves sem ninguém olhar.
+test('severidade ALTA fica fora da varredura em massa', () => {
+  const m = carregar();
+  const p = m.montarPedido({ fechados: 0, reincidentes: [], emParada: [], taxa: 0 }, ACERVO);
+  assert.match(p, /alt[ao]/i);
+  assert.match(p, /n[ãa]o feche|fora da varredura|nunca em massa/i);
+});
+
+test('sem acervo (falha na consulta) o pedido não quebra nem inventa número', () => {
+  const m = carregar();
+  const p = m.montarPedido({ fechados: 0, reincidentes: [], emParada: [], taxa: 0 }, null);
+  assert.ok(p.length > 100);
+  assert.doesNotMatch(p, /undefined|NaN|null/);
+});
+
+test('carregarAcervo devolve as contagens que o pedido usa', async () => {
+  const m = carregar();
+  const linhas = [
+    { severity: 'alto',  incident_at: new Date(Date.now() - 40 * 86400000).toISOString() },
+    { severity: 'medio', incident_at: new Date(Date.now() - 40 * 86400000).toISOString() },
+    { severity: 'medio', incident_at: new Date(Date.now() - 1 * 86400000).toISOString() },
+    { severity: 'baixo', incident_at: null },
+  ];
+  const sb = { from: () => { const o = {}; for (const k of ['select','not','in','gte','eq','order','limit']) o[k] = () => o; o.then = (ok) => ok({ data: linhas, error: null }); return o; } };
+  const a = await m.carregarAcervo(sb);
+  assert.strictEqual(a.total, 4);
+  assert.strictEqual(a.alto, 1);
+  assert.strictEqual(a.ate2d, 1);
+  assert.strictEqual(a.mais30d, 2);
+});

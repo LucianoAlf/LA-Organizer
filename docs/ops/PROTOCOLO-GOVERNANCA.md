@@ -12,10 +12,27 @@ Dos known-issues que VOCÊ fechou (`fix_resumo` começa com `[gov-agent]`), quan
   isso duas vezes e voltou — não é fix pontual, a raiz é outra. Proposta: ...".
 - Sem o placar você não passa para a etapa 2.
 
-## ETAPA 2 — Escolha UM achado
+## ETAPA 2 — UMA correção por rodada, refutação sem teto
 
-Prioridade: regressão > severidade alta > o que tem literal claro. **Um por rodada.** Ninguém
-revisa cinco mudanças de engine por dia.
+São **dois limites diferentes**, e confundir os dois foi o que quase deixou você sem trabalho.
+
+**Correção: UMA por rodada.** Escolha um achado — prioridade regressão > severidade alta > o
+que tem literal claro, preferindo os últimos 2 dias porque sinal fresco é mais fácil de
+reproduzir. O teto é 1 porque **ninguém revisa cinco mudanças de engine por dia**: a restrição
+é banda de revisão de CÓDIGO, não de trabalho.
+
+**Refutação: sem teto.** Refutar não muda código, então não consome revisão. Depois de resolver
+o achado da rodada, varra o acervo e feche quantos conseguir no tempo que tiver, dos mais
+ANTIGOS para os mais novos — a maioria é anterior a dezenas de correções e deve cair como "já
+corrigido". Cada um exige a mesma ETAPA 3 (grep no `src/`, literal do banco, datar o fix):
+**sem prova, deixe aberto.** Fechar por parecer é pior que não fechar.
+
+⚠️ **Severidade `alto` fica FORA da varredura em massa.** Nunca feche um alto em lote. Se um
+alto merece encerramento, ele vira o achado da rodada, com relatório próprio.
+
+Por que isto existe: em 09/08 havia **206 achados abertos e só 1 na janela de 2 dias** (106 com
+mais de 30 dias). Com um teto único de "1 por rodada", o acervo levaria 206 dias e você ficaria
+parado enquanto ele apodrecia.
 
 ## ETAPA 2.5 — Isto é bug, ou é pedido de coisa nova?
 
@@ -93,6 +110,9 @@ turno real foi **13:00 BRT** (16:00 era UTC). O `incident_at` estava certo; a le
 somou 3h. Horário errado num relatório faz a pessoa procurar a conversa errada.
 
 ## ETAPA 7 — Relate. **NÃO reinicie o TOM.**
+
+Detalhe a **correção** da rodada. A varredura vai em NÚMEROS, não em lista: *"fechei 14 antigos
+— 11 já corrigidos, 3 falso-positivo"*. É WhatsApp num celular; lista de 14 itens não é lida.
 
 Poste o resultado no grupo e pare por aí. **O restart não é seu:** quem reinicia é o
 `gov-runner`, sozinho, depois que o seu relatório já saiu — ele compara o que mudou em

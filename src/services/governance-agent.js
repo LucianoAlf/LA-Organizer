@@ -49,8 +49,39 @@ async function carregarPlacar(sb) {
   return calcularPlacar(kisRes.data || [], findRes.data || []);
 }
 
+const STATUS_FECHADOS = ['resolvido', 'falso_positivo', 'wontfix', 'corrigido', 'descartado'];
+
+/**
+ * Tamanho e idade do ACERVO de achados abertos. Sem isto o agente só enxerga a janela curta:
+ * medido em 09/08, eram 206 abertos e só 1 nos últimos 2 dias — ele rodaria a seco enquanto
+ * 106 achados de +30 dias apodreciam. Nunca lança: sem acervo o ciclo roda como antes.
+ */
+async function carregarAcervo(sb) {
+  try {
+    const { data } = await sb.from('tom_audit_findings')
+      .select('severity, incident_at')
+      .not('status', 'in', `(${STATUS_FECHADOS.join(',')})`);
+    const linhas = Array.isArray(data) ? data : [];
+    const agora = Date.now();
+    const idade = (r) => {
+      const t = Date.parse((r && r.incident_at) || '');
+      return Number.isFinite(t) ? (agora - t) / 86400000 : null;
+    };
+    return {
+      total: linhas.length,
+      alto: linhas.filter((r) => r && r.severity === 'alto').length,
+      ate2d: linhas.filter((r) => { const d = idade(r); return d !== null && d <= 2; }).length,
+      ate7d: linhas.filter((r) => { const d = idade(r); return d !== null && d <= 7; }).length,
+      mais30d: linhas.filter((r) => { const d = idade(r); return d !== null && d > 30; }).length,
+    };
+  } catch (e) {
+    console.warn('[GovAgent] não consegui medir o acervo:', e.message);
+    return null;
+  }
+}
+
 /** O pedido que vai ao agente. O protocolo inteiro vai no briefing; aqui vai o estado do dia. */
-function montarPedido(placar) {
+function montarPedido(placar, acervo) {
   const p = placar || { fechados: 0, reincidentes: [], emParada: [], taxa: 0 };
   const parada = p.emParada.length
     ? `\n\n🛑 EM PARADA — NÃO corrija nada destas famílias, elas já voltaram 2x depois de um fix seu: `
@@ -59,6 +90,11 @@ function montarPedido(placar) {
   const reincid = p.reincidentes.length
     ? `\nReincidiram: ${p.reincidentes.map((r) => `${r.codigo} (${r.vezes}x)`).join(', ')}.`
     : '';
+  // Sem acervo medido, o bloco some inteiro — melhor calar do que imprimir "undefined achados".
+  const blocoAcervo = (acervo && Number.isFinite(acervo.total))
+    ? `\n\nACERVO ABERTO HOJE: ${acervo.total} achados — ${acervo.alto} de severidade alta, `
+      + `${acervo.ate2d} nos últimos 2 dias, ${acervo.mais30d} com mais de 30 dias.`
+    : '';
   return `Rode o ciclo de governança de hoje, seguindo o protocolo do seu briefing na ordem.
 
 ETAPA 1 já foi medida pra você (confira no banco se quiser, mas não repita o trabalho):
@@ -66,11 +102,23 @@ ETAPA 1 já foi medida pra você (confira no banco se quiser, mas não repita o 
 - Reincidentes: ${p.reincidentes.length}${reincid}
 - Taxa de reincidência: ${(p.taxa * 100).toFixed(0)}%${parada}
 
-Agora siga da ETAPA 2 em diante: escolha UM achado dos últimos ${JANELA_FINDINGS_DIAS} dias em
-tom_audit_findings (status novo/confirmado), refute antes de acreditar, e só corrija o que
-conseguir reproduzir com teste vermelho.
+Agora siga da ETAPA 2 em diante.${blocoAcervo}
 
-Se refutar, isso é entrega: feche o finding com o veredito e relate. Não invente trabalho.`;
+TETO DE CORREÇÃO: **UMA correção por rodada.** Escolha UM achado para corrigir — de preferência
+dos últimos ${JANELA_FINDINGS_DIAS} dias, porque sinal fresco é mais fácil de reproduzir; se não
+houver, pegue o de maior severidade. Refute antes de acreditar e só corrija o que reproduzir com
+teste vermelho. O teto é 1 porque ninguém revisa cinco mudanças de engine por dia.
+
+VARREDURA DO ACERVO: refutar NÃO muda código, então não consome revisão — aqui não há teto,
+feche quantos conseguir no tempo que tiver. Vá pelos mais ANTIGOS primeiro: quase todos são
+anteriores a dezenas de correções e devem cair como "já corrigido". Cada um exige a mesma
+ETAPA 3 (grep no src/, literal do banco, datar o fix): sem prova, deixe aberto.
+
+⚠️ Severidade **alto** fica FORA da varredura em massa — não feche nenhum deles em lote. Se um
+alto merece encerramento, trate como o achado da rodada, com relatório próprio.
+
+No relatório: detalhe a correção, e resuma a varredura em números ("fechei N antigos: X já
+corrigidos, Y falso-positivo"). Não liste um por um — é WhatsApp.`;
 }
 
 /**
@@ -104,19 +152,21 @@ async function rodarCicloGovernanca(sb, { postar, ymd, force = false, rodar = nu
   }
 
   const placar = await carregarPlacar(sb);
+  const acervo = await carregarAcervo(sb);
   const executar = rodar || ((pedido) => opsAgent.runOpsAgent(pedido, {
     quem: 'o ciclo automático de governança', briefing, timeoutMs: GOV_TIMEOUT_MS,
   }));
 
-  const r = await executar(montarPedido(placar), { briefing });
+  const r = await executar(montarPedido(placar, acervo), { briefing });
   const texto = (r && typeof r.text === 'string' && r.text.trim())
     ? r.text
     : '⚠️ Rodei o ciclo de governança e voltei sem texto — isso é bug meu, não resultado. Não mexi em nada.';
 
   await postar(texto);
   await registrarLog(sb, ymd,
-    `fechados=${placar.fechados} reincidentes=${placar.reincidentes.length} parada=${placar.emParada.length}`);
-  return { rodou: true, motivo: 'ok', placar };
+    `fechados=${placar.fechados} reincidentes=${placar.reincidentes.length} parada=${placar.emParada.length}`
+    + `${acervo ? ` acervo=${acervo.total}` : ''}`);
+  return { rodou: true, motivo: 'ok', placar, acervo };
 }
 
 /**
@@ -132,6 +182,6 @@ function registrarLog(sb, ymd, detail) {
 }
 
 module.exports = {
-  rodarCicloGovernanca, montarPedido, montarBriefing, carregarPlacar,
+  rodarCicloGovernanca, montarPedido, montarBriefing, carregarPlacar, carregarAcervo,
   GOV_TIMEOUT_MS, JANELA_FINDINGS_DIAS,
 };
