@@ -483,7 +483,14 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
 
 // Encerra a SÉRIE (ação deliberada, à parte da rotina): cancela o molde + as instâncias
 // não-done (corrente + futuras). Reversível (soft) via reviveSeries. Done preservado (histórico).
-// Molde cancelado → materializeAll (Balde A) já pula molde cancelado, então PARA de gerar.
+//
+// ⚠️ CORREÇÃO DE COMENTÁRIO (09/08): aqui dizia "molde cancelado → materializeAll já pula molde
+// cancelado, então PARA de gerar". Isso era verdade até o flip da FATIA 2 (24/06) e ficou FALSO
+// depois: `materializeAll` filtra `.is('series_ended_at', null)` e NÃO olha status
+// (recurrence-engine.js:384), e `shouldMaterializeTemplate` idem. Quem para a série é o
+// `series_ended_at` que esta função seta na MESMA escrita do cancelamento — não o status.
+// O comentário velho é o que fez o buraco passar despercebido: cancelar o molde por outra
+// porta (sem `scope:'series'`) deixa a série viva aos olhos do cron.
 async function endSeries({ supabase, templateId }) {
   // FATIA 2: series_ended_at é o que de fato PARA a série pós-flip (o guard novo ignora status).
   await supabase.from('tasks').update({ status: 'cancelled', series_ended_at: new Date().toISOString() }).eq('id', templateId);

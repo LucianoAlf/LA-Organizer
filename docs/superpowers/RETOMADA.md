@@ -770,12 +770,35 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
      título inflou; "Repasses de Cartões" tem série ATIVA `BYMONTHDAY=-1` e a instância de
      31/08 é dela, legítima). Os 2 reais são "Conciliação de Cartões" (grupo Financeiro,
      29/08 e 30/09), cujas DUAS séries estão canceladas e não há ativa.
-     **RAIZ DIAGNOSTICADA:** `endSeries1on1` (recurrence-engine.js:429-440) filtra tudo por
-     `.eq('assigned_to', ownerId)`. Em série de GRUPO o `assigned_to` é NULL, então o filtro
-     nunca casa e a limpeza no-opa **em silêncio**: o molde é cancelado pelo update genérico
-     do engine (`.eq('id', tCan.id)`), mas as instâncias futuras sobrevivem. O nome da função
-     já entregava — `1on1`. **Fix pendente:** aceitar `assigned_group_id` no lugar de
-     `assigned_to` quando o molde é de grupo (`recurrence-engine-groups.test.js` já existe).
+     ⚠️ **A "raiz" que escrevi primeiro (`endSeries1on1` filtrando por `assigned_to`) estava
+     ERRADA** — existe um `endSeries` de grupo próprio (`group-chat-tasks.js:487`), sem filtro
+     de owner, e ele funciona: **20 dos 24** moldes cancelados têm `series_ended_at` correto.
+
+     **RAIZ REAL (verificada no código e no dado):** desde o flip da FATIA 2 (24/06), quem
+     para a série é `series_ended_at` — `materializeAll` filtra `.is('series_ended_at', null)`
+     (recurrence-engine.js:384) e `shouldMaterializeTemplate` idem: **os dois IGNORAM o
+     status**. Então um molde cancelado por outra porta (sem `scope:'series'`) fica
+     `cancelled` mas **ativo aos olhos do cron**. Eram **4** assim, todos do Financeiro: as 3
+     séries "Repasses de Cartões — CG/Barra/Recreio" (canceladas em 31/07 numa consolidação,
+     substituídas por uma unificada) e a "Conciliação de Cartões" (05/08). Na próxima rolagem
+     de horizonte o cron **ressuscitaria as 3**, duplicando a unificada — o "apago e volta" do
+     caso Gabi, por uma porta que o flip deixou aberta.
+
+     **O que fez o buraco passar despercebido:** o comentário em `group-chat-tasks.js:486`
+     afirmava *"molde cancelado → materializeAll já pula molde cancelado"*. Era verdade ANTES
+     do flip e virou falso depois. Comentário que promete o que o código não faz. **Corrigido.**
+
+     ✅ **Remediado em dado (reversível):** `series_ended_at` setado nos 4 (com a data do
+     próprio cancelamento, não a de hoje) + as 2 instâncias vivas da Conciliação canceladas.
+     Reverter: `reviveSeries` ou limpar `series_ended_at`.
+
+     🔜 **Decisão de desenho, do Alf — NÃO decidi sozinho:** o guard/cron deve passar a pular
+     molde com `status='cancelled'`? O risco é a simetria da dor #1: concluir a 1ª ocorrência
+     NÃO congela a série (âncora testada em `recurrence-lifecycle.golden.test.js:126`) — e
+     cancelar a 1ª ocorrência talvez também não devesse matar a série, já que o molde É a
+     primeira ocorrência. Alternativa mais limpa e mais funda: no cancel sem `scope:'series'`,
+     materializar a ocorrência e cancelar a INSTÂNCIA, nunca o molde. É mexer em dor #1 — pede
+     spec. **Sem caso real reproduzível, não corrigi** (é a ETAPA 4 aplicada a mim mesmo).
 8. ~~Segunda seção no relatório das 07h~~ — **FEITO em 09/08** (`59138e5` + `f59ea4e`).
    `src/lib/governanca-resumo.js`: formatador PURO (9 testes) + loader que nunca lança (falhou
    → seção some, relatório sai). `formatHealthReport(run, resumoGov='')` — sem o 2º argumento
