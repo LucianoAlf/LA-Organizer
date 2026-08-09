@@ -13,8 +13,16 @@
 const MARCA_AGENTE = '[gov-agent]';
 const LIMITE_PARADA = 2;   // mesmo KI voltando 2x = fix pontual não resolve; escala
 
+// Aceita `[gov-agent]` e `[gov-agent <data>]`. O protocolo pede duas coisas que colidem —
+// "fix_resumo começando com [gov-agent]" e "data sempre em BRT" — e o agente resolveu
+// escrevendo `[gov-agent 09/08]`. Exigindo o colchete colado, a marca NUNCA casava: placar
+// zerado com 2 consertos reais no banco, e a trava de parada (que depende da ETAPA 1) morria
+// em silêncio. Achado pelo próprio agente em 09/08. Tolerar a variante é mais robusto que
+// exigir que o LLM escreva exatamente igual todo dia.
+const RE_MARCA = /^\[gov-agent(\s[^\]]*)?\]/;
+
 function ehDoAgente(ki) {
-  return !!(ki && typeof ki.fix_resumo === 'string' && ki.fix_resumo.trimStart().startsWith(MARCA_AGENTE));
+  return !!(ki && typeof ki.fix_resumo === 'string' && RE_MARCA.test(ki.fix_resumo.trimStart()));
 }
 
 /**
