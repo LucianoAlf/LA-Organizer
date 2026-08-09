@@ -26,8 +26,10 @@ e a decisão D-03 merece ser reaberta, porque o inventário mudou a premissa del
 | # | O quê | Quem faz |
 |---|---|---|
 | — | **Conferir amanhã 07:00** se o laudo chegou sozinho (primeira rodada automática) | ALF + Claude |
-| **B1** | Fundações: 4 tabelas `maria_gov_*` + RPCs + ator técnico + placar | Claude |
+| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | Claude |
+| — | **Decidir onde o `gov/` e o `laudo/` ficam guardados** — hoje existem só na VPS (§8) | **ALF** |
 | — | Colar o **token novo do gateway** na UI (arquivo já entregue) | **ALF** |
+| **A8** | Rotacionar a `service_role` do TOM — **adiado pelo Alf em 09/08**, chave segue viva | ALF decide quando |
 
 Na VPS, nada foi alterado até aqui: tudo na Trilha A foi leitura. A única mudança em produção foi
 o Access, feita pelo Alf no dashboard da Cloudflare.
@@ -46,6 +48,47 @@ o Access, feita pelo Alf no dashboard da Cloudflare.
 | **A4** | Revogar os 5 PATs sem consumidor | ⏸️ **ESTACIONADO** — manutenção, sem urgência | ALF, quando quiser | Motivo do estacionamento: **medido que nenhum token vivo escapou da VPS.** Dos 3 repos com remote no GitHub, o único token commitado (`ad5703…`) já estava **morto (401)**. Com o A5 feito, os tokens saíram do alcance de qualquer agente. Revogar virou higiene, não contenção |
 | **A6** | Rebaixar o Alfredo: usuário próprio, sem sudo, copiando a Maria | 🔶 **ABERTO — MAIOR ITEM QUE SOBROU** | Claude, precisa de plano próprio | `ps -o user=` mostra não-root |
 | **A7** | Contenção por SO na Maria (`maria-ingest`) | 🔶 **ABERTO** (risco menor: `maria` não tem sudo) | Claude | agente da Maria não lê o env |
+| **A8** | **`service_role` do TOM vazada em repo PÚBLICO** | 🔶 **ABERTO — sangramento estancado, chave ainda viva** | ALF decidiu adiar a rotação em 09/08 | chave vazada devolvendo **401** |
+
+### A8 — o achado de 09/08 (detalhe, porque é o item mais grave em aberto)
+
+Descoberto por acidente: o Alf perguntou "isso está subindo pro git?". Estava — e o repositório
+`LucianoAlf/LA-Organizer` era **público**.
+
+| medida | resultado |
+|---|---|
+| entrou no repo | commit `3ad52f54`, **26/04/2026 11:17** — exposta por **105 dias** |
+| projeto | `cesnbnrynvxvgdhfmaua` (TOM) · papel `service_role` · expira **2036** |
+| a chave respondia? | **HTTP 200**, e leu dado real: **39 colaboradores**, **3.040 tarefas** — `service_role` ignora RLS |
+| download anônimo | **HTTP 200** em `raw.githubusercontent.com/.../3ad52f54/.env` |
+| **estancado em 09/08** | Alf tornou o repo **privado**. Anônimo agora leva **404**; push do hook segue funcionando |
+| **ainda em aberto** | a chave **continua viva (200)**. Privar não desfaz: quem clonou, tem |
+
+O commit `f1c6b28e` se chama `fix(security): remove .env.save from tree`. Tiraram do tree — mas em
+git remover não apaga, e o commit anterior seguia servindo o arquivo a qualquer um, sem login.
+
+**Inventário de consumidores (feito antes de qualquer rotação — regra do Alf):**
+
+| onde | o quê |
+|---|---|
+| `/opt/LA-Organizer/.env` | **1 único consumidor vivo** — o engine do TOM |
+| 4 Edge Functions | leem `SUPABASE_SERVICE_ROLE_KEY` da env do Supabase |
+| dentro do banco | **zero** — sem `pg_cron`, sem `pg_net`, sem webhook, sem trigger |
+| PWA | **zero** — usa a `anon`, não a `service_role` |
+| working tree local | **zero** — a chave só vive no histórico do git |
+
+Rastro morto a limpar depois: 8 backups diários, 14 `.env.bak*`, `.bash_history` do root, 1 `.jsonl`.
+
+**Caminho sem downtime, quando o Alf quiser executar** (confirmado na doc do Supabase, não é chute):
+o projeto TOM **já tem o sistema novo de chaves ligado**, com `sb_publishable_` ativa. Então:
+criar `sb_secret_` → trocar no `.env` do engine → migrar as 4 Edge Functions
+(`SUPABASE_SERVICE_ROLE_KEY` → `SUPABASE_SECRET_KEYS['default']`, `verify_jwt=false`) →
+**desativar só a `service_role` legacy**, e a chave vazada morre. O PWA nem sente, porque usa a
+`anon`. Cada passo é reversível — dá pra reativar a legacy se algo quebrar.
+
+**A lição:** passei a tarde do 09/08 censurando 641 ocorrências de token **dentro da VPS** enquanto
+o mapa da infra subia pro GitHub público a cada 20 minutos pelo hook. Blindei o lado que eu estava
+olhando. O buraco mora no lado sem irmão — sempre perguntar "e o outro lado?".
 
 **Legenda dos estados** — ⏸️ *ESTACIONADO* é escolha deliberada de adiar algo opcional.
 🔶 *ABERTO* é trabalho real que ainda falta. **Não confundir os dois.**
@@ -79,7 +122,7 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 |---|---|---|---|
 | **B-opçãoB** | Trocar o PAT por credencial de escopo estreito em `superfolha_sql.py` **e** no ingestor de e-mail | 🔴 próximo da Trilha B | — |
 | **B0** | Migrar o laudo para a Maria + entrega no WhatsApp dela | ✅ **FECHADO 09/08 17:33** | — |
-| **B1** | 4 tabelas `maria_gov_*` + RPCs + ator técnico + placar | ⏸️ | B0 |
+| **B1** | 4 tabelas `maria_gov_*` + ator técnico + placar | ✅ **FECHADO 09/08 21:30** | — |
 | **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | ⏸️ | B1 |
 | **B3** | Loop operacional (só dado/estado) | ⏸️ | B2 |
 | **B4** | Suíte + golden-file + fixtures | ⏸️ | B3 |
@@ -113,6 +156,46 @@ não apagado — dá para reverter.
   é conteúdo congelado — mudar a invocação obrigaria a editar o que o congelamento protege.
 - **O ingestor é a metade difícil.** Ele escreve; papel read-only não serve. Precisa de credencial
   própria com grant estreito em tabelas específicas. Não deixar a estimativa esconder isso.
+
+### B1 — como ficou (09/08/2026)
+
+Banco: Super Folha (`ubdvtjbitozhkuvvqkxj`). Código: `/home/maria/.openclaw/workspace/gov/`.
+
+| peça | estado |
+|---|---|
+| `maria_gov_findings` (16 col.), `maria_gov_known_issues` (12), `maria_gov_probes` (16), `maria_gov_runs` (10) | criadas |
+| ator técnico `gov_agent_tecnico` em `maria_whatsapp_atores` | criado (gate 1 da V1B) |
+| `placar-governanca.mjs` + `.test.mjs` | **pass 8, fail 0** |
+| baseline da suíte | `backups/loop-maria-fase1/baseline-suite.txt` |
+
+**Idempotência (gate 2 da V1B) — provada nos DOIS sentidos, não só no caso fácil:**
+
+| cenário | esperado | medido |
+|---|---|---|
+| mesma assinatura, mesmo dia BRT | colide | ✅ `duplicate key` |
+| 20h e 22h BRT do dia 09 (**dias UTC diferentes**) | colide | ✅ colidiu — o índice é BRT de verdade |
+| 09/08 22h e 10/08 00h30 BRT (**mesmo dia UTC**) | passam os dois | ✅ passaram — não agrupa demais |
+
+O primeiro teste sozinho (18h BRT) não provaria nada: naquele horário o dia UTC e o dia BRT
+coincidem. A prova está nas bordas.
+
+**Três desvios do plano, todos verificados contra o banco/máquina real:**
+
+1. **`gov_agent_tecnico` foi recusado por um CHECK** em `maria_whatsapp_atores` que só aceitava 4
+   papéis. O plano assumiu que entraria. Antes de ampliar o CHECK, varri quem **lê** a tabela:
+   **nenhum código lê** — a bridge viva deriva papel por **número, hardcoded**; as únicas
+   ocorrências do nome da tabela na VPS estão em `.md` de spec. Só então ampliei.
+2. **`maria_gov_findings` tem 16 colunas, o plano dizia esperar 14.** Contei o DDL: são 16. O
+   número escrito no plano é que estava errado; o DDL aplicado é o do plano, sem desvio.
+3. **`node --test <caminho>` no Node 24 trata o caminho como ARQUIVO.** Passar o diretório dá
+   `MODULE_NOT_FOUND` e imprime `fail 1`. Isso quase virou um **baseline vermelho gravado em
+   disco** — a partir dele, "a suíte está no baseline" passaria a significar "está quebrada".
+   Forma correta: `cd <dir> && node --test` **sem argumento**. Some-se a isso que
+   `sudo -u maria node --test` de outro cwd dá `EACCES` no spawn: a `maria` não lê o cwd herdado.
+
+**Onde esse código mora — e não mora:** o script `backup-to-github-safe.sh` tem allowlist
+(`docs-inbox-applied docs scripts bridges skills tools`). **Nem `gov/` nem `laudo/` estão nela.**
+O B0 e o B1 existem hoje **só na VPS, em um lugar**. Ver §8.
 
 ---
 
@@ -221,10 +304,24 @@ outra coisa está usando aquele token (outro servidor, um Action, um MCP). Evid�
 
 ## 8. ESPERANDO O ALF
 
-1. **Ligar o Cloudflare Access** (A2) — passos na §9.
-2. **Dar o sinal do restart** (A3) — derruba o Alfredo por segundos.
-3. **Revogar os 7** usando a digital da §7 (A4) — esta semana.
-4. **OK explícito** para apagar arquivo, quando chegar o A5.
+*(itens 1–4 desta lista — Access, restart, revogação, OK do A5 — foram todos resolvidos em 09/08;
+o que sobrou está abaixo.)*
+
+1. **Colar o token novo do gateway** na UI do OpenClaw. O arquivo já foi entregue.
+
+2. **Onde o `gov/` e o `laudo/` ficam guardados.** Hoje: **em um lugar só, a VPS.** Se a máquina
+   morrer ou alguém apagar a pasta, o B0 e o B1 vão junto. O script de backup existe e funciona,
+   mas a allowlist dele (`docs-inbox-applied docs scripts bridges skills tools`) não inclui
+   nenhum dos dois. Medido: nada nesses 6 arquivos tem segredo literal — todos leem credencial
+   de env.
+   **O nó:** `LucianoAlf/maria-backup` é **PÚBLICO** (HEAD e 206 commits de histórico varridos:
+   **zero credencial** — a denylist desse script funciona). Então incluir os diretórios publica o
+   código do Loop e o prompt do laudo. **Recomendação: fechar o `maria-backup` (privado) e aí
+   incluir `gov/` e `laudo/` na allowlist.** Não há motivo para o backup operacional de um agente
+   financeiro ser público.
+
+3. **A8 — rotacionar a `service_role` do TOM.** Adiado por decisão do Alf em 09/08. O sangramento
+   foi estancado (repo privado), mas **a chave continua viva**. Plano pronto na §3.
 
 ## 9. Passos do Cloudflare Access (A2)
 
