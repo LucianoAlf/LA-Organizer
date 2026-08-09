@@ -84,6 +84,8 @@ const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": conso
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
 const OPS_DIGEST_TIME = '07:30';                // Every day — achados da auditoria no grupo de ops (após triagem das 5h)
+const GOV_AGENT_TIME = '08:00';                 // Every day — ciclo do agente de governança (após o digest)
+const GOV_LOCK_FILE = process.env.TOM_GOV_LOCK || '/tmp/la-gov.lock';   // 1 ciclo por vez
 const LA_EDUCA_LEMBRETES_TIME = '09:00';        // Monday only — lembretes semanais do LA EDUCA
 const LEADER_ENGAGEMENT_TIME = '08:00';         // Monday only — relatório CEO de engajamento dos líderes
 const CHECKPOINT_DEADLINE_TIME = '09:00';       // Every day — lembretes de prazo de checkpoint de projeto (D-3/D-1/D0/D+1)
@@ -170,6 +172,30 @@ function timeToSlot(t) {
   if (Number.isNaN(h) || Number.isNaN(m)) return null;
   const slotMin = Math.floor(m / 15) * 15;
   return h * 60 + slotMin;
+}
+
+// Dispara o ciclo de governança em processo DESTACADO e volta na hora.
+// `flock -n` é a trava de concorrência: dois ciclos ao mesmo tempo seriam dois agentes com
+// Bash editando os mesmos arquivos em produção. É o mesmo mecanismo do cron do dispatcher, e
+// solta sozinho se o processo morrer — lockfile próprio não teria essa garantia.
+// A saída vai pra logs/gov-agent.log: com stdio 'ignore' uma falha do runner seria invisível.
+function dispararCicloGovernanca(ymd, force) {
+  const { spawn } = require('child_process');
+  const fs = require('fs');            // `fs` não é módulo-escopo aqui: só existe dentro do loadDotEnv
+  const raiz = path.join(__dirname, '..', '..');
+  const args = ['-n', GOV_LOCK_FILE, process.execPath, path.join(__dirname, 'gov-runner.js'), `--ymd=${ymd}`];
+  if (force) args.push('--force');
+
+  let saida = 'ignore';
+  try { saida = fs.openSync(path.join(raiz, 'logs', 'gov-agent.log'), 'a'); }
+  catch (e) { console.warn('[GovAgent] sem arquivo de log:', e.message); }
+
+  const filho = spawn('/usr/bin/flock', args, {
+    cwd: raiz, env: process.env, detached: true, stdio: ['ignore', saida, saida],
+  });
+  filho.on('error', (e) => console.error('[GovAgent] falhei ao disparar o runner:', e.message));
+  filho.unref();
+  console.log(`[GovAgent] ciclo disparado (pid ${filho.pid || '?'}, ymd=${ymd}${force ? ', force' : ''})`);
 }
 
 function currentSlot(now) {
@@ -3683,7 +3709,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'la_educa_lembretes') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -3939,6 +3965,34 @@ async function run(opts = {}) {
       }
     } catch (err) {
       console.error('[OpsDigest] erro (retenta no próximo tick até 11h):', err.message);
+    }
+  }
+
+  // Agente de governança — 08:00 BRT, depois do digest das 07:30 (que já mostrou os achados
+  // ao Alf e ao Hugo). Ele trata UM achado por rodada e só corrige o que reproduzir.
+  // Spec: docs/superpowers/specs/2026-08-08-agente-governanca-design.md
+  //
+  // Aqui só DISPARA: o ciclo leva minutos e este processo roda sob `flock -n` do cron. Esperar
+  // por ele prenderia o lock e pularia todos os outros rituais da manhã; não esperar mataria o
+  // ciclo no `process.exit(0)` do fim. Quem segura o tempo é o gov-runner, em processo próprio.
+  // Janela de retry até 12h pelo mesmo motivo do health report: UAZAPI hibernada devolve 503.
+  const _gaSlot = timeToSlot(GOV_AGENT_TIME);    // 480 (08:00)
+  const _gaCutoff = timeToSlot('12:00');         // 720 — desiste por hoje, sem spam
+  if (opts.force === 'gov_agent' || (slotNow >= _gaSlot && slotNow < _gaCutoff)) {
+    try {
+      const _gaGrupo = (process.env.TOM_OPS_GROUP_ID || '').trim();
+      const _gaForce = opts.force === 'gov_agent';
+      // Atalho barato: sem isto, cada tick até as 12h subiria um processo que carrega o engine
+      // inteiro só pra descobrir que o dia já rodou. O gate que MANDA é o do gov-runner.
+      let _gaJaRodou = false;
+      if (!_gaForce) {
+        const { data: _ja } = await supabase.from('ritual_logs').select('id')
+          .eq('ritual_type', 'gov_agent').eq('reference_date', now.ymd).eq('status', 'sent').limit(1);
+        _gaJaRodou = !!(_ja && _ja.length);
+      }
+      if (_gaGrupo && !_gaJaRodou) dispararCicloGovernanca(now.ymd, _gaForce);
+    } catch (err) {
+      console.error('[GovAgent] não consegui disparar (retenta no próximo tick até 12h):', err.message);
     }
   }
 
