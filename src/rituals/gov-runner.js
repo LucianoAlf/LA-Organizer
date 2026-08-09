@@ -62,18 +62,30 @@ function git(args) {
   catch (e) { console.error(`[GovRunner] git ${args.join(' ')} falhou: ${e.message}`); return ''; }
 }
 
+/** Caminhos que o `git status` reporta como sujos/untracked agora. */
+function pathsSujos() {
+  return git(['status', '--porcelain']).split('\n')
+    .map((l) => l.slice(3).trim())
+    .filter(Boolean);
+}
+
+// Sujeira PRÉ-EXISTENTE não é mudança do ciclo. A VPS carrega um `src/system.js` órfão
+// (untracked desde 03/08, cópia velha de prompts/system.js que ninguém requer): sem descontar
+// o que já estava sujo antes, todo ciclo concluiria "mudou código" e reiniciaria o TOM à toa.
+function novosEmRelacaoA(agora, antes) {
+  const jaEstava = new Set(Array.isArray(antes) ? antes : []);
+  return (Array.isArray(agora) ? agora : []).filter((f) => !jaEstava.has(f));
+}
+
 /** Committed durante o ciclo + o que ficou sem commitar. O processo carrega os dois. */
-function arquivosAlterados(headAntes) {
+function arquivosAlterados(headAntes, sujosAntes = []) {
   const set = new Set();
   if (headAntes) {
     for (const f of git(['diff', '--name-only', `${headAntes}`, 'HEAD']).split('\n')) {
       if (f.trim()) set.add(f.trim());
     }
   }
-  for (const l of git(['status', '--porcelain']).split('\n')) {
-    const f = l.slice(3).trim();
-    if (f) set.add(f);
-  }
+  for (const f of novosEmRelacaoA(pathsSujos(), sujosAntes)) set.add(f);
   return [...set];
 }
 
@@ -100,11 +112,13 @@ async function main() {
   const postar = (txt) => postOpsResult(supabase, grupo, txt);
   const force = process.argv.includes('--force');
   const headAntes = git(['rev-parse', 'HEAD']) || null;
+  // Fotografia da sujeira ANTES: o que já estava assim não é obra deste ciclo.
+  const sujosAntes = pathsSujos();
 
   try {
     const r = await rodarCicloGovernanca(supabase, { ymd, force, postar });
     console.log(`[GovRunner] ${ymd} ${JSON.stringify(r)}`);
-    if (r && r.rodou) await aplicarRestart(headAntes, postar);
+    if (r && r.rodou) await aplicarRestart(headAntes, sujosAntes, postar);
   } catch (e) {
     // Falhar calado é o pior desfecho: ninguém olha log, e o grupo assume que rodou.
     console.error('[GovRunner] ciclo quebrou:', e.stack || e.message);
@@ -118,8 +132,8 @@ async function main() {
 }
 
 /** Roda DEPOIS do relatório já postado. Só fala com o grupo quando houve mudança de código. */
-async function aplicarRestart(headAntes, postar) {
-  const mudados = arquivosAlterados(headAntes);
+async function aplicarRestart(headAntes, sujosAntes, postar) {
+  const mudados = arquivosAlterados(headAntes, sujosAntes);
   const previa = decidirRestart({ arquivosMudados: mudados });
   if (!previa.restart && previa.motivo === 'sem_mudanca_de_codigo') {
     console.log('[GovRunner] nada de código mudou — sem restart');
@@ -151,7 +165,7 @@ async function aplicarRestart(headAntes, postar) {
   }
 }
 
-module.exports = { decidirRestart, arquivosAlterados, sintaxeOkDe };
+module.exports = { decidirRestart, arquivosAlterados, novosEmRelacaoA, pathsSujos, sintaxeOkDe };
 
 if (require.main === module) {
   main()

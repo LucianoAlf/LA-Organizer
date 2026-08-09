@@ -13,7 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { decidirRestart } = require('./gov-runner');
+const { decidirRestart, novosEmRelacaoA } = require('./gov-runner');
 
 test('mudou código em src/ → reinicia', () => {
   const r = decidirRestart({ arquivosMudados: ['src/lib/optimistic-confirm.js'] });
@@ -49,4 +49,25 @@ test('entrada degenerada não decide reiniciar por acidente', () => {
 
 test('só conta .js de src/ — mexer em skills/ ou soul/ é violação, não deploy', () => {
   assert.strictEqual(decidirRestart({ arquivosMudados: ['skills/foo.md', 'soul/SOUL.md'] }).restart, false);
+});
+
+// SUJEIRA PRÉ-EXISTENTE NÃO É MUDANÇA DO CICLO.
+// A VPS tem um `src/system.js` órfão (234KB, untracked, parado desde 03/08 — cópia velha de
+// prompts/system.js que ninguém carrega). `git status` o reporta sempre. Sem descontar o que
+// já estava sujo ANTES, todo ciclo concluiria "mudou código" e reiniciaria o TOM à toa,
+// todo dia, por causa de um arquivo que ninguém tocou.
+test('arquivo já sujo antes do ciclo não conta como mudança', () => {
+  const antes = ['src/system.js', '.env'];
+  assert.deepStrictEqual(novosEmRelacaoA(['src/system.js', '.env'], antes), []);
+  assert.deepStrictEqual(novosEmRelacaoA(['src/system.js', 'src/engine.js'], antes), ['src/engine.js']);
+});
+
+test('sem lista do "antes", tudo que está sujo conta (primeira execução)', () => {
+  assert.deepStrictEqual(novosEmRelacaoA(['src/engine.js'], []), ['src/engine.js']);
+  assert.deepStrictEqual(novosEmRelacaoA(['src/engine.js'], null), ['src/engine.js']);
+});
+
+test('o órfão da VPS sozinho NÃO dispara restart', () => {
+  const novos = novosEmRelacaoA(['src/system.js'], ['src/system.js']);
+  assert.strictEqual(decidirRestart({ arquivosMudados: novos }).restart, false);
 });
