@@ -1,7 +1,7 @@
 # 🧭 PAINEL — Governança da Maria
 
 > **Documento único de controle.** Se você está perdido, leia só as duas primeiras seções.
-> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 17:10 BRT**.
+> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 17:40 BRT**.
 
 ---
 
@@ -20,9 +20,13 @@ propósito.
 **A trilha de segurança fez o que tinha que fazer.** Proposta: voltar para a **Trilha B** —
 e a decisão D-03 merece ser reaberta, porque o inventário mudou a premissa dela (ver D-09 na §5).
 
+**O B0 foi entregue em 09/08.** O laudo agora sai pelo WhatsApp da Maria às 07:00 BRT, com vigia às
+07:40. A primeira prova em produção é a rodada automática de **10/08 às 07:00**.
+
 | # | O quê | Quem faz |
 |---|---|---|
-| **D-09** | Decidir se o **B0 pode sair antes da opção B** | **ALF** |
+| — | **Conferir amanhã 07:00** se o laudo chegou sozinho (primeira rodada automática) | ALF + Claude |
+| **B1** | Fundações: 4 tabelas `maria_gov_*` + RPCs + ator técnico + placar | Claude |
 | — | Colar o **token novo do gateway** na UI (arquivo já entregue) | **ALF** |
 
 Na VPS, nada foi alterado até aqui: tudo na Trilha A foi leitura. A única mudança em produção foi
@@ -74,12 +78,35 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 | ID | Fatia | Estado | Bloqueado por |
 |---|---|---|---|
 | **B-opçãoB** | Trocar o PAT por credencial de escopo estreito em `superfolha_sql.py` **e** no ingestor de e-mail | 🔴 próximo da Trilha B | — |
-| **B0** | Migrar o laudo do gateway do Alfredo para o da Maria + entrega no WhatsApp dela | ⏸️ **PAUSADA** | B-opçãoB |
+| **B0** | Migrar o laudo para a Maria + entrega no WhatsApp dela | ✅ **FECHADO 09/08 17:33** | — |
 | **B1** | 4 tabelas `maria_gov_*` + RPCs + ator técnico + placar | ⏸️ | B0 |
 | **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | ⏸️ | B1 |
 | **B3** | Loop operacional (só dado/estado) | ⏸️ | B2 |
 | **B4** | Suíte + golden-file + fixtures | ⏸️ | B3 |
 | **B5** | Escada append-only | ⏸️ | B4 |
+
+### B0 — como ficou (09/08/2026)
+Tudo em `/home/maria/.openclaw/workspace/laudo/`, rodando como usuário `maria`:
+
+| peça | papel |
+|---|---|
+| `laudo-prompt.md` | prompt congelado, extraído **verbatim** do cron antigo. Golden-file `sha256:80a8cdc9fbecccb6` — o wrapper avisa se mudar |
+| `laudo-diario.sh` | chama `openclaw agent --json` (que **não entrega nada**), extrai `result.meta.finalAssistantVisibleText`, aplica o gate, e só então manda |
+| `enviar-whatsapp.py` | `POST /send/text` na UAZAPI. **Quem envia é código, nunca o LLM.** Sai 0 só se todas as partes forem confirmadas |
+| `laudo-vigia.sh` | dead-man's switch às 07:40 BRT: se não houver entrega do dia, avisa |
+| crontab do `maria` | `0 10 * * *` UTC = 07:00 BRT (sistema em UTC); vigia `40 10 * * *` |
+
+**Cron antigo:** `a47a1c2b…` no gateway do Alfredo → `enabled: false`, `nextRunAtMs: null`. Desligado,
+não apagado — dá para reverter.
+
+**PROVA da entrega:** run de 17:30 BRT saiu `ENTREGUE chars=3905 secoes=9`, 2 partes, ambas HTTP 200.
+
+**Duas armadilhas pegas antes de causar dano:**
+1. O extrator inicial não achava o campo certo e caía num fallback "maior string do JSON" — que é o
+   **system prompt**. Teria mandado o prompt interno da Maria para o WhatsApp do dono.
+2. O gate contava linhas `^N.`; o modelo da Maria escreve `**1. Título**`, então a linha começa com
+   `*`. Falso positivo por formatação. **Gate agora é semântico** — procura os nomes das 9 seções
+   exigidas pelo prompt, o que independe do modelo.
 
 **Requisitos travados para o B-opçãoB** (ditados pelo Alf, não negociar sem ele):
 - A ferramenta nova é **drop-in**: mesmas flags, mesma saída (`STATUS 201` + JSON). O payload do laudo
