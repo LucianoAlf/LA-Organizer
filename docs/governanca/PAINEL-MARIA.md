@@ -1,7 +1,7 @@
 # 🧭 PAINEL — Governança da Maria
 
 > **Documento único de controle.** Se você está perdido, leia só as duas primeiras seções.
-> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 16:10 BRT**.
+> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 16:25 BRT**.
 
 ---
 
@@ -19,10 +19,13 @@ propósito.
 
 | # | O quê | Quem faz |
 |---|---|---|
-| **A1** | Ligar **Cloudflare Access** no hostname `agent.maestrosdagestao.com.br` | **ALF** (dashboard) |
 | **A3** | Restart único com 3 mudanças — **esperando o sinal do Alf** | Claude, sob autorização |
 
-Nada foi alterado em produção até aqui. Tudo na Trilha A foi leitura.
+**Pendência do A2:** o Alf ainda precisa confirmar que **consegue entrar** — a medição provou que
+estranho é barrado, não que a chave dele funciona.
+
+Na VPS, nada foi alterado até aqui: tudo na Trilha A foi leitura. A única mudança em produção foi
+o Access, feita pelo Alf no dashboard da Cloudflare.
 
 ---
 
@@ -32,7 +35,7 @@ Nada foi alterado em produção até aqui. Tudo na Trilha A foi leitura.
 |---|---|---|---|---|
 | **A0** | Fechar `toolsAllow` do laudo V1A | ✅ **FECHADO** | Claude | 32 → 3 ferramentas, validado por execução forçada |
 | **A1** | Auditoria de acesso e raio de credencial | ✅ **FECHADO** | Claude | Inventário na §6 |
-| **A2** | Cloudflare Access no hostname do gateway | 🔴 **ABERTO** | **ALF** | Claude prova de fora: requisição não autenticada para de devolver 200 |
+| **A2** | Cloudflare Access no hostname do gateway | ✅ **FECHADO 09/08 16:23** | ALF | Medido de fora: `/` e `/health` passaram de **200** para **302 → old-mountain-a6b3.cloudflareaccess.com/cdn-cgi/access/login/**. Controle negativo: `maria-whatsapp…` inalterado. ⚠️ falta o Alf confirmar que **entra** |
 | **A3** | Restart único: `bind`→loopback + rotacionar token do gateway + apagar linhas mortas de PAT | 🔴 **ABERTO** | Claude, **espera sinal** | curl no hostname público volta 200; `check-agentes.py` segue ok; grep prova linhas ausentes |
 | **A4** | Revogar os 7 PATs sem consumidor (usando a digital da §7) | 🔴 **ABERTO** — esta semana | **ALF** | Claude re-roda liveness e mostra **401** |
 | **A5** | Limpar `bash_history`, sessões e backups com token em claro | ⏸️ depois do A4 | Claude | grep volta vazio. **Exige OK explícito — é apagar dado** |
@@ -45,6 +48,8 @@ Nada foi alterado em produção até aqui. Tudo na Trilha A foi leitura.
    `localhost:18789`, então o Cloudflare continua chegando. **Verificado:** zero conexões
    estabelecidas de fora do loopback (amostra pontual).
 2. Rotacionar `gateway.auth.token` — vazou no transcript por bug de redação do Claude.
+   **Urgência caiu com o A2 fechado:** o token deixou de ser a única coisa entre a internet e o
+   gateway root. Virou item de conveniência do restart, não emergência.
    **Verificado:** aparece em 58 arquivos, todos log/backup; nenhuma config viva de cliente na
    máquina. Custo: Alf redigita o token no celular uma vez.
 3. Apagar de `/root/.openclaw/workspace/.env` e `/root/.openclaw/.env` as linhas de PAT **sem
