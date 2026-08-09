@@ -1,7 +1,7 @@
 # 🧭 PAINEL — Governança da Maria
 
 > **Documento único de controle.** Se você está perdido, leia só as duas primeiras seções.
-> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 16:36 BRT**.
+> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 16:55 BRT**.
 
 ---
 
@@ -19,7 +19,8 @@ propósito.
 
 | # | O quê | Quem faz |
 |---|---|---|
-| **A3** | Restart único com 3 mudanças — **esperando o sinal do Alf** | Claude, sob autorização |
+| **A4** | Revogar os **5** PATs sem consumidor, usando a digital da §7 | **ALF** (painel Supabase) |
+| — | Colar o **token novo do gateway** na UI (está em `/root/GATEWAY-TOKEN-NOVO.txt`, modo 600) | **ALF** |
 
 Na VPS, nada foi alterado até aqui: tudo na Trilha A foi leitura. A única mudança em produção foi
 o Access, feita pelo Alf no dashboard da Cloudflare.
@@ -33,8 +34,8 @@ o Access, feita pelo Alf no dashboard da Cloudflare.
 | **A0** | Fechar `toolsAllow` do laudo V1A | ✅ **FECHADO** | Claude | 32 → 3 ferramentas. Rodada forçada de 09/08 14:43 saiu com as **9 seções inteiras** e números reais — confirmado visualmente pelo Alf no Telegram do Alfredo. Cortar as ferramentas **não** degradou o laudo |
 | **A1** | Auditoria de acesso e raio de credencial | ✅ **FECHADO** | Claude | Inventário na §6 |
 | **A2** | Cloudflare Access no hostname do gateway | ✅ **FECHADO 09/08 16:34** | ALF | **(a)** Medido de fora: `/` e `/health` passaram de **200** para **302 → old-mountain-a6b3.cloudflareaccess.com/cdn-cgi/access/login/**. **(b)** Controle negativo: `maria-whatsapp…` inalterado. **(c)** Alf autenticou e chegou na UI do gateway — a chave dele funciona |
-| **A3** | Restart único: `bind`→loopback + rotacionar token do gateway + apagar linhas mortas de PAT | 🔴 **ABERTO** | Claude, **espera sinal** | curl no hostname público volta 200; `check-agentes.py` segue ok; grep prova linhas ausentes |
-| **A4** | Revogar os 7 PATs sem consumidor (usando a digital da §7) | 🔴 **ABERTO** — esta semana | **ALF** | Claude re-roda liveness e mostra **401** |
+| **A3** | Restart único: `bind`→loopback + rotacionar token do gateway + apagar linhas mortas de PAT | ✅ **FECHADO 09/08 16:49** | Claude | escuta agora só `127.0.0.1:18789` + `[::1]:18789` (era `0.0.0.0`); `/health` local **200**; os 3 agentes visíveis pro monitor; hostname público segue **302 → Access**; `workspace/.env` só com FOLHAPAGAMENTO; token rotacionado — **provado pelo log**: navegador com o token velho recebeu `reason=token_mismatch` |
+| **A4** | Revogar os **5** PATs sem consumidor (digital na §7) | 🔴 **ABERTO** — esta semana | **ALF** | Claude re-roda liveness e mostra **401** |
 | **A5** | Limpar `bash_history`, sessões e backups com token em claro | ⏸️ depois do A4 | Claude | grep volta vazio. **Exige OK explícito — é apagar dado** |
 | **A6** | Rebaixar o Alfredo: usuário próprio, sem sudo, copiando a Maria | ⏸️ plano próprio | Claude | `ps -o user=` mostra não-root |
 | **A7** | Contenção por SO na Maria (`maria-ingest`) | ⏸️ pode virar dispensável se B entrar | Claude | agente da Maria não lê o env |
@@ -108,13 +109,21 @@ estava intacto.
 | sha256(12) | projetos | conta | consumidor |
 |---|---|---|---|
 | `bd00d3…` | 6 | producoes.emla | **SIM** — `superfolha_sql.py` (maria *e* root) + `maria_financeiro_email_ingest.py` |
-| `9fce17…` | 7 | la.tecnology.system | nenhum |
+| `9fce17…` | 7 | la.tecnology.system | **SIM** — MCP `supabase-lareport` em `openclaw.json:399` (`Bearer ${SUPABASE_LAREPORT_MCP_TOKEN}`) |
+| `3643b6…` | 2 | supa.lamusic | **SIM** — var `SUPABASE_ACCESS_TOKEN`, usada por scripts `.mjs`/`.ps1` do repo LAperformanceReport |
 | `0a8107…` | 7 | la.tecnology.system | nenhum |
 | `6e5b72…` | 7 | la.tecnology.system | nenhum (órfão) |
 | `21253b…` | 7 | contatosalf | nenhum (órfão) |
 | `1a9e95…` | 2 | **lucianoalf.la — conta pessoal do Alf** | nenhum |
-| `3643b6…` | 2 | supa.lamusic | nenhum |
 | `d05979…` | 1 | la.music.journey | nenhum |
+
+⚠️ **Só 5 dos 8 são revogáveis.** `bd00d3`, `9fce17` e `3643b6` têm consumidor vivo — revogar quebra.
+
+**Armadilha achada no A3:** a varredura de consumidores original buscou só os nomes de variável que
+apareciam em `workspace/.env`. O `/root/.openclaw/.env` usava **outros nomes** para os mesmos tokens
+— `SUPABASE_ACCESS_TOKEN` (nome convencional, lido por padrão pelo CLI e pelo MCP do Supabase) e
+`SUPABASE_LAREPORT_MCP_TOKEN`. O dry-run pegou antes de apagar. **Lição: varrer por VALOR do token,
+não por nome de variável** — o mesmo segredo vive sob nomes diferentes em arquivos diferentes.
 
 **PAT autentica como usuário, não como projeto** → rotacionar **não reduz o raio**, só invalida o
 vazado. `GET /v1/projects/{ref}/api-keys` devolve 200 em qualquer projeto alcançado.
@@ -146,16 +155,16 @@ Cada token foi tocado uma vez em `GET /v1/profile`, espaçado 75s. **Horários B
 mostrar UTC, somar 3h. Em `Account > Access Tokens`, a entrada cujo *last used* bate com o horário
 **é** aquele token.
 
-| conta | horário BRT | projetos | era |
+| conta | horário BRT | projetos | revogar? |
 |---|---|---|---|
-| la.tecnology.system | **15:49:53** | 7 | `LAREPORT_SUPABASE_ACCESS_TOKEN` |
-| lucianoalf.la (**pessoal**) | **15:51:08** | 2 | `SUPABASE_LAHQ_ACCESS_TOKEN` |
-| la.tecnology.system | **15:52:23** | 7 | `STUDIOMANAGER_SUPABASE_ACCESS_TOKEN` |
-| la.music.journey | **15:53:38** | 1 | `SUPABASE_ALFREDO_ACCESS_TOKEN` |
-| la.tecnology.system | **15:54:54** | 7 | órfão (só em log) |
-| supa.lamusic | **15:56:09** | 2 | estava em `/root/.openclaw/.env` |
-| contatosalf | **15:57:24** | 7 | órfão (só em backup) |
-| producoes.emla | 15:58:39 | 6 | `FOLHAPAGAMENTO` — **NÃO revogar**, tem consumidor |
+| lucianoalf.la (**pessoal**) | **15:51:08** | 2 | ✅ **SIM** (era `SUPABASE_LAHQ`) |
+| la.tecnology.system | **15:52:23** | 7 | ✅ **SIM** (era `STUDIOMANAGER`) |
+| la.music.journey | **15:53:38** | 1 | ✅ **SIM** (era `SUPABASE_ALFREDO`) |
+| la.tecnology.system | **15:54:54** | 7 | ✅ **SIM** (órfão, só em log) |
+| contatosalf | **15:57:24** | 7 | ✅ **SIM** (órfão, só em backup) |
+| la.tecnology.system | 15:49:53 | 7 | ❌ **NÃO** — MCP `supabase-lareport` usa |
+| supa.lamusic | 15:56:09 | 2 | ❌ **NÃO** — scripts do LAperformanceReport usam |
+| producoes.emla | 15:58:39 | 6 | ❌ **NÃO** — `FOLHAPAGAMENTO`, tem consumidor |
 
 **Diagnóstico de brinde:** se alguma entrada mostrar *last used* **mais recente** que o horário acima,
 outra coisa está usando aquele token (outro servidor, um Action, um MCP). Evidência em vez de memória.
