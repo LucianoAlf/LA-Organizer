@@ -688,10 +688,21 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **Tarefa que VENCE em dia não-útil** (3 findings, família C acima). Checar ANTES de codar:
-   (a) o agendamento já sabe pular dia não-útil? (b) `quiet_days` serve como calendário de
-   trabalho da pessoa, ou precisa de campo próprio? Só 9 de 39 têm `quiet_days_work` — usar
-   como fonte de "dia útil" silenciaria 30 pessoas sem elas terem pedido.
+1. ~~Tarefa que VENCE em dia não-útil~~ — **INVESTIGADO 09/08, veredito: decisão de dado, não
+   código.** As checagens: (a) o agendamento NÃO pula dia não-útil — RRULE puro, e o prompt
+   nem carrega `quiet_days` (LLM agenda às cegas); (b) medido em produção: 51 tarefas vencem
+   em domingo REAL (⚠️ `due_date` é meia-noite UTC = 21:00 BRT da véspera — contar dow em BRT
+   desloca tudo 1 dia e infla domingo pra 99), 7 pessoas, das quais **4 sem config (33 tarefas,
+   INTOCÁVEIS — escola de música trabalha fim de semana)** e **3 com domingo=folga (18 tarefas)**.
+   **A raiz das 18: templates `FREQ=DAILY` materializando 7 dias/semana** (6 séries da Fefê +
+   PRESENÇA EMUSYS da Gabi; Rafinha são 2 avulsas de evento). A prova de que DAILY quis dizer
+   "dia de trabalho": a própria Gabi tem outra série gravada como
+   `FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR` — quando foi configurado com cuidado, dias úteis foram
+   escolhidos. **Código: NENHUM** (freeze; auto-skip silencioso é perigoso no domínio — a
+   PRESENÇA de domingo pode ser exatamente a presença das aulas de domingo). **Resolução: com
+   OK do Alf/delas, converter os templates DAILY para BYDAY sem os dias de folga e cancelar as
+   instâncias futuras já materializadas nos domingos** (cancelar = dado de produção → OK
+   explícito). Velocímetro: a SQL desta investigação, rodável a qualquer momento.
 3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima. Junto: (a) conferir se o
    digest das 07:30 chegou nos dias em que houve achado; (b) contar `AUTO_RETRY_DATE_POISON`
    em `marker_logs` — se aparecer, o guard está pegando envenenamento de verdade; se ficar
