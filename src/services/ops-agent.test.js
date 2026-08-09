@@ -208,3 +208,27 @@ test('runOpsAgent aceita timeout próprio, com o default intacto', () => {
   assert.strictEqual(m.resolverTimeout(-5), m.OPS_TIMEOUT_MS);
   assert.strictEqual(m.resolverTimeout('abc'), m.OPS_TIMEOUT_MS);
 });
+
+// ── CUSTO DA RODADA NO CANAL INTERATIVO ────────────────────────────────────────────────────
+// O ciclo automático grava o custo no `detail` do ritual_logs, mas o canal interativo não tem
+// linha em ritual_logs nenhuma (é sob demanda, sem reference_date). Guardar o custo dele no
+// banco exigiria tabela nova — que é feature, e o freeze está de pé. O meio-termo é o log:
+// mesmo dialeto `custo=` do detail, então UM grep em /opt/LA-Organizer/logs/ pega os dois.
+test('linhaDeCusto formata a linha de log com o mesmo dialeto do detail', () => {
+  const m = carregar(LIGADO);
+  assert.strictEqual(m.linhaDeCusto('Alf', 0.8123456789), '[OpsAgent] custo=0.812346 quem="Alf"');
+});
+
+test('linhaDeCusto: zero é custo, não ausência', () => {
+  const m = carregar(LIGADO);
+  assert.strictEqual(m.linhaDeCusto('Alf', 0), '[OpsAgent] custo=0 quem="Alf"');
+});
+
+// Sem número não existe linha pra logar: "custo=null" no log é pior que log nenhum, porque
+// entra no mesmo grep de quem for somar depois.
+test('linhaDeCusto devolve null quando o CLI não mandou custo', () => {
+  const m = carregar(LIGADO);
+  assert.strictEqual(m.linhaDeCusto('Alf', null), null);
+  assert.strictEqual(m.linhaDeCusto('Alf', undefined), null);
+  assert.strictEqual(m.linhaDeCusto('Alf', NaN), null);
+});

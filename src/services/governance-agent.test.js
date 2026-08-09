@@ -238,3 +238,46 @@ test('carregarAcervo devolve as contagens que o pedido usa', async () => {
   assert.strictEqual(a.ate2d, 1);
   assert.strictEqual(a.mais30d, 2);
 });
+
+// ── CUSTO DA RODADA ────────────────────────────────────────────────────────────────────────
+// O CLI devolve `total_cost_usd` e o runOpsAgent já repassa em `.custo`, mas o ciclo descartava
+// o campo: o preço de cada rodada de Opus 5 (até 30 min) sumia todo dia, e o painel de custos
+// da seção 7 do MODELO-GOVERNANCA não tinha de onde ler.
+// Vai no `detail` de propósito, e não em coluna nova: `ritual_logs` é tabela de idempotência —
+// uma coluna de custo nasceria NULL em todos os outros ritual_type. Ninguém lê o detail do
+// gov_agent hoje (o único leitor, governanca-resumo.js, faz `select('id')`), então o formato
+// pode crescer sem quebrar leitor nenhum.
+test('o custo da rodada entra no detail — senão o número do CLI se perde todo dia', async () => {
+  const m = carregar();
+  const sb = fakeSb();
+  await m.rodarCicloGovernanca(sb, {
+    postar: () => ({ id: 'msg1' }), ymd: '2026-08-09',
+    rodar: () => Promise.resolve({ ok: true, text: 'relatório do ciclo', custo: 0.8123456789 }),
+  });
+  assert.strictEqual(sb.inserts.length, 1);
+  assert.match(sb.inserts[0].detail, /custo=0\.812346\b/, 'custo fora do log: o número do CLI se perdeu');
+  assert.match(sb.inserts[0].detail, /fechados=/, 'o detail antigo tem que continuar inteiro');
+});
+
+// `if (custo)` deixaria o zero de fora e o log mentiria por omissão — quem lê não sabe se a
+// rodada foi de graça ou se o campo não veio. Só `typeof === 'number'` separa os dois casos.
+test('custo zero é gravado como zero, não some por ser falsy', async () => {
+  const m = carregar();
+  const sb = fakeSb();
+  await m.rodarCicloGovernanca(sb, {
+    postar: () => ({ id: 'msg1' }), ymd: '2026-08-09',
+    rodar: () => Promise.resolve({ ok: true, text: 'relatório do ciclo', custo: 0 }),
+  });
+  assert.match(sb.inserts[0].detail, /custo=0\b/, 'zero caiu no buraco do falsy');
+});
+
+test('CLI sem custo não vira ruído no detail', async () => {
+  const m = carregar();
+  const sb = fakeSb();
+  await m.rodarCicloGovernanca(sb, {
+    postar: () => ({ id: 'msg1' }), ymd: '2026-08-09',
+    rodar: () => Promise.resolve({ ok: true, text: 'relatório do ciclo' }),
+  });
+  assert.doesNotMatch(sb.inserts[0].detail, /custo=/, 'gravou "custo=null" — ruído que ninguém consegue somar');
+  assert.match(sb.inserts[0].detail, /fechados=/);
+});

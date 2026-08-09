@@ -238,9 +238,20 @@ function runOpsAgent(pedido, { quem = 'alguém do grupo', briefing = null, timeo
   });
 }
 
+/**
+ * Linha de log do que a rodada custou. O canal interativo não tem onde gravar isso no banco
+ * (não existe linha em `ritual_logs` pra pedido sob demanda), então o custo vive no log — mesmo
+ * dialeto `custo=` que o ciclo automático usa no `detail`, pra um grep só pegar os dois.
+ * Sem número, devolve null e ninguém loga: "custo=null" cairia no mesmo grep de quem for somar.
+ */
+function linhaDeCusto(quem, custo) {
+  if (typeof custo !== 'number' || !Number.isFinite(custo)) return null;
+  return `[OpsAgent] custo=${Number(custo.toFixed(6))} quem="${quem}"`;
+}
+
 module.exports = {
   isOpsChannel, runOpsAgent, buildBriefing, OPS_GROUP_ID, OPS_ALLOWLIST, OPS_ENABLED,
   pedidosEmAndamento, textoDePedidosPerdidos, configurarCanalAviso, avisarPedidosPerdidos,
-  resolverBriefing, resolverTimeout, OPS_TIMEOUT_MS,
+  resolverBriefing, resolverTimeout, OPS_TIMEOUT_MS, linhaDeCusto,
   _registrarPedido, _concluirPedido,   // expostos para o teste do registro
 };

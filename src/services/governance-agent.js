@@ -172,8 +172,21 @@ async function rodarCicloGovernanca(sb, { postar, ymd, force = false, rodar = nu
   await entregar(postar, texto, 'o relatório do ciclo');
   await registrarLog(sb, ymd,
     `fechados=${placar.fechados} reincidentes=${placar.reincidentes.length} parada=${placar.emParada.length}`
-    + `${acervo ? ` acervo=${acervo.total}` : ''}`);
+    + `${acervo ? ` acervo=${acervo.total}` : ''}`
+    + sufixoDeCusto(r && r.custo));
   return { rodou: true, motivo: 'ok', placar, acervo };
+}
+
+/**
+ * O que a rodada custou, vindo do `total_cost_usd` do CLI. Só entra quando é número: `null`
+ * (JSON sem o campo) tem que sair do log em vez de virar "custo=null", senão quem for somar
+ * não distingue rodada de graça de campo ausente. Pelo mesmo motivo o teste do zero existe —
+ * `if (custo)` mandaria o zero pro mesmo buraco do null.
+ * 6 casas = precisão de microdólar; o `Number()` corta os zeros à direita.
+ */
+function sufixoDeCusto(custo) {
+  return typeof custo === 'number' && Number.isFinite(custo)
+    ? ` custo=${Number(custo.toFixed(6))}` : '';
 }
 
 /**

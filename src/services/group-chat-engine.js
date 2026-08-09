@@ -192,7 +192,13 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     // `runOpsAgent` nunca lança (devolve `{ ok:false, text }` já pronto pro grupo), então quem
     // cai neste catch é a ENTREGA — daí a prosa falar de envio, e não de o agente ter quebrado.
     opsAgent.runOpsAgent(text, { quem })
-      .then((r) => postOpsResult(supabase, groupId, r.text))
+      .then((r) => {
+        // O custo vem do CLI e não tem onde ser gravado aqui (pedido sob demanda não tem linha
+        // em ritual_logs). Fica no log: sem isso o preço do canal interativo some por completo.
+        const _custo = opsAgent.linhaDeCusto(quem, r && r.custo);
+        if (_custo) console.log(_custo);
+        return postOpsResult(supabase, groupId, r.text);
+      })
       .catch((e) => {
         console.error('[OpsAgent] falha ao entregar o resultado:', e.message);
         return postTomText(supabase, groupId, `Terminei, mas não consegui te entregar aqui — ${e.message}. Pede de novo que eu reenvio.`);
