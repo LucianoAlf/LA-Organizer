@@ -27,3 +27,11 @@ web/.claude/
 
 # Cópia temporária que scripts/selftest-mutante.sh gera para sabotar o runner.
 /scripts/.selftest-runner.sh
+
+# Backups feitos à mão na VPS antes de deploy cirúrgico. Nunca versionar: em 09/08 havia 12
+# deles em src/ somando ~6MB (8 cópias do engine.js), todos untracked e NÃO ignorados — um
+# `git add -A` os teria commitado. O agente de governança tem git na VPS, então isso não era
+# hipotético. Arquivados em /root/lixeira/src-orfaos-20260809.tar.gz e removidos.
+*.bak
+*.bak-*
+*.pre-*.bak
