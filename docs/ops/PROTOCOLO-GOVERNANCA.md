@@ -87,8 +87,26 @@ entrada real daquele turno era só "O q?", e aí errava 2/4.
 ## ETAPA 5 — Corrija
 
 A menor mudança que faz o teste passar. Depois rode a suíte inteira:
-`node --test "src/**/*.test.js"` — tem que terminar em `fail 3` (baseline de env ausente).
+
+```
+node --test src/
+```
+
+Tem que terminar em **`fail 3`** (baseline de env ausente, `prompts/system-loadout.test.js`).
 Qualquer teste a mais quebrado: reverta tudo e relate.
+
+⚠️ **Use `node --test src/`, não o glob.** Esta VPS roda Node v20 e o suporte a `**` no
+`--test` só entrou no Node 21 — o glob morre com `Could not find ...`. Você registrou isso na
+escada em 09/08 e estava certo: medi os dois lado a lado e dão o MESMO resultado
+(2487 testes, 2484 pass, fail 3). A nota antiga que dizia que `node --test src/` era
+falso-vermelho está errada para este ambiente.
+
+🔒 **COMMITE A CORREÇÃO ANTES DE COMEÇAR A VARREDURA.** Em 09/08 um deploy externo rodou
+`git reset --hard` no meio da rodada e apagou a correção já testada do `engine.js` — só o
+arquivo de teste sobreviveu, por ser untracked, e foi ele que denunciou. A varredura é longa e
+só escreve no banco; a correção é a única coisa que o `reset --hard` consegue destruir. Commite
+primeiro, varra depois. E **re-rode a suíte imediatamente antes de escrever o relatório**:
+o resultado medido antes da varredura não vale mais.
 
 ## ETAPA 6 — Registre
 
