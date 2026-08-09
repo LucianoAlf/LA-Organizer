@@ -6024,8 +6024,12 @@ function statusEmoji(s) {
   return s === 'ok' ? '✅' : s === 'fixed' ? '🛠️' : s === 'warning' ? '⚠️' : '🔴';
 }
 
-function formatHealthReport(run) {
+// `resumoGov` (opcional) é a 2ª seção — o que foi FEITO e o que REINCIDIU nas últimas 24h.
+// Vem pronta de src/lib/governanca-resumo.js; string vazia quando não há dados, e aí o
+// relatório sai exatamente como saía antes (zero-regressão).
+function formatHealthReport(run, resumoGov = '') {
   const head = `🔍 *Auditoria TOM — ${fmtBrtDayMonth()}*`;
+  const govBlock = (typeof resumoGov === 'string' && resumoGov.trim()) ? `\n\n${resumoGov.trim()}` : '';
   const { summary, checks } = run;
   // Sprint 30.1: sempre mostra amostras de ACTIONABLE_NO_MARKER quando há (mesmo se status=ok)
   const anmCheck = (checks || []).find(c => c.name === 'actionable_no_marker');
@@ -6045,7 +6049,7 @@ function formatHealthReport(run) {
 
   // Caminho feliz: tudo verde
   if (summary.warning === 0 && summary.error === 0 && summary.fixed === 0) {
-    return `${head}\n\n✅ Sistema saudável — ${summary.ok}/${summary.total} checks OK${anmSamplesBlock}`;
+    return `${head}\n\n✅ Sistema saudável — ${summary.ok}/${summary.total} checks OK${anmSamplesBlock}${govBlock}`;
   }
   const lines = checks
     .filter(c => c.status !== 'ok')
@@ -6054,7 +6058,7 @@ function formatHealthReport(run) {
   let footer = '';
   if (summary.error > 0) footer = `\n\n_Precisa de atenção: ${summary.error} check(s) com erro._`;
   else if (summary.warning > 0) footer = `\n\n_${summary.warning} alerta(s) — sem ação obrigatória._`;
-  return `${head}\n\n${lines.join('\n')}${anmSamplesBlock}${okCount}${footer}`;
+  return `${head}\n\n${lines.join('\n')}${anmSamplesBlock}${govBlock}${okCount}${footer}`;
 }
 
 async function sendHealthReport(refYmd = null, force = false) {
@@ -6090,7 +6094,13 @@ async function sendHealthReport(refYmd = null, force = false) {
     console.warn('[health-report] nenhum director encontrado — relatório não enviado');
     return;
   }
-  const msg = formatHealthReport(run);
+  // 2ª seção: o que o agente de governança FEZ e o que REINCIDIU. Fora do try/catch de
+  // ninguém — `carregarResumoGovernanca` já devolve null em qualquer falha, e aí o relatório
+  // sai sem a seção em vez de não sair.
+  const { carregarResumoGovernanca, formatarResumoGovernanca } = require('../lib/governanca-resumo');
+  const resumoGov = formatarResumoGovernanca(await carregarResumoGovernanca(supabase, { ymd }));
+
+  const msg = formatHealthReport(run, resumoGov);
   const whatsapp = require('../services/whatsapp');
   // 3. Envia por destinatário — dedupe individual (07/08: 2º destinatário
   // adicionado; se um envio falha, os demais já enviados não bloqueiam retry
