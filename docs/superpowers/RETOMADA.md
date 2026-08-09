@@ -755,8 +755,27 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
      58,1 · 62,3 · 81,4 · 56,4 · **31,7 (semana de 03/08)**. Menor da série COM tráfego maior
      (284 vs 195), então não é artefato de volume. **Mas o deploy tem 1 dia: o ganho é das
      outras correções da semana, não da Fatia A.** Atribuir isso a ela seria chute.
-7. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
-   recorrente virando `cancelled`.
+7. **Crons de governança** — as três verificações FEITAS em 09/08:
+   - ✅ **Paridade git↔produção → virou CHECK diário** (`ee14d6c`, `src/lib/git-paridade.js`,
+     9 testes). Motivado pelos dois incidentes silenciosos do dia: commit do agente que ficou
+     só na VPS, e `reset --hard` meu que apagou o trabalho não-commitado dele. Não faz `fetch`
+     (a direção perigosa é trabalho só-local); só alerta sobre `src/**.js`, `skills/`, `soul/`.
+     Provado nos DOIS sentidos na VPS: 15 arquivos sujos → `ok` (ruído filtrado); arquivo `.js`
+     novo em `src/` → `warning`; removido → `ok`.
+   - ⚠️ **`[GroupChat][DATE-CLAIM]` = 0 em todos os logs.** O detector de data afirmada no
+     GRUPO (`group-chat-engine.js:245`) **nunca disparou**. Ou o grupo não erra data, ou o
+     caminho está morto. Não dá pra distinguir sem um caso de teste — o 1:1 tem o guard
+     equivalente e dispara. **Investigar com uma fala plantada** (custa pouco).
+   - ⚠️ **Molde cancelado com instância viva: 2 casos** (eu tinha contado 3 — o join por
+     título inflou; "Repasses de Cartões" tem série ATIVA `BYMONTHDAY=-1` e a instância de
+     31/08 é dela, legítima). Os 2 reais são "Conciliação de Cartões" (grupo Financeiro,
+     29/08 e 30/09), cujas DUAS séries estão canceladas e não há ativa.
+     **RAIZ DIAGNOSTICADA:** `endSeries1on1` (recurrence-engine.js:429-440) filtra tudo por
+     `.eq('assigned_to', ownerId)`. Em série de GRUPO o `assigned_to` é NULL, então o filtro
+     nunca casa e a limpeza no-opa **em silêncio**: o molde é cancelado pelo update genérico
+     do engine (`.eq('id', tCan.id)`), mas as instâncias futuras sobrevivem. O nome da função
+     já entregava — `1on1`. **Fix pendente:** aceitar `assigned_group_id` no lugar de
+     `assigned_to` quando o molde é de grupo (`recurrence-engine-groups.test.js` já existe).
 8. ~~Segunda seção no relatório das 07h~~ — **FEITO em 09/08** (`59138e5` + `f59ea4e`).
    `src/lib/governanca-resumo.js`: formatador PURO (9 testes) + loader que nunca lança (falhou
    → seção some, relatório sai). `formatHealthReport(run, resumoGov='')` — sem o 2º argumento
