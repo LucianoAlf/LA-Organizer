@@ -24,6 +24,11 @@ NA MÃO uma amostra do que ele fechou. Se tiver fechado em massa sem prova → r
 
 ## 🆕 PROJETO — MODELO DE GOVERNANÇA PARA A MARIA (e depois para os outros agentes)
 
+> 📘 **O DOCUMENTO-MÃE existe: `docs/governanca/MODELO-GOVERNANCA-AGENTES.md`** (09/08).
+> Arquitetura completa, schemas do banco, as travas de código, as 3 rodadas reais e as 14
+> lições. O trabalho da Maria acontece em CHAT PRÓPRIO partindo dele — não deste. É documento
+> VIVO: cada implantação alimenta as seções 8 (evidências) e 9 (lições).
+
 **Pedido do Alf (09/08):** a Maria hoje só **alerta**. O laudo V1A diário chega no Telegram
 privado do *Alfredo* — que é amigo pessoal dele e não deveria ser mensageiro. Ele quer: (a) a
 Maria falando pelo **WhatsApp dela**, (b) o mesmo ciclo de **detectar → refutar → corrigir →
