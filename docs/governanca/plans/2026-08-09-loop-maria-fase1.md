@@ -43,7 +43,16 @@
 
 O cron roda com `toolsAllowIsDefault: true`, incluindo `cron`, `subagents`, `sessions_spawn`, `apply_patch`, `edit` e `supabase-lareport__apply_migration` — migration no banco do LA Report a partir de um agente financeiro. Reduzir para o mínimo que a rotina comprovadamente usa.
 
-⚠️ **`write` FICA nesta task.** Na rodada de 09/08 o agente escreveu ~20 arquivos `.sql` para contornar `exec preflight: complex interpreter`. Removê-lo aqui quebra o laudo. Ele cai na Task 7, junto com a instalação do `superfolha_sql.py`.
+⚠️ **`write` FICA nesta task.** Na rodada de 09/08 o agente escreveu ~20 arquivos `.sql` para contornar `exec preflight: complex interpreter`. Removê-lo aqui quebra o laudo. Ele cai na Task 5, junto com a instalação do `superfolha_sql.py`.
+
+⚠️⚠️ **Esta task fecha a porta e deixa a janela — e isso é declarado, não escondido.** Remover
+`apply_migration`, `cron`, `edit` e `subagents` reduz **alcance acidental**, não alcance real:
+com `exec` o agente roda `curl` ou `psql` e chega em qualquer banco cuja credencial esteja no
+ambiente. Verificado em 09/08: o env da Maria contém **`MARIA_LAREPORT_RPC_DATABASE_URL`**
+(connection string direta ao Postgres do LA Report) e `FOLHAPAGAMENTO_SUPABASE_SERVICE_ROLE`.
+Enquanto o cron roda no gateway do Alfredo, o env é o do root e não podemos mexer nele sem
+afetar os outros jobs dele. **O fechamento real acontece na Task 3**, quando a rotina passa a
+rodar sob env controlado. Esta task vale porque é barata e imediata — não porque resolve.
 
 **Files:**
 - Modify: cron `a47a1c2b-51f9-4097-a85a-f8db87087809` no gateway do Alfredo (`HOME=/root`)
@@ -136,9 +145,26 @@ ssh maria 'sudo env HOME=/root openclaw cron edit a47a1c2b-51f9-4097-a85a-f8db87
 
 Isso devolve o comportamento anterior (todas as ferramentas). Reporte o motivo antes de tentar de novo.
 
-- [ ] **Step 8: Registrar a conclusão**
+- [ ] **Step 8: Baselinar onde a rotina escreve (pré-requisito da Task 5)**
 
-Anexe ao relatório: a lista de tools antes e depois, e a confirmação do Step 5 e 6.
+A Task 5 vai remover `write`. Para não checar o lugar errado e produzir falso verde, registre
+**agora**, com `write` ainda ligado, os caminhos reais que a rodada gerou:
+
+```bash
+ssh maria 'sudo find /root/.openclaw/workspace /home/maria/.openclaw/workspace /tmp \
+  -maxdepth 3 -name "*.sql" -newermt "-1 hour" 2>/dev/null \
+  | sudo tee /home/maria/.openclaw/workspace/backups/loop-maria-fase1/caminhos-sql-baseline.txt; \
+  echo "---"; sudo wc -l < /home/maria/.openclaw/workspace/backups/loop-maria-fase1/caminhos-sql-baseline.txt'
+```
+
+Esperado: uma lista não-vazia. **Se vier vazia, a rotina não usou `write` nesta rodada** — anote
+isso, porque muda a Task 5 (o `write` pode cair mais cedo). Se vier cheia, esses são os caminhos
+que a Task 5 confere.
+
+- [ ] **Step 9: Registrar a conclusão**
+
+Anexe ao relatório: a lista de tools antes e depois, a confirmação dos Steps 5 e 6, e os caminhos
+do Step 8.
 
 ---
 
@@ -170,11 +196,44 @@ sudo ls -la /home/maria/.openclaw/workspace/tools/superfolha_sql.py'
 ssh maria 'sudo grep -oE "os\.environ[^)]{0,40}|getenv\([^)]{0,40}" /home/maria/.openclaw/workspace/tools/superfolha_sql.py | head -10'
 ```
 
-Anote os nomes das variáveis. Se alguma não existir em `/home/maria/.openclaw/private/maria.env`, ela precisa ser adicionada lá **com o mesmo valor** que o Alfredo usa — copie do env do root, sem imprimir o valor no terminal:
+Anote os nomes das variáveis.
+
+⚠️ **NÃO copie `service_role` do env do root.** A spec decidiu que o processo de governança roda
+com credencial própria e reduzida — `service_role` dá bypass de RLS e mataria o isolamento do
+held-out antes mesmo de ele existir. O laudo é **somente leitura**: crie um papel de banco
+read-only agora, que custa dez minutos e evita desfazer depois.
+
+Aplicar no Supabase `ubdvtjbitozhkuvvqkxj`:
+
+```sql
+-- Papel exclusivo do laudo/governanca: le tudo do schema public, nao escreve nada
+create role maria_gov_ro nologin;
+grant usage on schema public to maria_gov_ro;
+grant select on all tables in schema public to maria_gov_ro;
+alter default privileges in schema public grant select on tables to maria_gov_ro;
+```
+
+Verificar que não escreve:
+
+```sql
+select has_table_privilege('maria_gov_ro','contas_pagar','INSERT') as pode_inserir,
+       has_table_privilege('maria_gov_ro','contas_pagar','SELECT') as pode_ler;
+```
+
+Esperado: `pode_inserir = false`, `pode_ler = true`. Se `pode_inserir` vier `true`, **pare** — o
+papel herdou privilégio de algum outro e não serve.
+
+A variável de conexão do laudo aponta para esse papel, e entra no env com nome próprio
+(`MARIA_GOV_DATABASE_URL`), nunca reusando `FOLHAPAGAMENTO_SUPABASE_SERVICE_ROLE`.
+
+⚠️ **Ao anexar no `.env`, confira antes.** `>>` cego duplica chave, e chave duplicada em arquivo
+de env tem precedência indefinida entre implementações:
 
 ```bash
-ssh maria 'sudo bash -c "grep -h \"^NOME_DA_VAR=\" /root/.openclaw/private/*.env >> /home/maria/.openclaw/private/maria.env" && echo ADICIONADA'
+ssh maria 'sudo grep -c "^MARIA_GOV_DATABASE_URL=" /home/maria/.openclaw/private/maria.env || echo 0'
 ```
+
+Esperado: `0` antes de anexar; `1` depois. Se já existir, **edite a linha existente**, não anexe.
 
 - [ ] **Step 3: Teste de fumaça — rodar como a Maria**
 
@@ -219,55 +278,91 @@ ssh maria 'sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db870
 
 Esperado: cerca de 1801 caracteres.
 
-- [ ] **Step 2: Descobrir o identificador do canal WhatsApp no gateway da Maria**
+### ⚠️ Correção de desenho (revisão de 09/08) — a entrega NÃO fica com o LLM
+
+A versão anterior desta task punha no `--message` a instrução *"ao terminar, envie executando
+python3 enviar-whatsapp.py"*. **Isso é o princípio 2 do modelo virado do avesso:** a entrega volta
+a ser decisão e afirmação do LLM, e a falha volta a ser silenciosa — ele diz que enviou e não
+enviou, que foi exatamente o restart fantasma do TOM em 09/08 08:21.
+
+**Desenho correto:** o cron dispara um **payload de comando**, não um turno de agente. O comando é
+um wrapper que (1) chama o agente e captura a saída, (2) valida que não veio vazia, (3) sanitiza
+markdown para WhatsApp, (4) envia por código e (5) reporta o status real. O LLM produz o texto;
+**o código entrega e afirma.**
+
+Isso resolve três problemas de uma vez: a entrega sai do prompt, o env fica sob controle via
+`--command-env`, e a sanitização deixa de depender de o modelo lembrar de não usar markdown.
+
+- [ ] **Step 2: Criar o wrapper de execução e entrega**
 
 ```bash
-ssh maria 'sudo -u maria openclaw message --help 2>&1 | head -20; echo "---"; sudo -u maria openclaw cron list --json 2>&1 | python3 -c "import sys,json; d=json.load(sys.stdin); [print(j.get(\"name\"), j.get(\"delivery\")) for j in d.get(\"jobs\",[])]"'
+# /home/maria/.openclaw/workspace/gov/laudo-diario.sh
 ```
-
-Anote qual `channel` o gateway da Maria reconhece. Se não houver canal WhatsApp registrado no OpenClaw dela (a bridge é externa), use o **payload de comando** em vez de `--announce` — ver Step 3b.
-
-- [ ] **Step 3a: Criar o cron com entrega por anúncio (se houver canal WhatsApp)**
 
 ```bash
-ssh maria 'sudo -u maria openclaw cron add "maria-laudo-diario-v1a-own" \
-  --cron "0 7 * * *" --tz America/Sao_Paulo \
-  --agent maria --session isolated \
-  --tools "exec,read" \
-  --message "$(sudo cat /home/maria/.openclaw/workspace/backups/loop-maria-fase1/laudo-payload.txt)" \
-  --announce --channel whatsapp --to 5521981278047 \
-  --description "Laudo diario V1A — entrega pelo WhatsApp da propria Maria" \
-  --disabled'
+#!/usr/bin/env bash
+# Wrapper do laudo diario. O agente PRODUZ; este script ENTREGA e AFIRMA.
+set -uo pipefail
+
+GOV=/home/maria/.openclaw/workspace/gov
+PAYLOAD=/home/maria/.openclaw/workspace/backups/loop-maria-fase1/laudo-payload.txt
+SAIDA=$(mktemp /tmp/laudo-XXXXXX.txt)
+DESTINO=5521981278047
+LOG=/home/maria/.openclaw/workspace/logs/laudo-diario.log
+
+registrar() { echo "[$(TZ=America/Sao_Paulo date '+%F %T %Z')] $*" >> "$LOG"; }
+
+registrar "inicio"
+
+# 1. Roda o agente, captura a saida
+if ! openclaw agent --agent maria --session isolated \
+     --tools "exec,read" \
+     --message "$(cat "$PAYLOAD")" > "$SAIDA" 2>>"$LOG"; then
+  registrar "ERRO: agente falhou"
+  python3 "$GOV/enviar-whatsapp.py" --to "$DESTINO" \
+    --texto "MARIA — LAUDO DIARIO: falhei ao gerar o laudo de hoje. Causa tecnica no log do servidor. Nenhum dado foi alterado." \
+    >> "$LOG" 2>&1
+  exit 1
+fi
+
+# 2. Saida vazia e falha, nunca silencio
+if [ ! -s "$SAIDA" ] || [ "$(wc -c < "$SAIDA")" -lt 200 ]; then
+  registrar "ERRO: saida vazia ou curta demais ($(wc -c < "$SAIDA") bytes)"
+  python3 "$GOV/enviar-whatsapp.py" --to "$DESTINO" \
+    --texto "MARIA — LAUDO DIARIO: rodei mas voltei sem texto. Isso e bug meu, nao resultado. Nada foi alterado." \
+    >> "$LOG" 2>&1
+  exit 1
+fi
+
+# 3+4. Sanitiza e envia por CODIGO
+if python3 "$GOV/enviar-whatsapp.py" --to "$DESTINO" --arquivo "$SAIDA" >> "$LOG" 2>&1; then
+  registrar "OK: laudo entregue ($(wc -c < "$SAIDA") bytes)"
+  rm -f "$SAIDA"
+  exit 0
+else
+  registrar "ERRO: laudo gerado mas NAO entregue"
+  exit 1
+fi
 ```
-
-Note `--disabled`: nasce desligado, liga só depois de validado (Step 5).
-
-- [ ] **Step 3b: Alternativa se não houver canal WhatsApp no OpenClaw**
-
-A bridge é um serviço à parte, então o gateway pode não expor `whatsapp` como canal. Nesse caso a entrega vai por comando, usando a mesma API já provada em 09/08:
 
 ```bash
-ssh maria 'sudo -u maria openclaw cron add "maria-laudo-diario-v1a-own" \
-  --cron "0 7 * * *" --tz America/Sao_Paulo \
-  --agent maria --session isolated --tools "exec,read" \
-  --message "$(sudo cat /home/maria/.openclaw/workspace/backups/loop-maria-fase1/laudo-payload.txt)" \
-  --description "Laudo diario V1A — entrega pelo WhatsApp da propria Maria" \
-  --disabled'
+ssh maria 'sudo -u maria mkdir -p /home/maria/.openclaw/workspace/gov && \
+sudo -u maria tee /home/maria/.openclaw/workspace/gov/laudo-diario.sh > /dev/null <<"EOF"
+<cole o conteudo acima>
+EOF
+sudo -u maria chmod 750 /home/maria/.openclaw/workspace/gov/laudo-diario.sh && echo CRIADO'
 ```
 
-e a entrega é feita pelo próprio agente na última instrução do payload, acrescentando ao final do texto do `--message`:
+- [ ] **Step 3: Criar o utilitário de envio com sanitização markdown→WhatsApp**
 
-```
-ENTREGA: ao terminar o laudo, envie o texto final por WhatsApp executando:
-python3 /home/maria/.openclaw/workspace/gov/enviar-whatsapp.py --to 5521981278047 --arquivo <caminho do laudo>
-Não use nenhum outro canal. Se o envio falhar, diga a causa técnica no próprio laudo.
-```
-
-E crie o utilitário de envio (determinístico, sem LLM decidindo formato):
+O laudo usa `**negrito**` e `##`, que o WhatsApp **não renderiza** — chegam como asteriscos
+literais. O TOM tem `wa-format.js` exatamente para isso; aqui vai a versão mínima.
 
 ```python
 # /home/maria/.openclaw/workspace/gov/enviar-whatsapp.py
-import argparse, json, sys, urllib.request
+import argparse, json, re, sys, urllib.request
+
+LIMITE = 1200  # ~15 linhas no celular
 
 def carregar_env(caminho="/home/maria/.openclaw/private/maria.env"):
     env = {}
@@ -279,6 +374,38 @@ def carregar_env(caminho="/home/maria/.openclaw/private/maria.env"):
         env[k] = v.strip().strip('"').strip("'")
     return env
 
+def para_whatsapp(texto):
+    """WhatsApp so tem *negrito*, _italico_, ~riscado~ e crase. Markdown chega literal."""
+    saida = []
+    for linha in texto.split("\n"):
+        if re.fullmatch(r"\s*[-*_]{3,}\s*", linha):      # linha horizontal some
+            continue
+        linha = re.sub(r"^\s*#{1,6}\s*(.+)$", r"*\1*", linha)   # titulo -> negrito
+        linha = re.sub(r"^(\s*)[-*+]\s+", r"\1• ", linha)       # bullet -> ponto
+        linha = re.sub(r"^\s*>\s?", "", linha)                   # citacao perde marcador
+        saida.append(linha)
+    t = "\n".join(saida)
+    t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1: \2", t)        # link
+    t = re.sub(r"\*{2,}", "*", t)                                # ** -> *
+    t = re.sub(r"_{2,}", "_", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+def dividir(texto, limite=LIMITE):
+    """Divide em fronteira de paragrafo. NUNCA trunca: num laudo a conclusao fica no fim."""
+    if len(texto) <= limite:
+        return [texto]
+    partes, atual = [], ""
+    for par in re.split(r"\n{2,}", texto):
+        if len(atual) + len(par) + 2 > limite and atual:
+            partes.append(atual.strip())
+            atual = par
+        else:
+            atual = f"{atual}\n\n{par}" if atual else par
+    if atual.strip():
+        partes.append(atual.strip())
+    return partes
+
 def enviar(numero, texto):
     env = carregar_env()
     url = env["MARIA_UAZAPI_URL"].rstrip("/") + "/send/text"
@@ -288,24 +415,53 @@ def enviar(numero, texto):
         headers={"token": env["MARIA_UAZAPI_TOKEN"], "content-type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=30) as r:
-        d = json.loads(r.read().decode())
-    return r.status, d.get("messageid", "")
+        return r.status, json.loads(r.read().decode()).get("messageid", "")
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--to", required=True)
-    p.add_argument("--arquivo", required=True)
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--arquivo")
+    g.add_argument("--texto")
     a = p.parse_args()
-    texto = open(a.arquivo, encoding="utf-8").read()
-    if not texto.strip():
-        print("ERRO: arquivo vazio, nada enviado", file=sys.stderr)
+
+    bruto = open(a.arquivo, encoding="utf-8").read() if a.arquivo else a.texto
+    if not bruto.strip():
+        print("ERRO: nada a enviar", file=sys.stderr)
         sys.exit(1)
-    status, mid = enviar(a.to, texto)
-    print(f"HTTP {status} messageid={mid}")
-    sys.exit(0 if status == 200 else 1)
+
+    partes = dividir(para_whatsapp(bruto))
+    enviadas = 0
+    for i, parte in enumerate(partes, 1):
+        status, mid = enviar(a.to, parte)
+        print(f"parte {i}/{len(partes)} HTTP {status} messageid={mid}")
+        if status != 200:
+            print(f"ERRO: parte {i} de {len(partes)} falhou", file=sys.stderr)
+            sys.exit(1)   # entrega parcial e FALHA, nao sucesso
+        enviadas += 1
+    sys.exit(0 if enviadas == len(partes) else 1)
 ```
 
-- [ ] **Step 4: Rodar forçado com o job ainda desabilitado**
+- [ ] **Step 4: Criar o cron como payload de comando, com env controlado**
+
+```bash
+ssh maria 'sudo -u maria openclaw cron add "maria-laudo-diario-v1a-own" \
+  --cron "0 7 * * *" --tz America/Sao_Paulo \
+  --command "bash /home/maria/.openclaw/workspace/gov/laudo-diario.sh" \
+  --command-cwd /home/maria/.openclaw/workspace \
+  --command-env "MARIA_LAREPORT_RPC_DATABASE_URL=" \
+  --command-env "FOLHAPAGAMENTO_SUPABASE_SERVICE_ROLE=" \
+  --description "Laudo diario V1A — wrapper entrega pelo WhatsApp da propria Maria" \
+  --disabled'
+```
+
+Os dois `--command-env` vazios **anulam** as credenciais perigosas para este job: sem a
+connection string do LA Report e sem o `service_role`, o `exec` deixa de ser porta dos fundos.
+É aqui que o buraco declarado na Task 1 se fecha de verdade.
+
+`--disabled`: nasce desligado, liga só depois de validado.
+
+- [ ] **Step 5: Rodar forçado com o job ainda desabilitado**
 
 ```bash
 ssh maria 'sudo -u maria openclaw cron list --json | python3 -c "import sys,json; [print(j[\"id\"], j[\"name\"]) for j in json.load(sys.stdin)[\"jobs\"]]"'
@@ -336,7 +492,17 @@ PY'
 
 Esperado: a última mensagem para o Alf é o laudo, com `fromMe: true`. Se a API de listagem divergir, use `/message/find` com o `messageid` que o Step 4 imprimiu.
 
-**Critério de aceite:** o Alf confirma que recebeu o laudo **do número da Maria** (`5521989784688`), não do Telegram.
+**Critério de aceite — chegada E formato, não só chegada.** O laudo foi validado no Telegram, que
+renderiza markdown; o WhatsApp não. E formato foi exatamente o que causou a crise de 05–08/08.
+Os três critérios juntos:
+
+1. Chegou **do número da Maria** (`5521989784688`), não do Telegram.
+2. As **nove seções numeradas** estão presentes e legíveis.
+3. **Nenhum artefato de markdown cru** — sem `**`, sem `##`, sem `|` de tabela. Se aparecer, o
+   `para_whatsapp()` do Step 3 não pegou aquele caso; corrija ali, não no prompt.
+
+Enquanto o golden-file da Fatia 4 não existir, **esta primeira entrega precisa de olho humano**
+(Alf ou Hugo). É a única verificação de formato que temos hoje.
 
 - [ ] **Step 6: Habilitar o cron novo**
 
@@ -367,9 +533,63 @@ ssh maria 'echo "--- ALFREDO ---"; sudo env HOME=/root openclaw cron list --all 
 
 Esperado: o do Alfredo com `enabled= False`, o da Maria com `enabled= True`. **Dois laudos ativos gerariam mensagem duplicada — se ambos aparecerem ativos, pare e corrija.**
 
-- [ ] **Step 3: Observar a rodada real das 07:00 do dia seguinte**
+- [ ] **Step 3: Instalar o dead-man's switch (a rede da única janela quase-irreversível)**
 
-Este é o checkpoint da Fatia 0. No dia seguinte, confirmar com o Alf que o laudo chegou pelo WhatsApp da Maria no horário. Só então a Task 5 pode começar.
+Depois do Step 1 o cron antigo está desabilitado. Se o novo falhar às 07:00, o desfecho é
+**nenhum laudo e ninguém sabe** — o único modo de falha que o modelo proíbe. Uma verificação às
+07:30 fecha isso:
+
+```bash
+# /home/maria/.openclaw/workspace/gov/laudo-vigia.sh
+```
+
+```bash
+#!/usr/bin/env bash
+# Roda 07:30 BRT. Afirma "saiu laudo hoje?" e, se nao, alerta e reabilita o antigo.
+set -uo pipefail
+LOG=/home/maria/.openclaw/workspace/logs/laudo-diario.log
+GOV=/home/maria/.openclaw/workspace/gov
+HOJE=$(TZ=America/Sao_Paulo date +%F)
+ANTIGO=a47a1c2b-51f9-4097-a85a-f8db87087809
+
+if grep -q "^\[$HOJE .*\] OK: laudo entregue" "$LOG" 2>/dev/null; then
+  echo "laudo de $HOJE entregue — nada a fazer"
+  exit 0
+fi
+
+# Nao saiu: avisa E restaura o caminho antigo, sem esperar humano
+python3 "$GOV/enviar-whatsapp.py" --to 5521981278047 \
+  --texto "MARIA — ALERTA: o laudo de $HOJE NAO saiu ate 07:30. Reabilitei a rotina antiga no gateway do Alfredo como contingencia. Precisa de olho humano no laudo novo."
+sudo env HOME=/root openclaw cron enable "$ANTIGO"
+echo "ALERTA enviado e rotina antiga reabilitada"
+exit 1
+```
+
+Criar o cron do vigia:
+
+```bash
+ssh maria 'sudo -u maria openclaw cron add "maria-laudo-vigia" \
+  --cron "30 7 * * *" --tz America/Sao_Paulo \
+  --command "bash /home/maria/.openclaw/workspace/gov/laudo-vigia.sh" \
+  --description "Dead-man switch do laudo: alerta e reabilita a rotina antiga se nao saiu"'
+```
+
+**Testar o vigia no caminho de falha, não só no de sucesso** — é o teste que importa:
+
+```bash
+ssh maria 'sudo -u maria mv /home/maria/.openclaw/workspace/logs/laudo-diario.log /tmp/log-guardado.txt; \
+sudo -u maria bash /home/maria/.openclaw/workspace/gov/laudo-vigia.sh; \
+echo "--- exit=$? ---"; \
+sudo -u maria mv /tmp/log-guardado.txt /home/maria/.openclaw/workspace/logs/laudo-diario.log'
+```
+
+Esperado: alerta chega no WhatsApp do Alf, o cron antigo volta a `enabled=true`, e o script sai
+com `1`. **Depois do teste, desabilite o antigo de novo** (Step 1) para não ficar com dois ativos.
+
+- [ ] **Step 4: Observar a rodada real das 07:00 do dia seguinte**
+
+Este é o checkpoint da Fatia 0. No dia seguinte, confirmar com o Alf que o laudo chegou pelo
+WhatsApp da Maria no horário e no formato certo. Só então a Task 5 pode começar.
 
 ---
 
@@ -380,13 +600,29 @@ Só depois que a Task 3 estiver rodando com `superfolha_sql.py` no workspace da 
 **Files:**
 - Modify: cron novo no gateway da Maria
 
-- [ ] **Step 1: Confirmar que a rodada anterior não usou `write`**
+- [ ] **Step 1: Confirmar, nos caminhos REAIS, que a rodada não usou `write`**
+
+⚠️ **Não invente o caminho.** Procurar `tmp_*.sql` só em `workspace/` presumiria diretório e
+padrão de nome: se a rotina escrever em subdiretório ou em `/tmp`, a busca volta `0` por estar
+olhando no lugar errado, você remove `write` e o laudo quebra. **Falso verde é exatamente a
+classe de erro que este projeto existe para matar.** Use o baseline registrado na Task 1 Step 8:
 
 ```bash
-ssh maria 'sudo find /home/maria/.openclaw/workspace -maxdepth 1 -name "tmp_*.sql" -newermt "-2 days" 2>/dev/null | wc -l'
+ssh maria 'BASE=/home/maria/.openclaw/workspace/backups/loop-maria-fase1/caminhos-sql-baseline.txt; \
+echo "=== caminhos que a rotina usava ==="; sudo cat $BASE; \
+echo "=== esses caminhos ainda recebem arquivo novo? ==="; \
+sudo cat $BASE | while read -r p; do d=$(dirname "$p"); \
+  n=$(sudo find "$d" -maxdepth 1 -name "*.sql" -newermt "-1 day" 2>/dev/null | wc -l); \
+  echo "$d -> $n arquivo(s) na ultima 24h"; done | sort -u'
 ```
 
-Esperado: `0`. Se houver arquivos, o agente ainda está contornando algo — **investigue antes de remover `write`**.
+Esperado: todos os diretórios com `0 arquivo(s)`. Se algum tiver arquivo novo, o agente **ainda
+está contornando algo** — investigue a causa antes de remover `write`, porque removê-lo só troca
+um sintoma visível por uma falha silenciosa.
+
+Se o baseline da Task 1 tiver vindo vazio, isso significa que a rotina não usou `write` naquela
+rodada — nesse caso, confirme em uma segunda rodada antes de concluir, para não decidir com
+amostra de um.
 
 - [ ] **Step 2: Restringir**
 
@@ -524,6 +760,12 @@ select papel, numero_last4, ativo from maria_whatsapp_atores where papel='gov_ag
 ```
 
 Esperado: quatro tabelas (`maria_gov_findings` 14, `maria_gov_known_issues` 12, `maria_gov_probes` 16, `maria_gov_runs` 10) e uma linha do ator técnico.
+
+⚠️ **Lacuna declarada:** as colunas `modelo_efetivo_maria` (em `maria_gov_runs` e
+`maria_gov_probes`) nascem aqui mas **nada nesta fase as popula**. A trava 5.10 da spec — capturar
+o modelo efetivo e abortar se mudou — só entra na Fatia 2, junto com o verificador. Até lá,
+coluna vazia significa "não medido", nunca "não mudou". Ninguém deve assumir que a trava está de
+pé porque a coluna existe.
 
 - [ ] **Step 4: Provar a idempotência (teste que DEVE falhar na segunda inserção)**
 
@@ -745,9 +987,11 @@ ssh maria 'sudo -u maria bash /home/maria/.openclaw/workspace/scripts/backup-to-
 
 | depois de | checkpoint | como se prova |
 |---|---|---|
-| Task 1 | laudo continua completo com ferramentas restritas | execução forçada + nove seções presentes |
-| Task 4 | laudo das 07:00 chega pelo WhatsApp da Maria | confirmação do Alf + status na API |
-| Task 5 | rotina não precisa mais de `write` | zero `tmp_*.sql` e laudo completo |
+| Task 1 | laudo completo com ferramentas restritas, e caminhos de escrita baselinados | execução forçada + nove seções + `caminhos-sql-baseline.txt` não presumido |
+| Task 2 | credencial do laudo é read-only de verdade | `has_table_privilege(...,'INSERT') = false` |
+| Task 3 | entrega é do código e o formato sobrevive ao WhatsApp | status na API + nove seções legíveis + zero markdown cru, com olho humano |
+| Task 4 | a janela quase-irreversível tem rede | **o vigia testado no caminho de FALHA**: alerta chega e o cron antigo reabilita |
+| Task 5 | rotina não precisa mais de `write` | zero arquivo novo **nos diretórios do baseline**, não em diretório presumido |
 | Task 6 | idempotência é real | a segunda inserção falha com unique violation |
 | Task 7 | placar tem baseline | `pass 8, fail 0` gravado |
 
