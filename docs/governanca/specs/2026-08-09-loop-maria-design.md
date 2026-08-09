@@ -277,6 +277,22 @@ O golden-file **não engessa a Maria** — ela continua aprendendo e variando a 
 quando a **frase-contrato** muda, que é exatamente o caso em que o código quebra junto. É também
 o detector que faltava para a classe de regressão de 07/08.
 
+### 5.10 Identidade de modelo DA MARIA — a trava que a crise pediu
+
+O desenho v1 gravava modelo e provedor **do verificador** e esquecia o principal: **o modelo
+efetivo da Maria faz parte do sistema sob teste.** A troca silenciosa já queimou duas vezes — a
+cota da OpenAI estourando (07/08) e o token do xAI revogado que fez ~3h de "janela de teste do
+Grok 4.5" rodarem em Sonnet disfarçado de fallback (09/08).
+
+Sem essa trava: se a sonda rodar enquanto a Maria está em fallback, o `pass^k` **mede outro
+agente**; pior, o corretor "conserta" um sintoma que era troca de modelo e grava um KI lixo que
+vai poluir o placar para sempre.
+
+**Requisito duro:** a rodada captura o modelo **efetivo** e **aborta se mudou** desde a última.
+E — este é o ponto fino — o efetivo **não se lê do `openclaw.json`**: a lição do xAI é exatamente
+que a configuração dizia Grok e a execução era Sonnet. Tem de vir do log/telemetria da execução.
+Configuração é intenção; log é fato.
+
 ---
 
 ## 6. A sonda, em detalhe
@@ -293,6 +309,50 @@ o detector que faltava para a classe de regressão de 07/08.
 **Teste negativo obrigatório do verificador:** ele precisa **reprovar** um conjunto de casos que
 devem ser reprovados. Sem isso não se tem verificador, se tem carimbo — e o próprio τ-bench, que
 passou por revisão acadêmica, contava resposta vazia como sucesso.
+
+### 6.1 A última milha tem de ser testada
+
+Ler a resposta do arquivo de sessão evita depender de entrega, mas **cega o loop para a classe de
+bug em que a Maria calcula certo e a mensagem não sai, sai malformada ou é partida errado** — que
+foi literalmente o `FATURA-ACK-FORA-DO-HISTORICO` no TOM.
+
+**Regra: ao menos uma sonda por rodada verifica o artefato de saída real.** O método já está
+provado — em 09/08 o envio devolveu `id` e a consulta `/message/find` devolveu o status
+(`Pending` → `Read`). `Sent`/`Delivered` já basta como prova da última milha; não é preciso que
+alguém leia.
+
+**Buraco declarado da v1, agora explícito:** para haver artefato de saída, o outbound da SONDA
+precisa de **um número real que exista no WhatsApp** — a spec anterior não dizia qual. Duas
+opções: um chip pré-pago dedicado, ou um número secundário já existente do Alf. **Decisão
+pendente.** Enquanto não houver número, a sonda roda só por sessão e a cobertura da última milha
+fica declarada como ausente — nunca presumida.
+
+### 6.2 A contenção da sonda é asserção, não herança
+
+Cair em `readonly_prepare` por não ser owner é elegante e evita tocar no bridge, mas é **efeito
+colateral de semântica herdada**, não trava. Se alguém mexer em `NON_OWNER_MODE` ou puser o número
+da QA em outra lista, a sonda ganha escrita **em silêncio**.
+
+**Requisito:** asserção própria na suíte negativa, rodando **toda rodada** — o ator SONDA tenta
+uma escrita e precisa ser recusado. É barato e é a única forma de a contenção continuar sendo
+verdade amanhã.
+
+### 6.3 `pass^k` precisa de linha de base antes de virar veredito
+
+Rodar uma pergunta 5× mede sorte, não regressão. **Antes de o `pass^k` valer como veredito,
+medir a consistência da Maria em um punhado de casos sabidamente bons e derivar o limiar disso.**
+Sem baseline, o corretor queima rodadas caçando vermelho que não é regressão — e um loop que
+gera trabalho falso é abandonado, como acontece com todo alarme que erra.
+
+Medição barata, não estudo: ~10 perguntas conhecidas × 3 rodadas, limiar calibrado em cima.
+
+**O breaker nasce com número**, não com "teto a definir": custo máximo por rodada, escritas por
+hora e retries têm valor concreto na primeira versão.
+
+### 6.4 Held-out vem de incidente real
+
+Regra fechada: cada sonda held-out **deriva de um incidente que aconteceu**, nunca de caso
+inventado. Escrita pelo Catraca, revisada pelo Alf, fora do alcance da credencial do corretor.
 
 ---
 
@@ -328,14 +388,31 @@ fora. A fase 1 fecha o buraco por **isolamento de credencial** em vez de por con
 
 Cada fatia só começa quando o checkpoint da anterior é **observado**, não presumido.
 
+### Ação imediata A — fechar o `toolsAllow` (fora de fatia, hoje)
+Não espera roadmap. Hoje o cron do laudo roda com `toolsAllowIsDefault: true`, o que inclui
+`cron`, `subagents`, `sessions_spawn`, `apply_patch`, `edit` e
+`supabase-lareport__apply_migration` — **um agente financeiro com poder de migration no banco do
+LA Report, que é justamente o sistema sem monitoramento nenhum.** Risco desproporcional ao
+benefício de esperar.
+
+⚠️ **Armadilha medida — não tirar `write`.** Na rodada real de 09/08 o agente escreveu ~20
+arquivos `.sql` em disco para contornar erros de `exec preflight: complex interpreter`. Remover
+`write` quebra o laudo de amanhã. O mínimo que preserva a rotina é **`exec` + `read` + `write`**;
+sai todo o resto. E não se confia na teoria: **execução forçada de validação antes das 07:00**,
+comparando o laudo com o de hoje.
+
+### Ação imediata B — backup funcionando (pré-requisito, não paralelo)
+✅ **Concluído em 09/08 13:40 BRT** — commit `c8cacaf` no GitHub, confirmado pela API. Era
+bloqueador: a Fatia 0 mexe em cron e permissões de agente financeiro em produção, e fazer isso
+sem rede de rollback com a crise de 05–08/08 ainda quente é a ordem errada.
+
 ### Fatia 0 — A Maria vira dona da própria rotina
-Migrar o cron `maria-laudo-diario-v1a` do gateway do Alfredo (porta 18789, agente `main`) para o
-da Maria (19789); instalar `superfolha_sql.py` no workspace dela; fechar o `toolsAllow` em código
-(hoje é `toolsAllowIsDefault: true`, com `write`, `edit`, `apply_patch`, `exec`, `cron`,
-`subagents` e `apply_migration` do banco do LA Report); entregar pelo WhatsApp dela.
+**Só começa com A e B fechados.** Migrar o cron `maria-laudo-diario-v1a` do gateway do Alfredo
+(porta 18789, agente `main`) para o da Maria (19789); instalar `superfolha_sql.py` no workspace
+dela; entregar pelo WhatsApp dela.
 
 **Checkpoint:** o laudo das 07:00 do dia seguinte chega no WhatsApp do Alf vindo do número da
-Maria, com conteúdo equivalente ao de hoje, e o `toolsAllow` registrado no ticket é o mínimo.
+Maria, com conteúdo equivalente ao de hoje.
 
 ### Fatia 1 — Acervo, memória e placar
 As quatro tabelas e suas RPCs; o laudo passa a persistir achados; placar com marca tolerante;
@@ -352,13 +429,20 @@ held-out escrito pelo Catraca e revisado pelo Alf, credencial reduzida do corret
 batendo; (b) **uma pergunta plantada com resposta errada que o verificador precisa reprovar**. Sem
 (b) a fatia não fecha.
 
-### Fatia 3 — Loop operacional
-O corretor resolve o que está parado, dentro da allowlist de 5.5. Primeiros alvos naturais: as
-dívidas de 1.4 (reaplicar guardrails perdidos, consertar o backup, reconciliador) e o volume do
-laudo (vinculações, códigos do mês, fila de conferências).
+### Fatia 3 — Loop operacional (**apenas dado e estado**)
+O corretor resolve o que está parado, dentro da allowlist de 5.5 — e **nada mais**. Os seis itens
+autônomos daquela matriz são todos operação de dado/estado; nenhum exige editar código. Por isso
+a Fatia 3 fecha limpa sob o congelamento da seção 7, **desde que as dívidas de código saiam
+dela**.
+
+**Correção de uma contradição da v1 desta spec:** a versão anterior mandava o corretor "reaplicar
+guardrails perdidos" e citava a divergência do `5.5.1` entre bridge e skill como caso de loop.
+Ambos moram em território congelado. Das seis dívidas de 1.4, **cinco são trabalho humano em zona
+congelada, não caso de loop** — vão para fila humana. Sobra para o loop o volume do laudo:
+vinculações de e-mail, códigos do mês, fila de conferências, reprocessamento de rotina.
 
 **Checkpoint:** uma rodada real observada de ponta a ponta, com o gate contando os números e o
-relatório chegando pelo WhatsApp da Maria.
+relatório chegando pelo WhatsApp da Maria — sem nenhum arquivo de código tocado.
 
 ### Fatia 4 — Loop de código e suíte
 Runner agregado, baseline conhecido, golden-file das frases-contrato, e fixtures para as três
@@ -383,6 +467,25 @@ OK humano.
   sem escrever nada). Voltariam só para testar o caminho de escrita aprovada ponta a ponta.
 - Framework genérico para os 10 agentes: sai depois, com TOM e Maria como as duas provas.
 - Mudança de personalidade, tom ou formato por iniciativa do loop: proposta sim, aplicação não.
+
+### 9.1 Modularizar o `bridge.js` agora — recusado (o timing, não a ideia)
+
+Foi proposto extrair do `bridge.js` a superfície frágil (Light, Pluggy, parser de e-mail) para
+módulos próprios antes de abrir qualquer exceção de arquivo ao loop. **O diagnóstico está certo**
+— aquele arquivo mistura prompt normativo, regex de contrato, roteamento e integração, e é por
+isso que o congelamento só consegue ser tudo-ou-nada. **Recuso o momento, não a direção:**
+
+1. São 351 KB num agente que **saiu de operação há dois dias** e acabou de estabilizar.
+2. **Não existe teste** cobrindo Light, Pluggy ou parser — exatamente as três coisas que se quer
+   extrair. Refatorar sem rede é o que produziu a cadeia de 05–07/08.
+3. O contrato de formato está **literal dentro do arquivo** (`:851`, `:395`, `:5759-5771`); mover
+   código é mover contrato, e a crise cobrou caro por isso uma vez.
+
+**Contraproposta:** o loop trata Light, Pluggy e parser por **detecção, reprodução e patch
+proposto** — nunca por correção autônoma. Isso captura a maior parte do valor (descobrir que
+quebrou, reproduzir e chegar com o diagnóstico pronto) sem tocar em código congelado e sem
+exceção nominal de arquivos. A modularização entra **depois da Fatia 4**, quando existir suíte —
+aí é refatoração com rede, não aposta.
 
 ---
 
