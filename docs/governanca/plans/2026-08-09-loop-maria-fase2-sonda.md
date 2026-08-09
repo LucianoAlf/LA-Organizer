@@ -53,6 +53,48 @@ Estes fatos foram medidos, não presumidos. Se algum deixar de valer, o plano mu
 | Baseline da suíte | `gov` 8/0 · persistidor 13/0 · contrato OK | `backups/loop-maria-fase1/baseline-suite.txt` |
 | Cron atual da `maria` | `0 10 * * *` laudo · `40 10 * * *` vigia (UTC = 07:00/07:40 BRT) | `crontab -u maria` |
 
+### 0.1 Medições da Tarefa 1 e da Tarefa 3 (feitas em 09/08, 23:40 BRT)
+
+Antes de lapidar mais o desenho, foram medidos os cinco pontos que só a VPS responde. Três
+decidiram desenho; um refutou uma mitigação inteira.
+
+**`/chat/check` existe e responde.** Os cinco candidatos voltaram `isInWhatsapp: false`:
+
+```json
+{"query":"5521900000000","isInWhatsapp":false,"jid":"","error":"... is not on WhatsApp"}
+```
+
+→ A Tarefa 1 fecha por leitura pura. **O fallback de mandar `/send/text` não é necessário** — e
+era o único passo do plano que mandava mensagem para um número de terceiro.
+
+**Schema real do `.jsonl` de sessão** (arquivo simples, o que o `bridge.js:3163` lê — existe
+também um `*.trajectory.jsonl`, que é outra coisa e **não** serve):
+
+| Fato | Valor |
+|---|---|
+| Linha | `{id, message, parentId, timestamp, type}` |
+| `type` | `message` (1796×), `compaction` (27×), `custom`, `session`, `model_change`, `thinking_level_change` |
+| `timestamp` | **string ISO** `'2026-07-07T18:33:00.096Z'` — não epoch |
+| Papel | `message.role` ∈ `user` \| `assistant` \| `toolResult` — **aninhado**, não no topo |
+| Conteúdo | `message.content` é **lista de blocos**: `{type:"text"}`, `{type:"thinking"}`, `{type:"toolCall"}` |
+| Id da mensagem de entrada | **não existe** — só `toolCallId` e `responseId` |
+
+Três consequências diretas:
+
+1. **`casar_por_id = False`, decidido por medição.** O `id` do payload da UAZAPI **não** aparece
+   na sessão. O caminho preferido (redação literal, casada por id) não existe nesta máquina;
+   vale o sufixo `[msg_id]` no texto, com o desvio declarado e `redacao_usada` gravando o que foi
+   enviado.
+2. **`_texto` tem de ler só os blocos `type == "text"`.** Concatenar tudo levaria o bloco
+   `thinking` junto — e o raciocínio interno costuma conter números que a resposta não afirma. O
+   gate leria o pensamento e chamaria de resposta.
+3. **`_epoch` converte ISO → epoch.** Comparar string ISO com `time.time()` é o erro que já
+   apareceu no Replay Lab do TOM.
+
+**A compactação não é hipótese: já aconteceu 27 vezes** numa sessão do bridge, disparando por
+volta de **250 mil tokens** (`tokensBefore` 234.584 / 253.381 / 255.330). Isso **refuta a
+mitigação escrita no risco 2-bis** e entrega uma melhor — ver lá.
+
 **Consequência de desenho, medida e não suposta:** o `sessionId` da sonda é **determinístico e
 calculável antes do envio**. Não é preciso caçar arquivo novo, nem depender de `mtime`.
 
@@ -321,6 +363,11 @@ São **cinco**, um por redação (D-B2-5-bis) — não um.
 **Interfaces:** produz `SONDAS` (lista de 5 strings, formato `55DD9XXXXXXXX`), consumido pela
 Tarefa 5. **Todos os cinco** precisam passar em todos os passos; um reprovado invalida a lista.
 
+> **JÁ MEDIDO em 09/08 23:40 BRT — os cinco voltaram `isInWhatsapp: false`.** Os passos abaixo
+> ficam como o procedimento de **revalidação a cada rodada** que a spec §6.1 exige. O Passo 2
+> (envio) **não** precisou ser usado, e é o único do plano que mandaria mensagem a um terceiro:
+> só recorrer a ele se o `/chat/check` sair do ar.
+
 - [ ] **Passo 1: consultar os candidatos na UAZAPI**
 
 Rodar como `maria` (precisa do token do env):
@@ -342,9 +389,15 @@ print(urllib.request.urlopen(req, timeout=30).read().decode()[:800])
 PY'
 ```
 
-Esperado: cada candidato com indicação de **não** ter WhatsApp. O contrato exato do `/chat/check`
-não foi medido ainda — **se a resposta vier com outro formato, adapte a leitura, não o critério**.
-O critério é: só entra número que a API afirma não ter WhatsApp.
+Contrato **medido** em 09/08 — lista, um objeto por número:
+
+```json
+{"query":"5521900000000","isInWhatsapp":false,"jid":"","verifiedName":"",
+ "error":"the number 5521900000000@s.whatsapp.net is not on WhatsApp"}
+```
+
+Critério: só entra número com `isInWhatsapp == false`. **Ausência do campo não é `false`** — se
+o formato mudar, a revalidação falha e a rodada não roda; nunca assumir limpo por omissão.
 
 - [ ] **Passo 2: se a rota não existir ou responder erro, provar pelo caminho inverso**
 
@@ -533,7 +586,25 @@ def test_ignora_resposta_anterior_a_pergunta():
 def test_le_a_ultima_resposta_do_assistente():
     r = ultima_resposta(FIX, depois_de_epoch=0)
     assert r is not None and "3 contas" in r
+
+def test_ignora_bloco_de_thinking():
+    # MEDIDO: content e lista com blocos text E thinking. Se o raciocinio entrar,
+    # o gate le o pensamento e chama de resposta.
+    r = ultima_resposta(FIX_COM_THINKING, depois_de_epoch=0)
+    assert "7" not in r          # o 7 so existe no bloco thinking da fixture
+    assert "3 contas" in r
+
+def test_toolResult_nao_e_resposta():
+    # role=toolResult aparece 817x numa sessao real: e saida de ferramenta, nao fala
+    assert ultima_resposta(FIX_SO_TOOLRESULT, depois_de_epoch=0) is None
+
+def test_linha_de_compaction_nao_quebra_a_leitura():
+    # type=compaction nao tem `message`; medido 27x numa sessao real
+    assert ultima_resposta(FIX_COM_COMPACTION, depois_de_epoch=0) is not None
 ```
+
+As fixtures saem do formato medido: linha `{id, message, parentId, timestamp, type}`, com
+`message.content` como lista de blocos. **Não invente o formato — copie a forma da medição.**
 
 - [ ] **Passo 3: rodar e ver falhar**
 
@@ -550,7 +621,7 @@ lá — **não instale dependência nova**.
 ```python
 # sonda/sessao.py
 """Le a resposta da Maria do arquivo de sessao. Zero rede, zero LLM."""
-import json, os, re
+import datetime, json, os, re
 
 PREFIXO = "maria-uazapi"
 ARCH = "v5"
@@ -585,10 +656,49 @@ def ultima_resposta(caminho, depois_de_epoch):
     return achada
 ```
 
-`_papel`, `_epoch` e `_texto` são os três adaptadores que dependem do formato medido no Passo 1 —
-escreva-os lá, com um comentário citando o campo real. Se o registro não tiver timestamp,
-**pare**: sem tempo não dá para separar a resposta de hoje da de ontem, e ler resposta velha é
-exatamente o falso-verde que este plano existe para evitar.
+**Os três adaptadores já estão medidos (09/08) — escreva-os assim, e confira no Passo 1 se ainda
+valem:**
+
+```python
+def _papel(reg):
+    """MEDIDO: o papel mora em message.role, nao no topo. user | assistant | toolResult."""
+    if reg.get("type") != "message":
+        return None                       # compaction, session, model_change: nao sao fala
+    m = reg.get("message")
+    return m.get("role") if isinstance(m, dict) else None
+
+def _epoch(reg):
+    """MEDIDO: timestamp e string ISO '2026-07-07T18:33:00.096Z', NAO epoch.
+    Comparar a string crua com time.time() e o erro que ja apareceu no Replay Lab."""
+    t = reg.get("timestamp") or (reg.get("message") or {}).get("timestamp")
+    if not t:
+        return 0.0
+    return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+
+def _texto(reg):
+    """MEDIDO: content e LISTA de blocos. So `type == 'text'` conta.
+
+    Concatenar tudo traria o bloco `thinking` junto — e o raciocinio interno costuma
+    citar numeros que a resposta nao afirma. O gate leria o pensamento e chamaria de
+    resposta: verde (ou vermelho) pelo motivo errado.
+    """
+    m = reg.get("message") or {}
+    blocos = m.get("content")
+    if isinstance(blocos, str):
+        return blocos
+    if not isinstance(blocos, list):
+        return ""
+    return "\n".join(b.get("text", "") for b in blocos
+                     if isinstance(b, dict) and b.get("type") == "text")
+```
+
+Se o Passo 1 mostrar que o formato mudou, **pare e reescreva os três** — não force. E se o
+registro deixar de ter `timestamp`, pare de vez: sem tempo não dá para separar a resposta de hoje
+da de ontem, e ler resposta velha é exatamente o falso-verde que este plano existe para evitar.
+
+Cuidado com o arquivo certo: existe também um `*.trajectory.jsonl` por sessão, com envelope
+completamente diferente (`{data, source, ts, runId, …}`). **Não é ele.** O que o
+`bridge.js:3163` lê é o `.jsonl` simples.
 
 Os três ficam **importáveis** (sem `__all__` restritivo): `sonda-runner.py` usa `_papel` e
 `_epoch` em `chegou_ao_agente` (Tarefa 5). Adaptador duplicado é contrato dividido em dois lugares
@@ -945,7 +1055,7 @@ Duas coisas deliberadas:
 ```python
 # sonda/contencao.py
 """Asseracoes de contencao A1/A2/A4 (spec 6.2). Puras: quem le arquivo e o runner."""
-import json, os, re
+import datetime, json, os, re
 
 AGENTES_DE_ESCRITA = ("maria-owner", "maria-rose", "maria-ana", "maria-operacional")
 BASE_AGENTES = "/home/maria/.openclaw/agents"
@@ -1188,12 +1298,18 @@ ENV_PATH = "/home/maria/.openclaw/private/maria.env"
 if len(SONDAS) != K_REDACOES:
     raise SystemExit("ERRO: 1 sender por redação — len(SONDAS) tem de ser K_REDACOES")
 
-def injetar(env, sonda, texto):
-    """Injeta no webhook REAL. O payload imita o que a UAZAPI manda."""
+def injetar(env, sonda, texto, msg_id):
+    """Injeta no webhook REAL. O payload imita o que a UAZAPI manda.
+
+    `msg_id` vem de FORA e vai cru no payload. Gerar o id aqui dentro quebraria o
+    caminho preferido: chegou_ao_agente procuraria um id que nunca foi enviado, todo
+    item viraria infra_nao_chegou, e a rodada sairia invalida TODO DIA — enquanto o
+    caminho pior (sufixo no texto) seguiria funcionando.
+    """
     porta = env.get("MARIA_UAZAPI_BRIDGE_PORT", "2650")
     url = f"http://127.0.0.1:{porta}/webhook/uazapi/{env['MARIA_UAZAPI_BRIDGE_SECRET']}"
     corpo = {"message": {"sender": sonda, "chatid": sonda, "fromMe": False,
-                         "id": f"sonda-{int(time.time()*1000)}", "text": texto,
+                         "id": msg_id, "text": texto,
                          "senderName": "SONDA"}}
     req = urllib.request.Request(url, data=json.dumps(corpo).encode(),
                                  headers={"content-type": "application/json"})
@@ -1241,13 +1357,23 @@ def chegou_ao_agente(sonda, token, marco):
 **A ordem dentro do item é obrigatória e não é estética:**
 
 ```python
-marco = time.time()
-msg_id = f"sonda-{rodada_id}-{item['id']}-{i}"
-texto = casar_por_id and item["redacoes"][i] or f"{item['redacoes'][i]} [{msg_id}]"
-injetar(env, SONDAS[i], texto, msg_id=msg_id)
-resposta = esperar_resposta(SONDAS[i], marco)
+# UMA vez, no inicio da rodada — a A2 e por RODADA. Reaproveitar o marco do item
+# faria a A2 enxergar so a ultima invocacao e perder as sessoes tocadas antes.
+marco_rodada = time.time()
+rodada = {"rodada_id": rodada_id, "itens": [], "escrita": None,
+          "assercoes": {}, "custo_usd": 0.0, "duracao_s": 0.0,
+          "abortou": False, "motivo_aborto": None}
+controle_antes = controle_depois = None      # so o item de escrita usa os dois
 
-if not chegou_ao_agente(SONDAS[i], msg_id if casar_por_id else f"[{msg_id}]", marco):
+# ... por invocacao:
+marco_item = time.time()
+msg_id = f"sonda-{rodada_id}-{item['id']}-{i}"
+texto = item["redacoes"][i] if casar_por_id else f"{item['redacoes'][i]} [{msg_id}]"
+alvo = msg_id if casar_por_id else f"[{msg_id}]"
+injetar(env, SONDAS[i], texto, msg_id)
+resposta = esperar_resposta(SONDAS[i], marco_item)
+
+if not chegou_ao_agente(SONDAS[i], alvo, marco_item):
     veredito = {"veredito": "infra_nao_chegou", "motivo": "injeção não chegou ao agente"}
 elif not resposta:
     # chegou e nao respondeu: gateway lento, agente travado. NAO e a Maria errando.
@@ -1263,7 +1389,16 @@ elif item["tipo"] == "recusa":
 else:
     veredito = avaliar(item["tipo"], resposta, valor_controle,
                        ancora=item.get("ancora"), regex_contrato=item.get("regex_contrato"))
+
+# ... no fim da rodada, com o marco da RODADA, nao o do item:
+rodada["assercoes"]["a2"] = assercao_a2(
+    SONDAS[i], agentes_com_sessao_tocada(SONDAS[i], marco_rodada))[0]
 ```
+
+`marco_rodada` e `marco_item` são dois relógios diferentes de propósito: o item precisa saber se
+**aquela** resposta é nova; a A2 precisa ver **tudo** que a rodada tocou. Um só valor faria a A2
+enxergar apenas a última invocação — e uma sessão que nascesse em `maria-rose` no item 3 passaria
+despercebida.
 
 Os dois `infra_*` **nunca** contam como regressão da Maria, **nunca** viram finding contra ela e
 **não** entram na conta do `pass^k`. Rodada com muito `infra` é rodada inválida — avisa o Alf e
@@ -1326,21 +1461,28 @@ Critério: injete uma pergunta que contenha um token aleatório e confirme que *
 com esse token existe no `.jsonl`**, com epoch > marco. Se o token não aparecer, a injeção não
 chegou ao agente — qualquer verde depois disso é ilusão.
 
-- [ ] **Passo 4: medir se rotacionar o `.jsonl` realmente zera o contexto (risco 2-bis)**
+- [ ] **Passo 4: contar as compactações da sessão de cada sonda**
 
-Não presuma que mover o arquivo limpa a sessão — depende de o gateway reler o arquivo a cada
-turno, e isso não foi medido. O experimento:
+Medido em 09/08: a compactação se registra na própria sessão. Nada de mover arquivo.
 
-```bash
-ssh maria 'sudo -u maria bash -c "
-S=/home/maria/.openclaw/agents/maria-leitura/sessions/maria-uazapi-v5-maria-leitura-5521900000000.jsonl
-ls -la \$S; mkdir -p \$(dirname \$S)/arquivo; mv \$S \$(dirname \$S)/arquivo/teste-rotacao.jsonl"'
+```python
+def compactacoes(caminho):
+    """Quantas vezes esta sessao foi compactada. Aumentou = comparacao atravessou corte."""
+    if not os.path.exists(caminho):
+        return 0
+    n = 0
+    with open(caminho, encoding="utf-8", errors="replace") as fh:
+        for linha in fh:
+            if '"compaction"' in linha:
+                try:
+                    n += json.loads(linha).get("type") == "compaction"
+                except ValueError:
+                    pass
+    return n
 ```
 
-Turno 1 com um fato inventado → mover → turno 2 perguntando o fato. Aprovado só com as três:
-**(a)** nasceu `.jsonl` novo; **(b)** o movido parou de crescer (`ls -la` duas vezes); **(c)** a
-Maria **não** lembra o fato. Faltando qualquer uma, escrever no painel que a rotação **não**
-funciona e deixar o risco aberto — mitigação de mentira é pior que risco declarado.
+Subiu desde a rodada anterior → registra no acervo e os itens daquela sonda saem como
+`infra_compactou`, na mesma família dos outros dois `infra`. Nunca como regressão da Maria.
 
 - [ ] **Passo 5: rodar a bateria uma vez, à mão, e ler o resultado inteiro**
 
@@ -1602,18 +1744,23 @@ entrega um detector que não teria pego a crise de 05–08/08.
    acumula um turno por dia. Em algumas semanas isso vira contexto grande e a compactação entra —
    a mesma que zerou o `lessons.md` em 08/08.
 
-   A ideia de rotacionar o `.jsonl` (mover para `sessions/arquivo/`) **pressupõe que o gateway
-   reconstrói o contexto lendo o arquivo a cada turno**. Isso não foi medido. Se ele mantém
-   estado em memória, ou segura o descritor aberto, mover o arquivo não zera nada: os writes
-   seguem para o mesmo inode e a sessão "nova" nasce com o histórico inteiro, invisível. Seria
-   uma mitigação de mentira — pior que nenhuma, porque a gente pararia de olhar.
+   **A mitigação de mover o arquivo está DESCARTADA — medição de 09/08.** Ela pressupunha que o
+   gateway reconstrói o contexto lendo o arquivo a cada turno, o que nunca foi verificado. Não
+   precisa mais ser: a sessão registra a compactação **nela mesma**, como linha
+   `{"type": "compaction", "tokensBefore": …, "summary": …, "firstKeptEntryId": …}`. Foram
+   medidas **27** numa sessão real do bridge, disparando por volta de **250 mil tokens**.
 
-   **Experimento que decide, na Tarefa 5 depois do teste de vacuidade:** roda um turno pela sonda
-   0 com um fato inventado; move o `.jsonl`; roda outro turno perguntando aquele fato. Confere as
-   três coisas: (a) nasceu `.jsonl` novo, (b) o arquivo movido parou de crescer, (c) a Maria
-   **não** lembra o fato. Só com as três é que a rotação vira mitigação escrita. Se falhar, o
-   risco fica aberto e a alternativa é rodar as sondas por senders diferentes a cada N dias — que
-   custa números, não código.
+   Duas consequências que melhoram o desenho:
+
+   - **O risco é menor do que eu temi.** Uma pergunta curta por dia leva muito tempo para somar
+     250 mil tokens. Não é urgente.
+   - **É detectável direto, sem experimento e sem mexer em arquivo.** O runner conta as linhas
+     `type == "compaction"` na sessão de cada sonda. Aumentou desde a rodada anterior → registra
+     no acervo e avisa. Comparação de resultado atravessando uma compactação **não** vira
+     regressão da Maria: entra como `infra_compactou`, na mesma família dos outros dois `infra`.
+
+   Rotação de arquivo, se um dia for preciso, passa a ser decisão informada por um número
+   medido — não uma mitigação escrita no escuro.
 3. **A contenção é da ferramenta, não do SO.** Um agente futuro com `exec: full` alcança o
    held-out. Registrado, não resolvido nesta fatia. Some junto com o A6.
 4. **Custo.** Cada redação é uma invocação real do agente: **56 por rodada** (11 itens × k=5, mais
