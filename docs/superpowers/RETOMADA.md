@@ -1,5 +1,75 @@
 # RETOMADA — leia isto primeiro
 
+## ⏸️ ESTADO EM 09/08 ~10h — SEGURADO A PEDIDO DO ALF
+
+**O que está no ar e funcionando:** agente de governança (08:00 BRT, ciclo diário) · digest
+07:30 · DND no gate compartilhado · regra 17b · router Fatia 3 · teto separado do agente.
+
+**O que estamos ESPERANDO (única coisa em voo):** um ciclo FORÇADO do agente, disparado às
+09:47 para observar a primeira varredura de acervo com o teto novo. Teto de 30 min; se o
+`logs/gov-agent.log` na VPS não tiver uma 5ª linha `[GovRunner] 2026-08-09`, ele morreu no
+timeout. **Snapshot antes: 206 achados abertos, 8 de severidade alta, 12 já verificados.**
+Verificar depois: quantos fechou, se respeitou "alto fora da varredura em massa", e conferir
+NA MÃO uma amostra do que ele fechou. Se tiver fechado em massa sem prova → reverter o teto
+(`git revert e0127aa`) e voltar a 1 por rodada.
+
+**No RADAR, em ordem:**
+1. **Projeto novo — levar o modelo de governança para a Maria** (ver seção própria abaixo).
+2. Bloco de medições de **15/08** (Fatia A/Task 7, F3, sanitizador, digest, `AUTO_RETRY_DATE_POISON`, placar do agente).
+3. Tarefa que VENCE em dia não-útil — metade que sobrou da família C (agendamento, não silêncio).
+4. Segunda seção no relatório das 07h · crons de governança · `CONFAB-WRITE-DATE-NO-RELLABEL`.
+5. **Rotacionar o token da Hostinger** — é do Alf, segue pendente.
+
+---
+
+## 🆕 PROJETO — MODELO DE GOVERNANÇA PARA A MARIA (e depois para os outros agentes)
+
+**Pedido do Alf (09/08):** a Maria hoje só **alerta**. O laudo V1A diário chega no Telegram
+privado do *Alfredo* — que é amigo pessoal dele e não deveria ser mensageiro. Ele quer: (a) a
+Maria falando pelo **WhatsApp dela**, (b) o mesmo ciclo de **detectar → refutar → corrigir →
+provar → registrar → relatar** que o TOM tem, (c) depois replicar para os demais agentes, e
+(d) eventualmente um **painel de controle** (tokens gastos, desempenho por modelo, comparativos).
+
+**Contexto técnico dela é OUTRO STACK:** OpenClaw Gateway (cron `maria-laudo-diario-v1a`,
+`sessionTarget: isolated`), runtime Hermes, banco **Super Folha**, entrega Telegram.
+**Não dá para copiar código** deste repositório. O que transfere é o **modelo**.
+
+**O que a V1A dela JÁ tem de bom** (não refazer): somente leitura com proibições absolutas
+explícitas · cron único e rastreável · "nunca falhar em silêncio" · regra editorial total vs.
+limiar 48h · V1B travada atrás de gates.
+
+**O que falta é exatamente o que construímos aqui** — e cada item tem uma cicatriz nossa:
+- **Placar de eficácia com marca de autoria** — "dos que EU corrigi, quantos voltaram?". Sem a
+  marca ela mede o trabalho dos outros. E cuidado com campo de data MUTÁVEL apagando o
+  histórico (nos mordeu com `corrigido_em`).
+- **Refutar antes de acreditar** — em 08/08, 4 alvos seguidos JÁ tinham conserto no código.
+- **Prova de reversão** — sem teste vermelho, não corrige.
+- **Etapa 2.5, bug vs. pedido de coisa nova** — no financeiro isso é ainda mais crítico.
+- **Teto separado** — 1 correção por rodada, refutação sem teto.
+- **A ENTREGA NUNCA FICA COM O LLM** — a lição mais cara do dia: o agente consertou de verdade
+  e escreveu "restart disparado" sem ter reiniciado. Para a Maria: "corrigido automaticamente"
+  tem que ser **verificado por código** antes de virar texto, nunca afirmado pelo LLM.
+
+**Diferença obrigatória:** a matriz de autonomia dela é **mais conservadora** que a do TOM.
+Reversível e de baixo risco (vincular e-mail com alta confiança, coletar código, reprocessar
+rotina que falhou, organizar fila) = autônomo. Qualquer coisa que **mova ou comprometa
+dinheiro** (pagar, dar baixa, cancelar, alterar valor/vencimento/fornecedor, excluir, mesclar,
+resolver duplicidade com impacto) = **aprovação humana explícita**.
+
+**Checagens ANTES de propor qualquer coisa** (não pular — é a etapa 3 aplicada ao projeto):
+1. Ler o que já existe: `memory/projects/maria-financeiro.md`, `memory/agents/inventory.md`
+   (AGT-MARIA), o diagnóstico `MARIA-GOVERNANCIA-ATIVA-DIARIA-2026-08-08.md`.
+2. Confirmar no ambiente REAL dela: o WhatsApp da Maria está conectado e provado (número,
+   sessão, quem pode receber)? Sem isso, "entrega no WhatsApp dela" é hipótese.
+3. Os 4 gates da V1B ainda estão abertos? A governança ativa **depende** de escrita — não dá
+   para prometer auto-reparo com a escrita travada.
+4. Existe equivalente de `tom_known_issues` e `tom_audit_findings` no Super Folha, ou precisa
+   nascer? Sem os dois, não há placar nem acervo.
+5. Ela tem suíte de testes? Sem teste, "prova de reversão" não existe e o ciclo para na etapa 4.
+
+**Recomendação de sequência:** brainstorm → spec → plano, como fizemos aqui. O TOM levou
+spec+plano+6 tasks e ainda assim rendeu 3 defeitos que só apareceram executando.
+
 Ponto único de retomada do chat Revisor/Catraca. Atualizado em **08/08/2026, 22h**.
 
 Se você acabou de perder contexto (compactação ou sessão nova): **leia este arquivo inteiro
