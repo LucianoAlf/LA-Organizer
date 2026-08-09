@@ -757,7 +757,16 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
      outras correções da semana, não da Fatia A.** Atribuir isso a ela seria chute.
 7. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
-8. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
+8. ~~Segunda seção no relatório das 07h~~ — **FEITO em 09/08** (`59138e5` + `f59ea4e`).
+   `src/lib/governanca-resumo.js`: formatador PURO (9 testes) + loader que nunca lança (falhou
+   → seção some, relatório sai). `formatHealthReport(run, resumoGov='')` — sem o 2º argumento
+   o texto é byte a byte o de antes. Conteúdo com motivo: **reincidência é a linha que mais
+   importa** (velocímetro do agente); **"ciclo NÃO rodou" vira alerta explícito** (o pior caso
+   é ele parar e ninguém ver); rodada só de refutação NÃO é fracasso; zero não entra; máx. 2
+   códigos por linha. ⚠️ **Bug meu pego renderizando contra produção:** a 1ª versão contava
+   todo `verified_at` das 24h e deu **83** — 35 eram fechamentos MEUS à mão de 08/08. Agora
+   filtra por `temMarcaDoAgente(verified_note)` → **48**, que bate com o relatório do próprio
+   agente. Saída real conferida antes de ir ao ar.
 8b. ~~`incident_at` com hora BRT rotulada como UTC~~ — **REFUTADO em 09/08**, o campo está
    certo; era o agente lendo UTC. Protocolo corrigido.
 8c. ~~O acervo de 206 achados é invisível pro agente~~ — **FEITO em 09/08** (`e0127aa`). Teto
