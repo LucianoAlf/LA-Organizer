@@ -13,11 +13,44 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Fatia 3 do router/ledger** — o Alf definiu a ordem: agente de governança primeiro (✅ no ar
-desde 08/08 22:17), depois a Fatia 3. Risco invertido nela: falhar = TOM MUDO, então fail-open.
+**Escolher o próximo da FILA.** Os dois itens que estavam na frente saíram: o agente de
+governança está ✅ no ar (08/08 22:17) e a **Fatia 3 do router já estava completa** — ver
+abaixo. Recomendação: família C (tarefa que vence em dia não-útil, item 1 da fila).
 
-Depois disso, **as medições de 15/08** (lista no item 3 da fila). Não há bug aberto com sinal
-vivo no momento — os quatro alvos que persegui em 08/08 já tinham conserto no código.
+Não há bug aberto com sinal vivo no momento — os quatro alvos que persegui em 08/08 já tinham
+conserto no código.
+
+### ✅ FATIA 3 DO ROUTER — JÁ ESTAVA COMPLETA (medido em 09/08)
+
+Fui executar e **não havia o que fazer**: os 4 itens da régua estão no código e provados em
+produção. O que me mandou pra lá foi uma nota minha de 03/08 16:27 dizendo que faltava o 4º
+item (amarrar o outbound ao claim vencedor) — o commit que o fechou é `d8ddfb1b`, de **03/08
+16:41**. A nota estava certa quando escrita e envelheceu 14 minutos depois.
+
+**Cadeia verificada no código:** `webhook.js:245` claim → `:264` `enterTurn` → `:548`
+`runInTurn` (a fila não herda o contexto, então reentra) → `whatsapp.js:296` `beforeSend`
+gateia → `:307` `afterSend` grava. Flag `TOM_ROUTER_CLAIM=1` ligada na VPS.
+
+**Medição (ledger `tom_message_ownership`), turnos REAIS depois de 03/08 16:41:**
+
+| | |
+|---|---|
+| turnos concluídos | 214 |
+| com a saída amarrada à operação | **208** |
+| silenciosos (nenhum outbound) | 6 |
+| **vazamento (saiu fora do dono)** | **0** |
+
+⚠️ **Duas leituras que quase viraram bug falso:**
+1. `lease_token` é **0 em 1165 outbounds** — parece furo e não é. `tom_record_outbound` usa
+   `p_lease_token` como **guarda de posse** e deliberadamente não grava a coluna no insert: a
+   lease pertence à operação de entrada, não ao registro de saída.
+2. A cobertura de `operation_id` cai pra 9–26% em 05–07/08. É o **Replay Lab**: 26/55/19 turnos
+   QA nesses dias, e em replay o outbound é suprimido por projeto. Fora do replay, fecha.
+
+**7 inbounds presos em `claimed`:** 5 tiveram resposta (o claim só não recebeu o `finish` — é o
+early-return de mídia já documentado no `webhook.js:265`), 1 é QA e 1 é fixture
+(`wa_message_id=QA-AUTH-0001`, telefone `5599999999999`, sem colaborador). **Zero usuário real
+sem resposta.**
 
 ### ✅ `MEMORY_SAVE schema_invalid` — JÁ ESTAVA CORRIGIDO (08/08)
 
