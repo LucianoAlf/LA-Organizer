@@ -1,7 +1,46 @@
 # 🧭 PAINEL — Governança da Maria
 
 > **Documento único de controle.** Se você está perdido, leia só as duas primeiras seções.
-> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 19:20 BRT**.
+> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 19:55 BRT**.
+
+---
+
+## 0. RETOMADA — leia isto primeiro se o contexto foi compactado
+
+Este é o **chat único da governança da Maria**. Não abrir conversa nova: o Alf usa um chat por
+assunto, e a continuidade mora aqui + neste arquivo.
+
+**Regra de ouro: este documento é o que foi escrito, não necessariamente o que É.**
+Antes de agir sobre qualquer linha daqui, **medir o estado real**. Já aconteceu neste projeto de
+uma recomendação minha estar velha e eu quase executar em cima dela.
+
+**Os cinco comandos que devolvem o estado real em 30 segundos:**
+
+```bash
+ssh maria 'sudo -u maria python3 /home/maria/.openclaw/workspace/laudo/verificar-contrato.py'
+ssh maria 'sudo -u maria tail -6 /home/maria/.openclaw/workspace/laudo/laudo.log'
+ssh maria 'sudo -u maria cat /home/maria/.openclaw/workspace/backups/loop-maria-fase1/baseline-suite.txt'
+ssh maria 'sudo crontab -u maria -l | grep -v "^#"'
+ssh maria 'sudo -u maria python3 -c "import json;d=json.load(open(\"/home/maria/.openclaw/openclaw.json\"));print([a for a in d[\"agents\"][\"list\"] if a.get(\"id\")==\"laudo\"])"'
+```
+
+Para o acervo, consultar o Super Folha (`ubdvtjbitozhkuvvqkxj`) via MCP Supabase:
+`select count(*) from maria_gov_findings` / `maria_gov_runs`.
+
+**Onde ficam as coisas:**
+
+| o quê | onde |
+|---|---|
+| código do laudo (B0) | `/home/maria/.openclaw/workspace/laudo/` na VPS `maria` |
+| código do placar (B1) | `/home/maria/.openclaw/workspace/gov/` |
+| backup dos dois | repo **privado** `LucianoAlf/maria-backup` (script `scripts/backup-to-github-safe.sh --push`) |
+| tabelas do Loop | Super Folha `ubdvtjbitozhkuvvqkxj`, prefixo `maria_gov_` |
+| spec e plano | `specs/2026-08-09-loop-maria-design.md` · `plans/2026-08-09-loop-maria-fase1.md` |
+
+**Zona congelada, nunca tocar sem OK explícito:** `bridge.js` e `skills/*.md` da Maria.
+
+**Como fechar um checkpoint** (§10 tem a regra inteira): medir → provar com número → escrever aqui
+→ reescrever a §2 com o próximo passo. Sem prova medida, não fecha.
 
 ---
 
@@ -14,20 +53,43 @@ A missão é o **Loop de governança da Maria** (Trilha B). A pausa de seguranç
 roda com **4 ferramentas** em vez de 175, e agora **persiste o que encontra** — o acervo do Loop
 existe e tem dado real dentro.
 
-Sobrou da Trilha A: **A6** (o Alfredo roda como root), **A7** (contenção por SO na Maria) e
-**A8** (a `service_role` do TOM vazada — sangramento estancado, chave ainda viva, o Alf adiou).
+Sobrou da Trilha A: **A6** (o Alfredo roda como root) e **A8** (a `service_role` do TOM vazada —
+sangramento estancado, chave ainda viva, o Alf adiou). O **A7 fechou em 09/08**.
 
-## 2. PRÓXIMO PASSO
+## 2. PRÓXIMO PASSO — **B2, a sonda**
 
-A primeira prova sem ninguém olhando é a rodada automática de **10/08 às 07:00 BRT**.
+Antes de tudo: **conferir a rodada automática de 10/08 às 07:00 BRT** — é a primeira sem ninguém
+olhando.
 
-| # | O quê | Quem faz |
+**O B2 começa escrevendo o plano, não executando.** A spec (§6) já fixou o desenho; o que falta é
+o plano de execução, que a `plans/2026-08-09-loop-maria-fase1.md` deixou de fora de propósito
+("Fatias 2 a 5 ganham planos próprios"). O pré-requisito caiu: o **A7 fechou**, então o corretor
+já não alcança o `maria.env`.
+
+**O que o B2 tem de entregar** (resumo da spec §6 — reler a spec antes de planejar):
+
+1. Ator de classe **SONDA** entrando por `MARIA_UAZAPI_ALLOWED_NUMBERS`, que é env — **sem tocar
+   no `bridge.js`**. Número validado como **sem WhatsApp** via `/chat/check`, revalidado a cada rodada.
+2. Resposta lida do **arquivo de sessão**, não do WhatsApp — a sonda não depende de entrega.
+3. **Duas asserções por rodada** (§6.2): o ator SONDA tenta escrever e **precisa ser recusado**; e o
+   número **nunca** resolve como `owner`/`rose`/`ana`. Asserção sobre a resolução de papel, não sobre
+   o efeito — cair em `readonly_prepare` é herança de semântica, não trava.
+4. **Baseline antes do veredito** (§6.3): ~10 perguntas conhecidas × 3 rodadas para calibrar o
+   limiar do `pass^k`. Sem baseline, `pass^k` mede sorte e o corretor caça vermelho falso.
+5. **Teste negativo obrigatório**: pergunta plantada com resposta errada que o verificador **precisa
+   reprovar**. Sem ela a fatia não fecha — senão é carimbo, não verificador.
+6. Verificador de **outra família** de modelo; gravar `modelo_verificador` e `provedor_verificador`
+   em `maria_gov_probes` para separar regressão da Maria de deriva do verificador.
+7. **Held-out** (§6.4): cada sonda deriva de **incidente real**, escrita pelo Catraca, revisada pelo
+   Alf, fora do alcance da credencial do corretor.
+
+**Fila depois do B2:**
+
+| # | O quê | Quem |
 |---|---|---|
-| — | **Conferir amanhã 07:00** se o laudo chegou sozinho (primeira rodada automática) | ALF + Claude |
-| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | Claude — **fatia própria, precisa de plano** |
-| **A6** | Rebaixar o Alfredo de root | Claude — **janela própria** (17 GB, 4 crons, agente principal do Alf) |
+| **A6** | Rebaixar o Alfredo de root — 17 GB, 4 crons, agente principal do Alf. **Janela própria** | Claude |
+| **A8** | Rotacionar a `service_role` do TOM — adiado pelo Alf em 09/08, chave segue viva | ALF decide |
 | — | Colar o **token novo do gateway** na UI (arquivo já entregue) | **ALF** |
-| **A8** | Rotacionar a `service_role` do TOM — **adiado pelo Alf em 09/08**, chave segue viva | ALF decide quando |
 
 *(A frase antiga "na VPS nada foi alterado" venceu em 09/08 — desde então mexeram, com prova, o
 A3, o A5, o B0, o A0-bis e o B1. Cada um tem sua linha de evidência abaixo.)*
