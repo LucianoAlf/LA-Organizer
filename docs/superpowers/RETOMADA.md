@@ -347,10 +347,12 @@ culpa que o histórico não sustenta — é voz/prompt, fora da minha alçada").
 08/08 — pegou a data em UTC. Corrigido no protocolo (usar `TZ=America/Sao_Paulo date +%F`).
 Em operação normal (08:00 BRT = 11:00 UTC) não apareceria: só surge em rodada forçada à noite.
 
-⚠️ **Achado de dado, NÃO corrigido:** `incident_at` em `tom_audit_findings` parece guardar hora
-de BRT rotulada como UTC — o turno literal era 06/08 16:00:57 e o campo renderiza 13:00 em BRT.
-Isso é do escritor da auditoria, não do agente. Impacta comparações de data no limite de 3h.
-Investigar antes de confiar em `incident_at` para qualquer decisão fina.
+✅ **REFUTADO (09/08) — `incident_at` está CERTO.** Eu tinha registrado aqui a suspeita de que o
+campo guardava hora BRT rotulada como UTC. Medi contra o turno real em `conversation_history`:
+delta ~0 em 5 de 6 findings recentes. **Quem errou foi o agente**, que citou "06/08 16h00" para
+um turno de 13:00 BRT — leu o `timestamptz` em UTC e rotulou como BRT. Protocolo agora manda
+converter com `at time zone 'America/Sao_Paulo'` ao citar hora do banco. Mesma família do
+`[gov-agent 09/08]`: a correção anterior cobria a data de hoje, não a leitura de timestamps.
 
 ### 🔴 1ª rodada AUTÔNOMA (09/08 08:21) — conserto excelente, entrega confabulada
 
@@ -625,8 +627,13 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 7. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
 8. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
-8b. **`incident_at` com hora BRT rotulada como UTC** (achado em 08/08, ver seção do agente de
-   governança). Confirmar no escritor da auditoria antes de usar o campo em decisão fina.
+8b. ~~`incident_at` com hora BRT rotulada como UTC~~ — **REFUTADO em 09/08**, o campo está
+   certo; era o agente lendo UTC. Protocolo corrigido.
+8c. **O acervo de 206 achados é invisível pro agente** (medido 09/08): a janela dele é de 2
+   dias e só 1 achado cai nela; 106 têm +30 dias, 83 têm 8-30. Ele vai rodar a seco. Proposta:
+   separar o teto — **1 CORREÇÃO por rodada** (a restrição real é banda de revisão de código)
+   mas **refutação sem limite**, priorizando por severidade e não por recência. Refutar não
+   muda código, então não consome revisão.
 9. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
    Hostinger; confirmação ao cancelar tarefa recorrente (é UI, esbarra no freeze).
 

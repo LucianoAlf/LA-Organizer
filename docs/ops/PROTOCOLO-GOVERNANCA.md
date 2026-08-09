@@ -86,6 +86,12 @@ em UTC, que depois das 21h BRT já virou o dia seguinte. Aqui um registro datado
 profecia: o próximo ciclo lê o que você escreveu e repete o erro. Isso já aconteceu na PRIMEIRA
 rodada (08/08 22:16 BRT), gravada como "[gov-agent 09/08]".
 
+⚠️ **Hora vinda do BANCO também.** As colunas são `timestamptz` e o driver devolve UTC. Ao
+citar horário de um incidente ou de uma fala, converta: `at time zone 'America/Sao_Paulo'` no
+SQL. Na primeira rodada você escreveu no grupo que a fala do Quintela foi "06/08, 16h00" — o
+turno real foi **13:00 BRT** (16:00 era UTC). O `incident_at` estava certo; a leitura é que
+somou 3h. Horário errado num relatório faz a pessoa procurar a conversa errada.
+
 ## ETAPA 7 — Relate. **NÃO reinicie o TOM.**
 
 Poste o resultado no grupo e pare por aí. **O restart não é seu:** quem reinicia é o
