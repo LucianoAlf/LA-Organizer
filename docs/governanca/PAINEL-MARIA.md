@@ -294,6 +294,33 @@ os tokens vão em `detalhe`. **Vazio ali significa "não medido", nunca "não mu
 auditoria do `superfolha_sql.py`. Sem credencial e sem dado financeiro, mas é **log** e foi parar
 no GitHub. `*.jsonl` entrou no exclude; hoje há **0** arquivos de log/estado versionados.
 
+### Formato do laudo — fixado a pedido do Alf (09/08, 19:40 BRT)
+
+O Alf comparou duas rodadas do mesmo dia e preferiu a das 17:31 (emoji de estado, negrito,
+bullets, separadores) à das 19:01 (parágrafo corrido). Motivo dele, textual:
+*"preciso muito de ter hierarquia semântica, porque senão fica um bloco de texto. Eu não consigo ler"*.
+
+**A causa não era o que parecia.** Minha primeira hipótese foi o agente `laudo` do A0-bis carregar
+menos contexto. Medido: os **7 arquivos injetados são idênticos** nos dois agentes
+(`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `MEMORY.md`); a
+diferença de 58k → 21k prompt tokens é só a **definição das 175 ferramentas**. Hipótese refutada.
+
+A causa real: **o prompt nunca especificou formatação** — só a lista de seções. O formato bonito
+das 17:31 foi **sorte do modelo**, e ia variar todo dia. Agora é instrução.
+
+**Isso mexeu no contrato de 3 pontas:** as seções 8 e 9 passaram a ser *"Ações financeiras sem
+motivo"* e *"Achados informativos sem referência estável"*, com "Ação humana" e "Próxima execução"
+fora da numeração — 11 blocos em vez de 9. **Prompt, gate e persistidor foram atualizados juntos.**
+Divergir ali é falha silenciosa: seção não reconhecida não vira finding, e ninguém vê erro.
+
+Peça nova: `verificar-contrato.py`, no baseline da suíte. Compara os três e falha se divergirem.
+Novo golden-file do prompt: `sha256:5d3cdac39d938be3` (era `80a8cdc9fbecccb6`).
+
+⚠️ **Ponto para o Alf decidir depois:** o formato que ele aprovou nomeia colaboradoras (*"Rose:
+enviar comprovante…"*), mas a regra de PRIVACIDADE do próprio prompt diz "nunca incluir nome de
+colaborador". Na prática a atribuição é útil e ele aprovou assim — mas as duas regras se
+contradizem no papel. Não mexi; fica registrado para não virar surpresa numa auditoria.
+
 ### ⚠️ B1 fechou o plano, não a Fatia 1 *(resolvido acima)*
 
 A Fatia 1 da spec pede **quatro** coisas: as tabelas **e suas RPCs**; **o laudo passa a persistir
