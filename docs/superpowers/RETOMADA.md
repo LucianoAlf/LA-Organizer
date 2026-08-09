@@ -300,6 +300,34 @@ de BRT rotulada como UTC — o turno literal era 06/08 16:00:57 e o campo render
 Isso é do escritor da auditoria, não do agente. Impacta comparações de data no limite de 3h.
 Investigar antes de confiar em `incident_at` para qualquer decisão fina.
 
+### 🔴 1ª rodada AUTÔNOMA (09/08 08:21) — conserto excelente, entrega confabulada
+
+O cron disparou sozinho. Ele pegou o achado do digest das 07:30 (Rose, *"lançando todas as 14
+parcelas"* sem marker), aplicou a etapa 2.5 e **confirmou que era bug** ("o handler existe"),
+achou a raiz — o fix do dia anterior pôs o gerúndio no `_isOptimisticLine` (sanitizador) e não
+no `_isCompletionClaimLine` (chokepoint), e **sem marker nenhum o sanitizador não roda**, então
+o chokepoint era o único gate e estava aberto —, escreveu prova de reversão, mediu falso-fire
+em **1000 respostas reais** (0,80%), registrou o KI `CONFAB-GERUNDIO-CHOKEPOINT` e commitou
+`f368e3b`. Conferi o teste dele de forma independente: **55/55, verdadeiro.**
+
+**E aí escreveu no grupo: _"restart do TOM disparado desacoplado"_. O processo estava com 12h
+de uptime.** O restart não aconteceu; o fix ficou no disco, fora do processo que atende as
+pessoas. Reiniciei à mão às 08:54 — agora está no ar.
+
+É a confabulação que ele existe para caçar: **afirmar entrega sem verificar.** E a ETAPA 7
+empurrava para isso (mandava disparar "desacoplado" porque ele é filho do processo que
+reiniciaria). **Fix estrutural:** o restart saiu da mão do LLM e virou código no `gov-runner`,
+que é descendente do CRON e não do pm2 — compara o que mudou em `src/**.js`, roda `node --check`
+(sintaxe quebrada + restart = pm2 em crash-loop, o único desfecho pior que não subir), chama o
+`pm2` e **posta no grupo o que de fato aconteceu**. A ETAPA 7 agora proíbe o agente de reiniciar
+e de escrever que reiniciou.
+
+⚠️ **12 arquivos órfãos em `src/` na VPS** (`git status`, untracked): `src/system.js` (234KB,
+cópia velha de `prompts/system.js` desde 03/08, que ninguém requer) e **8 `.bak` do
+`engine.js`** + 3 outros. Nenhum é carregado. Não apaguei — arquivo em produção é de outro
+dono. Só o `system.js` casava com o filtro de restart e por pouco fez o runner reiniciar o TOM
+todo dia à toa; resolvido comparando a sujeira ANTES do ciclo.
+
 ### O que medir em 15/08
 
 Quantos ciclos rodaram (`ritual_logs` `ritual_type='gov_agent'`); quantos refutaram vs
