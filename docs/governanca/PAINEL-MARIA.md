@@ -136,10 +136,16 @@ script que lê.
 
 **O que foi feito:** `agents.list[laudo].tools.exec = {"security": "allowlist"}`.
 
-| | |
-|---|---|
-| antes | `68` (leu o arquivo de credenciais inteiro) |
-| depois | **`NEGADO`** |
+| medida | antes | depois |
+|---|---|---|
+| agente lê `maria.env` | **`68`** linhas | **`NEGADO`** |
+| laudo ainda entrega | — | `ENTREGUE chars=3200 secoes=11`, exit 0 |
+| consultou o banco de verdade | — | **130 queries**, 2 erros (o `superfolha_sql.py` registra cada uma) |
+
+A terceira linha é a que importa: *entregue* não prova *completo*. Se a allowlist tivesse
+bloqueado o `superfolha_sql.py`, o laudo sairia com as seções vazias e mesmo assim "entregue".
+As 130 queries provam que ele continuou consultando — e as últimas são às tabelas `maria_gov_*`,
+ou seja, **o laudo já está lendo o acervo do próprio Loop**.
 
 ⚠️ **Pegadinha do schema:** `tools.exec.mode` **não pode** coexistir com `tools.exec.security` —
 `openclaw config validate` recusa com *"cannot be combined"*. Usar só `security`.
