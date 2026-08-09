@@ -650,7 +650,20 @@ async function checkUncoveredGroups() {
   return { status: 'warning', detail: `🔴 ${count} grupo(s) com atrasada e cobrança desligada: ${list}` };
 }
 
+// ─────────────────────────────────────────────────────────────────
+// CHECK — Paridade git↔produção (09/08). Dois incidentes no MESMO dia motivaram:
+// (a) o agente de governança commitou um fix e o commit ficou só na VPS — o próximo
+//     `reset --hard origin/main` teria apagado; (b) um deploy rodou `reset --hard` no meio da
+// varredura dele e apagou do disco a correção ainda não commitada.
+// As duas são silenciosas: nada quebra, nada loga, o trabalho some. Ver src/lib/git-paridade.js.
+// ─────────────────────────────────────────────────────────────────
+async function checkGitParidade() {
+  const { avaliarParidade, lerEstadoGit } = require('../lib/git-paridade');
+  return avaliarParidade(lerEstadoGit());
+}
+
 const ALL_CHECKS = [
+  ['git_paridade',           checkGitParidade],
   ['dream_recent',           checkDreamRecent],
   ['weekly_summary',         checkWeeklySummary],
   ['memories_embedding',     checkMemoriesEmbedding],
