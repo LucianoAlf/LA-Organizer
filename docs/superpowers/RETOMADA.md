@@ -11,6 +11,58 @@ irmãos, e só valem quando você precisar deles:
 
 ---
 
+## ✅ FAMÍLIA C — SILÊNCIO (09/08): duas raízes distintas, as duas corrigidas
+
+**Pedido do Alf:** *"a pessoa fala 'Tom, hoje é feriado, não me manda mensagem' — acabou, tem
+que cortar na hora"*, e *"normalmente a pessoa esquece de ligar"* a preferência recorrente.
+
+### Raiz 1 — o chokepoint de silêncio esquecia o DND (pontual)
+
+O TOM **já gravava** `do_not_disturb_until` certo (`applyDnd`, cap 24h) — provado com o caso do
+Matheus (30/06 14:08 → 01/07 08:00: **zero proativo na janela**). O problema era quem LÊ.
+
+`isQuietNow` é o gate compartilhado — **66 pontos** o consultam — e não lia o campo. Dos 8
+arquivos que gateiam por ele, **7 nunca checavam DND**; só o dispatcher checava, à mão, em 14
+pontos. O pior: `send-proativo.js`, documentado como *"o silêncio fica embutido aqui — é
+impossível esquecer o gate"*, com trava de deploy própria. **O chokepoint que existe pra
+ninguém esquecer o silêncio esquecia o DND.**
+
+Fix num lugar só: `isQuietNow` checa `do_not_disturb_until` antes de tudo; os 66 herdam.
+Colunas entraram no `QUIET_PREF_COLUMNS` (sem isso o caminho por UUID buscaria prefs sem o
+campo — o footgun do SELECT parcial do caso Quintela). DND é **global** (não é por contexto) e
+vence até `defaultNightGate:false`, senão o feriado continua chegando pelo lembrete que a
+própria pessoa agendou. Provado na VPS: `dnd:feriado` → `quiet:true`; vencido → passa.
+
+### Raiz 2 — reclamação não vira preferência (recorrente)
+
+O padrão, medido: **pedido explícito funciona; menção incidental evapora.**
+
+| pessoa | o que fez | `quiet_days_work` |
+|---|---|---|
+| Arthur (07/06) | pediu "não me manda no domingo" | `[0]` ✓ |
+| Ana Paula (26/07) | perguntou como faz | `[0]` ✓ |
+| **Rose (01/08)** | *"muda pra segunda pfvr, amanhã é domingo, n trabalho"* | **`[]`** ✗ |
+| **Clayton (19/07)** | *"Tom, hoje é domingo, marcar para segunda feira"* | **`[]`** ✗ |
+
+Nos dois casos abertos o TOM **respondeu certo e disse de volta** que era folga ("domingo é
+folga 🙌", "Bom domingo!") — e não gravou. No domingo seguinte o briefing disparou e virou
+finding. A regra 17 só dispara em pedido explícito de silêncio; informação dada de passagem
+não aciona nada. Fix: **regra 17b** — resolve o pedido imediato, depois oferece em uma linha
+("quer que eu pare de te acionar aos domingos?") e persiste via regra 17. Máximo uma oferta por
+conversa; proibido prometer sem o marker. Guardada por `regras-silencio.test.js` (texto), senão
+uma refatoração apaga a regra e nada quebra.
+
+### O 3º pedido já estava pronto
+
+*"Se a pessoa falar 'já tá ligado e você continua mandando', ele tem que relatar pro agente de
+governança"* — **já funciona**: o auditor tem a categoria `proactive_overreach` com esses
+literais ("não me manda agora", "hoje é meu descanso", "dia de folga/domingo") e manda emitir
+**mesmo se o TOM se desculpar depois**. Vira finding → digest 07:30 → agente 08:00.
+
+⚠️ **Contraponto ao "TOM manda a pessoa ir no app":** ele **já configura sozinho** (Arthur e Ana
+Paula provam). Mandar ir em *Mais* seria rebaixar o que já funciona. Não implementei — se você
+quiser mesmo assim, é uma linha na 17b.
+
 ## PRÓXIMO PASSO (é só isto)
 
 **Escolher o próximo da FILA.** Os dois itens que estavam na frente saíram: o agente de
