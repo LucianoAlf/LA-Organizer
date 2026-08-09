@@ -130,6 +130,47 @@ test('pedido muito longo é cortado no aviso', () => {
   assert.ok(m.textoDePedidosPerdidos().length < 400, 'aviso não pode virar parede');
 });
 
+// O texto existir não basta: quem faz ele CHEGAR é o canal, e o drain hook só usa canal que
+// alguém tenha configurado. Quem configura é o group-chat-engine, no processo do TOM — o
+// gov-runner roda em processo próprio e nunca configurou, então lá o aviso morria no `if
+// (!_canalAviso) return` e um restart no meio do ciclo era silêncio total.
+test('sem canal configurado, o aviso de reinício não chega a ninguém', async () => {
+  const m = carregar(LIGADO);
+  m._registrarPedido('Alf', 'roda a auditoria');
+  const r = await m.avisarPedidosPerdidos();
+  assert.strictEqual(r.avisou, false);
+  assert.match(r.motivo, /canal/i);
+});
+
+test('com o canal ligado, o aviso de reinício chega inteiro', async () => {
+  const m = carregar(LIGADO);
+  const postadas = [];
+  m.configurarCanalAviso((t) => { postadas.push(t); return { id: 'm1' }; });
+  m._registrarPedido('Hugo', 'me traz os erros de ontem');
+  const r = await m.avisarPedidosPerdidos();
+  assert.strictEqual(r.avisou, true);
+  assert.strictEqual(postadas.length, 1);
+  assert.match(postadas[0], /Hugo/);
+});
+
+test('reinício limpo não avisa nada, nem com o canal ligado', async () => {
+  const m = carregar(LIGADO);
+  const postadas = [];
+  m.configurarCanalAviso((t) => { postadas.push(t); return { id: 'm1' }; });
+  const r = await m.avisarPedidosPerdidos();
+  assert.strictEqual(r.avisou, false);
+  assert.strictEqual(postadas.length, 0, 'reinício limpo não pode acordar o grupo');
+});
+
+test('canal que quebra não derruba o shutdown', async () => {
+  const m = carregar(LIGADO);
+  m.configurarCanalAviso(() => { throw new Error('uazapi 503'); });
+  m._registrarPedido('Alf', 'roda a auditoria');
+  const r = await m.avisarPedidosPerdidos();
+  assert.strictEqual(r.avisou, false);
+  assert.match(r.motivo, /503/);
+});
+
 // As regras de entrega vivem num .md editável sem deploy. Se o caminho quebrar, o agente
 // volta a despejar parede de texto no WhatsApp sem nada falhar — daí o teste.
 const FORMATO = require('path').join(__dirname, '../../docs/ops/FORMATO-GRUPO.md');

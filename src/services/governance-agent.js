@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const opsAgent = require('./ops-agent');
 const { calcularPlacar, MARCA_AGENTE } = require('../lib/placar-governanca');
+const { entregar } = require('../lib/entrega');
 
 // Os .md são resolvidos a partir DESTE arquivo, não de um caminho absoluto de produção: em
 // /opt/LA-Organizer dá exatamente o mesmo lugar, e localmente o teste consegue ler o protocolo
@@ -123,8 +124,12 @@ corrigidos, Y falso-positivo"). Não liste um por um — é WhatsApp.`;
 
 /**
  * Roda o ciclo e entrega no grupo. `postar` e `rodar` são injetados (testável, sem ciclo de
- * require com o group-chat-engine). Só grava o log DEPOIS de postar: se o envio falhar, o
- * próximo tick da janela retenta.
+ * require com o group-chat-engine). Só grava o log com a entrega CONFIRMADA: se o envio
+ * falhar, o próximo tick da janela retenta.
+ *
+ * Confirmada = `postar` resolveu com valor truthy (ver src/lib/entrega.js). Isso é contrato,
+ * não detalhe: enquanto era só "o await não lançou", o `postOpsResult` devolvendo null fechava
+ * o dia sem nada ter chegado ao grupo, e o gate de idempotência bloqueava o retry.
  */
 async function rodarCicloGovernanca(sb, { postar, ymd, force = false, rodar = null } = {}) {
   if (!GOV_ON) return { rodou: false, motivo: 'desligado' };
@@ -144,9 +149,11 @@ async function rodarCicloGovernanca(sb, { postar, ymd, force = false, rodar = nu
   const briefing = montarBriefing();
   if (!briefing) {
     console.error(`[GovAgent] protocolo ausente em ${PROTOCOLO_PATH} — ciclo abortado`);
-    await postar('⚠️ Não rodei o ciclo de governança: não achei o arquivo do protocolo '
+    // O log fecha o dia pra não repetir o aviso a cada tick — mas só se o aviso TIVER chegado.
+    // Fechar sem entrega significaria ninguém nunca ficar sabendo que o agente está parado.
+    await entregar(postar, '⚠️ Não rodei o ciclo de governança: não achei o arquivo do protocolo '
       + `(${PROTOCOLO_PATH}). Sem ele eu rodaria sem as travas, então preferi parar. `
-      + 'É problema de deploy — o .md não subiu.');
+      + 'É problema de deploy — o .md não subiu.', 'o aviso de protocolo ausente');
     await registrarLog(sb, ymd, 'abortado: protocolo ausente');
     return { rodou: false, motivo: 'sem protocolo' };
   }
@@ -162,7 +169,7 @@ async function rodarCicloGovernanca(sb, { postar, ymd, force = false, rodar = nu
     ? r.text
     : '⚠️ Rodei o ciclo de governança e voltei sem texto — isso é bug meu, não resultado. Não mexi em nada.';
 
-  await postar(texto);
+  await entregar(postar, texto, 'o relatório do ciclo');
   await registrarLog(sb, ymd,
     `fechados=${placar.fechados} reincidentes=${placar.reincidentes.length} parada=${placar.emParada.length}`
     + `${acervo ? ` acervo=${acervo.total}` : ''}`);

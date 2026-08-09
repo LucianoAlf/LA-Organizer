@@ -57,6 +57,37 @@ function decidirRestart({ arquivosMudados = [], sintaxeOk = true } = {}) {
   return { restart: true, motivo: 'codigo_mudou', arquivos: codigo };
 }
 
+// ── INTERRUPÇÃO NO MEIO DO CICLO NÃO PODE MORRER CALADA ────────────────────────────────────
+// O ops-agent registra um drain hook que avisa o grupo sobre pedido perdido num restart, mas
+// aqui ele nasce órfão: hook só roda dentro do `installGracefulShutdown`, que o index.js
+// instala no processo do TOM — e este runner é outro processo, sem handler de sinal nenhum.
+// Resultado: `pm2 restart`/deploy no meio do ciclo (até 30 min de Opus 5) matava tudo sem uma
+// linha pro grupo. Mesmo desfecho silencioso que a ETAPA 7 existe pra evitar.
+//
+// Não reusa o graceful shutdown do TOM de propósito: aquele espera a fila de webhooks drenar
+// (`activeProcesses`), que aqui é sempre zero. O runner só precisa de: sinal → avisa → sai.
+const SINAIS_DE_PARADA = ['SIGTERM', 'SIGINT'];
+
+/** Liga canal + handler de sinal. Devolve a função que desfaz — o teste precisa, produção não. */
+function instalarAvisoDeInterrupcao(postar) {
+  const opsAgent = require('../services/ops-agent');
+  opsAgent.configurarCanalAviso(postar);
+  const registrados = SINAIS_DE_PARADA.map((sig) => {
+    const h = () => {
+      console.warn(`[GovRunner] ${sig} no meio do ciclo — avisando o grupo antes de sair`);
+      Promise.resolve(opsAgent.avisarPedidosPerdidos())
+        .catch((e) => console.error('[GovRunner] nem o aviso de interrupção foi:', e.message))
+        .finally(() => process.exit(0));
+    };
+    process.on(sig, h);
+    return [sig, h];
+  });
+  return () => {
+    for (const [sig, h] of registrados) process.removeListener(sig, h);
+    opsAgent.configurarCanalAviso(null);
+  };
+}
+
 function git(args) {
   try { return execFileSync(GIT, args, { cwd: REPO, encoding: 'utf8' }).trim(); }
   catch (e) { console.error(`[GovRunner] git ${args.join(' ')} falhou: ${e.message}`); return ''; }
@@ -110,6 +141,7 @@ async function main() {
 
   // quiet-exempt: canal de engenharia do Alf e do Hugo, não é envio a colaborador.
   const postar = (txt) => postOpsResult(supabase, grupo, txt);
+  instalarAvisoDeInterrupcao(postar);
   const force = process.argv.includes('--force');
   const headAntes = git(['rev-parse', 'HEAD']) || null;
   // Fotografia da sujeira ANTES: o que já estava assim não é obra deste ciclo.
@@ -165,7 +197,10 @@ async function aplicarRestart(headAntes, sujosAntes, postar) {
   }
 }
 
-module.exports = { decidirRestart, arquivosAlterados, novosEmRelacaoA, pathsSujos, sintaxeOkDe };
+module.exports = {
+  decidirRestart, arquivosAlterados, novosEmRelacaoA, pathsSujos, sintaxeOkDe,
+  instalarAvisoDeInterrupcao,
+};
 
 if (require.main === module) {
   main()

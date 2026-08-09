@@ -11047,6 +11047,32 @@ async function processMessage(phone, text, raw = {}) {
             base = (base ? base + '\n\n' : '') + `_⚠️ Registrei ${okCount} de ${okCount + failCount}. Algumas falharam — me chama se algo ficar faltando._`;
           }
         }
+        // CONFAB-WRITE-DATE-NO-RELLABEL (Anne 05/08, alta): o prompt pré-computa o
+        // dia-relativo do lado da LEITURA, mas na ESCRITA a data nasce no marker no
+        // mesmo sopro da fala — sem rótulo pronto, o LLM narra de cabeça. Gravou
+        // 07/08 CERTO e disse "pra amanhã" numa quarta; a Anne leu "manhã", achou que
+        // ele tinha errado o que estava certo e gastou 3 turnos corrigindo.
+        // Este é o ESPELHO do auto-align logo acima: lá o dado é corrigido pela fala do
+        // usuário, aqui a fala é corrigida pelo dado gravado. Só age quando a
+        // correspondência é inequívoca — turno sem falha e UMA data só; o resto o
+        // helper barra sozinho (dois rótulos, data já colada) e nada muda.
+        if (okCount > 0 && failCount === 0 && base) {
+          try {
+            const { datasGravadasDasActions, corrigeRotuloDeEscrita } = require('./utils/write-date-label');
+            const _datas = datasGravadasDasActions(parsedTask.actions);
+            if (_datas.length === 1) {
+              const _rot = corrigeRotuloDeEscrita(base, _datas[0], todayYmdSP());
+              if (_rot.corrigiu) {
+                console.warn(`[Task] WRITE_DATE_RELABEL — disse "${_rot.de}", gravou ${_datas[0]} → "${_rot.para}"`);
+                await logMarker(collab.id, 'WRITE_DATE_RELABEL', 'redirected',
+                  `disse=${_rot.de} gravado=${_datas[0]} virou=${_rot.para}`, String(base).slice(0, 300));
+                base = _rot.texto;
+              }
+            }
+          } catch (e) {
+            console.error('[Task] write-date-label err (non-fatal):', e.message);
+          }
+        }
         // Cascata de grupo — só no caminho de sucesso (okCount > 0).
         if (groupNotices && groupNotices.length > 0 && okCount > 0) {
           base = (base ? base + '\n\n' : '') + groupNotices.join('\n');

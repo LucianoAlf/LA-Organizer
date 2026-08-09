@@ -49,11 +49,13 @@ test('não roda duas vezes no mesmo dia', async () => {
   assert.strictEqual(chamadas.length, 0, 'gastou uma rodada de Opus 5 à toa');
 });
 
+// O dublê de `postar` devolve comprovante porque é o que o postOpsResult devolve quando a
+// mensagem entra — sem isso o ciclo trata como entrega não confirmada (ver o bloco no fim).
 test('force ignora o gate do dia', async () => {
   const m = carregar();
   let chamou = 0;
   const r = await m.rodarCicloGovernanca(fakeSb({ jaRodou: true }), {
-    postar: () => {}, ymd: '2026-08-09', force: true,
+    postar: () => ({ id: 'msg1' }), ymd: '2026-08-09', force: true,
     rodar: () => { chamou++; return Promise.resolve({ ok: true, text: 'feito' }); },
   });
   assert.strictEqual(r.rodou, true);
@@ -88,6 +90,47 @@ test('se postar falhar, NÃO grava o log — o próximo tick retenta', async () 
     rodar: () => Promise.resolve({ ok: true, text: 'x' }),
   }));
   assert.strictEqual(sb.inserts.length, 0);
+});
+
+// ── ENTREGA QUE "RESOLVE" SEM TER ENTREGADO ────────────────────────────────────────────────
+// O teste acima passava por injetar um `postar` que LANÇA. O `postar` de produção é o
+// postOpsResult, e ele nunca lançava: devolvia null quando o insert falhava. Então o invariante
+// declarado ("só grava o log depois de postar") era verdadeiro no teste e falso em produção —
+// o dia fechava sem o relatório ter chegado e o gate bloqueava o retry (GOVLOG-SEM-ENTREGA).
+// O contrato agora é explícito: `postar` PROVA a entrega resolvendo com valor truthy.
+// Não provou — falsy, undefined, ou exceção — conta como não entregue.
+test('postar que resolve com null não fecha o dia — senão o gate de idempotência vira mordaça', async () => {
+  const m = carregar();
+  const sb = fakeSb();
+  await assert.rejects(() => m.rodarCicloGovernanca(sb, {
+    postar: async () => null,   // exatamente o que o postOpsResult devolvia com o insert falhando
+    ymd: '2026-08-09',
+    rodar: () => Promise.resolve({ ok: true, text: 'relatório do ciclo' }),
+  }), /entrega/i);
+  assert.strictEqual(sb.inserts.length, 0, 'marcou o dia como entregue sem ter entregue nada');
+});
+
+test('postar que não devolve nada também não conta como entrega', async () => {
+  const m = carregar();
+  const sb = fakeSb();
+  await assert.rejects(() => m.rodarCicloGovernanca(sb, {
+    postar: () => {}, ymd: '2026-08-09',
+    rodar: () => Promise.resolve({ ok: true, text: 'x' }),
+  }));
+  assert.strictEqual(sb.inserts.length, 0);
+});
+
+// O aviso de protocolo ausente grava o log de propósito (senão o grupo leva ~48 avisos iguais).
+// Mas isso só vale se o aviso TIVER CHEGADO: sem entrega, gravar significa que ninguém nunca
+// fica sabendo que o agente está parado.
+test('aviso de protocolo ausente que não entrega também não fecha o dia', async () => {
+  const m = carregar({ TOM_GOV_PROTOCOLO: '/caminho/que/nao/existe.md' });
+  const sb = fakeSb();
+  await assert.rejects(() => m.rodarCicloGovernanca(sb, {
+    postar: async () => null, ymd: '2026-08-09',
+    rodar: () => Promise.resolve({ ok: true, text: 'x' }),
+  }), /entrega/i);
+  assert.strictEqual(sb.inserts.length, 0, 'fechou o dia com o aviso preso na garganta');
 });
 
 test('agente que volta sem texto vira aviso, não silêncio', async () => {

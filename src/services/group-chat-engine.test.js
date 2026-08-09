@@ -1,7 +1,8 @@
-// src/services/group-chat-engine.test.js — foco no buildTomContent (montagem prosa+ações).
+// src/services/group-chat-engine.test.js — buildTomContent (montagem prosa+ações) e a
+// ENTREGA no grupo (postOpsResult), que é o que o ciclo de governança usa como prova de envio.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildTomContent, ACTIONS_DELIM, friendlyTaskFail } = require('./group-chat-engine');
+const { buildTomContent, ACTIONS_DELIM, friendlyTaskFail, postOpsResult } = require('./group-chat-engine');
 
 const prose = (c) => String(c).split(ACTIONS_DELIM)[0].trim();
 
@@ -52,4 +53,63 @@ test('friendlyTaskFail: not_found vira explicação útil; motivo desconhecido c
   assert.match(friendlyTaskFail('not_found_in_group'), /não achei.*grupo/);
   assert.match(friendlyTaskFail('not_found_in_pool'), /não achei/);
   assert.equal(friendlyTaskFail('xpto-desconhecido'), 'não consegui registrar');
+});
+
+// ── ENTREGA NO GRUPO: postOpsResult TEM QUE FALHAR ALTO ────────────────────────────────────
+// GOVLOG-SEM-ENTREGA (09/08): `postTomText` devolve null quando o insert em group_chat_messages
+// falha, e `postOpsResult` engolia isso. Quem chama — o ciclo de governança — via um `await`
+// que resolveu normalmente, gravava `sent` em ritual_logs, e o gate de idempotência bloqueava o
+// retry do dia. O relatório nunca chegava ao grupo, em silêncio: o gate virava mordaça.
+// Pior no caso PARCIAL: com a parte 2 de 4 falhando, o loop seguia postando 3 e 4 e ninguém
+// notava — o grupo ficava com um relatório furado, sem o pedaço do meio.
+
+/** Supabase de mentira: falha o N-ésimo insert (0 = nunca falha). Registra o que foi postado. */
+function sbQueFalhaNa(enesimo) {
+  const postadas = [];
+  return {
+    postadas,
+    from: () => ({
+      insert: (row) => {
+        postadas.push(String(row.content));
+        const n = postadas.length;
+        return { select: () => ({ single: async () => (n === enesimo
+          ? { data: null, error: { message: 'duplicate key value violates unique constraint' } }
+          : { data: { id: `m${n}` }, error: null }) }) };
+      },
+    }),
+  };
+}
+
+// 4 blocos de 1000 chars: cada um cabe no limite de 1200, mas dois não — vira 4 mensagens.
+const QUATRO_PARTES = ['a', 'b', 'c', 'd'].map((c) => c.repeat(1000)).join('\n\n');
+
+test('postOpsResult: entrega inteira ok → resolve com a última mensagem', async () => {
+  const sb = sbQueFalhaNa(0);
+  const r = await postOpsResult(sb, 'g1', QUATRO_PARTES);
+  assert.strictEqual(sb.postadas.length, 4, 'o texto tem que sair em 4 mensagens');
+  assert.strictEqual(r.id, 'm4');
+});
+
+test('postOpsResult: insert falhou → REJEITA em vez de devolver null em silêncio', async () => {
+  const sb = sbQueFalhaNa(1);
+  await assert.rejects(
+    () => postOpsResult(sb, 'g1', 'relatório do ciclo'),
+    /entrega|não postei|não cheguei a postar/i,
+  );
+});
+
+test('postOpsResult: entrega PARCIAL (parte 2 de 4) rejeita, para de postar e diz quantas foram', async () => {
+  const sb = sbQueFalhaNa(2);
+  await assert.rejects(() => postOpsResult(sb, 'g1', QUATRO_PARTES), (e) => {
+    assert.strictEqual(e.entregues, 1, 'tem que dizer quantas partes o grupo recebeu');
+    assert.strictEqual(e.total, 4);
+    return true;
+  });
+  assert.strictEqual(sb.postadas.length, 2,
+    'seguiu postando depois da falha: o grupo fica com relatório furado e ninguém detecta');
+});
+
+test('postOpsResult: agente sem texto — se nem o aviso entrar, também rejeita', async () => {
+  const sb = sbQueFalhaNa(1);
+  await assert.rejects(() => postOpsResult(sb, 'g1', '   '));
 });

@@ -120,16 +120,47 @@ function iniciarTypingSustentado(supabase, groupId) {
   return parar;
 }
 
+// Falha de ENTREGA no grupo. Carrega o parcial de propósito: quem chama precisa saber se o
+// grupo ficou com meio relatório na tela, e é isso que vai pro log do ciclo.
+class GroupPostError extends Error {
+  constructor(message, { entregues = 0, total = 0 } = {}) {
+    super(message);
+    this.name = 'GroupPostError';
+    this.entregues = entregues;
+    this.total = total;
+  }
+}
+
 // Resultado do agente de ops → grupo. Passa pelo sanitizador (markdown não renderiza no
 // WhatsApp) e sai em mensagens de tamanho legível, em série pra não embaralhar a ordem no
 // espelho. Divide em vez de truncar: num relatório de auditoria a conclusão fica no fim.
+//
+// REJEITA quando não entrega (GOVLOG-SEM-ENTREGA, 09/08): `postTomText` devolve null em falha
+// de insert, e engolir esse null aqui fazia o chamador — o ciclo de governança e o digest de
+// auditoria — gravar `sent` em `ritual_logs` sem nada ter chegado ao grupo. O gate de
+// idempotência então bloqueava o retry do dia: mensagem nenhuma, aviso nenhum.
 async function postOpsResult(supabase, groupId, texto) {
   const partes = dividirParaWhatsApp(paraWhatsApp(texto));
   if (!partes.length) {
-    return postTomText(supabase, groupId, 'Terminei, mas voltei sem texto nenhum — isso é bug meu. Pede de novo?');
+    const aviso = await postTomText(supabase, groupId, 'Terminei, mas voltei sem texto nenhum — isso é bug meu. Pede de novo?');
+    if (!aviso) throw new GroupPostError('não cheguei a postar nem o aviso de resposta vazia', { entregues: 0, total: 1 });
+    return aviso;
   }
   let ultimo = null;
-  for (const parte of partes) ultimo = await postTomText(supabase, groupId, parte);
+  let entregues = 0;
+  for (const parte of partes) {
+    const r = await postTomText(supabase, groupId, parte);
+    // Para no primeiro erro DE PROPÓSITO. Seguir postando a 3 e a 4 depois de perder a 2
+    // deixa no grupo um relatório furado no meio, que ninguém detecta lendo — e o `ultimo`
+    // truthy do fim faria o chamador concluir que a entrega inteira deu certo.
+    if (!r) {
+      throw new GroupPostError(
+        `entrega incompleta no grupo: ${entregues} de ${partes.length} parte(s)`,
+        { entregues, total: partes.length });
+    }
+    ultimo = r;
+    entregues += 1;
+  }
   if (partes.length > 1) console.log(`[OpsAgent] resposta em ${partes.length} mensagens`);
   return ultimo;
 }
@@ -158,9 +189,14 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     opsAgent.configurarCanalAviso((txt) => postTomText(supabase, groupId, txt));
     const pararTyping = iniciarTypingSustentado(supabase, groupId);
 
+    // `runOpsAgent` nunca lança (devolve `{ ok:false, text }` já pronto pro grupo), então quem
+    // cai neste catch é a ENTREGA — daí a prosa falar de envio, e não de o agente ter quebrado.
     opsAgent.runOpsAgent(text, { quem })
       .then((r) => postOpsResult(supabase, groupId, r.text))
-      .catch((e) => postTomText(supabase, groupId, `Quebrei no meio disso aqui: ${e.message}`))
+      .catch((e) => {
+        console.error('[OpsAgent] falha ao entregar o resultado:', e.message);
+        return postTomText(supabase, groupId, `Terminei, mas não consegui te entregar aqui — ${e.message}. Pede de novo que eu reenvio.`);
+      })
       .catch((e) => console.error('[OpsAgent] falha ao postar resultado:', e.message))
       .finally(pararTyping);
 
@@ -611,4 +647,4 @@ function friendlyTaskFail(why) {
   return MAP[why] || 'não consegui registrar';
 }
 
-module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM, buildTomContent, friendlyTaskFail, postOpsResult };
+module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM, buildTomContent, friendlyTaskFail, postOpsResult, GroupPostError };

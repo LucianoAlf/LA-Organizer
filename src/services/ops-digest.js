@@ -14,6 +14,8 @@
 // pronto: `suppress` = já corrigido antes do incidente (só conta), `regression` = voltou depois
 // de um fix (vai pro topo, é o que mais dói).
 
+const { entregar } = require('../lib/entrega');
+
 const TETO_PADRAO = 5;        // itens listados; acima disso o digest diz quantos ficaram
 const MAX_LITERAL = 120;      // a fala real, cortada pra caber numa linha de celular
 const JANELA_HORAS = 24;      // mesma janela do Dream que gerou os achados
@@ -185,7 +187,8 @@ function labelDia(ymd) {
 /**
  * Monta e entrega o digest no grupo. `postar` é injetado pelo dispatcher (evita ciclo de
  * require com o group-chat-engine e deixa o envio testável).
- * Só grava o log DEPOIS de postar: se o envio falhar, o próximo tick da janela retenta.
+ * Só grava o log com a entrega CONFIRMADA — `postar` resolvendo com valor truthy, ver
+ * src/lib/entrega.js. Se o envio falhar, o próximo tick da janela retenta.
  */
 async function enviarOpsDigest(sb, {
   postar, ymd, force = false, horas = JANELA_HORAS, ownerId = DIGEST_OWNER,
@@ -202,7 +205,8 @@ async function enviarOpsDigest(sb, {
   }
 
   const { achados, suprimidos } = await carregarDigest(sb, { horas });
-  await postar(formatarDigest({ dataLabel: labelDia(ymd), achados, suprimidos }));
+  await entregar(postar, formatarDigest({ dataLabel: labelDia(ymd), achados, suprimidos }),
+    'o digest de auditoria');
   await sb.from('ritual_logs').insert({
     collaborator_id: ownerId, ritual_type: 'ops_digest', reference_date: ymd,
     status: 'sent', sent_at: new Date().toISOString(),

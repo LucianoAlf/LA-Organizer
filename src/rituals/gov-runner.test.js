@@ -71,3 +71,32 @@ test('o órfão da VPS sozinho NÃO dispara restart', () => {
   const novos = novosEmRelacaoA(['src/system.js'], ['src/system.js']);
   assert.strictEqual(decidirRestart({ arquivosMudados: novos }).restart, false);
 });
+
+// ── INTERRUPÇÃO NO MEIO DO CICLO ───────────────────────────────────────────────────────────
+// O ops-agent registra um drain hook que avisa o grupo sobre pedido perdido no restart. No
+// processo do TOM isso funciona porque o index.js instala o graceful shutdown, que roda os
+// hooks. O runner é OUTRO processo e não instalava nada: nem canal de aviso, nem handler de
+// sinal. `pm2 restart`/deploy no meio do ciclo (até 30 min de Opus 5) matava tudo sem uma
+// linha pro grupo — o mesmo desfecho silencioso que a ETAPA 7 existe pra evitar.
+const opsAgent = require('../services/ops-agent');
+const { instalarAvisoDeInterrupcao } = require('./gov-runner');
+
+test('o runner liga o canal: interrupção no meio do ciclo vira mensagem no grupo', async () => {
+  const postadas = [];
+  const solto = instalarAvisoDeInterrupcao((t) => { postadas.push(t); return { id: 'm1' }; });
+  const id = opsAgent._registrarPedido('o ciclo automático de governança', 'rode o ciclo de hoje');
+  const r = await opsAgent.avisarPedidosPerdidos();
+  opsAgent._concluirPedido(id);
+  solto();
+  assert.strictEqual(r.avisou, true, 'o ciclo morreu calado');
+  assert.match(postadas[0], /ciclo autom/);
+});
+
+test('o runner instala handler de sinal — sem ele o drain hook nasce órfão', () => {
+  const antes = process.listenerCount('SIGTERM');
+  const solto = instalarAvisoDeInterrupcao(() => ({ id: 'm1' }));
+  assert.ok(process.listenerCount('SIGTERM') > antes,
+    'sem handler de SIGTERM o processo morre antes de qualquer drain');
+  solto();
+  assert.strictEqual(process.listenerCount('SIGTERM'), antes, 'deixou listener pendurado');
+});

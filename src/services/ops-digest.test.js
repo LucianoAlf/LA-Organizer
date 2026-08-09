@@ -244,6 +244,19 @@ test('se o envio falhar, NÃO grava o log — o próximo tick tem que retentar',
   assert.strictEqual(sb.inserts.length, 0, 'gravou entrega que não aconteceu');
 });
 
+// O teste acima só provava o caso em que o `postar` LANÇA. O `postar` de produção é o
+// postOpsResult, e ele nunca lançava: devolvia null quando o insert em group_chat_messages
+// falhava. Então o invariante do cabeçalho ("só grava o log DEPOIS de postar") era verdadeiro
+// no teste e falso em produção — o dia fechava sem o digest ter chegado e o gate bloqueava o
+// retry até as 11h (GOVLOG-SEM-ENTREGA, 09/08).
+test('postar que resolve sem confirmar entrega não fecha o dia', async () => {
+  const sb = fakeSb({ findings: [LINHA_DB] });
+  await assert.rejects(() => enviarOpsDigest(sb, {
+    postar: async () => null, ymd: '2026-08-08', ownerId: DONO,
+  }), /entrega/i);
+  assert.strictEqual(sb.inserts.length, 0, 'marcou o digest como entregue sem ter entregue');
+});
+
 test('sem função de envio não finge que entregou', async () => {
   const r = await enviarOpsDigest(fakeSb(), { ymd: '2026-08-08', ownerId: DONO });
   assert.strictEqual(r.enviado, false);

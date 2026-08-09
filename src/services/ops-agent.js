@@ -145,14 +145,28 @@ function textoDePedidosPerdidos() {
 let _canalAviso = null;
 function configurarCanalAviso(fn) { _canalAviso = typeof fn === 'function' ? fn : null; }
 
+/**
+ * Corpo do drain hook, com nome e retorno de propósito: pelo caminho real só dá pra exercitar
+ * com um SIGTERM de verdade (o handler termina em `process.exit`), e é ele que o gov-runner
+ * chama direto — lá o hook registrado abaixo nunca roda, porque aquele processo não instala o
+ * graceful shutdown do TOM. Nunca lança: aviso é o último passo antes de sair.
+ */
+async function avisarPedidosPerdidos() {
+  const texto = textoDePedidosPerdidos();
+  if (!texto) return { avisou: false, motivo: 'reinício limpo' };
+  console.warn(`[OpsAgent] reinício com ${pedidosEmAndamento().length} pedido(s) em andamento`);
+  if (!_canalAviso) return { avisou: false, motivo: 'sem canal de aviso configurado' };
+  try {
+    await _canalAviso(texto);
+    return { avisou: true, texto };
+  } catch (e) {
+    console.error('[OpsAgent] aviso falhou:', e.message);
+    return { avisou: false, motivo: e.message };
+  }
+}
+
 try {
-  require('./shutdown').registerDrainHook(async () => {
-    const texto = textoDePedidosPerdidos();
-    if (!texto) return;
-    console.warn(`[OpsAgent] reinício com ${pedidosEmAndamento().length} pedido(s) em andamento`);
-    if (!_canalAviso) return;
-    try { await _canalAviso(texto); } catch (e) { console.error('[OpsAgent] aviso falhou:', e.message); }
-  });
+  require('./shutdown').registerDrainHook(avisarPedidosPerdidos);
 } catch (e) {
   console.warn('[OpsAgent] sem drain hook de shutdown:', e.message);
 }
@@ -226,7 +240,7 @@ function runOpsAgent(pedido, { quem = 'alguém do grupo', briefing = null, timeo
 
 module.exports = {
   isOpsChannel, runOpsAgent, buildBriefing, OPS_GROUP_ID, OPS_ALLOWLIST, OPS_ENABLED,
-  pedidosEmAndamento, textoDePedidosPerdidos, configurarCanalAviso,
+  pedidosEmAndamento, textoDePedidosPerdidos, configurarCanalAviso, avisarPedidosPerdidos,
   resolverBriefing, resolverTimeout, OPS_TIMEOUT_MS,
   _registrarPedido, _concluirPedido,   // expostos para o teste do registro
 };
