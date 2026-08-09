@@ -9659,7 +9659,9 @@ async function processMessage(phone, text, raw = {}) {
       const _card = _pickA.status === 'resolved' ? _pickA.card : null;
       const _fmtTot = Number(_inv.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
       if (!_card && !(_allCardsA || []).length) {
-        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras (total R$ ${_fmtTot}), mas não identifiquei o cartão "${_inv.emissor}" nos seus cadastrados. Me diz de qual cartão é essa fatura (ou cadastra ele) que aí eu lanço.`);
+        const _outA0 = `📄 Li ${_inv.itens.length} compras (total R$ ${_fmtTot}), mas não identifiquei o cartão "${_inv.emissor}" nos seus cadastrados. Me diz de qual cartão é essa fatura (ou cadastra ele) que aí eu lanço.`;
+        await whatsapp.sendMessage(phone, _outA0);
+        await logConversation(collab.id, 'outbound', _outA0);
         return;
       }
       // safeCategory real = (cat, description, type, extraSlugs); carrega slugs custom do user (paridade c/ recordCardPurchase).
@@ -9690,7 +9692,9 @@ async function processMessage(phone, text, raw = {}) {
       // silenciosa escondeu esse bug por semanas (Alf/Rose 14/06). Loga ALTO e não promete confirmar.
       if (!_invIntentId) {
         console.error('[Fatura] CRÍTICO: openIntent invoice_import retornou null — confirmação NÃO vai funcionar. Checar pending_intents_kind_check / erro de insert.');
-        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras da fatura ${_card ? `*${_card.name}* ` : ''}(total R$ ${_fmtTot}), mas tive um problema técnico pra abrir a confirmação aqui. Já avisei o time — tenta de novo daqui a pouco ou lança pelo app em Finanças → Cartões.`);
+        const _outA1 = `📄 Li ${_inv.itens.length} compras da fatura ${_card ? `*${_card.name}* ` : ''}(total R$ ${_fmtTot}), mas tive um problema técnico pra abrir a confirmação aqui. Já avisei o time — tenta de novo daqui a pouco ou lança pelo app em Finanças → Cartões.`;
+        await whatsapp.sendMessage(phone, _outA1);
+        await logConversation(collab.id, 'outbound', _outA1);
         return;
       }
       if (!_card) {
@@ -9703,7 +9707,9 @@ async function processMessage(phone, text, raw = {}) {
         // Emissor pode vir vazio OU literalmente "desconhecido" do Gemini — nos dois casos o
         // nome sai da frase (Rose 16/07 21:26 leu "fatura *desconhecido*", parece defeito).
         const _emiA = (_inv.emissor && !/desconhecid|indefinid|^n\/?a$/i.test(_inv.emissor)) ? ` *${_inv.emissor}*` : '';
-        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras da fatura${_emiA} (total R$ ${_fmtTot}) — mas não sei de qual cartão ela é, então não vou chutar.\n\nTenho: *${_nomesA.join('*, *')}*.\nResponde tipo *lança no ${_nomesA[0]}* que eu te mando a prévia pra conferir.`);
+        const _outA2 = `📄 Li ${_inv.itens.length} compras da fatura${_emiA} (total R$ ${_fmtTot}) — mas não sei de qual cartão ela é, então não vou chutar.\n\nTenho: *${_nomesA.join('*, *')}*.\nResponde tipo *lança no ${_nomesA[0]}* que eu te mando a prévia pra conferir.`;
+        await whatsapp.sendMessage(phone, _outA2);
+        await logConversation(collab.id, 'outbound', _outA2);
         return;
       }
       const _preview = invoiceImport.buildInvoicePreview({
@@ -9711,6 +9717,7 @@ async function processMessage(phone, text, raw = {}) {
         cardName: _card.name, itens: _itensCat, dupWarning: null, unknowns: _unknowns,
       });
       await whatsapp.sendMessage(phone, _preview);
+      await logConversation(collab.id, 'outbound', _preview);
       return;
     }
   } catch (e) {
@@ -9824,14 +9831,18 @@ async function processMessage(phone, text, raw = {}) {
             { ..._payC, stage: 'awaiting_confirm', card_id: _namedC.card.id, card_name: _namedC.card.name }, 'lançar fatura?');
           if (!_newIntentId) {
             console.error('[Fatura] CRÍTICO: openIntent (desambiguação de cartão) retornou null — a intent antiga já foi superseded.');
-            await whatsapp.sendMessage(phone, `Entendi que é o *${_namedC.card.name}*, mas tive um problema técnico pra reabrir a confirmação. Me manda a fatura de novo, por favor.`);
+            const _outB0 = `Entendi que é o *${_namedC.card.name}*, mas tive um problema técnico pra reabrir a confirmação. Me manda a fatura de novo, por favor.`;
+            await whatsapp.sendMessage(phone, _outB0);
+            await logConversation(collab.id, 'outbound', _outB0);
             return;
           }
           console.log(`[Fatura] cartão definido pela fala: ${_payC.card_name || '(sem cartão)'} → ${_namedC.card.name} (decision=${_decision || 'null'}) → prévia, sem commit`);
-          await whatsapp.sendMessage(phone, invoiceImport.buildInvoicePreview({
+          const _prevB0 = invoiceImport.buildInvoicePreview({
             emissor: _payC.emissor, vencimento: _payC.vencimento, total: _payC.total,
             cardName: _namedC.card.name, itens: _payC.itens, dupWarning: null, unknowns: _payC._unknowns,
-          }));
+          });
+          await whatsapp.sendMessage(phone, _prevB0);
+          await logConversation(collab.id, 'outbound', _prevB0);
           return;
         }
       }
@@ -9867,13 +9878,17 @@ async function processMessage(phone, text, raw = {}) {
             { ..._pay, stage: 'awaiting_confirm', itens: _itensRe, _unknowns: _unknownsRe }, 'lançar fatura?');
           if (!_reId) {
             console.error('[Fatura] CRÍTICO: openIntent (correção de categoria) retornou null — intent antiga já superseded.');
-            await whatsapp.sendMessage(phone, 'Anotei a categoria, mas tive um problema técnico pra reabrir a confirmação. Me manda a fatura de novo, por favor.');
+            const _outB1 = 'Anotei a categoria, mas tive um problema técnico pra reabrir a confirmação. Me manda a fatura de novo, por favor.';
+            await whatsapp.sendMessage(phone, _outB1);
+            await logConversation(collab.id, 'outbound', _outB1);
             return;
           }
-          await whatsapp.sendMessage(phone, invoiceImport.buildInvoicePreview({
+          const _prevB1 = invoiceImport.buildInvoicePreview({
             emissor: _pay.emissor, vencimento: _pay.vencimento, total: _pay.total,
             cardName: _pay.card_name || _pay.emissor, itens: _itensRe, dupWarning: null, unknowns: _unknownsRe,
-          }));
+          });
+          await whatsapp.sendMessage(phone, _prevB1);
+          await logConversation(collab.id, 'outbound', _prevB1);
           return;
         }
       }
@@ -9881,14 +9896,18 @@ async function processMessage(phone, text, raw = {}) {
         const _pay = _invIntent.payload;
         if (_decision === 'cancel') {
           await pendingIntents.resolveIntent(_invIntent.id, 'denied', 'user cancelou');
-          await whatsapp.sendMessage(phone, 'Beleza, cancelei — não lancei nada. 👍');
+          const _outB2 = 'Beleza, cancelei — não lancei nada. 👍';
+          await whatsapp.sendMessage(phone, _outB2);
+          await logConversation(collab.id, 'outbound', _outB2);
           return;
         }
         if (_decision === 'commit_anotacoes') {
           const _body = invoiceImport.buildInvoicePreview({ ..._pay, cardName: _pay.card_name || _pay.emissor });
           await notesService.createNote(supabase, collab.id, { title: `Fatura ${_pay.emissor || ''} ${_pay.vencimento || ''}`.trim(), body: _body, source: 'tom', sharedWith: [] });
           await pendingIntents.resolveIntent(_invIntent.id, 'confirmed', 'salvou em anotacoes');
-          await whatsapp.sendMessage(phone, `📝 Salvei a fatura nas suas anotações (${_pay.itens.length} compras). Não lancei no financeiro.`);
+          const _outB3 = `📝 Salvei a fatura nas suas anotações (${_pay.itens.length} compras). Não lancei no financeiro.`;
+          await whatsapp.sendMessage(phone, _outB3);
+          await logConversation(collab.id, 'outbound', _outB3);
           return;
         }
         if (_decision === 'commit_financeiro') {
@@ -9902,7 +9921,9 @@ async function processMessage(phone, text, raw = {}) {
             const _cand = (_pick.candidates && _pick.candidates.length ? _pick.candidates : _allCards).map((c) => c.name);
             // Orienta a responder JÁ com o cartão ("lança no X") — aí o commit + o pick resolvem
             // no mesmo turno (pickInvoiceCard lê o nome da fala), sem depender de estado entre turnos.
-            await whatsapp.sendMessage(phone, `Antes de lançar — de qual cartão é essa fatura? Responde tipo *lança no ${_cand[0]}* que eu mando no certo. Tenho: *${_cand.join('*, *')}*.`);
+            const _outB4 = `Antes de lançar — de qual cartão é essa fatura? Responde tipo *lança no ${_cand[0]}* que eu mando no certo. Tenho: *${_cand.join('*, *')}*.`;
+            await whatsapp.sendMessage(phone, _outB4);
+            await logConversation(collab.id, 'outbound', _outB4);
             return; // intent segue aberta
           }
           const _card = _pick.card;
@@ -9942,7 +9963,9 @@ async function processMessage(phone, text, raw = {}) {
           }
           await pendingIntents.resolveIntent(_invIntent.id, 'confirmed', `lancou ${_okN} itens${_dupN ? ', ' + _dupN + ' dup' : ''}`);
           const _dupMsg = _dupN ? ` (${_dupN} já estava${_dupN > 1 ? 'm' : ''} lançada${_dupN > 1 ? 's' : ''}, ignorei pra não duplicar)` : '';
-          await whatsapp.sendMessage(phone, `✅ Lancei ${_okN} de ${_pay.itens.length} compras no *${_card.name}*${_dupMsg}. Confere na tela de Cartões!`);
+          const _outB5 = `✅ Lancei ${_okN} de ${_pay.itens.length} compras no *${_card.name}*${_dupMsg}. Confere na tela de Cartões!`;
+          await whatsapp.sendMessage(phone, _outB5);
+          await logConversation(collab.id, 'outbound', _outB5);
           return;
         }
       }
