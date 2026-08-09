@@ -13,8 +13,11 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**As medições de 15/08** (lista no item 3 da fila). Não há bug aberto com sinal vivo no
-momento — os quatro alvos que persegui em 08/08 já tinham conserto no código.
+**Fatia 3 do router/ledger** — o Alf definiu a ordem: agente de governança primeiro (✅ no ar
+desde 08/08 22:17), depois a Fatia 3. Risco invertido nela: falhar = TOM MUDO, então fail-open.
+
+Depois disso, **as medições de 15/08** (lista no item 3 da fila). Não há bug aberto com sinal
+vivo no momento — os quatro alvos que persegui em 08/08 já tinham conserto no código.
 
 ### ✅ `MEMORY_SAVE schema_invalid` — JÁ ESTAVA CORRIGIDO (08/08)
 
@@ -236,7 +239,41 @@ hipótese, inclusive a que você acabou de escrever. E **date antes de somar**.
 
 ---
 
-## 🤖 AGENTE DE GOVERNANÇA — NÃO ESQUECER (pedido explícito do Alf, 08/08)
+## 🤖 AGENTE DE GOVERNANÇA — ✅ NO AR (08/08 22:17 BRT)
+
+**Roda todo dia às 08:00 BRT**, depois do digest das 07:30. Janela de retry até 12h.
+Kill switch: `TOM_GOV_AGENT=0` no `.env` da VPS (vale no próximo tick, não precisa restart —
+o dispatcher é processo de cron e relê o `.env` a cada rodada). Backup: `.env.bak-gov-*`.
+
+**Arquivos:** `src/services/governance-agent.js` (ciclo) · `src/rituals/gov-runner.js`
+(processo próprio) · `src/lib/placar-governanca.js` (ETAPA 1) · `docs/ops/PROTOCOLO-GOVERNANCA.md`
++ `ESCADA-GOVERNANCA.md` + `PEDIDOS-DE-PRODUTO.md` (**editáveis sem deploy** — mudam o
+comportamento na hora). Log: `logs/gov-agent.log`. Lock: `/tmp/la-gov.lock`.
+
+### Primeira rodada real — 08/08 22:17, VERIFICADA NO BANCO
+
+Refutou um achado e **não mexeu em uma linha de código** — que é o desfecho certo, não uma
+falha. Fechou `frustration` do Quintela (06/08) como `falso_positivo` depois de puxar o literal
+e varrer os 467 inbounds dele. Escalou ao grupo a única parte que era julgamento ("o TOM aceitou
+culpa que o histórico não sustenta — é voz/prompt, fora da minha alçada"). `ritual_logs` gravado,
+`git status` limpo, `HEAD` intacto. Segunda invocação no mesmo dia: `já rodou hoje`, sem repostar.
+
+⚠️ **Ele já errou uma data na primeira rodada:** gravou `[gov-agent 09/08]` às 22:16 BRT de
+08/08 — pegou a data em UTC. Corrigido no protocolo (usar `TZ=America/Sao_Paulo date +%F`).
+Em operação normal (08:00 BRT = 11:00 UTC) não apareceria: só surge em rodada forçada à noite.
+
+⚠️ **Achado de dado, NÃO corrigido:** `incident_at` em `tom_audit_findings` parece guardar hora
+de BRT rotulada como UTC — o turno literal era 06/08 16:00:57 e o campo renderiza 13:00 em BRT.
+Isso é do escritor da auditoria, não do agente. Impacta comparações de data no limite de 3h.
+Investigar antes de confiar em `incident_at` para qualquer decisão fina.
+
+### O que medir em 15/08
+
+Quantos ciclos rodaram (`ritual_logs` `ritual_type='gov_agent'`); quantos refutaram vs
+corrigiram; se algum KI `[gov-agent]` já reincidiu (é o placar da ETAPA 1); e se
+`docs/ops/PEDIDOS-DE-PRODUTO.md` ganhou linha nova — se ganhou, a etapa 2.5 está funcionando.
+
+### Por que existe (registro original do pedido do Alf, 08/08)
 
 **Vem logo depois do Dreams.** O Alf pediu para isto ficar registrado de forma que não se
 perca: *"a gente não pode esquecer disso jamais"*.
@@ -475,6 +512,8 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 7. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
 8. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
+8b. **`incident_at` com hora BRT rotulada como UTC** (achado em 08/08, ver seção do agente de
+   governança). Confirmar no escritor da auditoria antes de usar o campo em decisão fina.
 9. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
    Hostinger; confirmação ao cancelar tarefa recorrente (é UI, esbarra no freeze).
 

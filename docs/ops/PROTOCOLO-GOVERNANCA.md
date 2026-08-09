@@ -81,6 +81,11 @@ depois) e `fix_resumo` começando com `[gov-agent]`. Feche o finding apontando p
 ⚠️ A marca `[gov-agent]` no início do `fix_resumo` não é enfeite: é ela que faz a ETAPA 1
 existir. Sem a marca, o seu conserto some do placar e você nunca descobre que ele voltou.
 
+⚠️ **Data sempre em BRT.** Pegue com `TZ=America/Sao_Paulo date +%F` — nunca a data do sistema
+em UTC, que depois das 21h BRT já virou o dia seguinte. Aqui um registro datado errado vira
+profecia: o próximo ciclo lê o que você escreveu e repete o erro. Isso já aconteceu na PRIMEIRA
+rodada (08/08 22:16 BRT), gravada como "[gov-agent 09/08]".
+
 ## ETAPA 7 — Relate e SÓ ENTÃO suba
 
 Poste o resultado no grupo ANTES de reiniciar o TOM.
