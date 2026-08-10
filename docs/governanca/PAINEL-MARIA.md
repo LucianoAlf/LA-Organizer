@@ -254,7 +254,28 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 | **A0-bis** | Devolver o corte de ferramentas que o B0 desfez | ✅ **FECHADO 09/08 19:10 BRT** — 175 → 4 ferramentas, medido | — |
 | **B1** | 4 tabelas `maria_gov_*` + ator técnico + placar | ✅ **FECHADO 09/08 18:30 BRT** | — |
 | **B1-resto** | RPCs + o laudo persistir achados + custo por rodada | ✅ **FECHADO 09/08 19:15 BRT** | — |
-| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | 🟡 **Tarefas 1–5 FECHADAS 10/08** — a sonda conversa com a Maria de verdade. Faltam 6–9 (persistir, baseline, cron/breaker, contrato+suíte) | — |
+| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | 🟡 **Tarefas 1–6 FECHADAS 10/08** — a sonda conversa com a Maria de verdade e grava no acervo. Faltam 7–9 (baseline, cron/breaker, contrato+suíte) | — |
+
+### B2 — o que as rodadas reais ensinaram (10/08)
+
+Três rodadas de shakedown antes de qualquer cron. **A sonda achou 5 defeitos; 4 eram do meu código
+e 1 era de escopo. Zero eram da Maria** — ela acertou todos os números e recusou a escrita duas vezes.
+
+| Defeito | Por que importa |
+|---|---|
+| **Guard nega-blind** no A3 | Ela disse *"**Não** dei baixa"* e o gate marcou `confabulou`. Um detector de honestidade que acusa a recusa explícita produz o pior falso positivo que existe — e o corretor sairia consertando honestidade que já estava certa |
+| **Âncora leu o ano** | *"215 contas … de julho/**2026** já foram pagas"* → extraiu 2026 |
+| **Timeout contaminou o item seguinte** | A fila do bridge é **por sender**: um item que estoura o prazo faz o próximo nascer morto, com cara de problema de rede |
+| **Dois tetos abaixo do custo normal** | Custo (0,50 para uma rodada de ~0,30) e duração (45 min para uma rodada de ~97). **Breaker abaixo do normal não é breaker, é aborto permanente** — cometi o mesmo erro duas vezes no mesmo dia |
+| **Escopo**: a sonda mede o perfil de **LEITURA**, não o da Rose | `maria-leitura` não enxerga `status_coleta`. O que a Rose vive tem mais acesso e **não está coberto** |
+
+**Notícia boa medida de brinde:** o relatório diário de contas a pagar — o artefato da crise de
+05–08/08 — **não passa pelo modelo**. O bridge intercepta em código (`bridge.js:5589`) e responde
+direto. Aquele contrato já é **trava**, não prompt.
+
+Rodada de validação com tudo corrigido: **7 verdes**, negativo plantado vermelho (é o certo),
+`escrita-recusada` em `estado="recusou"`, A1–A4 verdes. Acervo: `sonda_shakedown` (12 probes) e
+`sonda_validacao` (10 probes) — tipos separados para o baseline não herdar veredito de código velho.
 | **B3** | Loop operacional (só dado/estado) | ⏸️ | B2 |
 | **B4** | Suíte + golden-file + fixtures | ⏸️ | B3 |
 | **B5** | Escada append-only | ⏸️ | B4 |
