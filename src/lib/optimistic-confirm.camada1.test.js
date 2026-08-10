@@ -38,9 +38,35 @@ test('enforce NÃO mexe: algo persistiu (nothingPersisted=false)', () => {
   const t = '✅ Tarefa criada!';
   assert.strictEqual(enforceNoMarkerHonesty(t, { nothingPersisted: false, infoGathering: false, awaitingConfirm: false }), t);
 });
-test('enforce NÃO mexe: infoGathering', () => {
+// CONTRATO INVERTIDO em 10/08 — HABIT-UPDATE-SILENT-LIE (Bianca 09/08 08:30).
+//
+// Este teste afirmava que "✅ Criado! Quer que eu marque a hora?" com ZERO persistido devia
+// passar intacto, porque a pergunta o classificava como info-gathering. Era sintético: sem caso
+// real citado, ao contrário dos vizinhos (Ana, Rose, Dai) — documentava o gate, não um
+// comportamento observado que valesse proteger. E a estrutura que ele abençoava é exatamente a
+// que enganou a Bianca: "Entendi: quer tirar o lembrete das 6h, certo?" + "✅ Lembrete removido",
+// com o marker rejeitado. Ela respondeu "Certo" e o lembrete continua tocando às 6h.
+//
+// Uma pergunta ao lado não torna a afirmação verdadeira. Como o TOM foi ENSINADO a confirmar
+// antes de agir, perguntar-e-afirmar é o padrão dele — então o veto deixava a porta aberta
+// justamente no caminho mais comum, não num canto raro.
+test('info-gathering NÃO inocenta claim forte sem persistência (era o buraco da Bianca)', () => {
   const t = '✅ Criado! Quer que eu marque a hora?';
-  assert.strictEqual(enforceNoMarkerHonesty(t, { nothingPersisted: true, infoGathering: true, awaitingConfirm: false }), t);
+  const out = enforceNoMarkerHonesty(t, { nothingPersisted: true, infoGathering: true, awaitingConfirm: false });
+  assert.ok(!/criado/i.test(out), `a confirmação falsa sobreviveu: ${out}`);
+  assert.ok(/n[ãa]o consegui registrar/i.test(out), `devia ter aviso honesto: ${out}`);
+  // A pergunta cai junto QUANDO divide a linha com o claim: o sanitizador opera por linha, e
+  // separar oração dentro da linha seria reescrever a fala do TOM. Perder a pergunta é ruim,
+  // mas o aviso já pede pra mandar de novo — e o alternativo é entregar a mentira inteira.
+  // Em linha separada (que é o formato real do caso Bianca) ela sobrevive: ver o teste
+  // "SILENT-LIE: a pergunta sobrevive ao rebaixamento" em optimistic-confirm.test.js.
+});
+// O veto do info-gathering continua de pé onde ele foi feito pra servir: a camada FRACA, em que
+// a pergunta É o sinal de que aquilo é banter e não promessa (CHOKEPOINT-PROGRESS-FALSEFIRE).
+test('enforce NÃO mexe: claim FRACA + infoGathering segue vetada', () => {
+  const t = 'Beleza! Quer que eu veja mais alguma coisa?';
+  assert.strictEqual(enforceNoMarkerHonesty(t,
+    { nothingPersisted: true, infoGathering: true, awaitingConfirm: false, pendingActionRecent: true }), t);
 });
 test('enforce NÃO mexe: awaitingConfirm', () => {
   const t = '✅ Confirmado, crio as duas?';

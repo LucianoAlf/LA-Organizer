@@ -47,6 +47,14 @@ const COMPLETION_CORE =
   // o fix dela é o staging determinístico, não afrouxar este gate.
   'despachad[oa]s?|despachei|exclu[ií]d[oa]s?|exclu[ií]|apagad[oa]s?|apaguei|' +
   'delegad[oa]s?|deleguei|avisad[oa]s?|avisei|' +
+  // HABIT-UPDATE-SILENT-LIE (Bianca 09/08): a família de REMOÇÃO faltava inteira. O
+  // vocabulário nasceu em torno de CRIAR coisas — "excluí"/"apaguei" entraram pelo delete de
+  // hábito, mas o TOM fala "removido"/"tirei" quando a pessoa pede pra TIRAR alguma coisa, e
+  // nada disso casava: "✅ Lembrete das 6h removido" com o marker rejeitado passou limpo.
+  // Diferente do "enviad*" que ficou de fora acima, aqui não há ambiguidade — nos 90 dias
+  // anteriores as 9 falas do TOM com esses verbos eram TODAS claim de ação própria.
+  // "desligad*" fica FORA de propósito: descreve estado de coisa no mundo ("o ar tá desligado").
+  'removid[oa]s?|removi|tirad[oa]s?|tirei|desativad[oa]s?|desativei|' +
   'pront[oa]|prontinh[oa]|feit[oa])';
 
 // Fronteira FINAL ASCII-safe. Antes era `\b`, que em JS é ASCII: verbo terminado em vogal
@@ -281,11 +289,21 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   const o = opts || {};
   const meta = !!(opts2 && opts2.meta);
   const wrap = (r, fired) => (meta ? { reply: r, fired, sense: 'confab' } : r);
-  if (!reply || !o.nothingPersisted || o.infoGathering || o.awaitingConfirm) return wrap(reply, false);
+  if (!reply || !o.nothingPersisted || o.awaitingConfirm) return wrap(reply, false);
   // Forte (particípio/1ª pessoa) dispara sempre — tuning de meses, não mexo. Fraca ("Fechou")
   // só sob pendingActionRecent (eixo de ESTADO): fecha o NOOP do Matheus sem falso-fire de banter.
+  //
+  // HABIT-UPDATE-SILENT-LIE (Bianca 09/08): `infoGathering` vetava aqui em cima, ANTES de olhar
+  // o claim — então "dispara sempre" era falso na prática. Uma mensagem que pergunta e afirma no
+  // mesmo sopro ("Entendi: quer tirar o lembrete, certo?" + "✅ Lembrete removido") era lida como
+  // coleta de informação e desarmava o chokepoint inteiro. O TOM foi ENSINADO a confirmar antes
+  // de agir, então perguntar-e-afirmar é padrão dele, não exceção: a porta ficava aberta no
+  // caminho mais comum. Uma pergunta ao lado não torna a afirmação verdadeira, e `nothingPersisted`
+  // já é o gate duro. O veto continua valendo para a camada FRACA, que é onde mora o falso-fire
+  // de banter ("Beleza! Quer que eu veja mais alguma coisa?") — ali a pergunta É o sinal.
   const strong = hasCompletionClaim(reply);
-  const weak = !strong && !!o.pendingActionRecent && !o.userProgressStatus && hasWeakCompletionClaim(reply);
+  const weak = !strong && !o.infoGathering && !!o.pendingActionRecent
+    && !o.userProgressStatus && hasWeakCompletionClaim(reply);
   if (!strong && !weak) return wrap(reply, false);
   const cleaned = sanitizeOptimisticConfirm(reply, 'failed', { includeWeak: weak });
   const out = cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;

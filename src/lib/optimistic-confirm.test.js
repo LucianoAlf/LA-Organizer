@@ -347,3 +347,69 @@ test('GERUNDIO-CHOKEPOINT anti-FP: pergunta com gerúndio NÃO é claim', () => 
 test('GERUNDIO-CHOKEPOINT anti-FP: gerúndio negado NÃO é claim', () => {
   assert.strictEqual(hasCompletionClaim('Não estou lançando nada ainda.'), false);
 });
+
+// ── HABIT-UPDATE-SILENT-LIE (Bianca 09/08 08:30) — DUAS portas na mesma fala ────────────────
+// Ela pediu por áudio: "tira o lembrete de tomar os remédios às 6h". O LLM emitiu
+// {"action":"update"} — ação que não existe no engine nem na skill — o parser rejeitou com
+// schema_invalid, e ela recebeu: "✅ Lembrete das 6h removido." O lembrete continua tocando.
+//
+// O chokepoint tinha o sinal certo (nothingPersisted) e ainda assim não disparou, por DUAS
+// razões independentes — fechar só uma deixaria o caso passando igual:
+//   1) VOCABULÁRIO: "removido" não estava no COMPLETION_CORE. O sistema foi construído em
+//      torno de CRIAR coisas; a família de REMOÇÃO nunca entrou. Nos 90 dias anteriores, as
+//      9 falas do TOM com esses verbos eram TODAS claim de ação — nenhuma ambígua como o
+//      "enviado" que ficou de fora de propósito.
+//   2) FORMA: a mensagem pergunta e afirma no mesmo sopro ("...certo?" + "✅ removido"), e
+//      isso a classificava como info-gathering, o que desarmava o chokepoint INTEIRO — mesmo
+//      com claim forte, emoji de sucesso e zero persistência.
+const REAL_BIANCA = 'Entendi: quer tirar o lembrete das 6h de *Tomar remédios*, certo?\n\n✅ Lembrete das 6h removido. O hábito continua existindo, só para de te chamar nesse horário.';
+
+test('SILENT-LIE porta 1: "removido" é claim de conclusão (Bianca 09/08)', () => {
+  assert.strictEqual(hasCompletionClaim('✅ Lembrete das 6h removido.'), true);
+});
+test('SILENT-LIE porta 1: a família de remoção inteira, nos literais reais do banco', () => {
+  assert.strictEqual(hasCompletionClaim('Feito, Rose! Tirei o briefing das 8h e o fechamento das 19h.'), true);
+  assert.strictEqual(hasCompletionClaim('✅ Removida da lista, Quintela.'), true);
+  assert.strictEqual(hasCompletionClaim('Feito — removido o "Eric", fica só "Erick (M)".'), true);
+});
+test('SILENT-LIE porta 2: pergunta na mesma mensagem não inocenta a afirmação', () => {
+  const out = enforceNoMarkerHonesty(REAL_BIANCA,
+    { nothingPersisted: true, infoGathering: true, awaitingConfirm: false }, { meta: true });
+  assert.strictEqual(out.fired, true, 'info-gathering desarmava o chokepoint inteiro');
+  assert.ok(!/removido/i.test(out.reply), `a mentira sobreviveu: ${out.reply}`);
+  assert.ok(/n[ãa]o consegui registrar/i.test(out.reply), 'a nota honesta precisa estar lá');
+});
+// A pergunta em si tem que sobreviver: ela é a única parte verdadeira da mensagem.
+test('SILENT-LIE: a pergunta sobrevive ao rebaixamento', () => {
+  const out = enforceNoMarkerHonesty(REAL_BIANCA,
+    { nothingPersisted: true, infoGathering: true, awaitingConfirm: false }, { meta: true });
+  assert.match(out.reply, /quer tirar o lembrete das 6h/);
+});
+
+// ── ANTI-FALSO-FIRE: o que NÃO pode virar claim ─────────────────────────────────────────────
+test('SILENT-LIE anti-FP: infinitivo/pergunta não é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Quer tirar o lembrete das 6h de *Tomar remédios*?'), false);
+  assert.strictEqual(hasCompletionClaim('Posso remover esse lembrete?'), false);
+});
+test('SILENT-LIE anti-FP: negação continua honesta e sobrevive', () => {
+  assert.strictEqual(hasCompletionClaim('Não removi nada ainda.'), false);
+  assert.strictEqual(hasCompletionClaim('Ainda não tirei o lembrete.'), false);
+});
+test('SILENT-LIE anti-FP: verbo no meio de palavra não casa', () => {
+  assert.strictEqual(hasCompletionClaim('Iremos ver isso amanhã.'), false);
+  assert.strictEqual(hasCompletionClaim('O retirado do estoque foi conferido pelo fornecedor?'), false);
+});
+// info-gathering PURO (sem claim) continua intocado — é pra isso que o gate existe, e a
+// camada FRACA segue vetada por ele (é onde o falso-fire de banter mora).
+test('SILENT-LIE anti-FP: coleta de informação sem claim segue passando limpa', () => {
+  const puro = 'Qual horário você quer o lembrete? Manhã ou noite?';
+  const out = enforceNoMarkerHonesty(puro,
+    { nothingPersisted: true, infoGathering: true, awaitingConfirm: false }, { meta: true });
+  assert.strictEqual(out.fired, false);
+  assert.strictEqual(out.reply, puro);
+});
+test('SILENT-LIE anti-FP: claim FRACA + pergunta continua vetada pelo info-gathering', () => {
+  const out = enforceNoMarkerHonesty('Beleza! Quer que eu veja mais alguma coisa?',
+    { nothingPersisted: true, infoGathering: true, awaitingConfirm: false, pendingActionRecent: true }, { meta: true });
+  assert.strictEqual(out.fired, false, 'a camada fraca não pode disparar em pergunta — é banter');
+});
