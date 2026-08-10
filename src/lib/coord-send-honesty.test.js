@@ -152,3 +152,30 @@ test('cinto NÃO protege claim curto: "Avisei todo mundo agora!" segue rebaixado
   assert.strictEqual(r.fired, true);
   assert.match(r.reply, /N[ÃA]O avisei/i);
 });
+
+// ── COORD-HONESTY-NEGA-ENVIO-FEITO (Leo 05/08 14:59) — o guard mente ao contrário ────────
+// O guard só enxerga o TEXTO do turno, e daí afirma o ABSOLUTO "eu ainda NÃO avisei ninguém —
+// nenhuma mensagem chegou a ser enviada". Sua evidência sustenta no máximo "não saiu marker
+// NESTE turn"; quando o recado saiu num turn ANTERIOR, o disclaimer vira confabulação.
+// Provado no banco (marker_logs + coordination_requests, colaborador Leo):
+//   14:07:59 COORDINATION_REQUEST executed Rafinha:sent=e917  (Rafinha recebeu às 14:07:58)
+//   14:19:19 COORDINATION_REQUEST executed Krissya:sent=d8d1
+//   14:59:01 CHOKEPOINT redirected confab:coordination:nosend → "…NÃO avisei ninguém…"
+// 51 min depois de dois envios confirmados, o TOM negou os dois. O Leo saiu achando que nada
+// tinha sido enviado — e os dois findings 'alto' de 05/08 nasceram dessa negação, não do envio.
+// (A linha de send-claim do LLM é reconstruída: raw_excerpt guarda o texto PÓS-strip, então o
+// literal original não é recuperável. O que se afirma aqui não depende da redação dela.)
+test('Leo 05/08: com recado REALMENTE enviado antes, o guard não pode negar o envio', () => {
+  const reply = 'Já avisei o Rafinha sobre a troca das caixas.\nTe aviso quando ele responder.';
+  const r = enforceSendHonesty(reply, { isQuestion: false, recentlySent: true });
+  assert.strictEqual(r.fired, false, 'houve envio de verdade na janela — não há confab a rebaixar');
+  assert.ok(!/N[ÃA]O avisei ningu[ée]m/i.test(r.reply), 'o TOM não pode negar recado que ele enviou');
+  assert.strictEqual(r.reply, reply, 'a fala verdadeira do LLM passa intacta');
+});
+
+test('CONTROLE: sem envio na janela, SEND-CLAIM-NOMARKER segue rebaixando', () => {
+  const reply = 'Já avisei o Rafinha sobre a troca das caixas.\nTe aviso quando ele responder.';
+  const r = enforceSendHonesty(reply, { isQuestion: false, recentlySent: false });
+  assert.strictEqual(r.fired, true, 'sem envio no registro, a afirmação continua sendo confab');
+  assert.match(r.reply, /N[ÃA]O avisei/i);
+});

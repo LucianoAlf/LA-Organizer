@@ -67,10 +67,15 @@ function claimsSent(text) {
 const SEND_NOMARKER_DISCLAIMER =
   '_⚠️ Sendo sincero: eu ainda NÃO avisei ninguém — nenhuma mensagem chegou a ser enviada. Se quiser, me diz pra quem mandar que eu passo o recado._';
 
+// COORD-HONESTY-NEGA-ENVIO-FEITO (Leo 05/08): o disclaimer afirma o ABSOLUTO ("nenhuma mensagem
+// chegou a ser enviada"), mas a evidência do guard é só a ausência de marker NESTE turn. Quando o
+// recado saiu num turn ANTERIOR — o caso do Leo: 2 envios executados e o guard negando os dois 51
+// min depois — a "correção de confab" é ela própria a confab. recentlySent é o fato do banco
+// (coordination_requests status=sent na janela); com ele, a fala do LLM é verdadeira e passa.
 function enforceSendHonesty(text, opts = {}) {
-  const { isQuestion = false } = opts;
+  const { isQuestion = false, recentlySent = false } = opts;
   const s = String(text || '');
-  if (isQuestion || !claimsSent(s)) return { reply: s, fired: false };
+  if (isQuestion || recentlySent || !claimsSent(s)) return { reply: s, fired: false };
   const stripped = stripOptimisticSendLines(s);
   // CINTO (Rose 14/07): se o strip removeria TUDO de um reply LONGO, é overreach de regex —
   // uma resposta legítima longa não é 100% linhas de envio. Claim real é curto (1-2 linhas) OU

@@ -12370,7 +12370,24 @@ async function processMessage(phone, text, raw = {}) {
       // cada um dos 8") → confab (nada despachado). O strip de coord-send-honesty vivia SÓ nos
       // ramos acima; o chokepoint Camada 1 é BINÁRIO (o EVENT_CREATE que persistiu faz
       // nothingPersisted=false, então ele não rebaixa). Aqui: tira a linha de falso-envio + aviso honesto.
-      const _sh = enforceSendHonesty(reply, { isQuestion: hasTrailingQuestion(reply) || isInfoGatheringReply(reply) });
+      // COORD-HONESTY-NEGA-ENVIO-FEITO (Leo 05/08 14:59): "sem marker neste turn" ≠ "nada foi
+      // enviado". O Leo teve 2 recados despachados (Rafinha 14:07:59, Krissya 14:19:19) e, ao
+      // reclamar do lembrete às 14:58, ouviu "NÃO avisei ninguém — nenhuma mensagem chegou a ser
+      // enviada". Antes de negar, confere o registro de envio na mesma janela de 2h já usada pelo
+      // COORD_HINT. Se algo saiu de verdade, a afirmação do LLM não é confab.
+      let _recentlySent = false;
+      try {
+        const _cutoffSend = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const { data: _sentRows } = await supabase
+          .from('coordination_requests')
+          .select('id')
+          .eq('requester_id', collab.id)
+          .eq('status', 'sent')
+          .gte('sent_at', _cutoffSend)
+          .limit(1);
+        _recentlySent = !!(_sentRows && _sentRows.length);
+      } catch (e) { console.warn('[SendHonesty] recent-send check err:', e.message); }
+      const _sh = enforceSendHonesty(reply, { isQuestion: hasTrailingQuestion(reply) || isInfoGatheringReply(reply), recentlySent: _recentlySent });
       if (_sh.fired) {
         reply = _sh.reply;
         console.log(`[SendHonesty] SEND-CLAIM-NOMARKER phone=${_phoneTail} → rebaixado (afirmou envio sem coord marker)`);
