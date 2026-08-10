@@ -373,6 +373,66 @@ pelo `laudo-diario.sh` — perderia o gate semântico e o envio por código.
 **Lição:** ao migrar uma rotina de lugar, a trava que morava no lugar antigo não vai junto. Perguntar
 sempre "o que estava protegendo isso lá, e quem protege aqui?".
 
+### ⚠️ INCIDENTE 10/08 — eu quebrei o laudo e levei 3 tentativas para consertar
+
+**Fechado 10/08 09:05 BRT.** Duas falhas independentes apareceram na mesma manhã e foram
+confundidas uma com a outra. Vale ler inteiro antes de mexer em ferramenta de agente de novo.
+
+**Falha 1 — o laudo parou de ver o banco. Minha, do A0-bis.**
+O corte de 175 → 4 ferramentas tirou as **RPCs de leitura** que o laudo usava. O A7 (`exec` em
+allowlist) depois fechou a porta dos fundos. Primeira rodada nova (10/08 07:00) saiu com todas as
+seções numéricas em *"não verificável"*.
+
+> **O erro de método, que é a lição:** ao fechar o A7 eu testei **a contenção** — "o agente
+> consegue ler o `maria.env`? `NEGADO`" — e chamei de sucesso. **Nunca testei se o laudo continuava
+> produzindo número.** Trava nova exige provar as duas coisas: que o proibido falhou **e** que o
+> permitido continua funcionando. Testar só metade é como declarar verde sem rodar o teste.
+
+**Falha 2 — o código de barras errado para a Rose. NÃO é minha.**
+O campo `codigo_barras` da conta "Condomínio loja 172" contém a **frase** *"Já existem no Super
+Folha…"* em vez do código. Gravado em **08/08 02:59** num teste E2E, dois dias antes de eu encostar
+em qualquer coisa. A Maria leu e repetiu fielmente — **não confabulou**. Varredura na base:
+**12 de 176** registros coletados têm texto no lugar do código. Achado do Alfredo, ampliado aqui.
+
+**Prova de que nada meu vazou para a Maria operacional:**
+
+| Superfície | Resultado |
+|---|---|
+| `openclaw.json` | `last-good` idêntico ao vivo; meu único rastro era `agents.list` **6 → 7** (o agente `laudo`) |
+| Banco | 4 migrações, **todas** `maria_gov_*`. Nenhuma toca `contas_pagar_codigo_mes` nem a RPC de registro |
+
+**As três tentativas de conserto, e por que as duas primeiras falharam:**
+
+| # | O que fiz | Resultado |
+|---|---|---|
+| 1 | troquei `exec` por `maria-leitura-db__select` | **36 de 41** consultas bloqueadas pela trava de views sanitizadas |
+| 2 | dei as **39 ferramentas somente-leitura** da `maria-leitura` (com as RPCs certas) | RPCs certas apareceram, erros caíram para 17 — mas o agente terminou com `finalStatus: success` e **zero caracteres** |
+| 3 | `agents.defaults.timeoutSeconds` **240 → 900** | ✅ **ENTREGUE**: 4360 chars, 11 seções, 25 chamadas, 6 erros, zero "indisponível" |
+
+**A causa raiz da tentativa 2:** o wrapper chama `openclaw agent --timeout 900`, mas o agente era
+cortado em **240 s**. Discordavam por **3,75×**. O corte de ferramentas aumentou o trabalho
+(consultas bloqueadas consomem turno) até cruzar essa linha. **Não existe `timeoutSeconds` por
+agente** — o `validate` recusa; só o default compartilhado, e por isso a mudança precisou do OK do Alf.
+
+**De brinde:** a conversa da Rose que deu timeout às 08:06 morreu **exatamente nos mesmos 240 s**.
+A mesma mudança provavelmente cobre as duas.
+
+**Dois bugs do wrapper achados no caminho, ainda ABERTOS:**
+
+1. `avisa_falha` sai pelo **mesmo WhatsApp** que pode estar caído — em 09/08 a instância caiu às
+   19:38 e ninguém foi avisado até o Alf perceber, ~12 h depois.
+2. Rodada que falha na entrega **não persiste o achado**: o diagnóstico das 07:00 existiu (3684
+   chars) e sumiu. A sonda já nasce com isso resolvido (critério 8); o laudo não.
+3. `registra ERRO "extracao falhou: …"` imprime o **arquivo errado** (`erro.txt` é o stderr do
+   agente, não o da extração) — por isso o log saiu com a causa vazia.
+
+**Modelos, medido em 10/08:** os **7 agentes** rodam `opencode-go/deepseek-v4-flash`, fallbacks
+`xai/grok-4.3` → `anthropic/claude-sonnet-4-6`. **Nenhum override por agente.** O mesmo modelo
+*flash* atende resposta rápida no WhatsApp **e** o laudo de 11 seções. `model` **é** suportado por
+agente — dá para dar motor mais forte só ao `laudo` sem encostar em quem fala com a Rose.
+
+---
+
 ### B2 — Tarefas 1 a 4 fechadas + dívida de contrato paga (09/08/2026, 21:50 BRT)
 
 **Tarefa 1 — os cinco números da sonda, provados sem WhatsApp.**
