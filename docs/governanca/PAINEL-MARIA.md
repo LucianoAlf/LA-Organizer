@@ -62,9 +62,9 @@ sangramento estancado, chave ainda viva, o Alf adiou). O **A7 fechou em 09/08**.
 > — 9 tarefas, estado da VPS medido no §0 do plano, 13 critérios de fechamento.
 > **Executar a partir dele**, não a partir do resumo abaixo.
 >
-> **Andamento (09/08/2026 21:35 BRT):** Tarefa 1 ✅ · Tarefa 2 ✅ · Tarefa 3 Passo 1 ✅ (medição).
-> **Próximo: Tarefa 3** — `sessao.py` + testes, com o schema já medido. Ver `B2 — Tarefas 1 e 2`
-> abaixo.
+> **Andamento (09/08/2026 21:40 BRT):** Tarefas **1, 2, 3 e 4 fechadas**.
+> **Próximo: Tarefa 5** — o runner da rodada. É a primeira que **mexe no `maria.env`** (os cinco
+> números da sonda) e exige restart do bridge. Ver `B2 — Tarefas 1 a 4` abaixo.
 
 Antes de tudo: **conferir a rodada automática de 10/08 às 07:00 BRT** — é a primeira sem ninguém
 olhando.
@@ -372,7 +372,7 @@ pelo `laudo-diario.sh` — perderia o gate semântico e o envio por código.
 **Lição:** ao migrar uma rotina de lugar, a trava que morava no lugar antigo não vai junto. Perguntar
 sempre "o que estava protegendo isso lá, e quem protege aqui?".
 
-### B2 — Tarefas 1, 2 e 3 fechadas (09/08/2026, 21:35 BRT)
+### B2 — Tarefas 1 a 4 fechadas (09/08/2026, 21:40 BRT)
 
 **Tarefa 1 — os cinco números da sonda, provados sem WhatsApp.**
 `5521900000000` a `...0004`. `/chat/check` devolveu `isInWhatsapp: false` nos cinco. O passo de
@@ -403,6 +403,29 @@ mandaria mensagem a um terceiro. Revalidação a cada rodada, como a spec §6.1 
 As três armadilhas do schema, todas com teste dedicado: o papel mora em `message.role` e não no
 topo; `timestamp` é **string ISO** e não epoch; e `content` é **lista de blocos** — ler o bloco
 `thinking` junto do `text` faria o gate tomar o raciocínio interno por resposta.
+
+**Tarefa 4 — gate e asserções (`sonda/gate.py`, `sonda/contencao.py`). 42 ok, 0 falhas.**
+
+A prova que importa não é a suíte, é a **A1 rodando contra o `bridge.js` e o `maria.env` reais**:
+
+```
+constantes *NUMBER achadas no bridge.js REAL: ANA_NUMBER, ANNE_NUMBER, OWNER_NUMBER, ROSE_NUMBER
+esperadas presentes: True   |   números privilegiados: 4   |   erros: nenhum
+  5521****0990 <- bridge.js:ANA_NUMBER,  env:AUTHORIZED_PEOPLE_JSON
+  5521****0296 <- bridge.js:ANNE_NUMBER, env:AUTHORIZED_PEOPLE_JSON
+  5521****0998 <- bridge.js:ROSE_NUMBER, env:AUTHORIZED_PEOPLE_JSON
+  5521****8047 <- bridge.js:OWNER_NUMBER, env:AUTHORIZED_PEOPLE_JSON, env:MARIA_UAZAPI_OWNER_NUMBER
+A1 hoje: False | A1: sonda 0000 não está em MARIA_UAZAPI_ALLOWED_NUMBERS
+```
+
+**O vermelho é o esperado e é a favor:** os cinco números só entram no env na Tarefa 5. A A1 já
+está afirmando de verdade — três das quatro constantes **não existem no env**, só no código, e é
+por isso que a versão anterior dela passava sem afirmar nada.
+
+**Limpeza de dívida própria:** o `test_ancoras.py` tinha uma **segunda implementação** da extração
+por âncora. Quando corrigi o `_pela_ancora` do gate, a cópia ficou para trás e o teste passou a
+medir outra coisa. Agora ele **importa do `gate.py`**. É a quarta vez que contrato duplicado morde
+nesta fatia — as outras três foram no próprio plano.
 
 ⚠️ **Correção de horário:** as primeiras versões desta seção diziam "10/08 00:30 BRT". Era **UTC**
 lido do `ls`. O relógio BRT da VPS marcava **09/08 21:34**. É a segunda vez que erro isto nesta
