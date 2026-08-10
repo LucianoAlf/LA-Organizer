@@ -16,6 +16,20 @@ const MAX_CODIGOS = 2;   // WhatsApp num celular; lista longa não é lida
 
 function _n(v) { return Number.isFinite(Number(v)) ? Number(v) : 0; }
 
+const YMD_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+function _diasEntre(ymdA, ymdB) {
+  const a = YMD_RE.exec(String(ymdA || '')); const b = YMD_RE.exec(String(ymdB || ''));
+  if (!a || !b) return null;
+  // Aritmética em UTC sobre YMD já resolvido em BRT — sem conversão de fuso não há como
+  // deslocar o dia (LOCALYMD-UTC-SHIFT). Vira mês e ano sem tropeçar.
+  const ms = Date.UTC(+b[1], +b[2] - 1, +b[3]) - Date.UTC(+a[1], +a[2] - 1, +a[3]);
+  return Math.round(ms / 86400000);
+}
+function _ddmm(ymd) { const m = YMD_RE.exec(String(ymd || '')); return m ? `${m[3]}/${m[2]}` : ''; }
+const _FMT_BRT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
 /**
  * Monta a seção. PURA: recebe números prontos, não fala com banco.
  * Devolve '' quando não há dados — a seção some do relatório em vez de imprimir lixo.
@@ -32,8 +46,16 @@ function formatarResumoGovernanca(dados) {
   const linhas = ['📊 *Governança (24h)*'];
 
   // O caso mais valioso do relatório: o ciclo parou de rodar e ninguém percebeu.
+  //
+  // GOVRESUMO-CICLO-ALARME-FALSO (10/08): a linha só pode falar de PARADA, nunca de "ainda não
+  // rodou hoje". Este relatório sai às 07:00 e o ciclo dispara às 08:00 — quem lê às 07:00 lendo
+  // "não rodou" aprende a ignorar a linha, e ela morre justo pro dia em que a parada for real.
+  // Com a data e a contagem de dias, a frase deixa de ser adjetivo e vira medida verificável.
   if (!dados.cicloRodou) {
-    linhas.push('⚠️ O ciclo de governança *não rodou* — nenhum achado foi tratado hoje.');
+    const dias = _diasEntre(dados.ultimoCicloYmd, dados.hojeYmd);
+    linhas.push(dias != null && dias > 0
+      ? `⚠️ O ciclo de governança *não roda desde ${_ddmm(dados.ultimoCicloYmd)}* (${dias} dia${dias > 1 ? 's' : ''}) — nenhum achado está sendo tratado.`
+      : '⚠️ O ciclo de governança *não rodou* — nenhum achado está sendo tratado.');
     return linhas.join('\n');
   }
 
@@ -82,9 +104,10 @@ async function carregarResumoGovernanca(sb, { horas = HORAS_PADRAO, ymd = null }
       sb.from('tom_audit_findings').select('id, verified_note').gte('verified_at', desde),
       sb.from('tom_known_issues').select('codigo, corrigido_em, fix_resumo')
         .not('corrigido_em', 'is', null).gte('corrigido_em', desde90),
-      sb.from('ritual_logs').select('id').eq('ritual_type', 'gov_agent')
-        .eq('reference_date', ymd || new Date().toISOString().slice(0, 10))
-        .eq('status', 'sent').limit(1),
+      // ÚLTIMA rodada, não "a rodada de hoje" (GOVRESUMO-CICLO-ALARME-FALSO): quem consome isto
+      // às 07:00 pergunta antes das 08:00 em que o ciclo dispara, e "de hoje" seria sempre vazio.
+      sb.from('ritual_logs').select('reference_date').eq('ritual_type', 'gov_agent')
+        .eq('status', 'sent').order('created_at', { ascending: false }).limit(1),
     ]);
 
     // Findings dos 90 dias para o placar (mesma janela do ciclo, senão a taxa não bate).
@@ -92,8 +115,19 @@ async function carregarResumoGovernanca(sb, { horas = HORAS_PADRAO, ymd = null }
       .select('promoted_code, incident_at, auto_triage')
       .not('promoted_code', 'is', null).gte('incident_at', desde90);
 
+    // Dia civil de BRT, nunca toISOString().slice(0,10) — em UTC, depois das 21h "hoje" já é
+    // amanhã e o relatório da noite acusaria uma parada que não existe (LOCALYMD-UTC-SHIFT).
+    const hojeYmd = ymd || _FMT_BRT.format(new Date());
+    const ultimoCicloYmd = (ritualRes.data && ritualRes.data[0] && ritualRes.data[0].reference_date) || null;
+    const diasParado = _diasEntre(ultimoCicloYmd, hojeYmd);
+
     return {
-      cicloRodou: !!(ritualRes.data && ritualRes.data.length),
+      // Saudável = rodou hoje ou ontem. Dia civil em vez de "últimas N horas" porque a janela de
+      // retry vai até as 12h: com limite em horas, o MESMO ciclo saudável passa ou não conforme
+      // a hora em que o relatório sair.
+      cicloRodou: diasParado != null && diasParado <= 1,
+      ultimoCicloYmd,
+      hojeYmd,
       correcoes: (kisRes.data || []).filter(ehDoAgente),
       achadosFechados: (findRes.data || []).filter((f) => f && temMarcaDoAgente(f.verified_note)).length,
       placar: calcularPlacar(kis90Res.data || [], findPlacar || []),

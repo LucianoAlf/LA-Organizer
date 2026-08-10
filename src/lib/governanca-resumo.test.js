@@ -29,7 +29,44 @@ test('rodada com correção e varredura mostra as duas coisas', () => {
 // O caso mais valioso do relatório: o agente parou de rodar e ninguém percebeu.
 test('ciclo que NÃO rodou vira alerta explícito, não omissão', () => {
   const s = formatarResumoGovernanca({ cicloRodou: false, correcoes: [], achadosFechados: 0, placar: PLACAR_LIMPO });
-  assert.match(s, /n[ãa]o rodou/i);
+  assert.match(s, /n[ãa]o rod/i);
+  assert.match(s, /⚠️|🔴/);
+});
+
+// ── GOVRESUMO-CICLO-ALARME-FALSO (10/08) ───────────────────────────────────────────────────
+// O relatório sai às 07:00; o ciclo dispara às 08:00 (dispatcher, GOV_AGENT_TIME). A 1ª versão
+// perguntava "rodou HOJE?" — pergunta que às 07:00 é impossível responder sim. Estreou em
+// 10/08 gritando "não rodou" com o ciclo de ontem tendo rodado às 08:21, e ia repetir todo dia.
+// Alarme falso diário não é um bug pequeno: ele treina quem lê a ignorar a linha que existe
+// justamente pro dia em que o ciclo REALMENTE parar.
+//
+// A pergunta certa é "está rodando?", medida em dia civil: hoje ou ontem = saudável.
+// Dia civil, e não "últimas N horas", porque a janela de retry vai até 12h — com limite em
+// horas o mesmo ciclo saudável passa ou não dependendo da hora em que o relatório sair.
+test('ciclo que rodou ONTEM não vira alarme (o relatório das 07h é anterior ao ciclo das 08h)', () => {
+  const s = formatarResumoGovernanca({
+    cicloRodou: true, correcoes: [], achadosFechados: 5, placar: PLACAR_LIMPO,
+  });
+  assert.doesNotMatch(s, /n[ãa]o rod/i);
+  assert.match(s, /5/);
+});
+
+test('parada real diz DESDE QUANDO — número, não adjetivo', () => {
+  const s = formatarResumoGovernanca({
+    cicloRodou: false, ultimoCicloYmd: '2026-08-07', hojeYmd: '2026-08-10',
+    correcoes: [], achadosFechados: 0, placar: PLACAR_LIMPO,
+  });
+  assert.match(s, /07\/08/, 'sem a data, ninguém sabe se é de hoje ou de um mês atrás');
+  assert.match(s, /3 dias/);
+  assert.match(s, /⚠️|🔴/);
+});
+
+test('agente que nunca rodou não vira "há NaN dias"', () => {
+  const s = formatarResumoGovernanca({
+    cicloRodou: false, ultimoCicloYmd: null, hojeYmd: '2026-08-10',
+    correcoes: [], achadosFechados: 0, placar: PLACAR_LIMPO,
+  });
+  assert.doesNotMatch(s, /undefined|NaN|null|Invalid/);
   assert.match(s, /⚠️|🔴/);
 });
 
@@ -84,7 +121,9 @@ test('mais de 2 correções não vira parede — resume', () => {
 // já filtrava os KIs; eu não apliquei o mesmo aos findings).
 const { carregarResumoGovernanca } = require('./governanca-resumo');
 
-function sbFalso({ kis = [], findings24h = [], kis90 = [], findings90 = [], rodou = true } = {}) {
+// `ciclos` = reference_date das rodadas do gov_agent, da mais recente pra mais antiga
+// (é o que a consulta real devolve: order by created_at desc).
+function sbFalso({ kis = [], findings24h = [], kis90 = [], findings90 = [], ciclos = ['2026-08-09'] } = {}) {
   const mk = (data) => {
     const o = {};
     for (const m of ['select', 'eq', 'in', 'gte', 'order', 'limit', 'not', 'ilike']) o[m] = () => o;
@@ -94,13 +133,12 @@ function sbFalso({ kis = [], findings24h = [], kis90 = [], findings90 = [], rodo
   let chamadaFindings = 0;
   return {
     from: (t) => {
-      if (t === 'ritual_logs') return mk(rodou ? [{ id: 'x' }] : []);
+      if (t === 'ritual_logs') return mk(ciclos.map((d) => ({ reference_date: d })));
       if (t === 'tom_known_issues') return mk(chamadaKis++ === 0 ? kis : kis90);
       chamadaFindings += 1;
       return mk(chamadaFindings === 1 ? findings24h : findings90);
     },
   };
-  function chamadaKisInit() {}
 }
 let chamadaKis = 0;
 
@@ -119,4 +157,34 @@ test('a varredura conta SÓ o que tem a marca do agente', async () => {
   });
   const d = await carregarResumoGovernanca(sb, { ymd: '2026-08-09' });
   assert.strictEqual(d.achadosFechados, 2, 'contou fechamento humano como se fosse do agente');
+});
+
+// A raiz do GOVRESUMO-CICLO-ALARME-FALSO mora AQUI, não na formatação: a consulta filtrava por
+// reference_date = hoje. Cenário real de 10/08 07:00 — último ciclo em 09/08 08:21, nenhum hoje.
+test('ciclo de ontem conta como saudável — o de hoje ainda nem tinha hora de rodar', async () => {
+  chamadaKis = 0;
+  const d = await carregarResumoGovernanca(sbFalso({ ciclos: ['2026-08-09'] }), { ymd: '2026-08-10' });
+  assert.strictEqual(d.cicloRodou, true, 'alarme falso: acusou parada com o ciclo de ontem no lugar');
+  assert.strictEqual(d.ultimoCicloYmd, '2026-08-09');
+});
+
+test('dois dias sem rodar é parada de verdade — e aí o alarme TEM que soar', async () => {
+  chamadaKis = 0;
+  const d = await carregarResumoGovernanca(sbFalso({ ciclos: ['2026-08-08'] }), { ymd: '2026-08-10' });
+  assert.strictEqual(d.cicloRodou, false);
+  assert.strictEqual(d.ultimoCicloYmd, '2026-08-08');
+});
+
+test('rodou hoje também é saudável (relatório relido depois das 08h)', async () => {
+  chamadaKis = 0;
+  const d = await carregarResumoGovernanca(sbFalso({ ciclos: ['2026-08-10', '2026-08-09'] }), { ymd: '2026-08-10' });
+  assert.strictEqual(d.cicloRodou, true);
+  assert.strictEqual(d.ultimoCicloYmd, '2026-08-10');
+});
+
+test('sem nenhuma rodada registrada: para, sem data e sem lixo', async () => {
+  chamadaKis = 0;
+  const d = await carregarResumoGovernanca(sbFalso({ ciclos: [] }), { ymd: '2026-08-10' });
+  assert.strictEqual(d.cicloRodou, false);
+  assert.strictEqual(d.ultimoCicloYmd, null);
 });
