@@ -54,15 +54,36 @@ async function balanceDivergences(collaboratorId, { threshold = 1 } = {}) {
   }
   const { data: pfAccs } = await supabase.from('pf_accounts').select('id, name, balance').in('id', maps.map((m) => m.pf_account_id));
   const pfById = {}; for (const a of (pfAccs || [])) pfById[a.id] = a;
-  const out = [];
+
+  // FIN-DIVERG-CONTA-VAZIA: quantos lançamentos a conta do app tem. Conta que nunca foi usada
+  // acusa o saldo real inteiro como "faltando" — todo dia, sem ação possível de quem lê.
+  // null = não consegui medir, e aí a divergência é reportada (não medir ≠ estar tudo bem).
+  const lancPorConta = {};
+  await Promise.all([...new Set(maps.map((m) => m.pf_account_id))].map(async (id) => {
+    try {
+      const { count } = await supabase.from('pf_transactions')
+        .select('id', { count: 'exact', head: true }).eq('account_id', id);
+      lancPorConta[id] = Number.isFinite(count) ? count : null;
+    } catch (_) { lancPorConta[id] = null; }
+  }));
+
+  const linhas = [];
   for (const mp of maps) {
     const real = realById[mp.pluggy_account_id];
     const app = pfById[mp.pf_account_id];
     if (real == null || !app) continue;
-    const diff = Number(app.balance) - real;
-    if (Math.abs(diff) >= threshold) out.push({ conta: app.name, saldoApp: Number(app.balance), saldoReal: real, diff });
+    linhas.push({
+      conta: app.name, saldoApp: Number(app.balance), saldoReal: real,
+      lancamentos: lancPorConta[mp.pf_account_id],
+    });
   }
-  return out;
+  const { filtraDivergencias } = require('../finance/divergencia-saldo');
+  const r = filtraDivergencias(linhas, { threshold });
+  // Silenciar o alerta sem deixar rastro esconderia o mapeamento errado que o causou.
+  if (r.contasVazias.length) {
+    console.warn(`[Pluggy] mapa aponta pra conta do app SEM lançamentos: ${r.contasVazias.join(', ')} — cadastro duplicado?`);
+  }
+  return r.divergencias;
 }
 
 // --- Consulta realtime (D5): fetch fresh, filtra por banco (nome) ---

@@ -37,7 +37,18 @@ async function reconcileReportData(collaboratorId, { topN = 6 } = {}) {
   const supabase = require('../supabase/client');
   const cnt = async (status) => (await supabase.from('pf_pluggy_transactions')
     .select('*', { count: 'exact', head: true }).eq('collaborator_id', collaboratorId).eq('status', status)).count || 0;
-  const conciliadoCount = await cnt('matched');
+  // FIN-CONCILIADO-SEM-JANELA (10/08): `matched` sem filtro de data é o acumulado desde que o
+  // Pluggy entrou. No relatório de FECHAMENTO DO DIA isso saía como "✅ Tá tudo certo: 30
+  // movimentos bateram com o que você lançou" — com o último match tendo acontecido 3 semanas
+  // antes. Número histórico em moldura diária lê como resultado de hoje. `resolved_at` é seguro
+  // como marco: a reconciliação só processa `status='pending'`, então um matched nunca é
+  // reescrito. O total histórico continua aparecendo, na linha do backlog, onde ele é honesto
+  // ("…e mais N dos últimos meses").
+  const desde24h = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const conciliadoCount = (await supabase.from('pf_pluggy_transactions')
+    .select('*', { count: 'exact', head: true })
+    .eq('collaborator_id', collaboratorId).eq('status', 'matched')
+    .gte('resolved_at', desde24h)).count || 0;
   const pendingTotal = await cnt('pending');
   const { data: top } = await supabase.from('pf_pluggy_transactions')
     .select('amount, direction, posted_date, description, pluggy_category')
