@@ -35,3 +35,8 @@ web/.claude/
 *.bak
 *.bak-*
 *.pre-*.bak
+
+# Lock de deploy — estado LOCAL de coordenacao entre chats. Versionar isto faz o lock
+# viajar por commit/rebase e virar estado compartilhado: o hold de um chat some no pull do
+# outro (DEPLOYHOLD-CAMINHO-INVISIVEL, 10/08).
+.deploy-hold
