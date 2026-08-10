@@ -1035,11 +1035,22 @@ def _numeros(texto_norm):
     return achados
 
 def _pela_ancora(texto_norm, ancora):
-    """Numero ADJACENTE ao termo. Resolve 'R$ 1.240' vs '3 vencidas' sem declarar empate."""
+    """Numero ADJACENTE ao termo. Resolve 'R$ 1.240' vs '3 vencidas' sem declarar empate.
+
+    Pega o PRIMEIRO grupo que casou, nao o grupo 1. Isso deixa a ancora ter dois
+    ramos — numero antes do termo E termo antes do numero — porque as duas ordens
+    aparecem de verdade:
+        "3 contas vencidas"                        -> numero antes
+        "nao ha contas vencidas ... sao 0"         -> numero depois
+    Testado com resposta real: ancorar so num sentido reprova frase correta, e o
+    item afunda no baseline por defeito do gate (Tarefa 7, Passo 3).
+    """
     m = re.search(ancora, texto_norm)
     if not m:
         return None
-    bruto = m.group(1)
+    bruto = next((g for g in m.groups() if g), None)
+    if bruto is None:
+        return None
     if bruto.isdigit():
         return int(bruto)
     for p, v in EXTENSO.items():
