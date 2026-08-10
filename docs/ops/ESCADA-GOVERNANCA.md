@@ -44,7 +44,29 @@ suíte como uma função só, e o protocolo cita a função em vez do literal.
 
 ### ETAPA 6/7 — trabalho não-commitado é apagado por deploy externo no meio da rodada
 
-**Ocorrências:** 1 (09/08). **É a falha mais cara registrada até aqui.**
+**Ocorrências:** 2 (09/08, 10/08). **É a falha mais cara registrada até aqui — e reincidiu.**
+
+> ⚠️ **REINCIDÊNCIA EM 10/08, PIOR QUE A PRIMEIRA — e a regra 1 abaixo, como estava escrita,
+> NÃO teria salvado.** Duas coisas novas foram medidas:
+>
+> 1. **O arquivo de teste NÃO é rede de segurança.** Em 09/08 ele sobreviveu por ser untracked.
+>    Em 10/08 o alvo era `src/lib/coord-send-honesty.test.js`, que **já existia no repo** — o
+>    `reset --hard` apagou o fix (`coord-send-honesty.js`) **e** o teste, juntos. O que denunciou
+>    foi um `system-reminder` mostrando o arquivo sem a edição; sem isso, o `grep` de conferência
+>    é que teria pego. Não conte com o teste para denunciar.
+> 2. **Commit local não protege — só `push` protege.** O reflog mostra `reset: moving to
+>    origin/main`. Um commit local em `main` que não está em `origin` é simplesmente abandonado
+>    pelo reset. A regra 1 dizia "commitar"; o que ela precisa dizer é **commitar E dar push**,
+>    senão ela dá uma falsa sensação de segurança.
+>
+> Cronologia de 10/08: `HEAD` no início `078b73b`; dois resets durante a rodada
+> (`078b73b` → `de59bb3`), o segundo no meio da ETAPA 5. `src/engine.js` sobreviveu por sorte de
+> timing (a edição caiu entre os dois resets). Correção refeita e publicada em `74bf803`.
+>
+> Isto reforça a proposta de virar código que já estava aqui embaixo, e acrescenta uma:
+> **o `gov-runner` deveria segurar o auto-deploy enquanto a rodada de governança corre** (o
+> mecanismo de `.deploy-hold` descrito no CLAUDE.md já existe para exatamente esse tipo de
+> concorrência — a rodada de governança simplesmente não o usa).
 
 O que aconteceu: a correção da rodada (12 pontos de saída dos interceptors de fatura passando
 a gravar em `conversation_history`) foi feita, testada e ficou **verde** no `engine.js`. Em

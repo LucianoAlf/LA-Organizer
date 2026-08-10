@@ -14,3 +14,5 @@ Uma linha por pedido. Se já existir a linha, **incremente a contagem** em vez d
 | 31/07 | Rose | "mas ta td misturado trabalho e pessoal ai né, organiza melhor pf" | feature | 1 |
 | 25/07 | Rose | "Completo" — queria os 7 lançamentos restantes do extrato | limitação (contexto não persiste entre turnos) | 1 |
 | 16/07 | Rose | "já que vc n pode apagar por aqui" — estorno em lote | feature (Fase B do roadmap financeiro) | 1 |
+| 19/06 | Daiana | "Envie às 17:30 um lembrete para a Anne separar todos os cheques..." — recado com horário agendado | feature (o schema do COORDINATION_REQUEST não tem campo de horário de envio) | 1 |
+| 22/06 | Rafinha | "Me manda a mensagem do Rodrigo novamente" | limitação (janela de contexto de 30 mensagens; nenhum marker faz retrieval de histórico) | 1 |
