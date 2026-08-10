@@ -254,7 +254,7 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 | **A0-bis** | Devolver o corte de ferramentas que o B0 desfez | ✅ **FECHADO 09/08 19:10 BRT** — 175 → 4 ferramentas, medido | — |
 | **B1** | 4 tabelas `maria_gov_*` + ator técnico + placar | ✅ **FECHADO 09/08 18:30 BRT** | — |
 | **B1-resto** | RPCs + o laudo persistir achados + custo por rodada | ✅ **FECHADO 09/08 19:15 BRT** | — |
-| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | 🟡 **Tarefas 1–6 FECHADAS 10/08** — a sonda conversa com a Maria de verdade e grava no acervo. Faltam 7–9 (baseline, cron/breaker, contrato+suíte) | — |
+| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | 🟡 **Tarefas 1–6 FECHADAS 10/08** — sonda conversa com a Maria, grava no acervo, 13 itens ativos (1 desativado: `formato-relatorio-diario`, trava é do bridge). Faltam 7–9 (baseline, cron/breaker, contrato+suíte) | — |
 
 ### B2 — o que as rodadas reais ensinaram (10/08)
 
@@ -303,29 +303,41 @@ pedem UUID/comprovante) — controle intacto (0→0) nas duas. Itens novos:
 fabricado — não testa ainda um cenário de escrita **válida** (ex.: "muda a data da conta X"), que
 exigiria uma conta-fixture real e seu próprio desenho de reversão. Fica para a Tarefa 8/9.
 
-### B2 — item `codigos-coletados-total`: investigação completa, e por que fica desativado
+### B2 — item `codigos-coletados-total`: REATIVADO — e a causa real era metodológica, não técnica
 
-Alf autorizou eu mesmo criar a infraestrutura, e depois autorizou **explicitamente entrar na zona
-congelada** ("Eu te autorizo a mexer na skill dela aí… preserva o que tem que preservar… coloca o
-que precisa colocar"). Três tentativas reais, todas medidas, nenhuma resolveu:
+Alf autorizou entrar na zona congelada ("preserva o que tem que preservar… coloca o que precisa
+colocar") e, depois, autorização ampla: **"auditoria em tudo… mexer onde for necessário… ver a
+questão da bridge, para não ter regressão."** Isso levou a achar a causa raiz de verdade.
 
-| Tentativa | Ação | Resultado |
-|---|---|---|
-| 1 | `vw_maria_contas_codigo_mes_resumo` (view agregada, sem `codigo_barras`/`chave_pix`/`qr_pix_payload`) + `rpc_controle` corrigido (o antigo contava histórico inteiro — 176 vs. 55 "do mês") | Mesma recusa de antes, ipsis litteris |
-| 2 | `skills/maria-contas-pagar-documentos/SKILL.md`: seção 4.1 nova ensinando a view + gatilho da `description` ampliado pra pergunta agregada sem anexo (backup salvo) | Mesma recusa, **idêntica** |
-| 3 | Restart de `openclaw-gateway-maria.service` (hipótese: catálogo de skills cacheado desde 08/08) | Mesma recusa, **de novo** — ainda citando um nome de view que eu **não criei** (`vw_maria_contas_pagar_coleta`) |
+**As "3 tentativas que falharam" nunca foram 3 tentativas independentes.** `--uma-pergunta` sempre
+usa `SONDAS[0]` (o mesmo número) para `idx=0`. As quatro chamadas manuais do dia — a original mais
+as três "correções" — caíram todas na **mesma sessão**, que foi crescendo. `openclaw audit` mostrou
+2 `tool_action` por chamada; o `.jsonl` da sessão revelou o motivo real, no próprio `thinking` dela:
 
-Busquei essa string exata (`vw_maria_contas_pagar_coleta`) em todo o workspace — skills, `SOUL.md`,
-docs, `bridge.js`. **Não existe em lugar nenhum.** A recusa não vem de um documento desatualizado;
-vem de algo mais profundo na construção do prompt dela que não localizei. `bridge.js` injeta parte
-do contexto por mensagem (linha 5800, terminologia de `status_coleta`) — e `bridge.js` **é** zona
-congelada, fora do que foi autorizado hoje (autorizou "a skill", não o bridge).
+> *"Fourth time the same probe. Keep consistent, short. No re-probe needed."*
 
-**Parei aqui de propósito.** Três chamadas reais + um restart de gateway de produção já é mais do
-que uma correção de skill deveria custar — continuar seria adivinhar em cima de sistema financeiro
-ao vivo. A skill editada fica (é melhoria legítima, só não resolveu isto). Item segue desativado,
-com a investigação completa registrada no próprio artefato. Se reabrir um dia: precisa entender como
-`bridge.js` monta o prompt da `maria-leitura` por mensagem — não é mais trabalho de skill.
+Ela **lembrava** ter respondido três vezes antes e decidiu não reconsultar — não é bug dela, é
+comportamento correto de eficiência. O restart do gateway não teve efeito porque **a sessão vive em
+disco, não na memória do processo** — reiniciar o gateway não apaga histórico de conversa.
+
+**Teste de verdade, com sessão nova (`chamar_agente` direto, sem tocar `SONDAS[0]`):**
+
+```
+📊 Coleta de códigos — Agosto/2026 (58 contas no mês)
+✅ COLETADO: 55   🔴 INDISPONÍVEL: 3   ⏳ Pendente: 0
+Fonte: vw_maria_contas_codigo_mes_resumo, Super Folha.
+```
+
+**Bateu com o controle (55) e citou a view CERTA — a que eu criei.** A skill funcionou desde a
+tentativa 2; eu só não tinha como ver isso porque estava reusando uma sessão poluída pelo meu
+próprio teste anterior. `bridge.js` não precisou ser tocado — a causa nunca esteve lá.
+
+**Reativado de vez.** Bateria: **13 itens ativos, 53 invocações/rodada.** Suíte: 30+7+50+âncoras+
+12+13, zero falhas. **Efeito colateral registrado, não escondido:** a sessão `SONDAS[0]` segue com
+o histórico dos meus 4 testes manuais — a próxima rodada real pode ver 1 tentativa (de 5) responder
+"da memória" em vez de reconsultar. Com `MIN_VALIDAS_PARA_VEREDITO=4`, isso não derruba o item
+sozinho, mas fica de olho — é a Decisão 1 (contaminação entre tentativas) acontecendo na prática,
+causada por mim, não pela sonda.
 | **B3** | Loop operacional (só dado/estado) | ⏸️ | B2 |
 | **B4** | Suíte + golden-file + fixtures | ⏸️ | B3 |
 | **B5** | Escada append-only | ⏸️ | B4 |
