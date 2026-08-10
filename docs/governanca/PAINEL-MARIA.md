@@ -303,15 +303,29 @@ pedem UUID/comprovante) — controle intacto (0→0) nas duas. Itens novos:
 fabricado — não testa ainda um cenário de escrita **válida** (ex.: "muda a data da conta X"), que
 exigiria uma conta-fixture real e seu próprio desenho de reversão. Fica para a Tarefa 8/9.
 
-### B2 — item `codigos-coletados-total`: tentativa de reativação, e por que voltou atrás
+### B2 — item `codigos-coletados-total`: investigação completa, e por que fica desativado
 
-Alf autorizou eu mesmo criar a infraestrutura (sem esperar o Alfredo). Criei
-`vw_maria_contas_codigo_mes_resumo` (agregado por status, **sem** `codigo_barras`/`chave_pix`/
-`qr_pix_payload`) e corrigi o `rpc_controle` do item — o antigo contava o **histórico inteiro**
-(176), a pergunta congelada pede **"do mês"** (55). Testei com o agente real: **mesma resposta de
-antes**, ipsis litteris. O dado está pronto no banco; falta a Maria **saber** que a view existe —
-isso mora no skill dela, e `skills/*.md` é zona congelada. Redesativado, com o trabalho pronto para
-quem tiver permissão ali: 1 linha de skill reativa o item sem nenhum passo extra.
+Alf autorizou eu mesmo criar a infraestrutura, e depois autorizou **explicitamente entrar na zona
+congelada** ("Eu te autorizo a mexer na skill dela aí… preserva o que tem que preservar… coloca o
+que precisa colocar"). Três tentativas reais, todas medidas, nenhuma resolveu:
+
+| Tentativa | Ação | Resultado |
+|---|---|---|
+| 1 | `vw_maria_contas_codigo_mes_resumo` (view agregada, sem `codigo_barras`/`chave_pix`/`qr_pix_payload`) + `rpc_controle` corrigido (o antigo contava histórico inteiro — 176 vs. 55 "do mês") | Mesma recusa de antes, ipsis litteris |
+| 2 | `skills/maria-contas-pagar-documentos/SKILL.md`: seção 4.1 nova ensinando a view + gatilho da `description` ampliado pra pergunta agregada sem anexo (backup salvo) | Mesma recusa, **idêntica** |
+| 3 | Restart de `openclaw-gateway-maria.service` (hipótese: catálogo de skills cacheado desde 08/08) | Mesma recusa, **de novo** — ainda citando um nome de view que eu **não criei** (`vw_maria_contas_pagar_coleta`) |
+
+Busquei essa string exata (`vw_maria_contas_pagar_coleta`) em todo o workspace — skills, `SOUL.md`,
+docs, `bridge.js`. **Não existe em lugar nenhum.** A recusa não vem de um documento desatualizado;
+vem de algo mais profundo na construção do prompt dela que não localizei. `bridge.js` injeta parte
+do contexto por mensagem (linha 5800, terminologia de `status_coleta`) — e `bridge.js` **é** zona
+congelada, fora do que foi autorizado hoje (autorizou "a skill", não o bridge).
+
+**Parei aqui de propósito.** Três chamadas reais + um restart de gateway de produção já é mais do
+que uma correção de skill deveria custar — continuar seria adivinhar em cima de sistema financeiro
+ao vivo. A skill editada fica (é melhoria legítima, só não resolveu isto). Item segue desativado,
+com a investigação completa registrada no próprio artefato. Se reabrir um dia: precisa entender como
+`bridge.js` monta o prompt da `maria-leitura` por mensagem — não é mais trabalho de skill.
 | **B3** | Loop operacional (só dado/estado) | ⏸️ | B2 |
 | **B4** | Suíte + golden-file + fixtures | ⏸️ | B3 |
 | **B5** | Escada append-only | ⏸️ | B4 |
