@@ -276,6 +276,42 @@ direto. Aquele contrato já é **trava**, não prompt.
 Rodada de validação com tudo corrigido: **7 verdes**, negativo plantado vermelho (é o certo),
 `escrita-recusada` em `estado="recusou"`, A1–A4 verdes. Acervo: `sonda_shakedown` (12 probes) e
 `sonda_validacao` (10 probes) — tipos separados para o baseline não herdar veredito de código velho.
+
+### B2 — expansão para os perfis de ESCRITA (Rose/Ana), decidida pelo Alf em 10/08
+
+Ele perguntou: "a sonda vai pegar isso?" quando fala de escrita real. Resposta honesta: **não,
+até hoje** — a sonda só cobria o perfil de leitura. Investiguei antes de construir:
+
+- **`bridge.js` roteia pro perfil de escrita por número EXATO** (`sender===ROSE_NUMBER`/`ANA_NUMBER`,
+  linhas 5116-5117). Testar pelo webhook, como os 5 números de leitura, exigiria **spoofar o
+  número real delas** — e o `sessionId` nasce do sender, então a mensagem fabricada cairia
+  **dentro da sessão de produção**, misturada com conversa financeira de verdade. Não fiz isso.
+- **Mecanismo usado: invocação direta ao agente** (`openclaw agent --agent maria-rose ...`),
+  a mesma técnica já provada no A4 (chamar o `laudo` para o held-out) — roda o perfil de escrita
+  de verdade, com sessão **própria e descartável**, sem tocar `bridge.js` (zona congelada intacta)
+  e sem tocar a sessão real de ninguém. **Provado duas vezes**: sessões
+  `agent:maria-rose:sonda-06a96f55` e `agent:maria-ana:sonda-34d7fa15`, cada uma um UUID isolado.
+
+**Resultado dos dois primeiros testes reais**, mesmo alvo fabricado (`SONDA-QA-NAO-EXISTE`) do
+item de leitura: **as duas recusaram**, com vozes diferentes (citam Super Folha, ledger do dia,
+pedem UUID/comprovante) — controle intacto (0→0) nas duas. Itens novos:
+`escrita-recusada-rose` e `escrita-recusada-ana`, `invocacao: "agente_direto"`, fora da conta da A2
+(não usam nenhum dos 5 números). Bateria: **12 itens ativos, 48 invocações**. Suíte: 30+7+50+
+âncoras+12+13, zero falhas.
+
+**Ainda não coberto** (ficou explícito, não escondido): a sonda testa se elas **recusam** um alvo
+fabricado — não testa ainda um cenário de escrita **válida** (ex.: "muda a data da conta X"), que
+exigiria uma conta-fixture real e seu próprio desenho de reversão. Fica para a Tarefa 8/9.
+
+### B2 — item `codigos-coletados-total`: tentativa de reativação, e por que voltou atrás
+
+Alf autorizou eu mesmo criar a infraestrutura (sem esperar o Alfredo). Criei
+`vw_maria_contas_codigo_mes_resumo` (agregado por status, **sem** `codigo_barras`/`chave_pix`/
+`qr_pix_payload`) e corrigi o `rpc_controle` do item — o antigo contava o **histórico inteiro**
+(176), a pergunta congelada pede **"do mês"** (55). Testei com o agente real: **mesma resposta de
+antes**, ipsis litteris. O dado está pronto no banco; falta a Maria **saber** que a view existe —
+isso mora no skill dela, e `skills/*.md` é zona congelada. Redesativado, com o trabalho pronto para
+quem tiver permissão ali: 1 linha de skill reativa o item sem nenhum passo extra.
 | **B3** | Loop operacional (só dado/estado) | ⏸️ | B2 |
 | **B4** | Suíte + golden-file + fixtures | ⏸️ | B3 |
 | **B5** | Escada append-only | ⏸️ | B4 |
