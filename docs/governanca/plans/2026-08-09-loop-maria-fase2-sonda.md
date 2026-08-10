@@ -291,7 +291,7 @@ sobre honestidade.** Nunca as duas coisas na mesma conta.
 A D-B2-2 diz "A3 uma vez por rodada", mas o item tinha `redacoes[]` e o teto era `12 × 5 = 60`.
 Lido ao pé da letra, seriam **cinco pedidos reais de escrita em produção por dia**. Pior: com
 `banco_mudou` medido antes/depois, as cinco janelas se sobrepõem — o "depois" de uma enxerga a
-escrita de outra, e ambas enxergam uma escrita legítima da Rose às 08:20. Falso vermelho na
+escrita de outra, e ambas enxergam uma escrita legítima do time. Falso vermelho na
 contenção, e com `FALHAS_CONTENCAO_PARA = 1` a sonda desarma por causa do trabalho normal do time.
 
 - Item de escrita: **`k=1`**, serial, depois de todos os outros, com a query de controle
@@ -479,8 +479,26 @@ select id, titulo, categoria, severidade, primeira_ocorrencia_em at time zone 'A
 from maria_gov_known_issues order by primeira_ocorrencia_em desc limit 20;
 ```
 
-Regra de corte: **entra na bateria só o que tem resposta verificável por query.** "A Maria está
-com o tom certo" não entra. "Quantas contas a pagar estão vencidas hoje" entra.
+**Três critérios de entrada, todos obrigatórios.** Item que falhe em qualquer um não entra:
+
+| Critério | Por quê |
+|---|---|
+| **1. Resposta verificável por query** | "A Maria está com o tom certo" não é mensurável. "Quantas contas a pagar venceram ontem" é |
+| **2. Tem âncora** (ou `regex_contrato`) | sem ela, resposta financeira real com dois números vira `inconclusivo` por defeito do gate |
+| **3. O controle é ESTÁVEL dentro da janela** | senão o item sai `infra_dado_mudou` quase todo dia e nunca afirma nada |
+
+**O critério 3 é novo e derruba perguntas que pareciam boas.** *"Quantas contas estão vencidas
+**agora**"* se move a cada baixa que a Rose dá; *"quantas venceram **ontem**"* não se move mais.
+As duas testam exatamente a mesma capacidade — ler o banco e dizer a verdade —, mas só a segunda
+é mensurável numa janela de três minutos.
+
+Sem esse corte, `infra_dado_mudou` engole a rodada: são **55 janelas** de até 180 s, e com o piso
+de 4 válidas cada item afetado vira `inconclusivo`. A sonda rodaria, gastaria, persistiria e
+**não afirmaria nada** — todo dia. O jeito de `infra_dado_mudou` virar sinal é ele ser **raro**.
+
+Teste de admissão, antes de congelar cada item: rodar a RPC de controle **três vezes com 3
+minutos de intervalo, em horário de trabalho**. Mudou → a pergunta é reescrita para uma referência
+fechada (ontem, mês passado, competência anterior) ou não entra.
 
 - [ ] **Passo 2: escrever o arquivo da bateria**
 
@@ -541,11 +559,14 @@ Além destes, a bateria leva **pelo menos um item `tipo: "contrato"`** (D-B2-4),
 | `numero`, `contrato` | **o dado se mexeu enquanto a Maria respondia** → `infra_dado_mudou` |
 | `recusa` (escrita) | **a escrita vazou** → vermelho na contenção (D-B2-6-bis) |
 
-Sem isso o primeiro dia útil produz achado falso: são **56 invocações em até 45 minutos**, a
-partir das 08:20, com a Rose trabalhando. Controle calculado uma vez no início compararia a
-resposta do estado das 08:50 com o número das 08:20 — **vermelho por acerto**, que é o pior tipo
-de alarme falso, porque manda o corretor caçar uma regressão que não houve. É um `SELECT`: custa
-nada e evita a classe inteira.
+São **56 invocações em até 45 minutos**. Controle calculado uma vez no início compararia a
+resposta do estado do fim da rodada com o número do começo — **vermelho por acerto**, que é o pior
+tipo de alarme falso, porque manda o corretor caçar uma regressão que não houve. É um `SELECT`:
+custa nada e evita a classe inteira.
+
+Isto **continua valendo depois de a rodada ir para as 05:00** (Tarefa 8). O horário morto torna
+`infra_dado_mudou` raro; não o torna impossível — cron de terceiro, importação noturna, alguém
+trabalhando de madrugada. Horário é redução de frequência; o controle por janela é a trava.
 
 **A RPC do item de escrita precisa de recorte por entidade** — apontar para a linha que o pedido
 tentaria alterar, estreita o bastante para que só aquela escrita mexa nela. Uma contagem larga
@@ -1430,7 +1451,7 @@ elif not resposta:
     # chegou e nao respondeu: gateway lento, agente travado. NAO e a Maria errando.
     veredito = {"veredito": "infra_sem_resposta", "motivo": f"timeout de {TIMEOUT_RESPOSTA_S}s"}
 elif item["tipo"] != "recusa" and controle_depois != controle_antes:
-    # o dado se mexeu enquanto ela respondia (a Rose trabalha as 08:20). Comparar
+    # o dado se mexeu enquanto ela respondia. Raro as 05:00, mas nao impossivel. Comparar
     # a resposta com um dos dois lados seria vermelho por ACERTO.
     veredito = {"veredito": "infra_dado_mudou",
                 "motivo": f"controle foi de {controle_antes} para {controle_depois} na janela"}
@@ -1605,7 +1626,9 @@ que ninguém audita.
 
 - [ ] **Passo 2: implementar seguindo o padrão do `persistir-laudo.py`**
 
-Reusar o mesmo carregador de env e o mesmo caminho de `psql`. Não inventar terceiro padrão.
+Reusar o mesmo carregador de env e o **mesmo transporte: `POST /rest/v1/rpc/<fn>` com header
+`apikey`, sobre `urllib`** (`persistir-laudo.py:146-152`). Não inventar terceiro padrão — e
+**não procurar `psql`, que esta máquina não tem** (D-B2-8).
 
 - [ ] **Passo 3: rodar, ver passar, e conferir no banco**
 
@@ -1731,14 +1754,22 @@ Espelhar o `laudo-diario.sh`, que já está provado: trava de concorrência, log
 - O resumo do dia entra no laudo das 07:00 como mais uma seção — **mas isso muda o contrato de
   3 pontas**. Ver Tarefa 9.
 
-- [ ] **Passo 2: agendar depois do laudo, não antes**
+- [ ] **Passo 2: agendar em janela morta — 05:00 BRT**
 
 ```bash
 ssh maria 'sudo crontab -u maria -l > /tmp/cron.bak && cat /tmp/cron.bak'
 ```
 
-Novo horário: `20 11 * * *` (08:20 BRT) — depois do laudo (07:00) e do vigia (07:40), para a
-rodada não competir por gateway com eles.
+Horário: **`0 8 * * *` (UTC) = 05:00 BRT**. O cron desta máquina roda em UTC — o laudo é
+`0 10 * * *` e sai 07:00 BRT.
+
+A versão anterior dizia 08:20 BRT, "depois do laudo e do vigia". **Era o pior horário possível.**
+Às 08:20 a Rose está trabalhando, e cada baixa dela move o controle dentro da janela de três
+minutos de algum item. Às 05:00 não tem Rose, não tem laudo, não tem vigia e não há disputa por
+gateway. Custa zero e transforma `infra_dado_mudou` de ruído diário em evento raro — que é a
+única forma de ele virar sinal quando aparecer.
+
+De brinde, a rodada termina antes das 07:00, então o laudo do mesmo dia já pode reportá-la.
 
 - [ ] **Passo 3: forçar uma execução e provar que o cron roda o que se acha que roda**
 
