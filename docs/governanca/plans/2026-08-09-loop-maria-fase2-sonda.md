@@ -77,18 +77,18 @@ mantém um índice `sessions/sessions.json` que mapeia
 | `maria-rose` | tem **as duas formas** — o esquema mudou no meio e o arquivo velho ficou |
 | Campos úteis da entrada | `sessionFile`, `estimatedCostUsd`, `runtimeMs`, `compactionCount`, `model` |
 
-**O estrago se fosse ao ar assim:** `caminho_sessao` apontaria para um arquivo que nunca existe →
-`ultima_resposta` devolveria `None` → **todo item sairia `infra_sem_resposta` e a rodada seria
-inválida todo dia**. E a A2 — que também derivava o nome — não acharia sessão nenhuma, diria
-"nenhuma sessão escrita em `maria-leitura`" e, com `FALHAS_CONTENCAO_PARA=1`, **a sonda se
-desarmaria sozinha no dia 1**. Vermelho por vacuidade mente igual ao verde.
+**Correção do próprio achado, medida depois da primeira injeção real:** o nome derivado **não**
+estava morto. As 15 sessões UUID da `maria-leitura` vieram do `openclaw agent` (CLI); **o bridge
+cria a sessão com o nome derivado** — a sonda 0 nasceu como
+`maria-uazapi-v5-maria-leitura-<numero>.jsonl`. Ou seja: o caminho antigo teria funcionado hoje, e
+não é verdade que a rodada sairia inválida. O que é verdade é que **as duas formas convivem**, que
+o esquema já mudou uma vez sem aviso, e que o índice é a única fonte que responde pelas duas.
 
-Correção: `sessao.entrada_indice()` é a única leitora do índice; `caminho_sessao` e
+Correção aplicada: `sessao.entrada_indice()` é a única leitora do índice; `caminho_sessao` e
 `agentes_com_sessao_tocada` resolvem por ela e só caem no nome derivado quando o índice não
-responde (o esquema legado ainda existe em disco). 6 testes novos em `test_sessao.py` e o
-`test_contencao.py` inteiro (7) nasceram deste achado. **De brinde:** `estimatedCostUsd` no índice
-dá o custo REAL por invocação (delta antes/depois) — o breaker da Tarefa 7 nasce com número
-medido, não estimado.
+responde. 6 testes novos em `test_sessao.py` e o `test_contencao.py` inteiro (7) prendem as duas
+formas. **O ganho concreto não foi evitar a quebra — foi tirar a presunção e ganhar o
+`estimatedCostUsd`**, que dá o custo REAL por invocação (delta antes/depois).
 
 ### 0.1 Medições da Tarefa 1 e da Tarefa 3 (feitas em 09/08, 23:40 BRT)
 
@@ -701,10 +701,23 @@ declaração. `test_verificar_contrato.py` planta **11 defeitos** e exige reprov
 ---
 
 
-## Tarefa 5 — O runner da rodada
+## Tarefa 5 — O runner da rodada ✅ FEITA (10/08)
+
+> **Quatro coisas que só a execução respondeu** — todas estavam erradas no papel:
+>
+> | No plano | Medido em 10/08 |
+> |---|---|
+> | Porta do bridge `2650` | **19889**. Porta errada não dá erro: o webhook simplesmente não existe, a injeção morre calada e **todo item vira `infra_nao_chegou`**. O `env.get(..., "2650")` virou `env[...]` — sem default |
+> | `casar_por_id` provável | **False, medido.** O `id` do payload **não** entra na linha da sessão; só o sufixo entra. O caminho "preferido" do plano não existe aqui — a redação vai com token e o desvio fica declarado em `redacao_usada` |
+> | Custo = delta do acumulado | `estimatedCostUsd` é **por rodada**, não acumulado (foi de 0,0140 → 0,0036). Delta daria **negativo**, o `max(0.0, …)` viraria zero, e o breaker ficaria cego achando a rodada grátis |
+> | Ler o índice logo após a resposta | O índice é escrito **duas vezes**: no início (custo da invocação ANTERIOR, `runtimeMs` zerado) e no fim. O sinal certo é **`endedAt` + `status == "done"`** — esperar `lastInteractionAt` devolve o número da invocação passada com cara de fresco |
+>
+> **Custo real medido:** US$ 0,0029 – 0,0140 por invocação (`deepseek-v4-flash`). O teto de US$ 0,50
+> da rodada estava **abaixo do custo normal de 56 invocações** — breaker abaixo do custo normal não
+> é breaker, é aborto permanente. Subiu para 2,00 como guarda de disparada até a Tarefa 7 medir.
 
 **Arquivos:**
-- Criar: `sonda/sonda-runner.py`
+- Criar: `sonda/sonda-runner.py`, `sonda/rpc.py` (transporte único), `sonda/test_contencao.py`
 
 **Interfaces:**
 - Consome: `gate.avaliar`, `gate.classificar_escrita`, `contencao.assercao_a1`,
