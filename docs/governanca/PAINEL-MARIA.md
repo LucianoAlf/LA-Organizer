@@ -62,7 +62,8 @@ sangramento estancado, chave ainda viva, o Alf adiou). O **A7 fechou em 09/08**.
 > — 9 tarefas, estado da VPS medido no §0 do plano, 13 critérios de fechamento.
 > **Executar a partir dele**, não a partir do resumo abaixo.
 >
-> **Andamento (09/08/2026 21:40 BRT):** Tarefas **1, 2, 3 e 4 fechadas**.
+> **Andamento (09/08/2026 21:50 BRT):** Tarefas **1 a 4 fechadas** + dívida de contrato
+> duplicado paga (`config.py` como fonte única + `verificar-contrato.py` com 11 defeitos plantados).
 > **Próximo: Tarefa 5** — o runner da rodada. É a primeira que **mexe no `maria.env`** (os cinco
 > números da sonda) e exige restart do bridge. Ver `B2 — Tarefas 1 a 4` abaixo.
 
@@ -372,7 +373,7 @@ pelo `laudo-diario.sh` — perderia o gate semântico e o envio por código.
 **Lição:** ao migrar uma rotina de lugar, a trava que morava no lugar antigo não vai junto. Perguntar
 sempre "o que estava protegendo isso lá, e quem protege aqui?".
 
-### B2 — Tarefas 1 a 4 fechadas (09/08/2026, 21:40 BRT)
+### B2 — Tarefas 1 a 4 fechadas + dívida de contrato paga (09/08/2026, 21:50 BRT)
 
 **Tarefa 1 — os cinco números da sonda, provados sem WhatsApp.**
 `5521900000000` a `...0004`. `/chat/check` devolveu `isInWhatsapp: false` nos cinco. O passo de
@@ -422,10 +423,39 @@ A1 hoje: False | A1: sonda 0000 não está em MARIA_UAZAPI_ALLOWED_NUMBERS
 está afirmando de verdade — três das quatro constantes **não existem no env**, só no código, e é
 por isso que a versão anterior dela passava sem afirmar nada.
 
-**Limpeza de dívida própria:** o `test_ancoras.py` tinha uma **segunda implementação** da extração
-por âncora. Quando corrigi o `_pela_ancora` do gate, a cópia ficou para trás e o teste passou a
-medir outra coisa. Agora ele **importa do `gate.py`**. É a quarta vez que contrato duplicado morde
-nesta fatia — as outras três foram no próprio plano.
+**Tarefa 4-bis — a dívida de contrato duplicado, paga na raiz (a pedido do Alf).**
+
+Contrato duplicado mordeu **quatro vezes** nesta fatia: três no plano e uma em código rodando
+(o `test_ancoras.py` tinha uma **segunda implementação** da extração; quando corrigi o
+`_pela_ancora` do gate, a cópia ficou para trás e o teste passou a medir outra coisa). O laudo tem
+`verificar-contrato.py` por causa disso. A sonda não tinha.
+
+Duas peças, e a segunda é a que importa:
+
+| Peça | O que faz |
+|---|---|
+| **`sonda/config.py`** | **fonte única** dos números e rótulos: `K_REDACOES`, `SONDAS`, tetos do breaker, `VEREDITOS_INFRA`, `TIPOS_CONHECIDOS`, caminhos. Gate, runner, persistidor e verificador **importam**; ninguém redeclara |
+| **`sonda/verificar-contrato.py`** | confere as **quatro pontas**: `config` ↔ bateria congelada ↔ `gate.py` ↔ **RPCs vivas no Super Folha** |
+
+O verificador não acredita em declaração: **chama cada uma das 11 RPCs** e exige `int` de volta.
+E checa que `maria_gov_ctl_alvo_escrita_sonda` devolve **0** — se a conta fabricada passou a
+existir, alguma escrita vazou, e isso aparece aqui antes de qualquer rodada.
+
+**A prova de que ele não é carimbo:** `test_verificar_contrato.py` planta **11 defeitos** — tipo
+que o gate não trata, item numérico sem âncora, contagem de redações errada, item a mais/a menos,
+`rpc_controle` ausente, regex inválida, item sem `incidente`, contrato sem regex, e o item de
+escrita virando k=5. **Exige que o verificador reprove os 11.** Passa nos 11.
+
+Saída de hoje:
+
+```
+bateria    : bateria-v1, 12 itens
+config     : k=5 sondas=5 itens=11+1 invocacoes=56 min_validas=4
+invocacoes : 56 — bate com o teto
+tipos      : contrato, numero, recusa — todos tratados pelo gate
+rpcs       : 11 distintas, todas vivas e devolvendo int
+CONTRATO: OK
+```
 
 ⚠️ **Correção de horário:** as primeiras versões desta seção diziam "10/08 00:30 BRT". Era **UTC**
 lido do `ls`. O relógio BRT da VPS marcava **09/08 21:34**. É a segunda vez que erro isto nesta
