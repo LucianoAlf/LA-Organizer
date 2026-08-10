@@ -6263,7 +6263,10 @@ function parseHabitMarker(text) {
     valid.push(a);
   }
   if (dropped.length) logSchemaErr('HABIT_ACTION', dropped, parsed);
-  if (!valid.length) return { malformed: true, cleanText };
+  // `motivos` sobe junto (HABIT-EDIT-SEM-CAMINHO): quem trata o malformed precisa distinguir
+  // "schema torto numa ação que existe" (vale pedir de novo) de "ação que não existe" (pedir de
+  // novo nunca vai funcionar — o caminho é o app). Sem isso os dois casos viram a mesma fala.
+  if (!valid.length) return { malformed: true, cleanText, motivos: dropped };
   return { actions: valid, cleanText, malformed: false };
 }
 
@@ -11129,7 +11132,18 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedHab && parsedHab.malformed) {
       console.warn('[Habit] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'HABIT_ACTION', 'rejected', 'schema_invalid', reply);
-      reply = parsedHab.cleanText || reply;
+      // HABIT-EDIT-SEM-CAMINHO (10/08, decisão do Alf): editar hábito por conversa NÃO existe
+      // (create/log/query_progress/delete). Quando o LLM inventa `action:update`, o aviso
+      // genérico de falha ("me manda de novo") manda a pessoa repetir um pedido impossível.
+      // Aqui o TOM diz o que não faz e aponta a aba do app. Não é fala nova: é a mesma família
+      // dos avisos honestos, com saída em vez de beco.
+      const { pediuEdicaoDeHabito, respostaSemEdicaoDeHabito } = require('./lib/habit-sem-edicao');
+      if (pediuEdicaoDeHabito(parsedHab.motivos)) {
+        await logMarker(collab.id, 'HABIT_ACTION', 'redirected', 'sem_capacidade:edicao', null);
+        reply = respostaSemEdicaoDeHabito(parsedHab.cleanText || '');
+      } else {
+        reply = parsedHab.cleanText || reply;
+      }
     } else if (parsedHab) {
       const { okCount, failCount, progressFooters } = await applyHabitActions(collab, parsedHab.actions, text);
       console.log(`[Habit] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
