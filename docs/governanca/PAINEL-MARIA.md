@@ -62,7 +62,7 @@ sangramento estancado, chave ainda viva, o Alf adiou). O **A7 fechou em 09/08**.
 > — 9 tarefas, estado da VPS medido no §0 do plano, 13 critérios de fechamento.
 > **Executar a partir dele**, não a partir do resumo abaixo.
 >
-> **Andamento (10/08/2026 00:30 BRT):** Tarefa 1 ✅ · Tarefa 2 ✅ · Tarefa 3 Passo 1 ✅ (medição).
+> **Andamento (09/08/2026 21:35 BRT):** Tarefa 1 ✅ · Tarefa 2 ✅ · Tarefa 3 Passo 1 ✅ (medição).
 > **Próximo: Tarefa 3** — `sessao.py` + testes, com o schema já medido. Ver `B2 — Tarefas 1 e 2`
 > abaixo.
 
@@ -372,7 +372,7 @@ pelo `laudo-diario.sh` — perderia o gate semântico e o envio por código.
 **Lição:** ao migrar uma rotina de lugar, a trava que morava no lugar antigo não vai junto. Perguntar
 sempre "o que estava protegendo isso lá, e quem protege aqui?".
 
-### B2 — Tarefas 1 e 2 fechadas (10/08/2026, 00:30 BRT)
+### B2 — Tarefas 1, 2 e 3 fechadas (09/08/2026, 21:35 BRT)
 
 **Tarefa 1 — os cinco números da sonda, provados sem WhatsApp.**
 `5521900000000` a `...0004`. `/chat/check` devolveu `isInWhatsapp: false` nos cinco. O passo de
@@ -390,6 +390,23 @@ mandaria mensagem a um terceiro. Revalidação a cada rodada, como a spec §6.1 
 | RPCs de controle | **11** funções `maria_gov_ctl_*`, migração `maria_gov_ctl_sonda_b2`. Todas `stable`, `security definer`, somente leitura |
 | Cruzamento com o laudo | RPCs devolvem 353 pendentes / 11 vencidas / 5 conferências / 176 códigos — **os mesmos números** que o laudo de 09/08 reportou |
 | Testes das âncoras | `sonda/test_ancoras.py`: **21 casos numéricos + 1 positivo e 4 negativos de contrato**, todos verdes na VPS |
+
+**Tarefa 3 — leitor de sessão (`sonda/sessao.py`), com o schema medido, não presumido.**
+
+| Prova | Resultado |
+|---|---|
+| `sonda/test_sessao.py` | **21 ok, 0 falhas** |
+| Rodado contra **sessões reais** do bridge | 3 sessões, resposta lida em todas (`chars` 1144 / 152 / 111) |
+| Compactações medidas em produção | **26, 27 e 55** numa mesma varredura — não é hipótese |
+| Baseline nova | `backups/loop-maria-fase2/baseline-suite.txt`: gov 8/0 · persistidor 13/0 · contrato OK · sessão 21/0 · âncoras 0 falhas |
+
+As três armadilhas do schema, todas com teste dedicado: o papel mora em `message.role` e não no
+topo; `timestamp` é **string ISO** e não epoch; e `content` é **lista de blocos** — ler o bloco
+`thinking` junto do `text` faria o gate tomar o raciocínio interno por resposta.
+
+⚠️ **Correção de horário:** as primeiras versões desta seção diziam "10/08 00:30 BRT". Era **UTC**
+lido do `ls`. O relógio BRT da VPS marcava **09/08 21:34**. É a segunda vez que erro isto nesta
+missão — a hora sempre sai de `TZ=America/Sao_Paulo date`, nunca de timestamp de arquivo.
 
 **Três decisões da Tarefa 2 que mudaram o desenho:**
 
