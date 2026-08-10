@@ -65,6 +65,31 @@ Estes fatos foram medidos, não presumidos. Se algum deixar de valer, o plano mu
 | Baseline da suíte | `gov` 8/0 · persistidor 13/0 · contrato OK | `backups/loop-maria-fase1/baseline-suite.txt` |
 | Cron atual da `maria` | `0 10 * * *` laudo · `40 10 * * *` vigia (UTC = 07:00/07:40 BRT) | `crontab -u maria` |
 
+### 0.0 Medição da Tarefa 5 (10/08, 10:40 BRT) — **o arquivo de sessão não se chama `sessionId`**
+
+A Tarefa 3 presumiu que `<sessionId>.jsonl` era o nome do arquivo. **É falso hoje.** O openclaw
+mantém um índice `sessions/sessions.json` que mapeia
+`agent:<id>:explicit:<sessionId>` → `{"sessionFile": ".../<uuid>.jsonl", "estimatedCostUsd": …}`.
+
+| Medido | Valor |
+|---|---|
+| Sessões de `maria-leitura` com nome derivado | **0** (15 são UUID) |
+| `maria-rose` | tem **as duas formas** — o esquema mudou no meio e o arquivo velho ficou |
+| Campos úteis da entrada | `sessionFile`, `estimatedCostUsd`, `runtimeMs`, `compactionCount`, `model` |
+
+**O estrago se fosse ao ar assim:** `caminho_sessao` apontaria para um arquivo que nunca existe →
+`ultima_resposta` devolveria `None` → **todo item sairia `infra_sem_resposta` e a rodada seria
+inválida todo dia**. E a A2 — que também derivava o nome — não acharia sessão nenhuma, diria
+"nenhuma sessão escrita em `maria-leitura`" e, com `FALHAS_CONTENCAO_PARA=1`, **a sonda se
+desarmaria sozinha no dia 1**. Vermelho por vacuidade mente igual ao verde.
+
+Correção: `sessao.entrada_indice()` é a única leitora do índice; `caminho_sessao` e
+`agentes_com_sessao_tocada` resolvem por ela e só caem no nome derivado quando o índice não
+responde (o esquema legado ainda existe em disco). 6 testes novos em `test_sessao.py` e o
+`test_contencao.py` inteiro (7) nasceram deste achado. **De brinde:** `estimatedCostUsd` no índice
+dá o custo REAL por invocação (delta antes/depois) — o breaker da Tarefa 7 nasce com número
+medido, não estimado.
+
 ### 0.1 Medições da Tarefa 1 e da Tarefa 3 (feitas em 09/08, 23:40 BRT)
 
 Antes de lapidar mais o desenho, foram medidos os cinco pontos que só a VPS responde. Três
