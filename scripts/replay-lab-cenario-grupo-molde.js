@@ -125,6 +125,46 @@ async function statusDe(ids) {
   return data || [];
 }
 
+/**
+ * CANÁRIO INVERTIDO — item plantado cuja obrigação é REPROVAR.
+ * "Item que nunca reprova é decoração" (Lei 6 do manual de governança).
+ *
+ * Ele testa o INSTRUMENTO, não o TOM: planta o dano à mão — marca uma filha-template como
+ * `done` sem que ninguém peça nada — e exige que o medidor acuse. Se o medidor disser "está
+ * limpo" diante de um dano que EU acabei de causar, ele está cego, e todo verde da bateria
+ * vale zero: fixture com ids errados, query trocada, filha-template que não nasceu.
+ *
+ * Não gasta LLM: é banco puro. Roda ANTES da bateria porque medir com instrumento cego é
+ * pior que não medir — produz um relatório verde que ninguém tem como desconfiar.
+ *
+ * Foi exatamente o que me faltou hoje: o cenário C deu 0/3 e eu quase tratei como bug do
+ * produto; era a fixture. E o fix da lista deu 21/21 verde sem mover a agulha. Vermelho por
+ * vacuidade e verde por vacuidade são o mesmo defeito — instrumento não aferido.
+ *
+ * @returns {Promise<{ok:boolean, motivo:string}>} ok=false ⇒ DESCARTAR A RODADA INTEIRA
+ */
+async function rodarCanario(groupId, collabId) {
+  const { fantasmas } = await montarArmadilha(groupId, collabId);
+  if (!fantasmas.length) return { ok: false, motivo: 'fixture não produziu filha-template' };
+
+  const alvo = fantasmas[0];
+  await supabase.from('tasks').update({ status: 'done' }).eq('id', alvo.id);
+
+  const lidas = await statusDe(fantasmas.map((f) => f.id));
+  // CANARIO_SABOTAR=1 cega o medidor de propósito. É a prova de reversão DO CANÁRIO: um
+  // canário que nunca acusa é tão decorativo quanto o item que nunca reprova. Com a flag,
+  // a bateria TEM de sair com "RODADA DESCARTADA" e exit 2 — se sair verde, o canário está
+  // solto no fluxo e não protege nada.
+  const acusou = process.env.CANARIO_SABOTAR === '1'
+    ? 0
+    : lidas.filter((f) => f.status === 'done').length;
+  await limpar(groupId); // o dano plantado não pode sobreviver e virar falso positivo da bateria
+
+  return acusou > 0
+    ? { ok: true, motivo: `detectou o dano plantado em "${alvo.title}"` }
+    : { ok: false, motivo: `dano plantado em "${alvo.title}" passou despercebido — medidor CEGO` };
+}
+
 async function falar(groupId, collabId, texto) {
   await supabase.from('group_chat_messages').insert({ group_id: groupId, sender_id: collabId, role: 'user', content: texto });
   return processGroupChatMessage({ supabase, groupId, senderCollabId: collabId, text: texto });
@@ -168,12 +208,23 @@ async function rodada(i, collab, groupId) {
   const groupId = await grupoQA(collab.id);
   console.log(`[cenario-grupo-molde] N=${N} perfil=${collab.full_name} grupo=${groupId}`);
   console.log('[cenario-grupo-molde] fixture: pacote mensal de grupo + molde CANCELADO (o gatilho)');
+
+  // CANÁRIO ANTES DA BATERIA. Verde de instrumento cego é pior que vermelho: parece cobertura.
+  const can = await rodarCanario(groupId, collab.id);
+  console.log(`[canário] ${can.ok ? 'OK  ' : 'CEGO'} — ${can.motivo}`);
+  if (!can.ok) {
+    console.error('\n[cenario-grupo-molde] RODADA DESCARTADA: o medidor não acusou o dano plantado.');
+    console.error('Nenhum resultado desta bateria vale — inclusive os verdes. Conserte o cenário antes de medir o TOM.');
+    await limpar(groupId);
+    process.exit(2); // 2 = sem garantia (≠ 1, que é reprovação real do TOM)
+  }
+
   let ok = 0;
   for (let i = 0; i < N; i++) {
     try { if (await rodada(i, collab, groupId)) ok++; }
     catch (e) { console.error(`  rodada ${i}: ERRO ${e.message}`); }
   }
   await limpar(groupId);
-  console.log(`\n[cenario-grupo-molde] TAXA: ${ok}/${N} (${N ? Math.round((ok / N) * 100) : 0}%)`);
+  console.log(`\n[cenario-grupo-molde] TAXA: ${ok}/${N} (${N ? Math.round((ok / N) * 100) : 0}%) · canário: OK`);
   process.exit(ok === N ? 0 : 1);
 })();
