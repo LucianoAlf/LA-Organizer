@@ -248,8 +248,8 @@ fechado — e ele não movia a agulha.
 | # | Item | Status |
 |---|---|---|
 | 1 | **Ligar a auditoria nos grupos** | ✅ **FEITO** — ver §11 |
-| 2 | **Cenário C do Replay Lab** — vermelho falso | ⏳ em andamento |
-| 3 | **Buraco de FORMA nº3 do chokepoint** — afirmação de ESTADO sem verbo de conclusão; MEDIR os literais antes de ampliar o gate | ⏳ |
+| 2 | **Cenário C do Replay Lab** | ✅ **FEITO** — bloqueia só o dano, reporta o alvo |
+| 3 | **Buraco de FORMA nº3** | ✅ **REFUTADO por medição** — ver §12 |
 | 4 | **Arquitetura de 2 agentes** (auditor ≠ corretor) — depende do desenho da Maria que o Alf vai trazer | ⏳ |
 
 Regra que vale para os 4: **medir antes de mexer** e **simulação antes de fechar** — as duas
@@ -288,3 +288,29 @@ grupo ficava fora de qualquer varredura — o caso Rose nunca poderia ter entrad
 24h tem folga, mas grupo muito ativo pode raspar o limite e perder o começo da conversa.
 
 Suíte `fail 3` (baseline), 5 testes novos. Restart provado 15:41:26.
+
+---
+
+## §12 ITEM 3 — BURACO DE FORMA Nº3: REFUTADO POR MEDIÇÃO (13/08)
+
+**Hipótese:** o chokepoint é verbo-baseado ("marquei/concluí/dei baixa") e afirmação de
+ESTADO ("está feito", "tá tudo certo") escaparia. O agente de governança levantou 7 achados.
+
+**Medição** (`conversation_history` outbound, 21 dias): 191 ocorrências —
+165 "está feito/pronto/certo" · 13 "sem pendências" · 9 "tudo limpo/em dia" · 4 "já está".
+
+**O que os literais mostram — e derruba a hipótese:** as 165 são **o TÍTULO de uma tarefa
+da Fefê**: *"Não esquecer de verificar o report se está tudo certo"*. Não é o TOM afirmando
+coisa alguma — é o nome da tarefa aparecendo em lembrete (109×), digest, e cobrança de
+atraso. Ampliar o gate por esse literal dispararia em **165 lembretes legítimos**.
+
+É a mesma família de `SENDHONESTY-FALSEFIRE-FINANCE` (o `enviad*` que disparou em FATURA):
+**o padrão casa com o CONTEÚDO do usuário, não com a afirmação do agente.**
+
+A única fala que parecia afirmação de estado é uma PERGUNTA — *"Tá certo isso?"* — e ali o
+guard já funcionou, anexando *"não consegui registrar isso agora"*. "Sem pendências" e
+"tudo limpo" são digest, verificado contra o banco antes de sair.
+
+**DECISÃO: não ampliar o gate.** Trocaria zero confabulação por 165 falsos positivos.
+Reabrir só com incidente REAL na mão (fala + prova de que nada foi gravado), nunca por
+contagem de padrão. Ver [[project_confab_chokepoint]] e o buraco nº2 (já fechado).
