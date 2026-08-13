@@ -36,6 +36,16 @@ web/.claude/
 *.bak-*
 *.pre-*.bak
 
+# Segredos (13/08). NAO havia regra nenhuma para .env aqui — e foi exatamente assim que a
+# chave mestra do banco do TOM entrou no repo em 26/04 (commit 3ad52f54, `.env.save`) e ficou
+# baixavel sem login por 105 dias. Com `git add -A` no hook de auto-deploy, criar um `.env`
+# local para um teste bastaria para repetir. `.env.example` fica de fora da regra de proposito:
+# e o template sem segredo, e ja e versionado.
+.env
+.env.*
+!.env.example
+!web/.env.example
+
 # Lock de deploy — estado LOCAL de coordenacao entre chats. Versionar isto faz o lock
 # viajar por commit/rebase e virar estado compartilhado: o hold de um chat some no pull do
 # outro (DEPLOYHOLD-CAMINHO-INVISIVEL, 10/08).
