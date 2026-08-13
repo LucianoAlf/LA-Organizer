@@ -519,3 +519,67 @@ aprovação · bloqueado por risco · causa raiz em investigação · prevençã
 - Regra que virou código → atualizar a seção 5 e apontar o commit.
 - **Não** duplicar o que vive nos `.md` de runtime (protocolo/escada) — aqui é o modelo e a
   história; lá é o comportamento vivo.
+
+---
+
+## 14. SEPARAÇÃO AUDITOR ↔ CORRETOR (desenho, 13/08/2026)
+
+Pedido do Alf: *"se o mesmo agente que faz auditoria conserta, ele acaba sendo tendencioso"*.
+Está certo — e a evidência mais forte não veio do agente, veio de **mim** neste dia, atuando
+como auditor e corretor do caso Rose:
+
+| # | O que eu afirmei como auditor | O que me derrubou |
+|---|---|---|
+| 1 | "A raiz é dedupe sem `UNIQUE (recurrence_parent_id, due_date)`" | O banco: filha-template tem esse campo **nulo** |
+| 2 | "Consertei a lista, 21/21 verde, fechado" | A simulação: **1/3 antes e 1/3 depois** — agulha parada |
+| 3 | "Reparei os dados" | A conferência: eu tinha **duplicado 4 cartões** |
+
+Três erros, três mecanismos diferentes de correção. **Nenhum deles foi eu revendo meu próprio
+raciocínio** — foram medições externas ao raciocínio que produziu a conclusão.
+
+### A lição que muda o desenho
+
+Separar os papéis é necessário mas **não é suficiente**. O que quebrou o viés nos 3 casos foi
+a **prova de reversão obrigatória**: medir o mesmo cenário ANTES e DEPOIS. Um corretor
+separado, sem essa exigência, produz exatamente o meu erro nº2 — conserta algo real, verde
+em tudo, e a agulha não anda.
+
+### Desenho
+
+```
+AUDITOR (lê, nunca escreve código)
+  produz: achado + PROVA (literal exato, id no banco, query que reproduz)
+  produz: CRITÉRIO DE ACEITE — "isto passa a valer quando X for medido"
+  NÃO propõe fix. Propor fix é começar a defender uma hipótese.
+        │
+        ▼
+CORRETOR (escreve código, não julga se o achado é válido)
+  1. REPRODUZ com o critério do auditor  → se não reproduz, DEVOLVE (não é fix, é refutação)
+  2. mede o baseline (vermelho)          → registra o número
+  3. corrige
+  4. mede de novo com o MESMO critério   → verde, e o número tem que ter MUDADO
+  5. se o número não mudou: o fix está errado, ainda que os testes passem  ← erro nº2
+        │
+        ▼
+CÓDIGO (não-LLM) faz a entrega e relata: restart provado por `ps -o lstart=`,
+suíte no baseline, e o antes/depois da medição no relatório.
+```
+
+**Regras que fazem o desenho valer** (sem elas viram dois agentes concordando):
+
+1. **O auditor não vê o código do fix.** Se vir, passa a avaliar a solução em vez do sintoma.
+2. **O critério de aceite nasce ANTES do fix**, escrito por quem não vai corrigir. Critério
+   escrito depois é escrito para passar.
+3. **Refutação é entrega de valor.** O corretor devolver "não reproduz" tem que valer tanto
+   quanto corrigir — senão ele inventa reprodução. (4 de 5 "regressões" de 09-15/07 eram
+   falsas; ver seção 8.)
+4. **Nenhum fix fecha sem antes/depois medido.** É a trava contra o erro nº2, o mais caro
+   porque parece sucesso.
+5. **A simulação conversacional é o instrumento**, não a suíte. A suíte roda sem LLM; o que
+   quebra no TOM é escolha dentro de um turno de conversa. Ver `scripts/replay-lab-*`.
+
+### Estado
+
+**Não implementado.** Hoje é um agente só, com as etapas 3 (refutar) e 4 (prova de reversão)
+dentro do próprio ciclo — que é a versão "um agente disciplinado" disto. A separação real
+espera decisão do Alf sobre custo (dobra as chamadas de LLM por rodada).
