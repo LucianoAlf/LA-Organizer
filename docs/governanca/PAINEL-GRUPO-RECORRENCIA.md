@@ -314,3 +314,41 @@ guard já funcionou, anexando *"não consegui registrar isso agora"*. "Sem pend�
 **DECISÃO: não ampliar o gate.** Trocaria zero confabulação por 165 falsos positivos.
 Reabrir só com incidente REAL na mão (fala + prova de que nada foi gravado), nunca por
 contagem de padrão. Ver [[project_confab_chokepoint]] e o buraco nº2 (já fechado).
+
+---
+
+## §13 TRAVAS PORTADAS DA MARIA — 1/3 (13/08)
+
+**Correção de premissa:** a Maria **não tem dois agentes**. O documento dela diz na §0 que o
+viés *"não foi resolvido separando dois agentes — foi resolvido tirando do auditor a
+capacidade de executar"*, e na §3 que o **corretor NÃO EXISTE em nenhum piloto**. O que está
+validado lá é o auditor contido, não a separação. Decisão: **não construir os 2 agentes
+agora** — o gargalo do TOM é medição frouxa, e dois agentes com medição frouxa concordam.
+
+Fila escolhida por dor já vivida aqui: **canário** → `infra_*` → **trava camada 2**.
+
+### ✅ 1. Canário invertido (cenário D) — NO AR
+
+Testa o **instrumento**, não o TOM: planta o dano à mão (marca uma filha-template como `done`
+sem ninguém pedir) e exige que o medidor acuse. Banco puro, zero LLM, roda ANTES da bateria.
+
+`CANARIO_SABOTAR=1` cega o medidor de propósito — prova de reversão DO canário.
+`exit 2` = sem garantia (distinto de `exit 1` = reprovação real do TOM).
+
+**Provado nos dois sentidos:**
+
+| Modo | Resultado |
+|---|---|
+| `CANARIO_SABOTAR=1` | `[canário] CEGO` · RODADA DESCARTADA · `exit=2` — **sem gastar 1 chamada de LLM** |
+| normal | `[canário] OK` · bateria roda · **3/3** · `exit=0` |
+
+**Por que esta trava primeiro:** hoje eu tive **vermelho por vacuidade** (cenário C: 0/3 que
+era fixture quebrada, quase virou "bug do produto") e **verde por vacuidade** (fix da lista:
+21/21 sem mover a agulha). São o mesmo defeito — instrumento não aferido.
+
+⚠️ **Observação honesta da bateria:** na rodada 2 ("fecha esses dois aí pra mim") o TOM
+**não agiu** — `reais_feitas=0/2`. Passou porque o critério bloqueia DANO, não exige acerto
+(decisão consciente, §5). Mas ineficácia em 1 de 3 não é medida por nenhum critério hoje.
+Registrar; não transformar em bloqueio sem medir se é hesitação legítima ou defeito.
+
+### ⏳ 2. Vereditos `infra_*` · ⏳ 3. Trava anti-vacuidade camada 2
