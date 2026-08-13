@@ -25,8 +25,12 @@ Ordem acordada com o Alf (ele autorizou 1, 2 e 3; a ordem é minha e ele não co
    **5/5 com 5 frases diferentes.** Prova de reversão obtida — ver §9.
 5. ✅ **`.deploy-hold` solto** nos dois caminhos; fix NO AR (restart provado `ps -o lstart=`).
 
-**FILA ATUAL:** varrer os writers restantes de `tasks` p/ `updated_by` (engine: complete,
-reschedule, edit) · ligar a auditoria nos grupos (§6) · arquitetura de 2 agentes (§6).
+6. ✅ **`updated_by` fechado nos writers** — engine (snooze/edição/cancel-no-fechamento) e
+   chat de grupo (complete/reschedule). Conclusão já tinha `completed_by`; o buraco era
+   editar/remarcar/cancelar. Suíte `fail 3` na VPS, restart provado.
+
+**FILA ATUAL — o caso Rose está FECHADO.** O que sobra é de outras linhas: ligar a
+auditoria nos grupos (§6, o maior) · arquitetura de 2 agentes (§6) · buraco de FORMA nº3.
 
 ---
 
