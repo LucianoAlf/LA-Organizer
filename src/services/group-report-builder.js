@@ -202,7 +202,7 @@ function shapeOpenTasks(rows, todayYmd, parentTitleById) {
 // de ciclo is_group) é shapeOpenTasks — fonte única. A query traz os containers (sem .is(rule,null))
 // pra o helper montar o set de templates. `now` = "hoje" determinístico (default = agora).
 async function queryGroupTasks(supabase, groupId, now = new Date()) {
-  const { filterVisibleGroupTasks } = require('../utils/group-task-visibility');
+  const { filterVisibleGroupTasks, idsDeMoldeDosPais } = require('../utils/group-task-visibility');
   const { data } = await supabase.from('tasks')
     .select('id, title, due_date, status, is_group, recurrence_rule, recurrence_parent_id, parent_task_id, ' +
             'created_by, created_at, ' +
@@ -217,7 +217,11 @@ async function queryGroupTasks(supabase, groupId, now = new Date()) {
   for (const t of (data || [])) {
     if (t.is_group === true && t.id) parentTitleById.set(t.id, t.title);
   }
-  const visible = filterVisibleGroupTasks(data || []).filter((t) => t.recurrence_rule == null);
+  // GROUPPKG-FILHA-TEMPLATE-VAZA-MOLDE-CANCELADO (Rose 12/08): o `.neq('status','cancelled')`
+  // acima tira o molde CANCELADO do result set, e sem ele o helper não tem como saber que as
+  // filhas dele são fantasmas. Os ids vêm do banco, sem filtro de status.
+  const idsMolde = await idsDeMoldeDosPais(supabase, data || []);
+  const visible = filterVisibleGroupTasks(data || [], idsMolde).filter((t) => t.recurrence_rule == null);
   return shapeOpenTasks(visible, spYmd(now), parentTitleById);
 }
 

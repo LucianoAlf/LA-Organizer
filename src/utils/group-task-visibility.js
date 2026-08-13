@@ -17,14 +17,28 @@ function isRecurringTemplate(t) {
 /**
  * Filtra uma lista de tarefas de grupo para a visão correta do TOM: remove a mãe-template
  * recorrente (is_group + recurrence_rule) e qualquer filha cujo parent_task_id seja uma
- * mãe-template presente na lista. Mantém a ordem original. Não muta a entrada.
+ * mãe-template. Mantém a ordem original. Não muta a entrada.
+ *
+ * GROUPPKG-FILHA-TEMPLATE-VAZA-MOLDE-CANCELADO (caso Rose 12/08/2026): derivar os ids de
+ * molde SÓ do array recebido é um buraco, porque as queries que alimentam este helper
+ * filtram `status != cancelled`. Molde cancelado sai do result set, o conjunto fica sem
+ * ele, e as filhas-template dele vazam pra lista como tarefas reais — mesmo título, mesma
+ * data e sem `recurrence_rule` próprio pra denunciá-las. Foi o que fez o TOM concluir 10
+ * tarefas erradas: o molde da Conciliação foi cancelado em 09/08 e o pedido veio em 12/08.
+ *
+ * Por isso `idsDeMolde` — a mesma disciplina que `escondeMoldeComInstancia` já aplica logo
+ * abaixo: o conjunto de exclusão vem do BANCO, não da página já filtrada. Ele COMPÕE com os
+ * ids derivados do array (não substitui), e omiti-lo preserva o comportamento legado.
  *
  * @param {Array<{id,is_group?,recurrence_rule?,parent_task_id?}>} tasks
+ * @param {Set<string>|Array<string>} [idsDeMolde] ids de mãe-template vindos do banco,
+ *   consultados SEM filtro de status.
  * @returns {Array}
  */
-function filterVisibleGroupTasks(tasks) {
+function filterVisibleGroupTasks(tasks, idsDeMolde) {
   const arr = Array.isArray(tasks) ? tasks : [];
   const templateIds = new Set(arr.filter(isRecurringTemplate).map((t) => t.id));
+  if (idsDeMolde) for (const id of idsDeMolde) templateIds.add(String(id));
   return arr.filter((t) => t && !isRecurringTemplate(t) && !templateIds.has(t.parent_task_id));
 }
 
@@ -76,5 +90,34 @@ function escondeMoldeComInstancia(tasks, idsComInstanciaViva) {
     .filter((t) => t && !(ehMoldeRecorrente(t) && ids.has(String(t.id))));
 }
 
+/**
+ * Resolve, NO BANCO, quais `parent_task_id` da lista são molde recorrente — a fonte do
+ * `idsDeMolde` de `filterVisibleGroupTasks`.
+ *
+ * A consulta é deliberadamente SEM filtro de status: é justamente o molde cancelado (ou
+ * concluído) que some do result set dos chamadores e faz a filha-template vazar. Filtrar
+ * status aqui reintroduziria o bug que esta função existe pra fechar.
+ *
+ * Best-effort: o digest do grupo e o contexto do TOM não podem cair por causa disto —
+ * falha degrada pro comportamento legado (a fantasma volta), nunca derruba o envio.
+ *
+ * @param {Object} supabase
+ * @param {Array<{parent_task_id?:string}>} tasks
+ * @returns {Promise<Set<string>>}
+ */
+async function idsDeMoldeDosPais(supabase, tasks) {
+  const pais = [...new Set((Array.isArray(tasks) ? tasks : [])
+    .map((t) => t && t.parent_task_id).filter(Boolean).map(String))];
+  if (!pais.length) return new Set();
+  try {
+    const { data } = await supabase.from('tasks')
+      .select('id').in('id', pais).not('recurrence_rule', 'is', null);
+    return new Set((data || []).map((r) => String(r.id)));
+  } catch (e) {
+    console.error('[group-visibility] idsDeMoldeDosPais:', e.message);
+    return new Set();
+  }
+}
+
 module.exports = { filterVisibleGroupTasks, isRecurringTemplate, dropPackageContainers,
-  ehMoldeRecorrente, escondeMoldeComInstancia };
+  ehMoldeRecorrente, escondeMoldeComInstancia, idsDeMoldeDosPais };

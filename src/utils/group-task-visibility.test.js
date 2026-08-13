@@ -10,7 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { filterVisibleGroupTasks, isRecurringTemplate, dropPackageContainers } = require('./group-task-visibility');
+const { filterVisibleGroupTasks, isRecurringTemplate, dropPackageContainers, idsDeMoldeDosPais } = require('./group-task-visibility');
 
 test('isRecurringTemplate: só is_group + recurrence_rule', () => {
   assert.strictEqual(isRecurringTemplate({ is_group: true, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=1' }), true);
@@ -175,4 +175,101 @@ test('nao mexe em tarefa nao-recorrente, e nao muta a entrada', () => {
   const r = escondeMoldeComInstancia(entrada, new Set(['x']));
   assert.deepEqual(r.map((t) => t.id), ['a', 'i']);
   assert.equal(entrada.length, 2);
+});
+
+// ── GROUPPKG-FILHA-TEMPLATE-VAZA-MOLDE-CANCELADO (caso Rose 12/08/2026) ──────────────
+// O molde "Conciliação de Cartões" (dia 30) foi CANCELADO em 09/08 15:54. Três dias depois
+// a Rose pediu "Tom, conclui os dois" e o TOM concluiu 10 tarefas erradas antes de acertar.
+//
+// Por quê: as queries que alimentam este helper filtram `status != cancelled`. Molde cancelado
+// não entra no array → `templateIds` não o contém → as filhas-template dele passam pelo filtro
+// e aparecem como tarefas reais, com o MESMO título e a MESMA data da filha-instância. O TOM
+// não tem como distinguir: filha-template não tem `recurrence_rule` próprio.
+//
+// Enquanto o molde estava vivo, o filtro funcionava — por isso o bug "aparece de vez em quando"
+// e nunca reproduzia. Cancelar o molde é o gatilho.
+//
+// A correção é a MESMA lição que `escondeMoldeComInstancia` já documenta logo abaixo neste
+// arquivo: o conjunto de exclusão vem do BANCO, não da página já filtrada.
+test('filha de molde CANCELADO (fora do result set) some quando os ids vêm do banco', () => {
+  // O molde 'tpl' NÃO está na lista — foi cancelado e a query o excluiu.
+  const lista = [
+    { id: 'inst', is_group: true, recurrence_rule: null, recurrence_parent_id: 'tpl' },
+    { id: 'filha-real', is_group: false, recurrence_rule: null, parent_task_id: 'inst', title: 'Cartão 8516 (Barra)' },
+    { id: 'filha-fantasma', is_group: false, recurrence_rule: null, parent_task_id: 'tpl', title: 'Cartão 8516 (Barra)' },
+  ];
+
+  // Sem os ids do banco, a fantasma vaza — é exatamente o estado que quebrou em produção.
+  assert.deepStrictEqual(
+    filterVisibleGroupTasks(lista).map((t) => t.id),
+    ['inst', 'filha-real', 'filha-fantasma'],
+    'comportamento legado preservado quando não se passa o conjunto'
+  );
+
+  // Com os ids vindos do banco (sem filtro de status), ela some.
+  assert.deepStrictEqual(
+    filterVisibleGroupTasks(lista, new Set(['tpl'])).map((t) => t.id),
+    ['inst', 'filha-real']
+  );
+});
+
+test('ids do banco COMPÕEM com os derivados da lista, não os substituem', () => {
+  const lista = [
+    { id: 'tpl-vivo', is_group: true, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=1' },
+    { id: 'f-vivo', is_group: false, parent_task_id: 'tpl-vivo' },
+    { id: 'f-morto', is_group: false, parent_task_id: 'tpl-cancelado' },
+    { id: 'ok', is_group: false, parent_task_id: 'inst' },
+  ];
+  assert.deepStrictEqual(
+    filterVisibleGroupTasks(lista, new Set(['tpl-cancelado'])).map((t) => t.id),
+    ['ok']
+  );
+});
+
+test('conjunto aceita array e valores soltos sem quebrar (entrada defensiva)', () => {
+  const lista = [{ id: 'f', is_group: false, parent_task_id: 'tpl' }];
+  assert.deepStrictEqual(filterVisibleGroupTasks(lista, ['tpl']).map((t) => t.id), []);
+  assert.deepStrictEqual(filterVisibleGroupTasks(lista, null).map((t) => t.id), ['f']);
+  assert.deepStrictEqual(filterVisibleGroupTasks(lista, undefined).map((t) => t.id), ['f']);
+});
+
+// ── idsDeMoldeDosPais: o conjunto de exclusão vem do BANCO, sem filtro de status ──────
+function fakeSb(linhas, espia) {
+  return { from() { return {
+    select() { return this; },
+    in(col, vals) { if (espia) espia.ids = vals; return this; },
+    not(col, op, val) { if (espia) espia.not = [col, op, val]; return this; },
+    then(res) { return Promise.resolve({ data: linhas }).then(res); },
+  }; } };
+}
+
+test('idsDeMoldeDosPais consulta os pais distintos e devolve só os que são molde', async () => {
+  const espia = {};
+  const sb = fakeSb([{ id: 'tpl-cancelado' }], espia);
+  const tarefas = [
+    { id: 'a', parent_task_id: 'tpl-cancelado' },
+    { id: 'b', parent_task_id: 'inst' },
+    { id: 'c', parent_task_id: 'inst' }, // repetido → não duplica na consulta
+    { id: 'd' },                          // sem pai → ignorada
+  ];
+  const ids = await idsDeMoldeDosPais(sb, tarefas);
+  assert.deepStrictEqual([...espia.ids].sort(), ['inst', 'tpl-cancelado']);
+  assert.deepStrictEqual(espia.not, ['recurrence_rule', 'is', null]);
+  assert.ok(ids.has('tpl-cancelado') && !ids.has('inst'));
+});
+
+test('idsDeMoldeDosPais: sem pais não consulta o banco', async () => {
+  let consultou = false;
+  const sb = { from() { consultou = true; return {}; } };
+  assert.strictEqual((await idsDeMoldeDosPais(sb, [{ id: 'x' }])).size, 0);
+  assert.strictEqual((await idsDeMoldeDosPais(sb, [])).size, 0);
+  assert.strictEqual((await idsDeMoldeDosPais(sb, null)).size, 0);
+  assert.strictEqual(consultou, false);
+});
+
+// Best-effort: o digest do grupo e o contexto do TOM não podem cair por causa disto.
+// Falhar aqui degrada pro comportamento legado (a fantasma volta), nunca derruba o envio.
+test('idsDeMoldeDosPais engole erro do banco e devolve conjunto vazio', async () => {
+  const sb = { from() { throw new Error('boom'); } };
+  assert.strictEqual((await idsDeMoldeDosPais(sb, [{ id: 'a', parent_task_id: 'p' }])).size, 0);
 });

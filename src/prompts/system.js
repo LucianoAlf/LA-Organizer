@@ -1798,7 +1798,7 @@ async function fetchCollaboratorContext(collaborator) {
   let workGroupsCtx = { groups: [], myGroupTasks: [] };
   try {
     const wg = require('../services/work-groups');
-    const { filterVisibleGroupTasks, dropPackageContainers } = require('../utils/group-task-visibility');
+    const { filterVisibleGroupTasks, dropPackageContainers, idsDeMoldeDosPais } = require('../utils/group-task-visibility');
     const groups = await wg.loadActiveGroups(supabase);
     let myGroupTasks = [];
     const parentTitleById = new Map(); // id→título dos containers de pacote → prefixo "Pacote: " no pool
@@ -1824,7 +1824,12 @@ async function fetchCollaboratorContext(collaborator) {
       // abertos. group-chat-engine.js e shapeOpenTasks já excluíam desde 20/06
       // (GROUPPKG-CONTAINER-PHANTOM-FLATLIST); o chat 1:1 tinha ficado fora da varredura.
       // O map parentTitleById acima é montado do CRU, então a filha segue exibindo "Pacote: X".
-      myGroupTasks = dropPackageContainers(filterVisibleGroupTasks(gt || [])).slice(0, 12);
+      // GROUPPKG-FILHA-TEMPLATE-VAZA-MOLDE-CANCELADO (Rose 12/08): aqui o furo é MAIOR que no
+      // digest — a query é `status = 'pending'`, então molde cancelado E molde concluído ficam
+      // de fora, e as filhas-template deles chegam ao TOM como tarefa real, mesmo título e mesma
+      // data da filha de verdade. Foi assim que ele deu 10 baixas erradas antes de acertar.
+      const idsMolde = await idsDeMoldeDosPais(supabase, gt || []);
+      myGroupTasks = dropPackageContainers(filterVisibleGroupTasks(gt || [], idsMolde)).slice(0, 12);
     }
     workGroupsCtx = { groups, myGroupTasks, parentTitleById };
   } catch (_) { /* sem grupos no contexto */ }
