@@ -435,6 +435,56 @@ ele usou. Trancado com 4 asserções de regressão no teste da guarda (24 no tot
 **A lição é a de sempre, e eu repeti:** recomendação escrita antes do fix é hipótese. Re-puxar a barra
 antes de levar decisão a alguém — o Alf quase levou uma escolha que não existia mais.
 
+### 🧹 Fila de dívidas de código da Maria — FECHADA 13/08, e a suíte ficou verde inteira
+
+Quatro dívidas estavam escritas na fila desde 09/08. Medi uma a uma antes de trabalhar: **duas não
+existiam mais** e **duas viraram conserto real**. A suíte do bridge saiu de **6/8** para **8/8**.
+
+**O vermelho crônico era um bug de verdade escondido atrás de um detalhe bobo.** O teste da regra de
+plano falhava há dias com `suggestPlanosContas is not a function`. A leitura natural — e era assim
+que a dívida estava escrita — seria "a função se perdeu num rollback". Medido: **a função existe**
+(`bridge.js:2602`) e é usada em três pontos de produção; faltava só a linha no bloco de exports de
+teste. Com o teste finalmente rodando, ele cobrou o que importava: **a regra 5.5.1 não existia no
+classificador**. A `SKILL.md` manda usar `5.5.1 — Manutenção Equipamentos Operacionais` para
+manutenção de instrumento musical, e o código nunca soube disso. **A skill instruía, o código não
+executava** — divergência que só aparece quando alguém mede.
+
+Implementada exigindo **os dois sinais** (verbo de manutenção *e* objeto instrumento), no topo da
+prioridade, com três casos de proteção: manutenção predial **não** vira 5.5.1; compra de violão
+**não** vira; luthier + guitarra **vira**. Sem os negativos, o próximo que afrouxar o regex carimba
+5.5.1 em obra predial e ninguém descobre até a Rose ver a classificação errada.
+
+**Dois testes viviam vermelhos porque cravavam dado vivo.** Um exigia o nome `Vertix` entre os
+e-mails "lançados" e um teto de 5 pendências. Medido no banco: a **Vertix nunca teve vínculo** — o
+e-mail chegou 24/07, foi processado, gerou 4 cobranças em 31/07 e está sem match até hoje. O teste é
+que estava errado, e de quebra **mascarava uma pendência real de 20 dias**. Trocados por invariantes
+que não apodrecem: as listas de lançados e não lançados são disjuntas, e o consolidado nunca passa do
+bruto. Número de operação cravado em teste técnico volta como vermelho todo mês — e vermelho
+recorrente que "é normal" é como uma suíte inteira morre.
+
+> ⚠️ **Quase criei um alarme falso e vale registrar.** A primeira versão da invariante comparava por
+> `message_id` e acusou "2 itens nas duas listas ao mesmo tempo" — o que soaria como risco de pagar
+> duas vezes. Fui olhar antes de reportar: eram **cobranças diferentes do mesmo e-mail**, e é normal
+> uma estar vinculada e a outra não. **A unidade do vínculo é a cobrança, não a mensagem.**
+
+**As duas que não existiam mais:** o `cashflow_reconciler_failed` (479 ocorrências) está morto — hoje
+foram 2.400 varreduras, 24 registros e **zero falhas**, e conferi que ele *roda*, não que parou de
+rodar. E os "guardrails perdidos no rollback" estavam descritos por nomes que **não aparecem em
+backup nenhum** do bridge: a dívida foi escrita em paráfrase, e caçar string parafraseada é trabalho
+sem fim.
+
+**A memória de longo prazo não está vazia — está parada.** O arquivo existe, tem 20 KB, e o runtime
+do OpenClaw o carrega como orientação durável. Não é falta de permissão: ela tem as ferramentas de
+escrita liberadas. Simplesmente **nada manda ela registrar**, e por isso toda correção da Rose se
+perde na virada do dia — última linha nova em **06/07, 37 dias atrás**. Isso muda o que ela *faz*, não
+conserta um defeito: **decisão do Alf**, não implementei.
+
+**Sobrou uma descoberta de higiene:** 52 arquivos do próprio código da Maria (`tools/`, `bridges/`,
+`skills/`, `tests/`, `config/`) pertenciam ao **root** — ela não conseguia editar as próprias
+ferramentas, e eu só percebi porque um `chmod` meu foi negado. Devolvidos a ela. Restam ~3.100 em
+`repos/` e `.venv-cartoes/`, que não travam nada. É a mesma raiz da dívida do root no escopo: **o
+agente que roda como root escreve dentro da casa dos outros.**
+
 ### B2 — o que as rodadas reais ensinaram (10/08)
 
 Três rodadas de shakedown antes de qualquer cron. **A sonda achou 5 defeitos; 4 eram do meu código
