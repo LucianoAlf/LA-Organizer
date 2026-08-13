@@ -254,7 +254,7 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 | **A0-bis** | Devolver o corte de ferramentas que o B0 desfez | ✅ **FECHADO 09/08 19:10 BRT** — 175 → 4 ferramentas, medido | — |
 | **B1** | 4 tabelas `maria_gov_*` + ator técnico + placar | ✅ **FECHADO 09/08 18:30 BRT** | — |
 | **B1-resto** | RPCs + o laudo persistir achados + custo por rodada | ✅ **FECHADO 09/08 19:15 BRT** | — |
-| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | 🟢 **Tarefas 1–9 FECHADAS 13/08** — sonda **no cron às 05:00 BRT**, `PASS_K_MINIMO=0.80` medido em 3 rodadas reais, breaker provado (`status='abortada'` no acervo), suíte 171 testes verde. **12 dos 13 critérios de fechamento provados** — o 13º (item `tipo: contrato`) não é mensurável pela sonda: ver "B2 — o critério 11" abaixo | — |
+| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | 🟢 **FECHADA 13/08 — 13 de 13 critérios** — sonda **no cron às 05:00 BRT**, `PASS_K_MINIMO=0.80` medido em 3 rodadas reais, breaker provado (`status='abortada'` no acervo), critério 11 fechado pelo modo `saida_bridge` (ver B2-bis), suíte 177 testes verde, 14 itens ativos e **0 desativados** | — |
 
 ### B2 — como ficou (13/08/2026)
 
@@ -298,27 +298,50 @@ rearmar é apagar o arquivo — ato humano; `flock` corta rodada concorrente (ex
 ambiente mínimo de cron; breaker corta no teto e **as medições já feitas não se perdem**
 (`status='abortada'`, probes preservadas).
 
-### B2 — o critério 11 e a crise que originou a missão (13/08)
+### B2-bis — o critério 11 FECHADO, e o bug que apareceu no caminho (13/08)
 
-O plano define 13 critérios e diz que **o 11 é o que faz a sonda cobrir o incidente de 05–08/08**:
-"item `tipo: contrato` roda e reprova quando a forma muda". **Ele não está cumprido, e não por
-descuido.**
+O plano diz que **o critério 11 é o que faz a sonda cobrir o incidente de 05–08/08**: "item
+`tipo: contrato` roda e reprova quando a forma muda". Ele estava aberto porque o relatório diário
+**não passa pelo modelo** — o bridge intercepta em código (`shouldUseContasDiaShortcut`) e responde
+direto, então injetar pergunta e ler a resposta do LLM nunca o veria.
 
-Medido em duas rodadas de 10/08: o relatório diário **não passa pelo modelo**. O bridge intercepta em
-código (`shouldUseContasDiaShortcut` → `gerarRelatorioContasDiaShortcut`) e responde direto — zero
-ocorrências do token injetado na sessão. Injetar pergunta e ler a resposta do LLM **nunca** vai medir
-aquele texto, porque nenhum LLM o produz.
+**Fechado mudando o CAMINHO da medição, não a exigência.** O bridge passou a gravar o que produz
+para número sintético (já formatado — a supressão de envio acontece *antes* de
+`formatForWhatsapp`, e capturar ali mediria o texto cru, não o que o dono veria), num arquivo
+dedicado 600. A sonda ganhou um terceiro modo de invocação, `saida_bridge`: zera o arquivo, injeta,
+lê o que o bridge PRODUZIU e aplica o regex de formato. O item voltou com **k=5, 5/5 verdes**.
 
-Lendo direito, é notícia boa com um flanco aberto:
+**O que a medição achou antes de fechar** — três coisas, todas invisíveis no papel:
 
-- **Bom:** o contrato de formato que a crise gerou virou **trava**, não prompt. O LLM não pode mais
-  quebrá-lo — é a hierarquia certa ("prompt orienta; trava garante").
-- **Flanco:** se alguém mudar o código do shortcut, **nada detecta**. A garantia mudou de lugar, e a
-  vigilância não acompanhou.
+**1. Bug de produção (finding `bridge:roteamento:relatorio-contas-capturado-por-email`, alto).**
+Pedir *"maria, gera o **relatório** de contas a pagar de hoje"* **não gera o relatório**: responde
+"Não encontrei e-mails financeiros nesse recorte". Em `shouldUseFinanceiroEmailShortcut` a condição
+`mentionsMercado && wantsRead && (… || periodOrReport || …)` fecha porque "contas a pagar" conta como
+`mentionsMercado` e a palavra "relatório" ativa `wantsRead` **e** `periodOrReport` ao mesmo tempo — e
+esse shortcut vem **antes** do de contas na cadeia. A mesma intenção, dita de dois jeitos naturais,
+dá resultados opostos. **Não corrigido: mexer na ordem dos shortcuts é decisão do Alf.**
 
-O mecanismo do gate para `tipo: contrato` **está pronto e testado** (1 caso positivo + 4 negativos em
-`test_ancoras.py`); o que falta é um alvo que ele consiga observar. Medir a saída real do bridge é
-outra fatia — decisão do Alf.
+**2. O regex reprovava dia vazio.** Exigia `recreio.*barra.*campo grande`; em dia sem contas o
+relatório legítimo não lista unidade nenhuma ("_Nenhuma conta pendente para esta data._"). Ficaria
+esperando o primeiro dia vazio para dar falso alarme. Agora aceita as duas formas legítimas — e os
+5 negativos continuam reprovando (medido, não presumido).
+
+**3. Ponto cego no próprio verificador de contrato.** Ele classificava a bateria em duas gavetas
+(`k == 5` e `k == 1`) e somava só essas: o item de contrato voltou com k=3 e **sumiu da conta** — a
+bateria pedia 56 invocações e o verificador anunciava 53. Guardião com ponto cego dá a pior das
+garantias, a falsa. Passou a somar de verdade e a cobrar `k` intermediário.
+
+**Armadilha do teto, pela terceira vez nesta missão.** Com o item de volta, a bateria pediu mais
+invocações que o teto e o breaker abortaria **toda** rodada — mesma família de `MAX_CUSTO 0,50` e
+`MAX_DURACAO 2700`. Teto agora em **58**, com a bateria real somando 58.
+
+**Item que nunca reprova é decoração:** com k=3 ele ficava abaixo do piso de amostra (4) e sairia
+`inconclusivo` sempre. Subiu para k=5. As 5 redações evitam a palavra "relatório" pelo motivo do
+item 1 — medir aquele bug aqui carimbaria "formato quebrado" em cima de um defeito de roteamento,
+dois problemas diferentes com o mesmo nome.
+
+**Suíte no fechamento:** gov 8, laudo 13, sonda 177 — zero falhas; contrato OK (14 itens ativos,
+**0 desativados**, 58 invocações).
 
 ### B2 — o que as rodadas reais ensinaram (10/08)
 
