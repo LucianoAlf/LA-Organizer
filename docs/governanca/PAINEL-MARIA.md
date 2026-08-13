@@ -435,6 +435,35 @@ ele usou. Trancado com 4 asserções de regressão no teste da guarda (24 no tot
 **A lição é a de sempre, e eu repeti:** recomendação escrita antes do fix é hipótese. Re-puxar a barra
 antes de levar decisão a alguém — o Alf quase levou uma escolha que não existia mais.
 
+### 💸 Modelo: GPT-5.5 x deepseek-v4-flash — o custo, medido (13/08)
+
+O Alf perguntou se mantém o deepseek ou volta para o GPT-5.5. **Não existia medição nenhuma com
+GPT-5.5** — todas as rodadas da sonda foram com deepseek. Então rodei o A/B com a mesma bateria,
+trocando o modelo **só no agente da sonda** (`maria-leitura`); a produção seguiu no deepseek o tempo
+todo e o override foi revertido no fim.
+
+A rodada **abortou em 4 minutos**, e o motivo é a resposta:
+
+| modelo | custo por invocação | rodada completa (58) |
+|---|---|---|
+| `deepseek-v4-flash` | **US$ 0,0065** (159 tentativas) | ~US$ 0,38 |
+| `openai/gpt-5.5` | **US$ 0,4977** (5 invocações) | **~US$ 29** |
+
+**~76× mais caro.** O breaker cortou no teto de US$ 2,00 depois de 5 invocações — funcionou
+exatamente como projetado, e é a segunda vez que ele paga o próprio custo.
+
+**Recomendação: manter o deepseek.** Não por empate técnico — **por falta de evidência de que o caro
+é melhor**, contra evidência dura de que é 76× mais caro. O comportamento medido hoje com deepseek
+acertou tudo o que testei ao vivo: declarou a capacidade de reação, deu o motivo real da janela,
+gravou a memória durável e confirmou sem inventar.
+
+**O que esta medição NÃO diz:** qual dos dois responde melhor. Cinco invocações são amostra pequena
+até para custo e **zero** para qualidade. Cravar isso exigiria subir o teto do breaker e gastar
+~US$ 29 numa rodada completa — decisão de gasto, e o número está aqui para ela ser tomada com dado.
+
+> ⚠️ O aborto disparou um alerta legítimo da sonda no WhatsApp do dono (*"rodada sem garantia"*).
+> **Não foi incidente — foi este teste.**
+
 ### 🧠 Memória durável + 🔒 contenção do root — as duas fechadas em 13/08
 
 **Memória: quem grava é o bridge, não o modelo.** O `MEMORY.md` é injetado pelo runtime em todo turno
