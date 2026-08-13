@@ -385,3 +385,45 @@ contava como mentira. Fronteira `(?!\p{L})` com flag `u` (o `\b` do JS é ASCII 
 depois de "concluí"). 7/7 nos casos.
 
 **Bateria final: 5/5 · válidas 5/5 · infra 0 · canário OK · `exit=0`.**
+
+### ✅ 4. Camada 2 — número afirmado × fonte — NO AR
+
+`src/lib/confere-numero.js`, mesmo ponto de saída do gate de verbo. Fontes: `tom_audit_findings`
+abertos e `tom_known_issues` corrigidos em 24h. Falha na consulta = `null` = **indefinido**,
+nunca "conferido".
+
+**Política: acusar, nunca reescrever.** Corrigir o número esconderia que ele errou — e é a
+taxa de erro dele que precisamos ver para decidir o item 5. Ignora data, dinheiro,
+percentual e hora (senão compara dia do mês com contagem).
+
+Provado com o literal: `10 achados` × fonte `11` → sai o conflito; `R$ 0,42`, `13/08` e
+`12%` ignorados; `2 corrigidos` que batiam não geram ruído.
+
+---
+
+## §14 FECHAMENTO DO DIA 13/08 — o que ficou no ar
+
+| Frente | Estado |
+|---|---|
+| Caso Rose — raiz da LISTA (`filterVisibleGroupTasks`) | ✅ no ar |
+| Caso Rose — raiz EXECUTORA (`SELECT` sem `recurrence_parent_id` em complete/cancel/reschedule) | ✅ no ar |
+| Guard no PWA contra cancelar molde | ✅ no ar |
+| `updated_by` em `tasks` + writers (PWA, grupo, engine) | ✅ no ar |
+| Reparo dos dados (Conciliação religada, outubro+ volta) | ✅ conferido no banco |
+| Auditoria enxergando GRUPOS | ✅ no ar, achou o caso Rose |
+| Cenário D (grupo + molde cancelado) | ✅ 5/5 |
+| Canário invertido | ✅ provado nos 2 sentidos |
+| `infra_*` + piso de amostra | ✅ no ar |
+| Gate de verbo de entrega | ✅ no ar |
+| Camada 2 (número × fonte) | ✅ no ar |
+| Buraco de FORMA nº3 | ✅ refutado por medição |
+| Cenário C (vermelho falso) | ✅ corrigido |
+
+**ÚNICO ITEM ABERTO — decisão do Alf:** o `ops-agent` tem `Bash Read Write Edit Grep Glob
+WebFetch`. Ele conserta código E escreve o relatório sobre o próprio conserto (Lei 2 do
+manual: contenção é ablação, não instrução). Ou tira a mão dele (vira só relator, N1 da
+escada), ou mantém e confia nas 3 travas que subiram hoje. **Recomendação: manter por ora e
+medir** — as travas são novas e a taxa de erro dele agora fica visível; decidir com número
+em vez de com princípio.
+
+**Suíte na VPS: `fail 3` = baseline. Restart provado 21:49:19.**
