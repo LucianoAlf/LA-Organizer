@@ -10178,11 +10178,36 @@ async function processMessage(phone, text, raw = {}) {
         const { podeLiberarCriacao } = require('./utils/confirm-create-gate');
         const _gateOn = process.env.TOM_CONFIRM_CREATE_GATE !== '0';
         const _liberaCriacao = _gateOn && !hasConcrete && podeLiberarCriacao(target.question_text);
-        const markerRule = hasConcrete
+        let markerRule = hasConcrete
           ? 'Emita o marker apropriado APENAS para os itens do payload acima (ex: <<TASK_UPDATE>> com action=create para cada draft). NÃO crie, edite ou reagende NENHUM item que não esteja no payload.'
           : (_liberaCriacao
             ? 'O payload não tem ids, MAS a pergunta acima é uma proposta de CRIAÇÃO que VOCÊ mesmo formulou e o usuário aprovou. Emita o marker de criação (action=create) reproduzindo EXATAMENTE os dados que você propôs ali — mesmo título, mesma data, mesma hora, mesma pessoa. NÃO invente nenhum dado que não esteja na sua proposta. E NÃO edite, reagende, conclua, delegue nem apague NENHUM item já existente.'
             : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.');
+
+        // TASK-HONESTY-NEGA-BAIXA-FEITA (Kailane 12/08 19:21) — irmão do COORD-HONESTY nas TAREFAS.
+        // A instrução acima afirma o ABSOLUTO "você NÃO consegue executar isso agora", mas sua
+        // evidência é só "não há payload NESTE turno". Quando o TOM acabou de dar baixa — 25s
+        // antes, no caso da Kailane — ela manda negar um trabalho que ele mesmo fez, e a pessoa
+        // repete o pedido achando que nada aconteceu. Mesma forma do fix do recado (10/08): um
+        // FATO DO BANCO entra no gate. Lá era coordination_requests.status=sent; aqui é
+        // tasks.completed_at. A proibição de emitir marker NÃO é afrouxada — o perigo do LLM
+        // chutar alvo (Rose 10/06) continua barrado; o que muda é não poder negar o que existe.
+        // Consulta só neste ramo (raro) e falha-aberta: sem a leitura, vale a regra original.
+        if (!hasConcrete && !_liberaCriacao) {
+          try {
+            const { concluidasRecentes, regraComConclusaoRecente, JANELA_PADRAO_MIN } = require('./lib/task-done-recente');
+            const _desde = new Date(Date.now() - JANELA_PADRAO_MIN * 60_000).toISOString();
+            const { data: _doneRows } = await supabase.from('tasks')
+              .select('title, completed_at').eq('assigned_to', collab.id).eq('status', 'done')
+              .gte('completed_at', _desde).order('completed_at', { ascending: false }).limit(6);
+            const _titulos = concluidasRecentes(_doneRows || [], new Date());
+            if (_titulos.length) {
+              markerRule = regraComConclusaoRecente(markerRule, _titulos);
+              console.log(`[TaskHonesty] ${_titulos.length} baixa(s) recente(s) — regra ajustada p/ não negar`);
+              await logMarker(collab.id, 'TASK_DONE_RECENTE', 'redirected', `titulos=${_titulos.length}`, null);
+            }
+          } catch (e) { console.warn('[TaskHonesty] lookup err (non-fatal):', e.message); }
+        }
         // VELOCÍMETRO do confab-noop (audit 16/07). Sem isto a decisão de estagiar (ou não)
         // cada superfície seria por TEORIA: quando a Camada 1 funciona, o TOM avisa honesto
         // SEM o chokepoint disparar — ou seja, o caso não aparece em NENHUM log e some da

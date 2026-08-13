@@ -350,9 +350,17 @@ async function checkSilentCollaborators() {
   // Sprint 31.6 (D3) — ignora contas de sistema (não conversam no WhatsApp).
   // Ex.: Admin tem phone placeholder "00000000000" — cobrar "conversa" dela é ruído.
   const SYSTEM_NAMES = new Set(['admin', 'sistema', 'system', 'tom']);
+  // AUDIT-QA-PROFILE-NOISE (13/08): os perfis do Replay Lab ("[QA] Replay 01..04", criados
+  // 05/08) são fixtures de teste — não têm dono e por desenho não conversam. Eles entravam
+  // aqui todo dia como "colaboradores sem conversa 7+ dias", ocupando a primeira linha da
+  // auditoria das 07h com um alarme que ninguém pode resolver. A spec do Replay Lab já previa
+  // "QA fora das métricas" (trava 3); este check tinha ficado de fora. Gate pelo prefixo do
+  // nome, que é o mesmo contrato que o sweep do lab usa pra achar os perfis.
+  const ehPerfilQA = (nome) => /^\s*\[QA\]/i.test(String(nome || ''));
   // Tabela correta é `conversation_history` (a antiga `messages` nunca existiu).
   for (const c of (collabs || [])) {
     if (SYSTEM_NAMES.has(String(c.full_name || '').trim().toLowerCase())) continue;
+    if (ehPerfilQA(c.full_name)) continue;
     if (/^0+$/.test(String(c.phone || '').replace(/\D/g, ''))) continue;
     // Sprint 31.20 — recém-criado (< janela de 7d) não pode ter "7+ dias sem conversa";
     // flagar quem entrou ontem é falso positivo. Caso Ana Paula/Jéssica 07/06.
