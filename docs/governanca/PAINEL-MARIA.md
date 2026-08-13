@@ -435,6 +435,64 @@ ele usou. Trancado com 4 asserções de regressão no teste da guarda (24 no tot
 **A lição é a de sempre, e eu repeti:** recomendação escrita antes do fix é hipótese. Re-puxar a barra
 antes de levar decisão a alguém — o Alf quase levou uma escolha que não existia mais.
 
+### 🧠 Memória durável + 🔒 contenção do root — as duas fechadas em 13/08
+
+**Memória: quem grava é o bridge, não o modelo.** O `MEMORY.md` é injetado pelo runtime em todo turno
+como *durable user preferences and behavior guidance*, e estava **parado desde 06/07 — 37 dias**. O
+único aprendizado vivo era o de regra de e-mail de fornecedor (**1 regra**, aprendida em 24/07). Fora
+daquele escopo, toda correção da Rose evaporava na virada do dia.
+
+O caminho óbvio — instruir "anote quando pedirem" — seria o errado, e este projeto já sabe por quê:
+ela passaria a **dizer** que anotou sem anotar. Então a ordem é outra: o bridge **detecta e grava
+antes** de o modelo falar, injeta no contexto a confirmação do que **já** foi para o arquivo, e um
+chokepoint na saída corrige a fala se ela afirmar memória num turno em que nada foi gravado.
+
+Escopo estreito de propósito: pedido explícito (*"anota isso"*) ou regra declarada (*"a partir de
+agora"*, *"nunca mais"*). Inferir regra de conversa comum encheria o arquivo de lixo em uma semana —
+e esse arquivo entra em **todo turno seguinte**, então lixo ali envenena tudo.
+
+**Provado com a Maria real**, não só no teste: injetei uma regra marcada como teste, ela entrou no
+arquivo com **data em BRT e autor** (`- **13/08/2026** (…): A partir de agora…`) e a Maria confirmou.
+Linha de teste removida em seguida. 19 asserções novas, incluindo as bordas que importam: duplicata
+não empilha, e afirmação de memória sem gravação é corrigida antes de sair.
+
+---
+
+**Root: contive tirando o poder, não o uid — e a medição mudou o plano.** Eu tinha prometido "alguns
+segundos de restart". Ao medir: `/root/.openclaw` tem **18 GB**. O `mv` seria instantâneo (mesmo
+disco), mas o `chown -R` de 18 GB de inodes derruba o agente principal do Alf por **minutos**. Com ele
+usando o sistema, não era hora — e a promessa estava errada, não o plano dele.
+
+O que dá quase toda a contenção com **um** restart: um drop-in de systemd zerando as capabilities.
+
+| | antes | depois |
+|---|---|---|
+| `CapEff` / `CapBnd` | `000001ffffffffff` | **`0000000000000000`** |
+| `NoNewPrivs` | 0 | **1** |
+| ler `/home/maria/.openclaw/private/maria.env` | **74 linhas** | **`Permission denied`** |
+
+Sem `CAP_DAC_OVERRIDE` o kernel volta a checar permissão de verdade, então **uid 0 deixa de
+atravessar o modo 700 da Maria**. Sem `CAP_SETUID` não vira outro usuário. É a mesma lição do
+`project_agente_le_env_por_ser_dono`, agora aplicada: **conter é tirar capacidade, não trocar
+permissão de arquivo.**
+
+`PrivateTmp` ficou **de fora de propósito** — o socket do gateway vive em `/tmp/openclaw-0`, e isolar
+`/tmp` cortaria os clientes. Alfredo de pé depois: `/health` 200, plugins pré-aquecidos.
+
+> ⚠️ **Erro meu no meio, e vale registrar porque quase virou "não mudou nada".** Testei a contenção
+> com `nsenter -t PID -m -p`, que entra no namespace do processo mas **roda com as capabilities do meu
+> shell** — deu "74 linhas" e pareceu que o hardening não pegou. Medição de contenção só vale
+> reproduzindo o ambiente do alvo (`setpriv --bounding-set=-all --inh-caps=-all`).
+
+**Achado lateral, e não foi meu restart:** o canal WhatsApp do **Alfredo está deslogado desde
+11/08** — `session logged out during setup` aparece em 5 boots, o primeiro em 11/08 00:17, dias antes
+de eu tocar em qualquer coisa. Precisa de `openclaw channels login --channel whatsapp`, que é ação do
+Alf.
+
+**Continua aberto, sem urgência:** migração para usuário próprio (as 18 GB), rotação do token do
+gateway (pode trancar o Alf fora da UI — tem de ser com ele junto), PATs sem consumidor nos `.env` do
+root, e o mesmo drop-in no `sol bridge`.
+
 ### 🧹 Fila de dívidas de código da Maria — FECHADA 13/08, e a suíte ficou verde inteira
 
 Quatro dívidas estavam escritas na fila desde 09/08. Medi uma a uma antes de trabalhar: **duas não
