@@ -1,7 +1,7 @@
 # 🧭 PAINEL — Governança da Maria
 
 > **Documento único de controle.** Se você está perdido, leia só as duas primeiras seções.
-> Atualizado a cada checkpoint fechado. Última atualização: **09/08/2026 19:55 BRT**.
+> Atualizado a cada checkpoint fechado. Última atualização: **13/08/2026 19:00 BRT**.
 
 ---
 
@@ -342,6 +342,84 @@ dois problemas diferentes com o mesmo nome.
 
 **Suíte no fechamento:** gov 8, laudo 13, sonda 177 — zero falhas; contrato OK (14 itens ativos,
 **0 desativados**, 58 invocações).
+
+### 🔎 Radar de 13/08 — os três problemas que o Alf viu nos prints, e as três raízes
+
+O Alf mandou prints do grupo e disse: *"a Maria errando muito"*. Eram três coisas distintas. **Em
+dois dos três casos o diagnóstico que eu tinha escrito estava errado** — a medição desmentiu, e a
+raiz real ficou em outro lugar. Registro os dois para não repetirem.
+
+**1) O laudo dava ✅ em cima de fonte que ele não conseguiu ler.** Em 12/08 a seção 6 afirmou
+*"0 e-mails sem match no período. Nada a fazer."* — a view tinha **103 pendências**, 101 delas
+paradas há mais de 48h, a mais antiga de 10/07. No dia seguinte, a mesma seção disse "view não
+encontrada". Ausência de medição virando conformidade é o mesmo defeito do TOM, agora no financeiro.
+
+Trava em **duas camadas**, porque uma só não pega o caso pior. A camada textual (cegueira declarada
++ sinal de verde na mesma seção) só funciona quando ela **avisa** que não leu — e em 12/08 ela não
+avisou nada, simplesmente afirmou zero. Então entrou a camada de **controle**: o número que a seção
+afirma é conferido contra uma RPC que lê a fonte, e divergência vira severidade alta com o conflito
+escrito no resumo. Falha de rede na conferência devolve *indefinido*, nunca "conferido" — inventar
+ok ali seria repetir a doença que a trava combate.
+
+**Dois bugs pré-existentes apareceram no caminho**, ambos no fatiador de seções: (a) o rótulo era
+procurado em **qualquer** posição, e "conferências" aparece dentro do corpo da seção 1 — o acervo
+vinha guardando, como seção 3, texto que era da seção 1; (b) o índice era achado no texto
+normalizado com NFD e aplicado ao texto **original** — NFD decompõe o acento em dois code points e
+**muda o comprimento da string**, então o corte saía deslocado, e o erro crescia a cada acento
+anterior.
+
+**2) "View não encontrada" era falta de GRANT — não nome errado.** Testei com o perfil real do
+laudo e veio `permission denied for view vw_maria_email_pendencias`. A view existe; as que funcionam
+(`vw_maria_contas_pagar`, `vw_maria_contas_codigo_mes_resumo`) têm grant para `maria_leitura` e
+`maria_operacional`, essa só tinha `postgres`/`service_role`. Ela tentou três nomes, levou "negado"
+em todos e concluiu que a view não existia. **Erro de permissão chegou ao laudo como inexistência.**
+
+Não liberei a original: ela expõe `fornecedor_nome` e `valor_centavos`, e a seção só precisa de
+contagem. Criei `vw_maria_email_pendencias_resumo`, **sanitizada** — só agregados. O prompt pode
+proibir citar fornecedor; não entregar o dado é mais forte do que pedir para não usar. O prompt
+também passou a **nomear a fonte** da seção 6 (nomeava a da seção 5, e aquela funcionava) com regra
+explícita: não conseguir ler nunca vira zero. Provado com a agente real: **103 total, 101 há mais de
+48h**. Golden-file do prompt atualizado — senão o wrapper alertaria "prompt alterado" todo dia e o
+alarme viraria ruído.
+
+> ⚠️ **Efeito visível para a Rose:** o laudo passou a mostrar 103 e-mails sem match. **Não é
+> regressão** — é o número que sempre existiu e estava invisível.
+
+**3) Ela nega uma capacidade que tem e usa.** O print: a Rose insiste *"Vc consegue reagir sim
+Maria, vc tem essa ferramenta"*, e a Maria responde *"neste meu runtime atual eu não tenho a
+ferramenta de reação ativa"*. No turno seguinte, pior: *"anotei a pendência pra habilitar a reação
+com ✅ no bridge UAZAPI — assim que o Alf/Alfredo liberar"*. **Inventou um pedido de feature para
+algo que já roda 377 vezes no mesmo log.**
+
+**Meu diagnóstico inicial estava errado e a medição o refutou.** Eu tinha escrito que o bridge pulava
+calado e o modelo preenchia o silêncio. Não: o aviso honesto existe (`postAgentGreenCheckNotice` diz
+"não marquei N porque a mensagem saiu da janela") e **foi enviado naquela sessão**. Dos 88 eventos de
+pulo por janela, 3 das 4 sessões eram de teste meu; a única real recebeu o aviso.
+
+**A raiz é estrutural:** a reação roda **no bridge, depois da resposta** — logo nunca aparece na
+lista de ferramentas do modelo — e nada em `SOUL.md`, `AGENTS.md` ou no prompt dizia que ela existe.
+Capacidade que vive fora do toolset e não é declarada vira negação, e a negação puxa confabulação
+junto. Mesma família do `project_tom_nega_capacidade`.
+
+Corrigido declarando o fato no prompt, **só quando o assunto toca marcação** (o bloco custa tokens em
+todo turno): a capacidade existe e está ativa; é proibido dizer que não tem ou se oferecer para pedir
+habilitação; o limite real e único é a janela do WhatsApp (**6,5 dias**, lida do env, não escrita à
+mão); e o placar da última rodada naquele chat — quantos marcados, quantos fora da janela, quantos
+sem vínculo único. **Sem rodada registrada, o bloco não afirma placar nenhum** — número sem medição é
+exatamente o que a trava do item 1 combate.
+
+**Prova pós-fix, com a agente real** (não com o teste unitário — o teste prova que o bloco é montado,
+não que ela parou de negar): *"Consegue sim! A reação ✅ é aplicada pelo bridge logo depois da minha
+resposta… Único limite real: o WhatsApp só aceita reação em mensagens com até 6,5 dias."* E,
+perguntada por que não marcou os antigos, deu **o motivo certo** em vez da negação.
+
+**Zero-regressão:** 23 asserções novas verdes; a suíte do bridge tem duas falhas
+(`plano_manutencao_instrumentos`, `email_july_audit`) **idênticas no baseline pré-patch** — dívida
+antiga, não regressão minha. Restart do bridge provado por `ps -o lstart=` (PID novo, 18:46:44 BRT),
+não por afirmação.
+
+**Ainda aberto, decisão do Alf:** o bug de roteamento nº 1 da B2-bis (a palavra "relatório" desvia
+pedido de contas para o atalho de e-mail) — mexer na ordem dos shortcuts é chamada dele.
 
 ### B2 — o que as rodadas reais ensinaram (10/08)
 
