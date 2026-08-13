@@ -583,3 +583,40 @@ suíte no baseline, e o antes/depois da medição no relatório.
 **Não implementado.** Hoje é um agente só, com as etapas 3 (refutar) e 4 (prova de reversão)
 dentro do próprio ciclo — que é a versão "um agente disciplinado" disto. A separação real
 espera decisão do Alf sobre custo (dobra as chamadas de LLM por rodada).
+
+### Decisão do Alf (13/08): FAZER — custo aprovado
+
+Dobrar as chamadas de LLM por rodada **não é impedimento**. A implantação usa a arquitetura
+**já testada e validada na Maria** — o Alf traz o desenho de lá na hora de executar. Não
+inventar um desenho paralelo aqui: dois modelos diferentes para o mesmo problema viram duas
+dívidas, e o daqui não tem rodagem em produção.
+
+O §14 acima é o que eu derivei sozinho a partir dos erros do caso Rose. Serve como **lista de
+conferência** contra o desenho da Maria — o que bater, confirma; o que divergir, o da Maria
+ganha (tem evidência de produção), e a divergência vira lição a registrar aqui.
+
+#### O que preciso saber do desenho da Maria (perguntas específicas)
+
+Genérico ("me manda a arquitetura") volta incompleto. Isto é o que muda a implantação:
+
+1. **Transporte do achado** — o auditor entrega ao corretor por tabela, arquivo ou fila?
+   Se o TOM já tem `tom_audit_findings`, o corretor lê de lá ou de um artefato próprio?
+2. **Critério de aceite** — quem escreve, em que formato, e é obrigatório? (No meu desenho é
+   o auditor quem escreve, ANTES do fix. Se lá for diferente, quero saber por quê.)
+3. **Devolução** — o corretor pode responder "não reproduz"? Onde isso fica registrado e
+   conta como entrega? (4 de 5 "regressões" de 09-15/07 aqui eram falsas — sem devolver com
+   status, o corretor inventa reprodução.)
+4. **Medição antes/depois** — quem mede, código ou LLM? É trava dura (não fecha sem) ou
+   recomendação? **Esta é a pergunta mais importante**: foi a ausência disso que deixou meu
+   fix passar com a agulha parada em 1/3.
+5. **O auditor vê o fix?** Se vê, passa a avaliar a solução em vez do sintoma.
+6. **Anticonluio** — o que impede os dois de concordarem? Modelos diferentes, prompts
+   adversariais, terceiro juiz?
+7. **Modelo por papel** e o que acontece quando a cota do primário estoura (aqui o fallback
+   é GPT-5.6 Sol High; ver `src/services/ops-fallback.js`).
+8. **Raio em código** de cada papel: o auditor tem write? O corretor tem deploy? Kill switch?
+
+**Diferença de terreno que já sei que existe:** aqui o instrumento de medição é a **simulação
+conversacional** (`scripts/replay-lab-*`), porque o que quebra no TOM é escolha dentro de um
+turno de conversa — a suíte roda sem LLM e não pega. Se a Maria mede de outro jeito, esse é
+o ponto que NÃO se copia direto.
