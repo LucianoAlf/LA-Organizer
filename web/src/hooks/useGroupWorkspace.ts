@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
 import { bucketizeGroupTasks, collapseOpenSeries, computeGroupStats, groupCountsFromRows, packageInMonth, type PoolTask } from '../lib/groupWorkspace';
+import { ehMoldeDeSerie } from '../lib/recurrenceGuard';
 import type { Task } from '../types';
 
 const POOL_SELECT =
@@ -197,6 +198,14 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
 
   const cancelTask = useMutation({
     mutationFn: async (id: string) => {
+      // Guard SÉRIE (09/08/2026): cancelar o MOLDE mata a recorrência pra sempre, sem erro
+      // e sem aviso — as tarefas só param de nascer meses depois. Quatro séries do Financeiro
+      // morreram assim num domingo. Aqui, não lá na tela: é chokepoint, vale pra todo chamador.
+      // Encerrar série é ação deliberada; não pode ser efeito colateral de "cancelar tarefa".
+      const { data: alvo } = await supabase.from('tasks')
+        .select('recurrence_rule, recurrence_parent_id').eq('id', id).maybeSingle();
+      if (ehMoldeDeSerie(alvo)) throw new Error('EH_MOLDE_SERIE');
+
       const { data, error } = await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', id).select('id');
       if (error) throw error;
       if (!data || data.length === 0) throw new Error('SEM_PERMISSAO');

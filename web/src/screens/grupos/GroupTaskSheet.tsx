@@ -93,8 +93,20 @@ export function GroupTaskSheet({ open, task, groupName, readOnly, onClose, onSav
       setConfirmCancel(false);
       onClose();
       showToast({ kind: 'success', title: 'Tarefa cancelada' });
-    } catch {
-      showToast({ kind: 'error', title: 'Não consegui cancelar' });
+    } catch (e) {
+      // Guard SÉRIE (09/08/2026): quem clica aqui quer tirar UMA tarefa da frente, não
+      // acabar com a recorrência. Dizer só "não consegui" faria a pessoa tentar de novo
+      // por outro caminho — a mensagem precisa explicar o que aquilo é e o que fazer.
+      const m = e instanceof Error ? e.message : '';
+      if (m === 'EH_MOLDE_SERIE') {
+        showToast({
+          kind: 'error',
+          title: 'Essa é a recorrência, não uma tarefa',
+          msg: 'Cancelar aqui faria a tarefa parar de nascer todo mês. Pra tirar só a deste mês, cancela a ocorrência na lista. Pra encerrar de vez, fala com quem cuida do grupo.',
+        });
+      } else {
+        showToast({ kind: 'error', title: 'Não consegui cancelar' });
+      }
     } finally { setCancelling(false); }
   }
 

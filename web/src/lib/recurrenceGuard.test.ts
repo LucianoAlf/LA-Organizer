@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  projectedInstances, shouldWarnUnboundedRecurrence, GUARD_SPAM_THRESHOLD,
+  projectedInstances, shouldWarnUnboundedRecurrence, GUARD_SPAM_THRESHOLD, ehMoldeDeSerie,
 } from './recurrenceGuard';
 
 const START = '2026-07-02';
@@ -52,5 +52,37 @@ describe('shouldWarnUnboundedRecurrence', () => {
   it('sem recorrência → não avisa', () => {
     expect(shouldWarnUnboundedRecurrence(null, START)).toBeNull();
     expect(shouldWarnUnboundedRecurrence('', START)).toBeNull();
+  });
+});
+
+// ── ehMoldeDeSerie: cancelar o molde mata a série em silêncio ────────────────────────
+// 09/08/2026, domingo 12:54 BRT: quatro moldes do Financeiro foram cancelados de uma vez
+// (Conciliação de Cartões + Repasses Maquininha Barra/CG/Recreio). Nenhum erro, nenhum
+// aviso — as tarefas simplesmente parariam de nascer em outubro, meses depois, sem que
+// ninguém ligasse uma coisa à outra.
+//
+// O chat do TOM protege isso desde 17/06 (pickInstanceTarget nunca mira molde). O app
+// ficou sem o irmão: cancelTask aceitava qualquer id. Este é o guard que faltava.
+describe('ehMoldeDeSerie', () => {
+  it('molde recorrente é reconhecido (tem regra e não é instância de ninguém)', () => {
+    expect(ehMoldeDeSerie({ recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=30' })).toBe(true);
+    expect(ehMoldeDeSerie({ recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=1', recurrence_parent_id: null })).toBe(true);
+  });
+
+  it('instância NÃO é molde — é ela que a pessoa quer cancelar', () => {
+    expect(ehMoldeDeSerie({ recurrence_rule: null, recurrence_parent_id: 'tpl' })).toBe(false);
+    expect(ehMoldeDeSerie({ recurrence_rule: null, recurrence_parent_id: null })).toBe(false);
+  });
+
+  // Sutil: uma ocorrência que ganhou regra própria continua sendo ocorrência. Tratá-la como
+  // molde bloquearia o cancelamento de uma tarefa que a pessoa PRECISA cancelar.
+  it('ocorrência com regra própria e pai não é molde', () => {
+    expect(ehMoldeDeSerie({ recurrence_rule: 'FREQ=MONTHLY', recurrence_parent_id: 'tpl' })).toBe(false);
+  });
+
+  it('entrada vazia não trava nada', () => {
+    expect(ehMoldeDeSerie(null)).toBe(false);
+    expect(ehMoldeDeSerie(undefined)).toBe(false);
+    expect(ehMoldeDeSerie({})).toBe(false);
   });
 });

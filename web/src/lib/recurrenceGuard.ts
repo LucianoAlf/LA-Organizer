@@ -34,6 +34,26 @@ export function projectedInstances(
   }
 }
 
+/**
+ * A linha é o MOLDE da série (a receita que gera as ocorrências), não uma ocorrência?
+ *
+ * Cancelar o molde mata a recorrência PARA SEMPRE, em silêncio: o materializador pula
+ * molde cancelado, ninguém recebe erro, e as tarefas só param de nascer meses depois —
+ * quando já não dá pra ligar uma coisa à outra. Foi o que aconteceu em 09/08/2026 com
+ * quatro séries do Financeiro (Conciliação de Cartões + Repasses Maquininha nas 3 unidades).
+ *
+ * O chat do TOM protege isso desde 17/06 (pickInstanceTarget nunca mira molde). Este é o
+ * irmão que faltava no app.
+ *
+ * Molde = tem regra E não é ocorrência de ninguém. A segunda metade importa: uma ocorrência
+ * que ganhou regra própria continua sendo ocorrência, e a pessoa precisa poder cancelá-la.
+ */
+export function ehMoldeDeSerie(
+  task: { recurrence_rule?: string | null; recurrence_parent_id?: string | null } | null | undefined,
+): boolean {
+  return !!(task && task.recurrence_rule && !task.recurrence_parent_id);
+}
+
 /** RRULE já tem fim explícito (UNTIL/COUNT)? Aí o usuário limitou de propósito. */
 function hasEnd(rule: string): boolean {
   return /(?:^|;)\s*(?:UNTIL|COUNT)=/i.test(rule.replace(/^RRULE:/i, ''));
