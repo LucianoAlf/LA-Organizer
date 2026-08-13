@@ -419,7 +419,9 @@ Provado com o literal: `10 achados` × fonte `11` → sai o conflito; `R$ 0,42`,
 | Buraco de FORMA nº3 | ✅ refutado por medição |
 | Cenário C (vermelho falso) | ✅ corrigido |
 
-**ÚNICO ITEM ABERTO — decisão do Alf:** o `ops-agent` tem `Bash Read Write Edit Grep Glob
+**DECIDIDO PELO ALF (13/08): MANTÉM.** *"Eu quero que ele corrija as paradas. Eu quero que ele continue fazendo o trabalho que ele tá fazendo."* O agente segue com Bash/Write/Edit e segue consertando; as 3 travas verificam o que ele afirma. Reabrir só com número — taxa de erro medida pelas travas, não por princípio.
+
+**Contexto da decisão:** o `ops-agent` tem `Bash Read Write Edit Grep Glob
 WebFetch`. Ele conserta código E escreve o relatório sobre o próprio conserto (Lei 2 do
 manual: contenção é ablação, não instrução). Ou tira a mão dele (vira só relator, N1 da
 escada), ou mantém e confia nas 3 travas que subiram hoje. **Recomendação: manter por ora e
