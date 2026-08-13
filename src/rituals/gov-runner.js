@@ -140,7 +140,17 @@ async function main() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return console.error(`[GovRunner] --ymd inválido: "${ymd}"`);
 
   // quiet-exempt: canal de engenharia do Alf e do Hugo, não é envio a colaborador.
-  const postar = (txt) => postOpsResult(supabase, grupo, txt);
+  //
+  // GATE DE VERBO DE ENTREGA (13/08): ponto ÚNICO de saída do ciclo — todo texto publicado
+  // passa aqui, então a trava fica aqui e não espalhada por quem escreve. Em 10/08 o
+  // relatório afirmou que o Rafinha "recebeu" o recado; no banco só havia registro de envio.
+  // Rebaixa a palavra, não bloqueia o achado: "foi enviado" é a verdade que ele tinha.
+  const { rebaixarClaimDeEntrega } = require('../lib/claim-entrega');
+  const postar = (txt) => {
+    const g = rebaixarClaimDeEntrega(txt);
+    if (g.rebaixou) console.log(`[GovRunner] claim de entrega rebaixado: ${g.termos.join(' · ')}`);
+    return postOpsResult(supabase, grupo, g.texto);
+  };
   instalarAvisoDeInterrupcao(postar);
   const force = process.argv.includes('--force');
   const headAntes = git(['rev-parse', 'HEAD']) || null;

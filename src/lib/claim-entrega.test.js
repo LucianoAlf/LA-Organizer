@@ -9,7 +9,9 @@ const { rebaixarClaimDeEntrega, temClaimDeEntrega } = require('./claim-entrega')
 // havia registro de ENVIO, nenhum de entrega. Auditoria cruzada pegou; o código não pegava.
 test('rebaixa "recebeu" para "enviado" — o caso Rafinha de 10/08', () => {
   const r = rebaixarClaimDeEntrega('Confirmei que o Rafinha recebeu o recado sobre a lâmpada.');
-  assert.match(r.texto, /foi enviado/i);
+  // Reescrita tem de ser GRAMATICAL com qualquer sujeito — a 1a versao produzia
+  // "o Rafinha foi enviado o recado". So apareceu rodando com o literal real.
+  assert.match(r.texto, /o Rafinha teve o recado enviado/i);
   assert.doesNotMatch(r.texto, /recebeu/i);
   assert.strictEqual(r.rebaixou, true);
 });
