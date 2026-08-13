@@ -11,15 +11,14 @@ Estado: **raiz achada e provada, fix do vazamento no ar (commit local, deploy SE
 
 Ordem acordada com o Alf (ele autorizou 1, 2 e 3; a ordem é minha e ele não contestou):
 
-1. **Guard no PWA contra cancelar molde** — `cancelTask` em
-   `web/src/hooks/useGroupWorkspace.ts:198` aceita qualquer id, inclusive o molde.
-   Cancelar molde mata a série em silêncio. O chat já tem esse guard
-   (`pickInstanceTarget`, `src/services/group-chat-tasks.js:83`); o app ficou sem o irmão.
-   Encerrar série tem que ser ação deliberada e avisada, nunca efeito de um cancelamento comum.
-2. **`updated_by` em `tasks`** — AUTORIZADO pelo Alf (fora do freeze, com palavra dele).
-   Migration + preencher no PWA e no engine. Hoje `tasks` só tem `created_by`: não há como
-   saber quem cancelou. Foi o que travou a investigação do 09/08.
-3. **Reparo dos dados** — religar os 4 moldes, corrigir filhas-template que ficaram `done`
+1. ✅ **Guard no PWA contra cancelar molde** — commit `3f8b2e51`. `ehMoldeDeSerie()` em
+   `web/src/lib/recurrenceGuard.ts` + guard no `cancelTask` do hook (chokepoint) + mensagem
+   que explica o que fazer. 16/16 no guard, 398/398 no PWA.
+2. ✅ **`updated_by` em `tasks`** — commit `50011a1a`, migration `add_updated_by_to_tasks`
+   APLICADA. Writers preenchidos: PWA `saveTask`/`cancelTask` e o `cancel` do chat de grupo
+   (incluindo a cascata pras filhas). ⚠️ **Falta varrer os demais writers** de `tasks` no
+   engine (complete, reschedule, edit) — hoje só os caminhos de grupo gravam autoria.
+3. **Reparo dos dados** ⬅️ **PRÓXIMO** — religar os 4 moldes, corrigir filhas-template que ficaram `done`
    por engano, gerar **outubro em diante**, conferir no banco que não nasceu duplicata.
    (Agosto e setembro já existem — não recriar.)
 4. **Simulação no Replay Lab** — cenário de GRUPO com **molde cancelado** (é o gatilho).
