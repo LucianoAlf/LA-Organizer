@@ -89,3 +89,35 @@ Duas regras que isto sugere, ambas mecânicas:
 Proposta de virar código: o `gov-runner` guarda o SHA do `HEAD` no início da rodada e, antes de
 postar, compara com o `HEAD` atual; se mudou, avisa no relatório em vez de deixar o LLM
 descobrir por acaso.
+
+### ETAPA 2 (varredura) — "o guard existe e nasceu depois do incidente" NÃO é prova
+
+**Ocorrências:** 1 (13/08), mas medida em cima de 152 achados de uma vez.
+
+Tentei industrializar a varredura: rodei os 152 abertos não-altos contra os guards
+determinísticos que existem hoje (`sync-excuse-guard`, `mechanism-leak`, `promise-honesty`,
+`inventory-error-message`) e filtrei por "o regex casa E o guard nasceu **depois** do
+incidente". Deu **9 candidatos — e 8 eram falsos.**
+
+O erro: o `REPLY_PROMISE_RE` do `promise-honesty` casa em "Te cobro depois", "me avisa?" — mas
+aqueles achados são de pedido DERRUBADO, e o TOM já tinha sido honesto ("_não consegui
+registrar_"). O guard casa o texto e mesmo assim **não conserta o bug do achado**. Casar regex
+≠ consertar. Só sobrou 1 verdadeiro (`eb518cfa`, erro cru de inventário), e ele só ficou de pé
+porque rodei a string exata pela função e comparei a saída.
+
+Segundo resultado, mais caro: eu ia fechar em lote a família do `optimistic-confirm` (7
+achados de 25/06 a 02/07, todos com "✅ …" + "_não consegui registrar_" na mesma mensagem) por
+parecer óbvio que meses de correção já teriam pego. **Rodei os textos reais e o chokepoint não
+dispara em nenhum**: `hasCompletionClaim` dá `false` em "Ficam abertas agora: …", "• Reunião
+com Juliana ✓ … Junho encerrado redondo", "As 3 tarefas já estão no banco". O gate é verbo de
+conclusão em 1ª pessoa; **afirmação de ESTADO ("já estão no banco", "ficam abertas") passa
+inteira.** Se eu tivesse fechado por parecer, teria enterrado um buraco real e ainda declarado
+progresso.
+
+Regra que isto sugere, e que já segui nesta rodada: **na varredura, o que fecha um achado é a
+saída da função rodada com o literal do banco — não o regex casar, não a data bater.** Data e
+regex servem pra escolher o candidato; a prova é a execução.
+
+Proposta de virar código: o `gov-runner` expõe um `provar(literal, guard)` que roda o texto e
+devolve `{antes, depois, mudou}`; o agente só pode fechar um achado da varredura anexando esse
+retorno no `verified_note`. Sem o retorno, o fechamento é recusado.
