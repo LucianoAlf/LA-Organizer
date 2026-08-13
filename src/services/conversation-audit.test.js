@@ -4,7 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  normalizeSummary, signatureFor, parseFindings, rankFindings, upsertFinding,
+  normalizeSummary, signatureFor, parseFindings, rankFindings, upsertFinding, formatGroupTranscript,
 } = require('./conversation-audit');
 
 // Supabase fake p/ upsertFinding: from→select→eq resolve {data}; update/insert registram.
@@ -175,4 +175,61 @@ test('upsertFinding: inserção grava incident_at e incident_confidence', async 
   assert.strictEqual(calls.inserts.length, 1);
   assert.strictEqual(calls.inserts[0].incident_at, '2026-06-09T14:30:00Z');
   assert.strictEqual(calls.inserts[0].incident_confidence, 'high');
+});
+
+// ── AUDIT-GRUPO-CEGO (13/08/2026) ────────────────────────────────────────────────────
+// A auditoria lia SÓ `conversation_history`: zero refs a `group_chat_messages`. O caso Rose
+// (10 tarefas concluídas erradas no grupo Financeiro, 12/08) nunca poderia ter sido visto —
+// o sensor apontava pro outro lado. Não é falha do agente de governança, é falha do sensor.
+//
+// O transcript de grupo tem uma diferença que importa: são VÁRIAS pessoas. Sem o nome de quem
+// falou, o auditor lê um diálogo embaralhado e inventa atribuição — falso positivo caro.
+test('formatGroupTranscript nomeia quem falou e marca o TOM', () => {
+  const linhas = [
+    { role: 'member', content: 'Tom, conclui os dois por favor', created_at: '2026-08-12T21:44:00-03:00',
+      sender: { preferred_name: 'Rose', full_name: 'Rose Silva' } },
+    { role: 'tom', content: 'Marquei como feitos os dois de hoje', created_at: '2026-08-12T21:45:00-03:00', sender: null },
+  ];
+  const t = formatGroupTranscript(linhas);
+  assert.match(t, /Rose: Tom, conclui os dois/);
+  assert.match(t, /TOM: Marquei como feitos/);
+  assert.match(t, /12\/08/); // carimbo de data — o auditor julga "hoje" contra o dia da conversa
+});
+
+// GROUPCHAT-SENDER-ID-NULL: 710 das 1633 mensagens de membro estão sem sender_id. Cair pra
+// "alguém do grupo" é melhor que quebrar ou omitir a linha — omitir tira o pedido do
+// contexto e o auditor passa a ver a resposta do TOM sem a pergunta que a gerou.
+test('formatGroupTranscript aguenta sender ausente sem perder a linha', () => {
+  const t = formatGroupTranscript([
+    { role: 'member', content: 'pode finalizar', created_at: '2026-08-12T19:21:00-03:00', sender: null },
+  ]);
+  assert.match(t, /pode finalizar/);
+  assert.match(t, /alguém do grupo/i);
+});
+
+test('formatGroupTranscript: entrada vazia ou inválida vira string vazia', () => {
+  assert.strictEqual(formatGroupTranscript([]), '');
+  assert.strictEqual(formatGroupTranscript(null), '');
+  assert.strictEqual(formatGroupTranscript(undefined), '');
+});
+
+test('upsertFinding com groupId grava group_id e deixa collaborator_id nulo', async () => {
+  const calls = { inserts: [], updates: [] };
+  const sb = fakeSb([], calls);
+  const grupo = { id: 'g1', full_name: 'Financeiro' }; // work_groups usa `name`; quem chama normaliza
+  const r = await upsertFinding(sb, grupo, { category: 'confabulacao', severity: 'alto', summary: 's', evidence: 'e' }, { groupId: 'g1' });
+  assert.strictEqual(r, 'inserted');
+  assert.strictEqual(calls.inserts[0].group_id, 'g1');
+  assert.strictEqual(calls.inserts[0].collaborator_id, null);
+});
+
+// O cenário D do Replay Lab roda num grupo `[QA] ...` e produz exatamente os sintomas que
+// este detector procura. Sem o guard, cada bateria injetaria falha FABRICADA na base que
+// usamos pra priorizar — eu contaminando o meu próprio diagnóstico.
+test('upsertFinding ignora grupo de QA', async () => {
+  const calls = { inserts: [], updates: [] };
+  const sb = fakeSb([], calls);
+  const r = await upsertFinding(sb, { id: 'g2', full_name: '[QA] Financeiro Replay' },
+    { category: 'confabulacao', severity: 'alto', summary: 's', evidence: 'e' }, { groupId: 'g2' });
+  assert.strictEqual(r, 'ignorado_qa');
 });

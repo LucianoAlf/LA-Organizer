@@ -99,6 +99,85 @@ async function loadConversation(sb, collaboratorId, hours = 24) {
   return { text, lastAt, sinceIso };
 }
 
+// ── AUDITORIA DE GRUPO (13/08/2026) ──────────────────────────────────────────────────
+// AUDIT-GRUPO-CEGO: até aqui a auditoria lia SÓ `conversation_history`. Todo o trabalho de
+// grupo — onde o financeiro vive — ficava fora de qualquer varredura. O caso Rose (10 tarefas
+// concluídas erradas no grupo Financeiro em 12/08) nunca poderia ter aparecido no relatório:
+// o sensor apontava pro outro lado. Não é falha do agente de governança, é falha do sensor.
+//
+// A régua é DELIBERADAMENTE a mesma do 1:1 (mesmo prompt, mesmo parseFindings, mesma
+// severidade): inventar critério novo pra grupo criaria duas noções de "achado" e tornaria
+// os números incomparáveis entre si.
+
+/** Carimbo [DD/MM (dia) HH:MM] em BRT — compartilhado com o transcript 1:1. */
+function _stampBrt(iso) {
+  try {
+    const f = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
+      weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(iso));
+    const g = (t) => (f.find((p) => p.type === t) || {}).value || '';
+    return `${g('day')}/${g('month')} (${g('weekday').replace('.', '')}) ${g('hour')}:${g('minute')}`;
+  } catch (_) { return ''; }
+}
+
+/**
+ * Formata mensagens de grupo no mesmo shape do transcript 1:1, com UMA diferença que importa:
+ * grupo tem várias pessoas, então cada fala precisa do NOME de quem falou. Sem isso o auditor
+ * lê um diálogo embaralhado e erra a atribuição — falso positivo caro.
+ *
+ * Fala de membro sem `sender_id` (710 das 1633 no banco — GROUPCHAT-SENDER-ID-NULL) vira
+ * "alguém do grupo" em vez de sumir: omitir a linha tiraria o PEDIDO do contexto e deixaria
+ * o auditor vendo a resposta do TOM sem a pergunta que a gerou.
+ *
+ * Pura. @param {Array} rows @returns {string}
+ */
+function formatGroupTranscript(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((m) => {
+      if (!m) return null;
+      const quem = m.role === 'tom'
+        ? 'TOM'
+        : ((m.sender && (m.sender.preferred_name || m.sender.full_name)) || 'alguém do grupo');
+      const txt = String(m.content || m.media_extracted_text || '').slice(0, 1600);
+      if (!txt) return null;
+      return `[${_stampBrt(m.created_at)}] ${quem}: ${txt}`;
+    })
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 24000);
+}
+
+/** Carrega a conversa de um GRUPO das últimas `hours`h, já formatada. */
+async function loadGroupConversation(sb, groupId, hours = 24) {
+  const sinceIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+  const { data } = await sb.from('group_chat_messages')
+    .select('content, media_extracted_text, role, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(preferred_name, full_name)')
+    .eq('group_id', groupId)
+    .gte('created_at', sinceIso)
+    .order('created_at', { ascending: true })
+    .limit(300);
+  const rows = data || [];
+  return { text: formatGroupTranscript(rows), lastAt: rows.length ? rows[rows.length - 1].created_at : null, sinceIso };
+}
+
+/** Analisa a conversa de um GRUPO. Retorna Finding[]. NUNCA lança. */
+async function auditGroupConversation(sb, chat, group, hours = 24) {
+  try {
+    const { text: convo, lastAt } = await loadGroupConversation(sb, group.id, hours);
+    if (convo.length < 80) return []; // conversa fina demais
+    const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
+    const { system, messages } = buildAuditMessages(convo);
+    const r = await chat(system, messages, 1200);
+    // `resolveIncidentAt` casa evidência contra `conversation_history` — inaplicável aqui.
+    // Sem ele, occurred_at cai no lastAt da janela, que é o mesmo fallback do 1:1.
+    return parseFindings(r && r.text, lastAt);
+  } catch (err) {
+    console.error(`[ConvAudit] erro no grupo ${group && group.name}:`, err.message);
+    return [];
+  }
+}
+
 /** Analisa a conversa de um colaborador. Retorna Finding[]. NUNCA lança. */
 async function auditConversation(sb, chat, collaborator, hours = 24) {
   try {
@@ -161,7 +240,13 @@ function rankFindings(findings, opts = {}) {
 }
 
 /** Grava 1 finding com dedupe por assinatura. Triado/fechado NÃO re-surge. NUNCA lança. */
-async function upsertFinding(sb, collaborator, finding) {
+// `opts.groupId` (13/08): achado de GRUPO. O sujeito passa a ser o grupo — quem chama
+// normaliza pra `{id, full_name: group.name}`, porque o guard de QA lê `full_name` e o
+// grupo do Replay Lab (`[QA] Financeiro Replay`) precisa cair fora das métricas igual aos
+// perfis. `collaborator_id` fica nulo: o achado é do grupo, não de uma pessoa — atribuir a
+// um membro seria inventar responsável.
+async function upsertFinding(sb, collaborator, finding, opts = {}) {
+  const _groupId = opts.groupId || null;
   try {
     // ---- Isolamento do Replay Lab (spec 05/08, fronteira das métricas) ----
     // Os cenários do laboratório geram exatamente os sintomas que este detector procura.
@@ -194,7 +279,8 @@ async function upsertFinding(sb, collaborator, finding) {
       return 'incremented';
     }
     await sb.from('tom_audit_findings').insert({
-      collaborator_id: collaborator.id,
+      collaborator_id: _groupId ? null : collaborator.id,
+      group_id: _groupId,
       category: finding.category,
       severity: finding.severity,
       summary: finding.summary,
@@ -247,5 +333,6 @@ async function resolveIncidentAt(sb, collaboratorId, evidence, occurredAt, since
 module.exports = {
   normalizeSummary, signatureFor, parseFindings, rankFindings,
   loadConversation, auditConversation, upsertFinding, resolveIncidentAt,
+  formatGroupTranscript, loadGroupConversation, auditGroupConversation,
   CLOSED_STATUSES, SEV_RANK,
 };

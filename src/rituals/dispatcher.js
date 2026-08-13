@@ -3893,6 +3893,35 @@ async function run(opts = {}) {
     } catch (err) {
       console.error('[Dispatcher] dream-consolidation erro:', err.message);
     }
+
+    // AUDIT-GRUPO-CEGO (13/08): a auditoria acima varre conversa 1:1 e só. Todo o trabalho
+    // de GRUPO — onde o financeiro vive — ficava fora. O caso Rose (10 tarefas concluídas
+    // erradas no Financeiro, 12/08) nunca poderia ter entrado no relatório: o sensor
+    // apontava pro outro lado. Não é falha do agente de governança, é falha do sensor.
+    //
+    // Laço próprio (o de cima é por colaborador; grupo é por grupo, senão auditaria o mesmo
+    // transcript N vezes). Mesma janela de 24h e MESMA régua — reusa o prompt e o parser do
+    // 1:1 de propósito: critério novo criaria duas noções de "achado" e números incomparáveis.
+    // Isolado: erro aqui nunca derruba o Dream nem a auditoria individual.
+    try {
+      const { auditGroupConversation } = require('../services/conversation-audit');
+      const { data: grupos } = await supabase.from('work_groups')
+        .select('id, name').eq('active', true);
+      for (const g of (grupos || [])) {
+        try {
+          const achados = await auditGroupConversation(supabase, aiChat, g, 24);
+          // `full_name` porque o guard de QA lê esse campo — o grupo do Replay Lab
+          // (`[QA] Financeiro Replay`) tem que cair fora das métricas igual aos perfis.
+          const sujeito = { id: g.id, full_name: g.name };
+          for (const f of achados) await upsertFinding(supabase, sujeito, f, { groupId: g.id });
+          if (achados.length) console.log(`[ConvAudit] grupo ${g.name}: ${achados.length} achado(s)`);
+        } catch (gErr) {
+          console.error(`[ConvAudit] falha no grupo ${g.name}:`, gErr.message);
+        }
+      }
+    } catch (err) {
+      console.error('[ConvAudit] varredura de grupos erro:', err.message);
+    }
   }
 
   // Auditoria do sistema (health check) — 5h BRT, depois do Dream das 3h.
