@@ -250,7 +250,7 @@ fechado — e ele não movia a agulha.
 | 1 | **Ligar a auditoria nos grupos** | ✅ **FEITO** — ver §11 |
 | 2 | **Cenário C do Replay Lab** | ✅ **FEITO** — bloqueia só o dano, reporta o alvo |
 | 3 | **Buraco de FORMA nº3** | ✅ **REFUTADO por medição** — ver §12 |
-| 4 | **Arquitetura de 2 agentes** | ✅ **DESENHADA** —  §14; implantação espera decisão de custo do Alf |
+| 4 | **Arquitetura de 2 agentes** | ✅ **DESENHADA** — `MODELO-GOVERNANCA-AGENTES.md` §14; implantação espera decisão de custo do Alf |
 
 Regra que vale para os 4: **medir antes de mexer** e **simulação antes de fechar** — as duas
 lições que o caso Rose cobrou caro (§9).
