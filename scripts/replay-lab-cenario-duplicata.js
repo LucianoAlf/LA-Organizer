@@ -95,7 +95,7 @@ async function montarFixture(collabId) {
   const base = {
     assigned_to: collabId, created_by: collabId,
     context: 'work', status: 'pending', source: 'manual', priority: 'medium',
-    data_classification: 'qa',
+    data_classification: 'test',
   };
   const ids = {};
   for (const titulo of [T1, T2]) {
