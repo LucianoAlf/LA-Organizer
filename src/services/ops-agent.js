@@ -25,6 +25,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const REPO = process.env.TOM_OPS_REPO || '/opt/LA-Organizer';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/usr/bin/claude';
@@ -186,12 +187,8 @@ function resolverTimeout(timeoutMs) {
  * Roda o pedido no CLI com ferramentas. Resolve com o texto final do agente.
  * Nunca lança: devolve `{ ok:false, text }` com mensagem já pronta pro grupo.
  */
-function runOpsAgent(pedido, { quem = 'alguém do grupo', briefing = null, timeoutMs = null } = {}) {
-  const _idPedido = _registrarPedido(quem, pedido);
-  return new Promise((_resolveRaw) => {
-    // Baixa o pedido em QUALQUER saída (sucesso, erro, timeout) — um registro que vaza faria
-    // o próximo restart avisar sobre pedido que já tinha sido respondido.
-    const resolve = (v) => { _concluirPedido(_idPedido); _resolveRaw(v); };
+function _rodarClaude(pedido, { quem = 'alguém do grupo', briefing = null, timeoutMs = null } = {}) {
+  return new Promise((resolve) => {
     const args = [
       '-p', String(pedido || '').slice(0, 4000),
       '--model', OPS_MODEL,
@@ -231,11 +228,81 @@ function runOpsAgent(pedido, { quem = 'alguém do grupo', briefing = null, timeo
         const motivo = code === null ? `passou de ${Math.round(_limite / 60000)} min e eu cortei`
           : `saiu com código ${code}`;
         const cauda = String(err || '').trim().slice(-300);
-        return resolve({ ok: false, text: `Não terminei esse — ${motivo}.${cauda ? `\n\n_${cauda}_` : ''}` });
+        // `code`/`err` sobem junto (GOVAGENT-SEM-FALLBACK): quem orquestra precisa saber se foi
+        // falta de CAPACIDADE (cota/hang → vale o outro provedor) ou erro de USO (repetiria igual).
+        return resolve({ ok: false, text: `Não terminei esse — ${motivo}.${cauda ? `\n\n_${cauda}_` : ''}`, code, err, out });
       }
-      resolve({ ok: true, text: texto, custo });
+      resolve({ ok: true, text: texto, custo, modelo: OPS_MODEL });
     });
   });
+}
+
+// ── FALLBACK DE PROVEDOR (GOVAGENT-SEM-FALLBACK, 13/08) ───────────────────────────────────────
+// Outro PROVEDOR, não outro modelo Claude: a cota é da conta, então quando o Opus cai por
+// rate limit o Sonnet cai junto — seria a mesma corda, não uma rede.
+const FALLBACK_ON = process.env.TOM_OPS_FALLBACK !== '0';
+const FALLBACK_MODEL = process.env.TOM_OPS_FALLBACK_MODEL || 'gpt-5.6-sol';
+const FALLBACK_EFFORT = process.env.TOM_OPS_FALLBACK_EFFORT || 'high';
+const CODEX_BIN = process.env.CODEX_BIN || 'codex';
+
+function _rodarCodex(pedido, { quem = 'alguém do grupo', briefing = null, timeoutMs = null } = {}) {
+  const { argsCodex, stdinCodex } = require('./ops-fallback');
+  return new Promise((resolve) => {
+    // Arquivo por processo: dois ciclos concorrentes não podem ler a resposta um do outro.
+    const arquivoSaida = path.join(os.tmpdir(), `ops-fallback-${process.pid}-${Date.now()}.txt`);
+    let child;
+    try {
+      child = spawn(CODEX_BIN, argsCodex({ modelo: FALLBACK_MODEL, effort: FALLBACK_EFFORT, repo: REPO, arquivoSaida }),
+        { cwd: REPO, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (e) {
+      return resolve({ ok: false, text: `Nem o fallback subiu aqui (${e.message}).` });
+    }
+    let err = '';
+    const _limite = resolverTimeout(timeoutMs);
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} }, _limite);
+    child.stdout.on('data', () => {});   // telemetria do codex — a resposta vem pelo arquivo
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, text: `Falhei no fallback: ${e.message}` }); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      let texto = '';
+      try { texto = fs.readFileSync(arquivoSaida, 'utf8').trim(); } catch (_) { texto = ''; }
+      try { fs.unlinkSync(arquivoSaida); } catch (_) {}
+      if (!texto) {
+        const cauda = String(err || '').trim().slice(-300);
+        return resolve({ ok: false, text: `O fallback (${FALLBACK_MODEL}) também não terminou.${cauda ? `\n\n_${cauda}_` : ''}` });
+      }
+      resolve({ ok: true, text: texto, custo: null, modelo: FALLBACK_MODEL });
+    });
+    try { child.stdin.write(stdinCodex(resolverBriefing(quem, briefing), String(pedido || ''))); child.stdin.end(); } catch (_) {}
+  });
+}
+
+/**
+ * Orquestra: Claude primeiro; o outro provedor só quando faltou CAPACIDADE.
+ * Nunca lança — devolve `{ok, text}` já pronto pro grupo, como antes.
+ */
+function runOpsAgent(pedido, opts = {}) {
+  const _idPedido = _registrarPedido(opts.quem || 'alguém do grupo', pedido);
+  return (async () => {
+    try {
+      const r = await _rodarClaude(pedido, opts);
+      if (r.ok || !FALLBACK_ON) return r;
+      const { classifyClaudeExit } = require('../ai/classify-claude-exit');
+      const { deveTentarFallback, selarModelo } = require('./ops-fallback');
+      const cls = classifyClaudeExit(r.code, r.err || '', r.out || '');
+      if (!deveTentarFallback(cls)) return r;
+      console.warn(`[OpsAgent] Claude fora (${cls.kind}) — assumindo com ${FALLBACK_MODEL}`);
+      const rf = await _rodarCodex(pedido, opts);
+      // O selo é obrigatório: sem ele um ciclo do GPT chega ao grupo com a mesma cara de um do
+      // Opus, e quem lê aplica a régua de confiança errada.
+      return rf.ok ? { ...rf, text: selarModelo(rf.text, FALLBACK_MODEL) } : rf;
+    } finally {
+      // Baixa o pedido em QUALQUER saída (sucesso, erro, timeout) — um registro que vaza faria
+      // o próximo restart avisar sobre pedido que já tinha sido respondido.
+      _concluirPedido(_idPedido);
+    }
+  })();
 }
 
 /**
