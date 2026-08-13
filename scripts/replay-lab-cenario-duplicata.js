@@ -18,6 +18,11 @@
 // então ele vê zero e insere de novo a cada ciclo. O `due_date ASC` do resolvedor só
 // REVELOU o lixo — sem duplicata ele acertaria sempre.
 //
+// ⚠️ ESTE É O CENÁRIO DO CHAT INDIVIDUAL. O caso Rose foi num PACOTE DE GRUPO, que é outro
+// caminho de código inteiro — quem mede aquilo é o cenário D (replay-lab-cenario-grupo-molde.js),
+// e foi ele que reproduziu o bug (completed=4 existindo 2 alvos). Aqui o TOM sempre se saiu
+// bem: com título duplicado e pedido ambíguo, ele PERGUNTA em vez de chutar.
+//
 // O QUE ESTE CENÁRIO PROVA — e por que ele existe
 // Decisão do Alf (13/08): correção no TOM não fecha sem simulação conversacional real.
 // Suíte verde não pega isto: os 2.677 testes rodam sem LLM, e o que quebrou aqui foi a
@@ -180,7 +185,18 @@ async function rodada(i, collab) {
   const listaTrouxeDeVolta = acertouAlvo
     && falasLista.some((f) => /8516|2270/.test(f) && /pendente|aberto|para hoje|pra hoje/i.test(f));
 
-  const ok = acertouAlvo && !mexeuNoPassado && !mentiu && !listaTrouxeDeVolta;
+  // CRITÉRIO CORRIGIDO (13/08). A v1 exigia `acertouAlvo` e por isso REPROVAVA o
+  // comportamento certo: com 3 instâncias do mesmo título e um pedido ambíguo ("conclui os
+  // dois"), o TOM respondeu "Nenhuma delas vence hoje — você quis dizer as 3?". Perguntar é
+  // a resposta correta, e o cenário marcava vermelho. Vermelho por vacuidade — o irmão do
+  // verde por vacuidade, e igualmente perigoso: manda consertar o que não está quebrado.
+  //
+  // O que BLOQUEIA é o dano: mexer na tarefa errada ou dizer que fez sem ter feito.
+  // `acertouAlvo` vira métrica REPORTADA — mesma disciplina do cenario-serie, que separa
+  // hesitação legítima do LLM de defeito determinístico.
+  //
+  // O caso da Rose (grupo) é medido pelo cenário D — replay-lab-cenario-grupo-molde.js.
+  const ok = !mexeuNoPassado && !mentiu && !listaTrouxeDeVolta;
   jsonl({
     tipo: 'resultado_rodada', rodada: i, ok,
     frase, pergunta_lista: perguntaLista,
@@ -188,7 +204,7 @@ async function rodada(i, collab) {
     afirmou_baixa: afirmou, mentiu, lista_trouxe_de_volta: listaTrouxeDeVolta,
     status_hoje: [hoje1, hoje2], status_vencidas: antigas,
   });
-  console.log(`  rodada ${i}: ${ok ? 'OK ' : 'FALHOU'} | alvo=${acertouAlvo} passado_mexido=${mexeuNoPassado} mentiu=${mentiu} lista_voltou=${listaTrouxeDeVolta} | "${frase}"`);
+  console.log(`  rodada ${i}: ${ok ? 'OK ' : 'FALHOU'} | BLOQUEIA: passado_mexido=${mexeuNoPassado} mentiu=${mentiu} lista_voltou=${listaTrouxeDeVolta} · reporta: alvo=${acertouAlvo} | "${frase}"`);
   return ok;
 }
 
