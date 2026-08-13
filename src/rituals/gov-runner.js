@@ -146,10 +146,37 @@ async function main() {
   // relatório afirmou que o Rafinha "recebeu" o recado; no banco só havia registro de envio.
   // Rebaixa a palavra, não bloqueia o achado: "foi enviado" é a verdade que ele tinha.
   const { rebaixarClaimDeEntrega } = require('../lib/claim-entrega');
-  const postar = (txt) => {
+  const { conferirNumerosAfirmados } = require('../lib/confere-numero');
+
+  // CAMADA 2 da trava anti-vacuidade: o número que o relatório AFIRMA, conferido contra a
+  // fonte. A camada textual não pega isto — ela depende de o agente declarar que não
+  // conseguiu ler, e o caso pior não declara nada: afirma errado com confiança. Em 10/08 ele
+  // somou "1+9" e escreveu 10; eram 11.
+  // Falha na consulta devolve `null` → INDEFINIDO, nunca "conferido".
+  const fontesDeControle = async () => {
+    const out = { achados: null, corrigidos: null };
+    try {
+      const { count } = await supabase.from('tom_audit_findings')
+        .select('id', { count: 'exact', head: true }).in('status', ['novo', 'confirmado']);
+      if (Number.isFinite(count)) out.achados = count;
+    } catch (_) { /* indefinido, de propósito */ }
+    try {
+      const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const { count } = await supabase.from('tom_known_issues')
+        .select('id', { count: 'exact', head: true }).gte('corrigido_em', desde);
+      if (Number.isFinite(count)) out.corrigidos = count;
+    } catch (_) { /* indefinido, de propósito */ }
+    return out;
+  };
+
+  const postar = async (txt) => {
     const g = rebaixarClaimDeEntrega(txt);
     if (g.rebaixou) console.log(`[GovRunner] claim de entrega rebaixado: ${g.termos.join(' · ')}`);
-    return postOpsResult(supabase, grupo, g.texto);
+    const c = conferirNumerosAfirmados(g.texto, await fontesDeControle());
+    if (c.divergiu) {
+      console.log(`[GovRunner] CONFERE NÃO BATEU: ${c.conflitos.map((x) => `${x.chave} ${x.afirmado}≠${x.real}`).join(' · ')}`);
+    }
+    return postOpsResult(supabase, grupo, c.texto);
   };
   instalarAvisoDeInterrupcao(postar);
   const force = process.argv.includes('--force');
