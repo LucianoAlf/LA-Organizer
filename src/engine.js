@@ -5097,7 +5097,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           });
         }
         if (planSnz.taskPatch) {
-          await supabase.from('tasks').update(planSnz.taskPatch).eq('id', t.id);
+          // updated_by (13/08): conclusão já tinha `completed_by`; remarcar/editar/cancelar não
+          // tinham autoria nenhuma. Em 09/08 quatro séries do Financeiro foram encerradas e a
+          // investigação terminou em "não dá pra saber quem".
+          await supabase.from('tasks').update({ ...planSnz.taskPatch, updated_by: collaborator.id }).eq('id', t.id);
         }
         console.log(`[Task] snooze_reminders task=${String(t.id).slice(0, 8)} consumed=${planSnz.consumeReminderIds.length} inserted=${planSnz.insertReminder ? 1 : 0} patch=${planSnz.taskPatch ? 'y' : 'n'} clearAll=${clearAllSnz} not_before=${notBeforeSnz || '(all)'}`);
         okCount++;
@@ -5798,7 +5801,8 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             }
           }
           // If task was overdue, reset status to pending.
-          await supabase.from('tasks').update(update).eq('id', candidate.id);
+          // updated_by (13/08) — ver nota no ramo de snooze.
+          await supabase.from('tasks').update({ ...update, updated_by: collaborator.id }).eq('id', candidate.id);
         }
         // Mark notification as read so it doesn't re-trigger.
         await supabase.from('notifications').update({ status: 'read', read_at: new Date().toISOString() }).eq('id', notifs[0].id);
@@ -9036,7 +9040,10 @@ async function processMessage(phone, text, raw = {}) {
             let okC = false;
             try {
               if (it.type === 'task') {
-                const { error } = await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', it.id);
+                // updated_by (13/08): cancelar é o que mais apaga trabalho da frente das
+                // pessoas — é o primeiro lugar onde a autoria precisa existir.
+                const { error } = await supabase.from('tasks')
+                  .update({ status: 'cancelled', updated_by: collab.id }).eq('id', it.id);
                 okC = !error;
               } else {
                 const { error } = await supabase.from('events').update({ status: 'cancelled' }).eq('id', it.id);

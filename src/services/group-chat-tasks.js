@@ -407,7 +407,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         }
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         // Anti-corrida: só marca se ainda não estava done.
-        const patch = { status: 'done', completed_at: new Date().toISOString(), completed_by: senderCollabId };
+        const patch = { status: 'done', completed_at: new Date().toISOString(), completed_by: senderCollabId, updated_by: senderCollabId };
         const { data: upd } = await supabase
           .from('tasks')
           .update(patch)
@@ -471,7 +471,9 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         let target = pickInstanceTarget(found);
         if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title, excludeCancelled: true });
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
-        const patch = {}; if (nd) patch.due_date = nd; if (nr) patch.remind_at = nr;
+        // updated_by (13/08): remarcar move trabalho de dia sem deixar rastro de quem moveu —
+        // e desce em cascata pras filhas logo abaixo, então some prazo de várias de uma vez.
+        const patch = { updated_by: senderCollabId }; if (nd) patch.due_date = nd; if (nr) patch.remind_at = nr;
         const { data: upd } = await supabase.from('tasks').update(patch).eq('id', target.id).select('id, title').maybeSingle();
         if (upd) {
           // PACOTE É UMA UNIDADE (incidente Rose, 08/08 11:15). O `cancel` acima já descia
