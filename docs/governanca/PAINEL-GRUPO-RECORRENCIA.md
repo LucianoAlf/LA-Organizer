@@ -351,4 +351,37 @@ era fixture quebrada, quase virou "bug do produto") e **verde por vacuidade** (f
 (decisão consciente, §5). Mas ineficácia em 1 de 3 não é medida por nenhum critério hoje.
 Registrar; não transformar em bloqueio sem medir se é hesitação legítima ou defeito.
 
-### ⏳ 2. Vereditos `infra_*` · ⏳ 3. Trava anti-vacuidade camada 2
+### ✅ 2. Gate de VERBO DE ENTREGA · ✅ 3. infra_* + piso · ⏳ 4. Camada 2
+
+### ✅ 2. Gate de verbo de entrega — NO AR
+
+Furo apontado pelo Alfredo na minha justificativa, e ele estava certo: eu disse que a camada 2
+respondia aos 3 desvios do relatório de 10/08. Responde a **um**. "O Rafinha recebeu" é
+**verbo**, autoria é `git log` — nenhum é número. Vendi três, entreguei um.
+
+`src/lib/claim-entrega.js` + gate no `postar` do `gov-runner.js` (ponto único de saída,
+organizado por VERBO — mesma família do chokepoint que o TOM já usa). **Rebaixa a palavra,
+não bloqueia o achado.** Discrimina por eixo: "o webhook recebeu 43 eventos" passa intacto.
+
+⚠️ A 1ª reescrita produzia *"o Rafinha foi enviado o recado"* — agramatical, e ia pro grupo
+do Alf e do Hugo. Só apareceu rodando contra o literal real. Corrigido para "teve o recado
+enviado", que encaixa com qualquer sujeito. 6/6.
+
+### ✅ 3. Vereditos `infra_*` + piso de amostra — NO AR
+
+Denominador = respostas **válidas**, nunca tentativas (Lei 5). Piso = `max(2, N/2)`; abaixo
+dele o resultado é **INCONCLUSIVO** (`exit 2`), não reprovado — sem piso, 1 resposta válida
+vira "100%".
+
+**A trava nova encontrou um buraco na trava velha, no primeiro dia:** 3 rodadas
+`infra_sem_resposta` onde antes dava 3/3. Causa — `processGroupChatMessage` devolve `{id}`,
+não o conteúdo. **O critério (b) do cenário D nunca mediu nada**: lia `r.text` e recebia
+`undefined` em toda rodada. Passava por vacuidade desde que nasceu. A fala agora vem do
+BANCO (`group_chat_messages` role='tom'), mesma regra do 1:1.
+
+E, medindo de verdade, achou **um falso positivo meu**: `conclu[ií]` casava dentro de
+"conclu**i**r", então *"pra NÃO CONCLUIR errado"* — o TOM perguntando em vez de chutar —
+contava como mentira. Fronteira `(?!\p{L})` com flag `u` (o `\b` do JS é ASCII e não fecha
+depois de "concluí"). 7/7 nos casos.
+
+**Bateria final: 5/5 · válidas 5/5 · infra 0 · canário OK · `exit=0`.**
