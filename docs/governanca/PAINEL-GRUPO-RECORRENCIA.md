@@ -18,7 +18,7 @@ Ordem acordada com o Alf (ele autorizou 1, 2 e 3; a ordem é minha e ele não co
    APLICADA. Writers preenchidos: PWA `saveTask`/`cancelTask` e o `cancel` do chat de grupo
    (incluindo a cascata pras filhas). ⚠️ **Falta varrer os demais writers** de `tasks` no
    engine (complete, reschedule, edit) — hoje só os caminhos de grupo gravam autoria.
-3. **Reparo dos dados** ⬅️ **PRÓXIMO** — religar os 4 moldes, corrigir filhas-template que ficaram `done`
+3. **Reparo dos dados** ⛔ **BLOQUEADO — decisão do Alf pendente** (ver §7) — religar os 4 moldes, corrigir filhas-template que ficaram `done`
    por engano, gerar **outubro em diante**, conferir no banco que não nasceu duplicata.
    (Agosto e setembro já existem — não recriar.)
 4. **Simulação no Replay Lab** — cenário de GRUPO com **molde cancelado** (é o gatilho).
@@ -130,3 +130,37 @@ A fixture certa precisa de: **pacote mensal de GRUPO** (`createTaskGroup` com
   do caso Rose. Não é falha dele, é falha do sensor.
 - Arquitetura de **2 agentes** (auditor ≠ corretor) — o Alf vai trazer o desenho da Maria.
 - Buraco de FORMA nº3 do chokepoint (afirmação de ESTADO sem verbo de conclusão).
+
+---
+
+## §7 O ENCERRAMENTO FOI DELIBERADO — reparo bloqueado (13/08)
+
+`series_ended_at` (checado por `shouldMaterializeTemplate`, `src/services/recurrence-guard.js:32`)
+é o campo que encerra série de verdade. **Status `cancelled` NÃO para a materialização — esse
+campo para.** As quatro séries têm `series_ended_at` preenchido em momentos DIFERENTES e
+ANTERIORES ao cancelamento de 09/08:
+
+| Série | `series_ended_at` |
+|---|---|
+| Repasses Maquininha: Barra e Recreio | 31/07 10:07:28 |
+| Repasses Maquininha: CG | 31/07 10:09:42 |
+| Conciliação de Cartões | 05/08 22:30:22 |
+
+Três momentos ao longo de uma semana = **decisão deliberada**, não acidente. O cancelamento
+de 09/08 foi um SEGUNDO evento, limpando moldes já encerrados.
+
+**Consolidação confirmada nos Repasses:** 31/07 **10:07** encerram as três por unidade;
+31/07 **13:07** o molde `Repasses de Cartões - Maquininha` (SEM sufixo) é atualizado e segue
+ATIVO, com instância viva em 31/08. Juntaram as três numa só.
+
+**Conciliação de Cartões: sem substituto.** Instâncias só até setembro; nenhum molde ativo
+com esse nome ou com os cartões. Em outubro para de nascer.
+
+⚠️ **Eu religuei os 4 moldes para `pending` e revertí tudo** ao descobrir o `series_ended_at`.
+O banco está EXATAMENTE como estava. O que salvou foi o `shouldMaterializeTemplate` recusar
+com `closed_template` — se ele não existisse, eu teria duplicado os Repasses em cima do
+unificado. **Reativar série exige limpar `series_ended_at`, e isso reverte decisão de outra
+pessoa: não fazer sem o Alf saber que houve decisão.**
+
+Lição: `status` e `series_ended_at` são eixos SEPARADOS. Ler só o status conta a metade
+errada da história.
