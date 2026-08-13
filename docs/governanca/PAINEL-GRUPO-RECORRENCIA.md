@@ -1,36 +1,79 @@
-# PAINEL — Grupo / Recorrência / Caso Rose (12/08)
+# PAINEL — Grupo / Recorrência / Governança do TOM
 
-> Chat ÚNICO. Ao voltar, ler **§0 RETOMADA** e seguir. Não abrir chat novo.
-> Última atualização: 13/08/2026.
+> **v1.0 — CHECKPOINT de 13/08/2026, 22h.** Chat ÚNICO: ao voltar, ler **§0** e seguir daqui.
+> Não abrir chat novo. Histórico versionado ao fim do §0.
 
 ---
 
-## §0 RETOMADA — o que fazer agora
+## §0 RETOMADA — leia isto primeiro
 
-Estado: **raiz achada e provada, fix do vazamento no ar (commit local, deploy SEGURADO)**.
+### Estado em uma linha
 
-Ordem acordada com o Alf (ele autorizou 1, 2 e 3; a ordem é minha e ele não contestou):
+**Tudo o que foi aberto em 13/08 está FECHADO e EM PRODUÇÃO.** Suíte na VPS `fail 3`
+(baseline), restart provado `ps -o lstart=` às 21:49:19. Zero dívida técnica em aberto.
 
-1. ✅ **Guard no PWA contra cancelar molde** — commit `3f8b2e51`. `ehMoldeDeSerie()` em
-   `web/src/lib/recurrenceGuard.ts` + guard no `cancelTask` do hook (chokepoint) + mensagem
-   que explica o que fazer. 16/16 no guard, 398/398 no PWA.
-2. ✅ **`updated_by` em `tasks`** — commit `50011a1a`, migration `add_updated_by_to_tasks`
-   APLICADA. Writers preenchidos: PWA `saveTask`/`cancelTask` e o `cancel` do chat de grupo
-   (incluindo a cascata pras filhas). ⚠️ **Falta varrer os demais writers** de `tasks` no
-   engine (complete, reschedule, edit) — hoje só os caminhos de grupo gravam autoria.
-3. **Reparo dos dados** ⛔ **BLOQUEADO — decisão do Alf pendente** (ver §7) — religar os 4 moldes, corrigir filhas-template que ficaram `done`
-   por engano, gerar **outubro em diante**, conferir no banco que não nasceu duplicata.
-   (Agosto e setembro já existem — não recriar.)
-4. ✅ **Simulação no Replay Lab** — `scripts/replay-lab-cenario-grupo-molde.js` (cenário D).
-   **5/5 com 5 frases diferentes.** Prova de reversão obtida — ver §9.
-5. ✅ **`.deploy-hold` solto** nos dois caminhos; fix NO AR (restart provado `ps -o lstart=`).
+### A PRIMEIRA COISA a fazer ao retomar (14/08 ou depois)
 
-6. ✅ **`updated_by` fechado nos writers** — engine (snooze/edição/cancel-no-fechamento) e
-   chat de grupo (complete/reschedule). Conclusão já tinha `completed_by`; o buraco era
-   editar/remarcar/cancelar. Suíte `fail 3` na VPS, restart provado.
+**Conferir o ciclo de governança que rodou às 08:00 BRT** — é a estreia em produção das 4
+travas que subiram em 13/08. Nunca rodaram num ciclo real; só em teste.
 
-**FILA ATUAL — o caso Rose está FECHADO.** O que sobra é de outras linhas: ligar a
-auditoria nos grupos (§6, o maior) · arquitetura de 2 agentes (§6) · buraco de FORMA nº3.
+```bash
+# 1. o ciclo rodou? (última rodada em dia civil — NUNCA "hoje até agora", ver §4)
+ssh tom "tail -30 /opt/LA-Organizer/logs/gov-agent.log"
+
+# 2. alguma trava disparou? (é isso que o Alf vai perguntar)
+ssh tom "grep -E 'claim de entrega rebaixado|CONFERE NÃO BATEU' /opt/LA-Organizer/logs/gov-agent.log | tail"
+
+# 3. o que ele publicou de fato no grupo (a fala real, não a intenção)
+#    → group_chat_messages do grupo de ops, role='tom', do dia
+```
+
+**Como ler o resultado:**
+
+| O que aparecer | Significa |
+|---|---|
+| Nenhuma trava disparou | O agente falou a verdade. Normal. |
+| `claim de entrega rebaixado` | Ele afirmou entrega sem prova; a trava corrigiu. **Bom.** |
+| `CONFERE NÃO BATEU` | O número dele divergiu do banco. **Bom** — é o dado que decide o §15. |
+| Trava disparando em coisa certa | **Falso positivo.** Ajustar a trava, não o agente. |
+
+⚠️ **Horários (não confundir — alarme falso destrói sinal):** digest **07:30**, ciclo do
+agente **08:00**. Se às 08:15 não chegou nada, aí sim há problema. O Alf achava 08:30.
+
+### Fila do dia seguinte
+
+Nada obrigatório. Se sobrar tempo, na ordem de valor:
+
+1. **Observar 3-5 ciclos** antes de mexer em qualquer trava — ajustar com 1 amostra é chute.
+2. Contrato de 3 pontas + golden-file por SHA (§13 do modelo) — **não medido** se já divergiu.
+3. Credencial read-only para o auditor — hoje usa `service_role`. Higiene, não urgência.
+4. Refatoração de recorrência pós-freeze (dor #1 histórica).
+
+### Versões deste painel
+
+| v | data | o que fechou |
+|---|---|---|
+| **1.0** | 13/08/2026 | Caso Rose (2 raízes) · guard no PWA · `updated_by` · reparo dos dados · auditoria de grupo · cenário D · 4 travas de governança · decisão do Alf sobre a mão do agente |
+
+---
+
+## §0.1 O QUE FOI ENTREGUE EM 13/08 (checkpoint)
+
+| Frente | Onde vive | Estado |
+|---|---|---|
+| Raiz da LISTA — filha-template vazando | `src/utils/group-task-visibility.js` | ✅ |
+| Raiz EXECUTORA — `SELECT` sem `recurrence_parent_id` | `src/services/group-chat-tasks.js` (complete/cancel/reschedule) | ✅ |
+| Guard contra cancelar molde no app | `web/src/lib/recurrenceGuard.ts` + `useGroupWorkspace` | ✅ |
+| `updated_by` em `tasks` + writers | migration + PWA + grupo + engine | ✅ |
+| Reparo dos dados (Conciliação religada) | banco, conferido | ✅ |
+| Auditoria enxergando GRUPOS | `src/services/conversation-audit.js` + dispatcher | ✅ |
+| Cenário D (reproduz o caso Rose) | `scripts/replay-lab-cenario-grupo-molde.js` | ✅ 5/5 |
+| Canário invertido | idem, `rodarCanario()` | ✅ |
+| `infra_*` + piso de amostra | idem | ✅ |
+| Gate de verbo de entrega | `src/lib/claim-entrega.js` → `gov-runner` | ✅ |
+| Camada 2 (número × fonte) | `src/lib/confere-numero.js` → `gov-runner` | ✅ |
+| Buraco de FORMA nº3 | — | ✅ refutado por medição |
+| Cenário C (vermelho falso) | `scripts/replay-lab-cenario-duplicata.js` | ✅ corrigido |
 
 ---
 
