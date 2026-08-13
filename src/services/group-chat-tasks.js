@@ -432,9 +432,12 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         let target = pickInstanceTarget(hit);
         if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title, excludeCancelled: true });
         if (!target) { failed.push({ action: a, why: 'not_found_in_group' }); continue; }
-        await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', target.id);
+        // updated_by (13/08): quem pediu o cancelamento fica registrado — inclusive na
+        // cascata pras filhas, que é onde some mais trabalho de uma vez só.
+        const _porQuem = { updated_by: senderCollabId || null };
+        await supabase.from('tasks').update({ status: 'cancelled', ..._porQuem }).eq('id', target.id);
         if (target.is_group) {
-          await supabase.from('tasks').update({ status: 'cancelled' }).eq('parent_task_id', target.id).neq('status', 'done');
+          await supabase.from('tasks').update({ status: 'cancelled', ..._porQuem }).eq('parent_task_id', target.id).neq('status', 'done');
         }
         cancelled.push({ id: target.id, title: target.title });
       } else if (a.action === 'reschedule') {

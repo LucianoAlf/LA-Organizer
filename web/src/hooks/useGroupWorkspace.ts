@@ -175,6 +175,7 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
         title: input.title.trim().slice(0, 200),
         description: input.description?.trim() || null,
         due_date: input.due_date, due_time: input.due_time,
+        updated_by: collabId ?? null, // quem mexeu (13/08) — ver cancelTask
       };
       if (input.dueChanged) patch.reminded_at = null;
       const { data, error } = await supabase.from('tasks').update(patch).eq('id', input.id).select('id');
@@ -206,7 +207,11 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
         .select('recurrence_rule, recurrence_parent_id').eq('id', id).maybeSingle();
       if (ehMoldeDeSerie(alvo)) throw new Error('EH_MOLDE_SERIE');
 
-      const { data, error } = await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', id).select('id');
+      // updated_by (13/08): em 09/08 a investigação de "quem cancelou" morreu porque a
+      // tabela não guardava autoria de alteração. Cancelamento é justamente o que a gente
+      // mais precisa rastrear — é o que apaga trabalho da frente das pessoas.
+      const { data, error } = await supabase.from('tasks')
+        .update({ status: 'cancelled', updated_by: collabId ?? null }).eq('id', id).select('id');
       if (error) throw error;
       if (!data || data.length === 0) throw new Error('SEM_PERMISSAO');
     },
