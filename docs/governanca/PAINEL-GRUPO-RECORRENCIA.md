@@ -247,10 +247,44 @@ fechado — e ele não movia a agulha.
 
 | # | Item | Status |
 |---|---|---|
-| 1 | **Ligar a auditoria nos grupos** — `conversation-audit.js` tem ZERO refs a `group_chat_messages`; o agente nunca poderia ter visto o caso Rose | ⏳ em andamento |
-| 2 | **Cenário C do Replay Lab** — `replay-lab-cenario-duplicata.js` dá vermelho falso; consertar o critério ou remover | ⏳ |
+| 1 | **Ligar a auditoria nos grupos** | ✅ **FEITO** — ver §11 |
+| 2 | **Cenário C do Replay Lab** — vermelho falso | ⏳ em andamento |
 | 3 | **Buraco de FORMA nº3 do chokepoint** — afirmação de ESTADO sem verbo de conclusão; MEDIR os literais antes de ampliar o gate | ⏳ |
 | 4 | **Arquitetura de 2 agentes** (auditor ≠ corretor) — depende do desenho da Maria que o Alf vai trazer | ⏳ |
 
 Regra que vale para os 4: **medir antes de mexer** e **simulação antes de fechar** — as duas
 lições que o caso Rose cobrou caro (§9).
+
+---
+
+## §11 ITEM 1 — AUDITORIA DE GRUPO NO AR (13/08)
+
+`conversation-audit.js` tinha **zero** referências a `group_chat_messages`. Todo o trabalho de
+grupo ficava fora de qualquer varredura — o caso Rose nunca poderia ter entrado no relatório.
+
+**O que foi feito:**
+- `formatGroupTranscript` (pura, testada): mesmo shape do 1:1 **mais o NOME de quem falou**.
+  Grupo tem várias pessoas; sem nome o auditor erra a atribuição. Membro sem `sender_id`
+  (710 das 1633 no banco) vira "alguém do grupo" em vez de sumir — omitir tiraria o PEDIDO
+  do contexto e deixaria o auditor vendo a resposta sem a pergunta.
+- `loadGroupConversation` + `auditGroupConversation`: **mesmo prompt, mesmo parser** do 1:1.
+  Régua nova criaria duas noções de "achado" e números incomparáveis.
+- `upsertFinding(sb, sujeito, finding, {groupId})` — `collaborator_id` nulo (achado é do
+  grupo; atribuir a um membro seria inventar responsável). Guard de QA cobre o grupo do
+  Replay Lab via `full_name`.
+- Migration `add_group_id_to_tom_audit_findings`.
+- Dispatcher: laço próprio por grupo (o de cima é por colaborador), isolado do Dream.
+
+**PROVA ponta a ponta** — rodado contra o Financeiro, janela 48h (transcript 23.056 chars):
+
+```
+* medio | confabulation | TOM afirmou que concluiu as duas tarefas, mas em seguida
+                          exibiu as mesmas tarefas como pendentes.
+* medio | frustration   | Rose demonstrou frustração clara porque TOM não conseguia
+                          concluir as tarefas de hoje após repetidas tentativas.
+```
+
+⚠️ **A vigiar:** 48h no Financeiro deu 23.056 chars contra um teto de 24.000 — a janela de
+24h tem folga, mas grupo muito ativo pode raspar o limite e perder o começo da conversa.
+
+Suíte `fail 3` (baseline), 5 testes novos. Restart provado 15:41:26.
