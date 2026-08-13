@@ -21,9 +21,12 @@ Ordem acordada com o Alf (ele autorizou 1, 2 e 3; a ordem é minha e ele não co
 3. **Reparo dos dados** ⛔ **BLOQUEADO — decisão do Alf pendente** (ver §7) — religar os 4 moldes, corrigir filhas-template que ficaram `done`
    por engano, gerar **outubro em diante**, conferir no banco que não nasceu duplicata.
    (Agosto e setembro já existem — não recriar.)
-4. **Simulação no Replay Lab** — cenário de GRUPO com **molde cancelado** (é o gatilho).
-   Sem isso o deploy não sai: regra do Alf de 13/08.
-5. **Soltar o `.deploy-hold`** (existe na raiz E em `_remote/`; os dois contam).
+4. ✅ **Simulação no Replay Lab** — `scripts/replay-lab-cenario-grupo-molde.js` (cenário D).
+   **5/5 com 5 frases diferentes.** Prova de reversão obtida — ver §9.
+5. ✅ **`.deploy-hold` solto** nos dois caminhos; fix NO AR (restart provado `ps -o lstart=`).
+
+**FILA ATUAL:** varrer os writers restantes de `tasks` p/ `updated_by` (engine: complete,
+reschedule, edit) · ligar a auditoria nos grupos (§6) · arquitetura de 2 agentes (§6).
 
 ---
 
@@ -205,3 +208,31 @@ materializar, conferir se há filhas vivas órfãs de mãe cancelada.
 
 **Quem encerrou a Conciliação em 05/08 22:30:22 continua desconhecido** — 1 linha só (ação pontual,
 não script: os lotes de 2-4 linhas são nossos scripts de reparo), sem conversa no grupo nem 1:1.
+
+---
+
+## §9 A RAIZ EXECUTORA — e por que o primeiro fix não bastava (13/08)
+
+O cenário D (`scripts/replay-lab-cenario-grupo-molde.js`) mediu antes/depois e derrubou a
+minha própria conclusão:
+
+| Versão | Taxa | Filha-template concluída |
+|---|---|---|
+| Sem fix nenhum | 1/3 | **2** |
+| **Só com o fix da lista (§1/§2)** | **1/3** | **2** ← agulha PARADA |
+| Com o fix do SELECT | **5/5** | **0** |
+
+**Segunda raiz:** `pickInstanceTarget` separa filha-INSTÂNCIA de filha-TEMPLATE por
+`recurrence_parent_id`. A função sempre esteve certa — os **três** chamadores
+(`complete`, `cancel`, `reschedule`) buscavam `.select('id, title, recurrence_rule, is_group')`,
+**sem a coluna**. Sem o campo toda linha vem `undefined`, o filtro de ciclo esvazia e cai no
+fallback `instances[0]`: a primeira por `due_date`, que EMPATA entre a real e a fantasma.
+
+Reproduzido: `completed=4` existindo 2 alvos. E o `reschedule` cego explica o *"remanejar
+criou 3 duplicadas"* dos Repasses em 31/07 — mesmo bug, outra rotina, dois incidentes, uma causa.
+
+**Ler o código não pegaria:** o select e o helper estão a ~370 linhas de distância e cada um,
+lido sozinho, parece correto. Só medir pegou.
+
+**Regra que fica:** fix não fecha sem a simulação medir ANTES e DEPOIS. Eu daria o §1/§2 por
+fechado — e ele não movia a agulha.
