@@ -240,3 +240,17 @@ lido sozinho, parece correto. Só medir pegou.
 
 **Regra que fica:** fix não fecha sem a simulação medir ANTES e DEPOIS. Eu daria o §1/§2 por
 fechado — e ele não movia a agulha.
+
+---
+
+## §10 FILA DOS 4 ITENS (autorizada pelo Alf, 13/08) — atualizar a cada entrega
+
+| # | Item | Status |
+|---|---|---|
+| 1 | **Ligar a auditoria nos grupos** — `conversation-audit.js` tem ZERO refs a `group_chat_messages`; o agente nunca poderia ter visto o caso Rose | ⏳ em andamento |
+| 2 | **Cenário C do Replay Lab** — `replay-lab-cenario-duplicata.js` dá vermelho falso; consertar o critério ou remover | ⏳ |
+| 3 | **Buraco de FORMA nº3 do chokepoint** — afirmação de ESTADO sem verbo de conclusão; MEDIR os literais antes de ampliar o gate | ⏳ |
+| 4 | **Arquitetura de 2 agentes** (auditor ≠ corretor) — depende do desenho da Maria que o Alf vai trazer | ⏳ |
+
+Regra que vale para os 4: **medir antes de mexer** e **simulação antes de fechar** — as duas
+lições que o caso Rose cobrou caro (§9).
