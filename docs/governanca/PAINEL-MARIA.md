@@ -319,7 +319,8 @@ Pedir *"maria, gera o **relatório** de contas a pagar de hoje"* **não gera o r
 `mentionsMercado && wantsRead && (… || periodOrReport || …)` fecha porque "contas a pagar" conta como
 `mentionsMercado` e a palavra "relatório" ativa `wantsRead` **e** `periodOrReport` ao mesmo tempo — e
 esse shortcut vem **antes** do de contas na cadeia. A mesma intenção, dita de dois jeitos naturais,
-dá resultados opostos. **Não corrigido: mexer na ordem dos shortcuts é decisão do Alf.**
+dá resultados opostos. **CORRIGIDO no mesmo dia** — ver o radar de 13/08 abaixo: a guarda de intenção
+(verbo × objeto) mata este caso sem tocar na ordem da cadeia.
 
 **2. O regex reprovava dia vazio.** Exigia `recreio.*barra.*campo grande`; em dia sem contas o
 relatório legítimo não lista unidade nenhuma ("_Nenhuma conta pendente para esta data._"). Ficaria
@@ -418,8 +419,21 @@ perguntada por que não marcou os antigos, deu **o motivo certo** em vez da nega
 antiga, não regressão minha. Restart do bridge provado por `ps -o lstart=` (PID novo, 18:46:44 BRT),
 não por afirmação.
 
-**Ainda aberto, decisão do Alf:** o bug de roteamento nº 1 da B2-bis (a palavra "relatório" desvia
-pedido de contas para o atalho de e-mail) — mexer na ordem dos shortcuts é chamada dele.
+**4) O bug do "relatório" já estava morto — eu é que não tinha re-medido.** Eu havia registrado o
+roteamento como "aberto, decisão do Alf: mexer na ordem dos shortcuts". **Errado.** A guarda de
+intenção instalada horas antes já resolve, e injetando no bridge fica provado:
+
+| pedido | o que acontece hoje |
+|---|---|
+| *"gera o relatório de contas a pagar de hoje"* | guarda bloqueia o atalho de e-mail (`objeto contas_pagar ≠ email`) → responde `contas_dia_shortcut` ✅ |
+| *"me faz um relatório das últimas contas"* | vai ao modelo e ele lista as contas ✅ |
+| *"quais as contas a pagar de hoje?"* | `contas_dia_shortcut` ✅ |
+
+Nenhuma ordem de cadeia precisou mudar: a guarda pergunta **o quê** o pedido quer, não **qual palavra**
+ele usou. Trancado com 4 asserções de regressão no teste da guarda (24 no total).
+
+**A lição é a de sempre, e eu repeti:** recomendação escrita antes do fix é hipótese. Re-puxar a barra
+antes de levar decisão a alguém — o Alf quase levou uma escolha que não existia mais.
 
 ### B2 — o que as rodadas reais ensinaram (10/08)
 
