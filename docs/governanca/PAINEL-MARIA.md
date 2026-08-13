@@ -254,7 +254,71 @@ Plano da Fase 1: [`plans/2026-08-09-loop-maria-fase1.md`](plans/2026-08-09-loop-
 | **A0-bis** | Devolver o corte de ferramentas que o B0 desfez | ✅ **FECHADO 09/08 19:10 BRT** — 175 → 4 ferramentas, medido | — |
 | **B1** | 4 tabelas `maria_gov_*` + ator técnico + placar | ✅ **FECHADO 09/08 18:30 BRT** | — |
 | **B1-resto** | RPCs + o laudo persistir achados + custo por rodada | ✅ **FECHADO 09/08 19:15 BRT** | — |
-| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | 🟡 **Tarefas 1–6 FECHADAS 10/08** — sonda conversa com a Maria, grava no acervo, 13 itens ativos (1 desativado: `formato-relatorio-diario`, trava é do bridge). Faltam 7–9 (baseline, cron/breaker, contrato+suíte) | — |
+| **B2** | Sonda no webhook + verificador de outra família + gate determinístico + held-out | 🟢 **Tarefas 1–9 FECHADAS 13/08** — sonda **no cron às 05:00 BRT**, `PASS_K_MINIMO=0.80` medido em 3 rodadas reais, breaker provado (`status='abortada'` no acervo), suíte 171 testes verde. **12 dos 13 critérios de fechamento provados** — o 13º (item `tipo: contrato`) não é mensurável pela sonda: ver "B2 — o critério 11" abaixo | — |
+
+### B2 — como ficou (13/08/2026)
+
+**No ar:** `0 8 * * *` UTC = **05:00 BRT**, `sonda/sonda-rodada.sh`. Horário escolhido com prova, não
+por gosto: o ensaio das 10:30 produziu **2 `infra_dado_mudou`** porque a Rose estava trabalhando e
+cada baixa dela move o controle dentro da janela de comparação. Às 05:00 não há Rose, laudo, vigia
+nem disputa por gateway — e a rodada termina antes das 07:00, então o laudo do mesmo dia já pode
+reportá-la.
+
+**Números medidos** (3 rodadas × 53 invocações = 159 tentativas reais):
+
+| | medido | teto | folga |
+|---|---|---|---|
+| custo/invocação | US$ 0,0065 | — | — |
+| custo/rodada | US$ 0,39 (pior) | US$ 2,00 | 5,1× |
+| duração/rodada | 33 min (pior) | 100 min | 3,0× |
+| duração p95/invocação | 96,5s | — | — |
+
+**`PASS_K_MINIMO = 0,80`.** 5 das 13 perguntas ficaram 100% estáveis nas 3 rodadas; piso 1,00 menos
+uma tentativa de margem. **A margem é `1/K_REDACOES` (1/5), não `1/159`** — o veredito é aplicado
+POR RODADA, e calcular a margem sobre as 3 somadas daria 93%, que reprova 4/5: uma falha isolada em
+cinco viraria alarme, o oposto da margem pedida. Conferido rodada a rodada, 12 dos 13 itens passam
+nas três.
+
+**A regra do canário é invertida, e isso é o coração do alarme.** O `negativo-plantado` pergunta algo
+cujo controle é falso de propósito: reprovar é o resultado CERTO, todo dia, e não vale aviso. O que
+vale aviso é ele ficar **verde** — aí o detector cegou, e os outros verdes daquela rodada não valem
+nada; isso **desarma** a sonda. Sem essa inversão, a sonda gritaria diariamente pelo motivo errado e
+ficaria muda no único caso que a invalida por inteiro.
+
+**Terceiro estado do canário, achado no ensaio:** ele saiu `inconclusivo` (0/3 válidas, porque
+`infra_dado_mudou` comeu tentativas) e o alarme — que só olhava "verde" — carimbou a rodada como
+verde. Inconclusivo não prova defeito (não desarma), mas **sem o canário reprovando ninguém garante
+os verdes do dia**: agora avisa "rodada sem garantia".
+
+**Fadiga de alarme, tratada:** `codigos-coletados-total` reprova nas 3 rodadas e tem finding aberto.
+Marcado `ki_conhecido`: continua medido e aparece no registro, mas não grita como novidade todo dia.
+
+**Provas dos bloqueios** (todas exercitadas, não presumidas): `.desarmada` recusa a rodada (exit 3) e
+rearmar é apagar o arquivo — ato humano; `flock` corta rodada concorrente (exit 4), inclusive sob
+ambiente mínimo de cron; breaker corta no teto e **as medições já feitas não se perdem**
+(`status='abortada'`, probes preservadas).
+
+### B2 — o critério 11 e a crise que originou a missão (13/08)
+
+O plano define 13 critérios e diz que **o 11 é o que faz a sonda cobrir o incidente de 05–08/08**:
+"item `tipo: contrato` roda e reprova quando a forma muda". **Ele não está cumprido, e não por
+descuido.**
+
+Medido em duas rodadas de 10/08: o relatório diário **não passa pelo modelo**. O bridge intercepta em
+código (`shouldUseContasDiaShortcut` → `gerarRelatorioContasDiaShortcut`) e responde direto — zero
+ocorrências do token injetado na sessão. Injetar pergunta e ler a resposta do LLM **nunca** vai medir
+aquele texto, porque nenhum LLM o produz.
+
+Lendo direito, é notícia boa com um flanco aberto:
+
+- **Bom:** o contrato de formato que a crise gerou virou **trava**, não prompt. O LLM não pode mais
+  quebrá-lo — é a hierarquia certa ("prompt orienta; trava garante").
+- **Flanco:** se alguém mudar o código do shortcut, **nada detecta**. A garantia mudou de lugar, e a
+  vigilância não acompanhou.
+
+O mecanismo do gate para `tipo: contrato` **está pronto e testado** (1 caso positivo + 4 negativos em
+`test_ancoras.py`); o que falta é um alvo que ele consiga observar. Medir a saída real do bridge é
+outra fatia — decisão do Alf.
 
 ### B2 — o que as rodadas reais ensinaram (10/08)
 

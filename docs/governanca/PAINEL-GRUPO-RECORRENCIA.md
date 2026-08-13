@@ -164,3 +164,44 @@ pessoa: não fazer sem o Alf saber que houve decisão.**
 
 Lição: `status` e `series_ended_at` são eixos SEPARADOS. Ler só o status conta a metade
 errada da história.
+
+---
+
+## §8 REPARO EXECUTADO (13/08) — Conciliação de Cartões
+
+**Respostas da Rose (13/08 11:25) derrubaram a §7 pela metade:**
+1. Conciliação: *"Precisa voltar todo mes, n sei pq encerrou, era pro Tom só concluir"* — ela NÃO encerrou.
+2. Repasses: *"Nao, precisa ter as 3 separadas sim em subtarefas."* — **refuta** minha hipótese de
+   consolidação deliberada.
+3. Cancelamento de 09/08: não lembra; pediu a lista.
+
+**Repasses: NÃO precisam de reparo.** O molde unificado `c981b7a6` está `pending`, `series_ended_at`
+NULL, `is_group=true` e **tem as 3 subtarefas** (Recreio | Barra | CG) — exatamente o que a Rose
+descreveu. A limpeza de 31/07 (10:07) foi CERTA: matou os 3 moldes soltos por unidade e deixou o
+pacote com as 3 dentro. Contexto no grupo em 31/07: TOM criou 3 duplicadas ao remanejar; a limpeza
+as removeu ("já limpei as duplicadas", 10:13).
+
+**Conciliação: reparada.** Molde `4f898dce` → `status=pending`, `series_ended_at=NULL`.
+
+⚠️ **ERRO MEU no meio do reparo, desfeito:** rodei `materializeSeries` e ele criou uma mãe nova
+(30/08) com 6 filhas — **duplicando 4 cartões de agosto**. Causa: as mães de agosto (29/08) e
+setembro (30/09) tinham sido canceladas em 09/08 12:54:34, mas **as filhas delas seguiam `pending`**
+— o dedupe olha as MÃES, não as filhas, então não viu ocupado. Desfeito: cancelei a mãe nova
+`373f51d3` + filhas e **reativei** `2fbbe3b6` (29/08) e `e509eaca` (30/09), que é o certo — as
+filhas nunca pararam, só as mães tinham sido canceladas.
+
+**Estado final conferido no banco (zero duplicata `(título, due_date)` em aberto):**
+
+| Ciclo | Mãe | Filhas abertas | Filhas feitas |
+|---|---|---|---|
+| 01/07 | done | 0 | 6 |
+| 29/08 | pending | 4 | 2 |
+| 30/09 | pending | 6 | 0 |
+| Molde | pending, não encerrado | — | outubro+ nasce pelo cron |
+
+**Lição:** cancelar a MÃE não cancela as filhas, e o dedupe do materializador olha só a mãe. Mãe
+cancelada + filhas vivas = o materializador acha que o ciclo não existe e recria tudo. Antes de
+materializar, conferir se há filhas vivas órfãs de mãe cancelada.
+
+**Quem encerrou a Conciliação em 05/08 22:30:22 continua desconhecido** — 1 linha só (ação pontual,
+não script: os lotes de 2-4 linhas são nossos scripts de reparo), sem conversa no grupo nem 1:1.
