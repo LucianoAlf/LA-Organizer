@@ -324,7 +324,12 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // (concluir o molde mata a série — materializeAll não regenera molde done).
         const { data: found } = await supabase
           .from('tasks')
-          .select('id, title, recurrence_rule, is_group')
+          // `recurrence_parent_id` é OBRIGATÓRIO aqui: é por ele que pickInstanceTarget separa
+          // a filha-INSTÂNCIA (tem) da filha-TEMPLATE (não tem). Sem a coluna toda linha vem
+          // `undefined`, o filtro de ciclo esvazia e ele cai no fallback `instances[0]` — a
+          // primeira por due_date, que EMPATA entre a real e a fantasma. Foi assim que o TOM
+          // fechou 4 tarefas existindo 2 (caso Rose 12/08, reproduzido no cenário D do Replay Lab).
+          .select('id, title, recurrence_rule, recurrence_parent_id, is_group')
           .eq('assigned_group_id', groupId)
           .neq('status', 'done')
           .ilike('title', title)
@@ -419,7 +424,10 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         if (!title) { failed.push({ action: a, why: 'title_missing' }); continue; }
         const { data: hit } = await supabase
           .from('tasks')
-          .select('id, title, is_group, recurrence_rule')
+          // recurrence_parent_id obrigatório — ver a nota no ramo `complete`. Cancelar a
+          // filha-template no lugar da real é pior que concluir: some trabalho da frente
+          // de todo mundo e o molde fica marcado.
+          .select('id, title, is_group, recurrence_rule, recurrence_parent_id')
           .eq('assigned_group_id', groupId)
           .neq('status', 'done')
           .neq('status', 'cancelled')
@@ -454,7 +462,10 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // e a cascata abaixo nunca dispararia. (O dublê dos testes ignora a lista de colunas,
         // então essa falta passaria verde na suíte e só apareceria em produção.)
         const { data: found } = await supabase.from('tasks')
-          .select('id, title, recurrence_rule, is_group').eq('assigned_group_id', groupId)
+          // recurrence_parent_id obrigatório — ver a nota no ramo `complete`. Remarcar a
+          // filha-template move o molde e descasa a série: foi o que fez o TOM "criar 3
+          // duplicadas" ao remanejar os Repasses da Rose em 31/07.
+          .select('id, title, recurrence_rule, recurrence_parent_id, is_group').eq('assigned_group_id', groupId)
           .neq('status', 'done').neq('status', 'cancelled').ilike('title', title)
           .order('due_date', { ascending: true }).limit(5);
         let target = pickInstanceTarget(found);

@@ -543,3 +543,32 @@ test('reschedule de tarefa COMUM não arrasta ninguém (anti-regressão)', async
   assert.equal(tasks.find((t) => t.id === 's1').due_date, '2026-08-12');
   assert.equal(tasks.find((t) => t.id === 's2').due_date, '2026-08-08', 'não podia encostar na outra');
 });
+
+// ── GROUPCHAT-PICKTARGET-SELECT-CEGO (caso Rose 12/08) ───────────────────────────────
+// pickInstanceTarget decide pelo `recurrence_parent_id`: filha-INSTÂNCIA tem, filha-TEMPLATE
+// não. A função sempre esteve certa — mas complete/cancel/reschedule buscavam
+// `select('id, title, recurrence_rule, is_group')`, SEM essa coluna. Sem o campo, toda linha
+// tem `undefined`, `cyclic` fica vazio e ele cai no fallback `instances[0]`: a primeira por
+// due_date, que EMPATA entre a real e a fantasma.
+//
+// Medido no Replay Lab (cenário D, 13/08): o TOM fechou `completed=4` existindo 2 alvos —
+// as 2 reais e as 2 fantasmas. É o caso da Rose reproduzido.
+//
+// A lição é o chamador, não a função: helper que decide por um campo só funciona se quem
+// chama trouxer o campo. Este teste ancora os DOIS lados.
+test('pickInstanceTarget: sem recurrence_parent_id no select, não distingue instância de template', () => {
+  const semColuna = [
+    { id: 'template', title: 'Cartão 8516 (Barra)', recurrence_rule: null },
+    { id: 'instancia', title: 'Cartão 8516 (Barra)', recurrence_rule: null },
+  ];
+  // Documenta o modo de falha: cai no primeiro da lista, seja ele qual for.
+  assert.strictEqual(pickInstanceTarget(semColuna).id, 'template');
+});
+
+test('pickInstanceTarget: COM a coluna, escolhe a instância mesmo vindo depois', () => {
+  const comColuna = [
+    { id: 'template', title: 'Cartão 8516 (Barra)', recurrence_rule: null, recurrence_parent_id: null },
+    { id: 'instancia', title: 'Cartão 8516 (Barra)', recurrence_rule: null, recurrence_parent_id: 'tpl-filha' },
+  ];
+  assert.strictEqual(pickInstanceTarget(comColuna).id, 'instancia');
+});
