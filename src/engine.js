@@ -4505,7 +4505,26 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             a.id = byTitleC.id.replace(/-/g, '').slice(0, 8);
             console.log(`[Task] complete title-lookup: "${a.title}" → id=${a.id}`);
           } else {
-            console.warn(`[Task] complete title-lookup failed: "${a.title}" not found for ${last4}`);
+            // TASK-COMPLETE-ALVO-NAO-ACHADO (Clayton 11/08, Mayra 11/08): sair daqui sem
+            // failMessage joga o caller no genérico "me manda de novo" (engine.js:11054) — que
+            // é beco quando a tarefa é de outra pessoa, porque este handler casa só por
+            // `assigned_to`. Mesma cortesia que reschedule (E2) e snooze já tinham.
+            let _donoNome = null;
+            try {
+              const { data: _outra } = await supabase
+                .from('tasks').select('assigned_to')
+                .ilike('title', `%${String(a.title).slice(0, 60)}%`)
+                .not('status', 'in', '("done","cancelled")')
+                .order('created_at', { ascending: false }).limit(1).maybeSingle();
+              if (_outra && _outra.assigned_to && _outra.assigned_to !== collaborator.id) {
+                const { data: _ow } = await supabase
+                  .from('collaborators').select('full_name').eq('id', _outra.assigned_to).maybeSingle();
+                _donoNome = (_ow && _ow.full_name) || null;
+              }
+            } catch (e) { console.warn('[Task] complete dono-lookup err:', e.message); }
+            const { mensagemAlvoNaoAchado } = require('./lib/task-complete-alvo-nao-achado');
+            failMessages.push(mensagemAlvoNaoAchado(a.title, _donoNome));
+            console.warn(`[Task] complete title-lookup failed: "${a.title}" not found for ${last4} (dono=${_donoNome || '-'})`);
             failCount++;
             continue;
           }
