@@ -642,6 +642,36 @@ function addMonthsToCompetencia(compStr, n) {
 }
 function currentCompetencia(card) { return competenciaFor(new Date(), card.closing_day); }
 
+// Competências FECHADAS (< ciclo aberto) com saldo — matéria-prima pro pure em
+// invoice-pagar-competencia.js. Espelha a mesma regra que o PWA usa em
+// listClosedUnpaidInvoices (web/src/lib/cartoes.ts), aqui restrita a UM cartão.
+async function _closedUnpaidCompetencias(collaboratorId, card) {
+  const curr = currentCompetencia(card);
+  const [txRes, payRes] = await Promise.all([
+    supabase.from('pf_transactions').select('competencia, amount')
+      .eq('collaborator_id', collaboratorId).eq('card_id', card.id)
+      .not('competencia', 'is', null).lt('competencia', curr),
+    supabase.from('pf_card_payments').select('competencia, amount')
+      .eq('collaborator_id', collaboratorId).eq('card_id', card.id).lt('competencia', curr),
+  ]);
+  if (txRes.error) throw txRes.error;
+  if (payRes.error) throw payRes.error;
+  const totals = new Map();
+  for (const r of txRes.data || []) totals.set(r.competencia, (totals.get(r.competencia) || 0) + Number(r.amount));
+  const paids = new Map();
+  for (const r of payRes.data || []) paids.set(r.competencia, (paids.get(r.competencia) || 0) + Number(r.amount));
+  return [...totals].map(([competencia, total]) => ({ competencia, remaining: total - (paids.get(competencia) || 0) }));
+}
+
+// A RAIZ do caso Rose (14/08) — ver invoice-pagar-competencia.js. Quem paga fatura sem
+// dizer o mês quer a fatura DEVIDA (fechada, com saldo), não o ciclo aberto que ainda
+// acumula lançamentos.
+async function defaultPayableCompetencia(collaboratorId, card) {
+  const { escolherCompetenciaParaPagar } = require('../finance/invoice-pagar-competencia');
+  const fechadas = await _closedUnpaidCompetencias(collaboratorId, card);
+  return escolherCompetenciaParaPagar(fechadas, currentCompetencia(card));
+}
+
 async function createCard(collaboratorId, { name, brand, color, credit_limit, closing_day, due_day, icon }) {
   const { data, error } = await supabase.from('pf_cards')
     .insert({ collaborator_id: collaboratorId, name, brand: brand || null, color: color || null,
@@ -905,7 +935,7 @@ module.exports = {
   billsDueWithin, listActiveBills, billOverridesForMonth, setBillOverride, deleteBillOverride, pendingCardInvoices, monthlyReport, monthCategoryBreakdown, collaboratorsWithActivity, collaboratorsForFinanceRitual,
   collaboratorsWithActiveBills,
   // cartão
-  competenciaFor, addMonthsToCompetencia, currentCompetencia,
+  competenciaFor, addMonthsToCompetencia, currentCompetencia, defaultPayableCompetencia,
   createCard, updateCard, listCards, findCard, insertCardPurchase,
   cardInvoice, cardUsage, payCardInvoice, createTransfer,
   checkAndMarkLimitAlert, cardsForAlerts, ALERT_BANDS,

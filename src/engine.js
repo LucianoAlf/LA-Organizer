@@ -7891,7 +7891,10 @@ async function stagePayInvoice(cid, params) {
   const cards = await financeService.findCard(cid, (params && params.card) || '');
   if (cards.length !== 1) return null;
   const card = cards[0];
-  const comp = (params && params.competencia) || financeService.currentCompetencia(card);
+  // RAIZ do caso Rose 14/08: sem mês explícito, usa a fatura FECHADA em aberto (a devida),
+  // não o ciclo aberto — que ainda acumula lançamentos e costuma estar zerado logo após o
+  // fechamento. Ver invoice-pagar-competencia.js.
+  const comp = (params && params.competencia) || await financeService.defaultPayableCompetencia(cid, card);
   const inv = await financeService.cardInvoice(cid, card.id, comp);
   if (!(inv.total > 0)) return null;
   const amount = Number(params && params.amount) > 0 ? Number(params.amount) : inv.remaining;
@@ -8402,7 +8405,12 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       if (cards.length !== 1) {
         const all = await financeService.listCards(cid);
         if (all.length === 0) return `Pra lançar o estorno, cadastra o cartão no app primeiro — *Finanças → Cartões*.`;
-        return `Em qual cartão entrou o estorno? Tenho: ${all.map((c) => c.name).join(', ')}.`;
+        const question = `Em qual cartão entrou o estorno? Tenho: ${all.map((c) => c.name).join(', ')}.`;
+        // Pending-intent DETERMINÍSTICO — ver card-pick.js. Sem isto, a resposta seguinte
+        // dependia do LLM reconstruir o alvo do zero a cada turno (raiz do loop 14/08).
+        const { payloadCardPick } = require('./finance/card-pick');
+        await pendingIntents.openIntent(cid, 'finance_source', payloadCardPick('card_refund', params, all), question);
+        return question;
       }
       const card = cards[0];
       const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
@@ -8424,7 +8432,12 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       const cards = await financeService.findCard(cid, params.card || '');
       if (cards.length !== 1) {
         const all = await financeService.listCards(cid);
-        return `Qual cartão? Tenho: ${all.map((c) => c.name).join(', ') || 'nenhum'}.`;
+        const question = `Qual cartão? Tenho: ${all.map((c) => c.name).join(', ') || 'nenhum'}.`;
+        if (all.length > 0) {
+          const { payloadCardPick } = require('./finance/card-pick');
+          await pendingIntents.openIntent(cid, 'finance_source', payloadCardPick('query_invoice', params, all), question);
+        }
+        return question;
       }
       const card = cards[0];
       const comp = params.competencia || financeService.currentCompetencia(card);
@@ -8436,10 +8449,23 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       const cards = await financeService.findCard(cid, params.card || '');
       if (cards.length !== 1) {
         const all = await financeService.listCards(cid);
-        return `Qual cartão você pagou? Tenho: ${all.map((c) => c.name).join(', ') || 'nenhum'}.`;
+        const question = `Qual cartão você pagou? Tenho: ${all.map((c) => c.name).join(', ') || 'nenhum'}.`;
+        // CASO ROSE 14/08: ela respondeu "Cartão Nubank" (exato) e levou a MESMA pergunta de
+        // novo — nada persistia o alvo entre turnos. Pending-intent determinístico: a resposta
+        // seguinte é resolvida aqui (ver o consumidor 'card_pick' mais abaixo), sem depender do
+        // LLM reconstruir o contexto. Mesmo padrão já validado em card_purchase.
+        if (all.length > 0) {
+          const { payloadCardPick } = require('./finance/card-pick');
+          await pendingIntents.openIntent(cid, 'finance_source', payloadCardPick('pay_invoice', params, all), question);
+        }
+        return question;
       }
       const card = cards[0];
-      const comp = params.competencia || financeService.currentCompetencia(card);
+      // RAIZ do caso Rose 14/08: sem mês explícito, usa a fatura FECHADA em aberto (a devida),
+      // não o ciclo aberto — que ainda acumula lançamentos e costuma estar zerado logo após o
+      // fechamento (foi o que produziu "A fatura do Cartão Nubank está zerada."). Ver
+      // invoice-pagar-competencia.js.
+      const comp = params.competencia || await financeService.defaultPayableCompetencia(cid, card);
       const inv = await financeService.cardInvoice(cid, card.id, comp);
       if (inv.total <= 0) return `A fatura do *${card.name}* está zerada.`;
       const amount = Number(params.amount) > 0 ? Number(params.amount) : inv.remaining;
@@ -8904,6 +8930,37 @@ async function processMessage(phone, text, raw = {}) {
             return;
           }
         }
+      }
+      // CONSUMIDOR de card_pick — ver card-pick.js. Resolve a resposta ("Cartão Nubank"/"2")
+      // determinístico e RETOMA a ação original (pay_invoice/query_invoice/card_refund) com o
+      // cartão resolvido, sem passar pelo LLM. Raiz do caso Rose 14/08: "Cartão Nubank" exato
+      // levava à MESMA pergunta de novo porque nada persistia o alvo entre turnos.
+      if (finOpen.payload && finOpen.payload.form === 'card_pick') {
+        const pick = matchSourceReply(String(text || ''), { form: 'list', candidates: finOpen.payload.candidates });
+        if (pick && pick.kind === 'card') {
+          const card = (await financeService.listCards(collab.id)).find((c) => c.id === pick.id);
+          if (card) {
+            const _o = { persisted: false };
+            let reply;
+            try {
+              reply = await handleFinanceAction(collab, finOpen.payload.action, { ...finOpen.payload.params, card: card.name }, _o);
+            } catch (e) {
+              console.error('[CardPick] exec err:', e.message);
+              try { await whatsapp.sendMessage(phone, '⚠️ Não consegui continuar agora. Tenta de novo daqui a pouco?'); } catch (_) { /* best-effort */ }
+              console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (card_pick_error)`);
+              return;
+            }
+            try {
+              await pendingIntents.resolveIntent(finOpen.id, 'confirmed', `card_pick:${finOpen.payload.action}`);
+              await whatsapp.sendMessage(phone, reply || '👍');
+              await logConversation(collab.id, 'outbound', reply || '👍');
+            } catch (postErr) { console.warn('[CardPick] post err:', postErr.message); }
+            console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (card_pick_resolved)`);
+            return;
+          }
+        }
+        // Sem match (resposta não bate com nenhum cartão) → intent segue aberta; cai no LLM,
+        // que pode pedir esclarecimento — igual ao comportamento de txn_pick acima.
       }
       const hit = matchSourceReply(String(text || ''), finOpen.payload);
       if (hit) {
