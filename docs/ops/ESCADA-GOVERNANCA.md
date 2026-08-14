@@ -121,3 +121,43 @@ regex servem pra escolher o candidato; a prova é a execução.
 Proposta de virar código: o `gov-runner` expõe um `provar(literal, guard)` que roda o texto e
 devolve `{antes, depois, mudou}`; o agente só pode fechar um achado da varredura anexando esse
 retorno no `verified_note`. Sem o retorno, o fechamento é recusado.
+
+### ETAPA 2 (varredura) — nem um COMENTÁRIO que cita o caso pelo nome é prova
+
+**Ocorrências:** 2 (13/08, 14/08). **Reincidiu — e em 14/08 num filtro que eu achava seguro.**
+
+Em 13/08 aprendi que "o regex casa e o guard nasceu depois do incidente" não fecha achado. Em
+14/08 tentei um filtro mais forte, que parecia inatacável: **cruzar as datas citadas nos
+comentários do `src/` com as datas dos achados abertos**, e só considerar candidato quando o
+comentário nomeasse a PESSOA e a HORA. Deu 3 candidatos. **Só 1 sobreviveu à execução.**
+
+O que derrubou os outros dois:
+
+- `8efa7be0` (Rafinha, 26/06 09:18 BRT — "Coloca o prazo até final de julho" respondendo a um
+  card de projeto). O comentário em `src/engine.js:9432` **cita o caso literalmente**: "Caso
+  Rafinha: 'Coloca o prazo até final de julho' … → finance-edit redirect curto-circuitava o
+  handler de tarefa". Fix datado 27/06, posterior ao incidente. Eu ia fechar. Rodei: o
+  `detectCorrection`/`detectFinanceEditIntent` devolve `null` **nas duas versões** (a de 26/06 e
+  a de hoje) — ou seja minha reprodução estava errada, o desvio de 26/06 nunca passou por ali.
+  Rodei então pelo `pickSkill`: **`financeiro-pessoal` ainda hoje**, com a fala real roteando
+  `null`. O achado não só não estava corrigido como revelou um QUARTO irmão da família de
+  quote-contamination que o fix desta mesma rodada não cobriu.
+- `545b8fe0` (Alf, 02/07 07:00 BRT). O `stripMechanismLeak` dispara e limpa o vazamento
+  ("convite sai quando o `engine` confirmar"). Mas o achado é `frustration` — "usuário repetiu a
+  demanda". Tirar a linha do vazamento **não faz a demanda parar de ser repetida**. Guard verde,
+  achado aberto.
+
+A regra de 13/08 continua valendo e ganha uma segunda metade: **o candidato só vira fechamento
+quando a execução reproduz o SINTOMA DO ACHADO — não quando um guard qualquer muda a saída.**
+Antes de rodar, escreva qual saída, se aparecer, prova o achado; se a execução não bate com o
+que você escreveu, a hipótese caiu, não o achado.
+
+**Medição de população, feita na mesma rodada:** a frase "não consegui registrar" (o maior
+cluster do acervo, ~12 achados abertos de 24/06 a 09/07) aparecia em **0,98% das respostas na
+janela dos achados (29/2946)** e aparece em **0,91% nas últimas duas semanas (20/2201)**. Seis
+semanas e dezenas de correções depois, o patamar é o MESMO. Isso é evidência forte de que essa
+família não é fila de bug pontual — é raiz aberta.
+
+Proposta de virar código (reforça a de 13/08): além do `provar(literal, guard)`, o `gov-runner`
+deveria exigir do agente uma **predição escrita ANTES da execução** ("espero ver X; X prova o
+achado porque Y") e recusar o fechamento quando a saída medida não for a predita.
