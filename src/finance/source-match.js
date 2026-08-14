@@ -43,15 +43,38 @@ function matchSourceReply(rawText, payload) {
     if (cash) return cash;
   }
 
-  // 3) nome — casa o candidato cujo nome COMPLETO ou cuja 1ª palavra (a marca:
-  //    "c6", "nubank", "itau") aparece como token no texto. "salva no c6" casa "C6 Bank".
+  // 3) nome — DUAS PASSADAS, não uma checagem por candidato.
+  //
+  // MATCHSOURCE-PREFIXO-GENERICO-CHUTA-ERRADO (14/08): candidatos de cartão em produção têm
+  // prefixo genérico compartilhado ("Cartão Nubank", "Cartão Itaú" — confirmado em
+  // pf_cards.name real). A versão antiga testava full-name E 1ª-palavra no MESMO predicado,
+  // candidato por candidato: ao chegar em "Cartão Itaú" primeiro na lista, a checagem de
+  // 1ª-palavra ("cartão") já batia como token solto dentro de "cartão nubank" (o texto do
+  // usuário) — e `.find()` retornava Itaú ANTES de sequer testar o full-name de Nubank, que
+  // seria PERFEITO. Resposta EXATA resolvia pro cartão ERRADO, em silêncio — pior que repetir
+  // a pergunta, porque não avisa.
+  //
+  // Passada 1 (specific): full-name em TODOS os candidatos primeiro — a resposta exata sempre
+  // vence antes de qualquer heurística de marca entrar em jogo.
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const porNomeCompleto = cands.find((c) => {
+    const name = String(c.name || '').toLowerCase().trim();
+    return name && t.includes(name);
+  });
+  if (porNomeCompleto) return porNomeCompleto;
+
+  // Passada 2 (fallback): marca — pula prefixo GENÉRICO ("cartão"/"conta"/"carteira"/"banco")
+  // pra achar a palavra que de fato distingue ("nubank", "itaú", "c6"). Sem isso, resposta só
+  // com a palavra genérica ("cartão", sem marca) chutaria o 1º candidato da lista — mesmo
+  // problema, forma mais rasa. Fica null nesse caso: ambíguo de verdade não casa (mesma
+  // filosofia do número fora do range).
+  const GENERICO = new Set(['cartão', 'cartao', 'conta', 'carteira', 'banco']);
   const byName = cands.find((c) => {
     const name = String(c.name || '').toLowerCase().trim();
     if (!name) return false;
-    if (t.includes(name)) return true;
-    const first = name.split(/\s+/)[0];
-    return first.length >= 2 && new RegExp(`\\b${escapeRe(first)}\\b`).test(t);
+    const palavras = name.split(/\s+/).filter((w) => !GENERICO.has(w));
+    const marca = palavras[0];
+    return !!marca && marca.length >= 2 && new RegExp(`\\b${escapeRe(marca)}\\b`).test(t);
   });
   return byName || null;
 }
