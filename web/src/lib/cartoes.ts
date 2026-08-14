@@ -249,6 +249,55 @@ export async function listClosedUnpaidInvoices(collaboratorId: string): Promise<
   return out;
 }
 
+/**
+ * Faturas fechadas JÁ QUITADAS — irmã de `listClosedUnpaidInvoices`.
+ *
+ * FATURA PAGA SUMIA (13/08/2026, caso Rose): ela pagou a fatura do Itaú (R$ 199,31 de agosto)
+ * às 20:56 e às 20:57 avisou que a fatura "sumiu, não aparece nas contas pagas nem em lugar
+ * nenhum". Estava certíssima. `listClosedUnpaidInvoices` só devolve fatura com saldo
+ * (`remaining > 0.005`), então ao quitar ela sai da lista — correto —, e a seção "✅ Pagas"
+ * só recebia `bills` (contas fixas), nunca faturas de cartão. **Não havia tela nenhuma onde
+ * uma fatura paga pudesse ser vista.**
+ *
+ * Some sem deixar rastro é indistinguível de "o sistema perdeu meu dinheiro" — e foi
+ * exatamente essa a leitura dela.
+ *
+ * Espelha a regra da irmã (competência anterior à corrente); inverte só o filtro do saldo e
+ * exige pagamento registrado, para não listar fatura de valor zero que nunca existiu.
+ */
+export async function listClosedPaidInvoices(collaboratorId: string): Promise<ClosedInvoice[]> {
+  const cards = await listCards(collaboratorId);
+  const out: ClosedInvoice[] = [];
+  for (const card of cards) {
+    const curr = currentCompetencia(card);
+    const [txRes, payRes] = await Promise.all([
+      supabase.from('pf_transactions').select('competencia, amount')
+        .eq('collaborator_id', collaboratorId).eq('card_id', card.id)
+        .not('competencia', 'is', null).lt('competencia', curr),
+      supabase.from('pf_card_payments').select('competencia, amount')
+        .eq('collaborator_id', collaboratorId).eq('card_id', card.id).lt('competencia', curr),
+    ]);
+    if (txRes.error) throw txRes.error;
+    if (payRes.error) throw payRes.error;
+    const totals = new Map<string, number>();
+    for (const r of (txRes.data ?? []) as { competencia: string; amount: number }[]) {
+      totals.set(r.competencia, (totals.get(r.competencia) ?? 0) + Number(r.amount));
+    }
+    const paids = new Map<string, number>();
+    for (const r of (payRes.data ?? []) as { competencia: string; amount: number }[]) {
+      paids.set(r.competencia, (paids.get(r.competencia) ?? 0) + Number(r.amount));
+    }
+    for (const [competencia, total] of totals) {
+      const paid = paids.get(competencia) ?? 0;
+      // `paid > 0` é obrigatório: sem ele, fatura de total 0 (cartão sem gasto no mês) entraria
+      // como "paga" e a lista encheria de linha fantasma.
+      if (paid > 0 && total - paid <= 0.005) out.push({ card, competencia, total, paid, remaining: 0 });
+    }
+  }
+  out.sort((a, b) => (a.competencia < b.competencia ? 1 : -1));
+  return out;
+}
+
 // Faturas de uma competência específica (YYYY-MM-01), de todos os cartões ativos — usado na
 // previsão mensal das Contas a pagar (navegar mês a mês). Inclui faturas abertas/futuras
 // (parcelas já têm competência futura), por isso não filtra por "fechada". total = lançado;
