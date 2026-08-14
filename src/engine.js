@@ -11082,7 +11082,18 @@ async function processMessage(phone, text, raw = {}) {
           } else {
             // AUDIT-OPTIMISTIC-CONFIRM (caso Fefê): remove "✅ Criado!" antes do honesto.
             base = sanitizeOptimisticConfirm(base, 'failed');
-            base = (base ? base + '\n\n' : '') + '_não consegui registrar agora. Me passa de novo?_';
+            // TASK-COMPLETE-ALVO-NAO-ACHADO — RAIZ (14/08). O engine tem 101 `failCount++` e
+            // só UM empurra `failMessages`; os outros 100 desembocavam aqui, no genérico que
+            // não diz O QUE falhou. A pessoa reenvia a mesma coisa e leva a mesma resposta:
+            // beco. A Mayra provou repetindo "Feito" → "Feito tom"; o Quintela levou o mesmo
+            // beco em 12/08 e 13/08.
+            //
+            // O fix de 13/08 deu fala honesta ao handler `complete` — cobriu 1 de 101 e
+            // reincidiu 2×. Este é o PONTO ÚNICO DE SAÍDA, onde os 101 convergem: nomear o
+            // alvo aqui vale para toda ação que procura tarefa, sem tocar em 101 lugares.
+            // Guard por caminho de código vira queijo suíço (antipadrão 13.1 do manual).
+            const { falaDoQueTentou } = require('./lib/falha-diz-alvo');
+            base = (base ? base + '\n\n' : '') + falaDoQueTentou(parsedTask.actions);
           }
         } else if (failCount > 0 && okCount > 0) {
           // Sprint 21.5 — confirmação parcial honesta. Engine não pode deixar TOM dizer
