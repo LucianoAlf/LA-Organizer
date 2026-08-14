@@ -5,6 +5,7 @@ import { BottomSheet } from '../../../components/BottomSheet';
 import { Field } from '../../../components/Field';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Button } from '../../../components/Button';
+import { showToast } from '../../../components/Toast';
 import { useCards, useCardInvoice, useAccounts, usePayInvoice } from '../../../hooks/useFinanceiro';
 import { currentCompetencia, mesDaCompetencia } from '../../../lib/cartoes';
 
@@ -24,12 +25,51 @@ export function PagarFaturaSheet({ open, onClose, cardId, competencia }: { open:
   const remaining = inv.data?.remaining ?? 0;
   const inputCls = 'w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom';
 
+  // PAGAMENTO QUE SOME (13/08/2026 — caso do Cartão Itaú Matheus, R$ 950,21 de agosto).
+  // A pessoa clicou em "Registrar pagamento", o botão girou, e NADA foi gravado — nem em
+  // `pf_card_payments` nem em `pf_transactions`. Ela saiu achando que tinha pago.
+  //
+  // Causa: os três caminhos de falha daqui eram MUDOS.
+  //   1. `if (!card || !comp) return`  → some sem dizer
+  //   2. `if (value <= 0) return`      → some sem dizer
+  //   3. `await mutateAsync(...)` SEM try/catch → o erro (RLS, rede, constraint) virava
+  //      rejection não tratada; `useFinMutation` não tem `onError`, então a tela ficava
+  //      exatamente igual a antes do clique.
+  //
+  // Dinheiro que some em silêncio é o pior tipo de falha silenciosa: a pessoa reorganiza a
+  // vida financeira dela em cima de uma informação que o sistema sabia ser falsa.
   async function submit() {
-    if (!card || !comp) return;
+    if (!card || !comp) {
+      showToast({ kind: 'error', title: 'Não consegui identificar a fatura', msg: 'Fecha e abre de novo. Se persistir, me avisa.' });
+      return;
+    }
     const value = Number(amount) > 0 ? Number(amount) : remaining;
-    if (value <= 0) return;
-    await payMut.mutateAsync({ card, competencia: comp, amount: value, paid_from_account: fromAcc || null });
+    if (value <= 0) {
+      showToast({
+        kind: 'error',
+        title: 'Nada a pagar nesta fatura',
+        msg: inv.isLoading ? 'A fatura ainda está carregando — espera um segundo e tenta de novo.'
+          : 'O valor em aberto está zerado. Digita o valor no campo acima se quiser lançar mesmo assim.',
+      });
+      return;
+    }
+    try {
+      await payMut.mutateAsync({ card, competencia: comp, amount: value, paid_from_account: fromAcc || null });
+    } catch (e) {
+      // NUNCA fechar o sheet aqui: fechar depois de falhar é o que faz a pessoa achar que deu certo.
+      const m = e instanceof Error ? e.message : String(e);
+      const semPermissao = /row-level security|permission|policy|denied/i.test(m);
+      showToast({
+        kind: 'error',
+        title: 'O pagamento NÃO foi registrado',
+        msg: semPermissao
+          ? 'Esse cartão é de outra pessoa — só quem é dono dele pode dar baixa na fatura.'
+          : `Nada foi gravado. Tenta de novo. (${m.slice(0, 120)})`,
+      });
+      return;
+    }
     setAmount(''); setFromAcc('');
+    showToast({ kind: 'success', title: 'Pagamento registrado', msg: `${fmtBRL(value)} na fatura de ${mesDaCompetencia(comp)}.` });
     onClose();
   }
 
