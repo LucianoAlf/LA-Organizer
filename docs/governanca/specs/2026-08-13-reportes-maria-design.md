@@ -337,3 +337,57 @@ a interpretar isso.
 | A pilha de 127 pendentes aparece de uma vez e assusta | **é o objetivo** — mas avisar Rose e Ana antes de ligar (o Alf já vai fazer) |
 | Captura no caminho de entrada pesa na latência | a gravação é uma linha, sem OCR extra: reusa o que o bridge já extrai |
 | Relatório vira ruído se sair todo dia igual | rever em 30 dias: se a Rose parar de responder, o formato está errado |
+
+---
+
+## ⚠️ REVISÃO DE 13/08, à noite — duas premissas caíram
+
+Este bloco foi escrito **depois** do desenho acima, quando o Alf lembrou que "a gente já criou algo
+que salva o comprovante numa parte transitória". Ele estava certo, e a auditoria derrubou duas
+premissas da spec. **Onde este bloco divergir do que está acima, vale este bloco.**
+
+### 1. O caderno não precisa ser construído — ele já existe
+
+`maria_fluxo_caixa_eventos`: **1.123 eventos**, criados por `maria-observadora`, 24 só em 13/08.
+Tem `chat_id`, `message_id`, `data_operacional`, `valor_centavos`, `status`, `descricao` — e três
+coisas que a tabela nova não tinha: **`media_ref`** (aponta o arquivo do comprovante),
+**`event_fingerprint`** (anti-duplicata) e **`conta_pagar_id`**.
+
+E o pedido literal da Rose tem nome de campo: **"as saídas do dia" = `tipo_evento = 'saida_confirmada'`.**
+
+> A tabela `maria_grupo_movimento_dia`, criada e depois **removida** no mesmo dia, foi erro meu: na
+> auditoria inicial procurei por "snapshot", "grupo" e "relatório", e não por "fluxo de caixa". Duas
+> fontes contando o mesmo fato é o pior dos mundos — uma hora discordam e ninguém sabe qual acreditar.
+
+### 2. "Sem vínculo" **não** significa "não lançado" — e essa era a base da seção ⏳
+
+Medido: `conta_pagar_id` está **nulo em 100%** dos eventos de fluxo, e `fluxo_evento_id` só aparece em
+**59 de 307** itens de conferência (**12 de 175** entre os lançados).
+
+**O caso que provou:** *Aluguel CG, R$ 9.256,55*, observado às 09h25, sairia como "falta lançar". Foi
+conferido em `contas_pagar`: **status pago, data 13/08**. Um relatório estreando com uma pendência
+falsa de nove mil reais queima a confiança da Rose no primeiro dia — e aí nenhum relatório seguinte é
+lido.
+
+**A raiz:** `maria_conferencia_lancamento_salvar` **aceita** `fluxo_evento_id`, mas quem preenche é o
+**modelo**, ao montar o JSON dos itens. Dado crítico dependendo de o LLM lembrar — a mesma família de
+falha que o resto deste projeto combate.
+
+**O fix correto, antes de qualquer relatório:** a função resolve o vínculo **por código** quando ele
+vier nulo, cruzando `chat + valor + data + unidade` contra eventos de fluxo em aberto. Assim o vínculo
+existe sempre, independente do modelo.
+
+> Isso mexe no coração do lançamento financeiro da Maria. Exige TDD, fixtures e janela — não se faz
+> às pressas no fim do dia. **É a nova Tarefa 0 da Fatia 2.**
+
+### 3. O que sobrevive do desenho acima
+
+O formato aprovado (§6), as travas (§7), o agendamento (§8) e a guarda anti-eco continuam valendo
+integralmente. Muda **de onde vêm os dados**: de `maria_fluxo_caixa_eventos`, não de tabela nova. E o
+histórico já existe — dá para gerar relatório retroativo desde já.
+
+### 4. Achado lateral para a Rose
+
+Um evento de 13/08 tem descrição `@114838969827528` — **uma menção de contato virou o nome da
+despesa**, R$ 2.500,00, sem correspondência em `contas_pagar`. É o único item do dia que merece
+pergunta de verdade.
