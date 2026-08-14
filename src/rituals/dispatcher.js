@@ -6123,13 +6123,15 @@ async function sendHealthReport(refYmd = null, force = false) {
     console.warn('[health-report] nenhum director encontrado — relatório não enviado');
     return;
   }
-  // 2ª seção: o que o agente de governança FEZ e o que REINCIDIU. Fora do try/catch de
-  // ninguém — `carregarResumoGovernanca` já devolve null em qualquer falha, e aí o relatório
-  // sai sem a seção em vez de não sair.
-  const { carregarResumoGovernanca, formatarResumoGovernanca } = require('../lib/governanca-resumo');
-  const resumoGov = formatarResumoGovernanca(await carregarResumoGovernanca(supabase, { ymd }));
-
-  const msg = formatHealthReport(run, resumoGov);
+  // GOVRESUMO-DM-MISTURA-2-ASSUNTOS (14/08): esta DM é sobre a SAÚDE DO TOM (perfis
+  // parados, eventos sem lembrete, falhas de conversa) — decisão do Alf. O bloco de
+  // governança (o que o AGENTE fez) é assunto do grupo, às 08:00, e por rodar às 07:00
+  // ela SEMPRE mostrava o ciclo de ONTEM rotulado como se fosse o de hoje — foi o que
+  // gerou dois relatórios do mesmo sistema se contradizendo na frente do dono em 14/08.
+  // Duas fontes de verdade sobre o mesmo fato é dívida, não redundância saudável.
+  // O módulo `governanca-resumo.js` continua existindo e testado — só parou de ser
+  // chamado aqui.
+  const msg = formatHealthReport(run);
   const whatsapp = require('../services/whatsapp');
   // 3. Envia por destinatário — dedupe individual (07/08: 2º destinatário
   // adicionado; se um envio falha, os demais já enviados não bloqueiam retry
