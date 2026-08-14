@@ -112,7 +112,7 @@ const DISSE_ZERADA = (t) => /est[áa] zerada/i.test(t);
 
   const t0 = new Date().toISOString();
   await falar(QA_PHONE, 'Paguei a fatura nubank com conta mercado pago');
-  await dorme(30000);
+  await dorme(45000);
   const r1 = await respostaDoTom(collab.id, t0);
   console.log(`\n[turno 1] TOM: ${r1.replace(/\s+/g, ' ').slice(0, 200)}`);
 
@@ -128,6 +128,14 @@ const DISSE_ZERADA = (t) => /est[áa] zerada/i.test(t);
   }
 
   // ---- Veredito ----
+  // Resposta vazia NÃO é aprovação — é o instrumento não medindo nada (mesmo defeito do
+  // "PASSOU" por vacuidade que já mordeu este projeto: instância derrubada cedo demais
+  // enquanto o LLM ainda processava). Sem isto, um timeout vira "tudo certo" falso.
+  if (!r1.trim()) {
+    console.error('\n[cenario-pay-invoice] SEM RESPOSTA no turno 1 — instrumento não mediu nada (timeout?). Não conta como PASSOU.');
+    await limpar(collab.id);
+    process.exit(2);
+  }
   const repetiuAPergunta = perguntouNoT1 && PERGUNTOU_QUAL_CARTAO(r2);
   const disseZeradaIndevido = DISSE_ZERADA(r1) || DISSE_ZERADA(r2);
 
