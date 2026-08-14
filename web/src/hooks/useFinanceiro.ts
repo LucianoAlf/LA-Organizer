@@ -263,6 +263,15 @@ export function useClosedUnpaidInvoices() {
     enabled: !!cid,
   });
 }
+// Irmã da de cima. Sem ela, fatura quitada não aparecia em tela nenhuma (caso Rose 13/08).
+export function useClosedPaidInvoices() {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'closedPaidInvoices', cid],
+    queryFn: () => cartoes.listClosedPaidInvoices(cid!),
+    enabled: !!cid,
+  });
+}
 export function useInvoicesByCompetencia(competencia: string | undefined) {
   const cid = useFinanceiroAuth();
   return useQuery({

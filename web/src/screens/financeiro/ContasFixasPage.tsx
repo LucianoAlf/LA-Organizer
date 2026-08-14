@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Fab } from '../../components/Fab';
 import { Tabs } from '../../components/Tabs';
-import { useBills, useBillOverrides, useCategoryLookup, useClosedUnpaidInvoices, useInvoicesByCompetencia, useFinanceiroAuth } from '../../hooks/useFinanceiro';
+import { useBills, useBillOverrides, useCategoryLookup, useClosedUnpaidInvoices, useClosedPaidInvoices, useInvoicesByCompetencia, useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { deriveBillStatus, groupExpenseBillsByStatus, resolveBillsForMonth } from '../../lib/financeiro';
 import type { BillStatus, PfBill } from '../../lib/financeiro';
@@ -84,6 +84,37 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'todas', label: 'Todas' },
   { id: 'apagar', label: 'A pagar' },
 ];
+
+/**
+ * Faturas de cartão JÁ PAGAS. Existe porque, até 13/08/2026, fatura quitada não aparecia em
+ * lugar nenhum: saía da lista "a pagar" (certo) e a seção "✅ Pagas" só listava contas fixas.
+ * A Rose pagou o Itaú às 20:56 e às 20:57 avisou que a fatura tinha sumido — e tinha mesmo.
+ *
+ * Some sem deixar rastro é indistinguível de "perdi meu dinheiro".
+ */
+function FaturasPagasSection({ invoices }: { invoices: ClosedInvoice[] }) {
+  if (invoices.length === 0) return null;
+  const total = invoices.reduce((s, i) => s + i.paid, 0);
+  return (
+    <section className="rounded-lg border border-border bg-bg-surface overflow-hidden">
+      <header className="px-md pt-md pb-2 flex items-baseline justify-between">
+        <h3 className="text-label text-fg-muted uppercase tracking-wide">✅ Faturas pagas</h3>
+        <span className="text-body-sm text-fg-muted tabular-nums">{invoices.length} · R$ {brl(total)}</span>
+      </header>
+      <ul className="divide-y divide-border">
+        {invoices.map((inv) => (
+          <li key={`${inv.card.id}-${inv.competencia}`} className="px-md py-3 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-body-md text-fg truncate">{inv.card.name}</p>
+              <p className="text-body-sm text-fg-muted">fatura {mesDaCompetencia(inv.competencia)} · quitada</p>
+            </div>
+            <span className="text-body-md font-semibold text-fg tabular-nums shrink-0">R$ {brl(inv.paid)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 function FaturasSection({ invoices, onPay }: { invoices: ClosedInvoice[]; onPay: (inv: ClosedInvoice) => void }) {
   if (invoices.length === 0) return null;
@@ -214,6 +245,7 @@ export function ContasFixasPage() {
 
   const billsQ = useBills();
   const invoicesQ = useClosedUnpaidInvoices();
+  const invoicesPagasQ = useClosedPaidInvoices();
   const prevInvoicesQ = useInvoicesByCompetencia(isCurrentMonth ? undefined : ymToCompetencia(monthYear));
   // Overrides de valor da competência EXIBIDA (mês corrente OU o navegado). 0 overrides => valor base.
   const overridesQ = useBillOverrides(ymToCompetencia(monthYear));
@@ -245,6 +277,7 @@ export function ContasFixasPage() {
   }, [billsQ.data, overrides]);
 
   const faturas = invoicesQ.data ?? [];
+  const faturasPagas = invoicesPagasQ.data ?? [];
   const faturasTotal = faturas.reduce((s, i) => s + i.remaining, 0);
 
   // Previsão de OUTRO mês: contas que se aplicam (recorrentes + únicas que vencem nele)
@@ -342,6 +375,7 @@ export function ContasFixasPage() {
               <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
               <FaturasSection invoices={faturas} onPay={payInvoice} />
               <BillSection title="✅ Pagas" bills={groups.pagas} onPay={pay} onEdit={setEditing} />
+              <FaturasPagasSection invoices={faturasPagas} />
               <BillSection title="A receber" bills={aReceber} onPay={pay} onEdit={setEditing} />
             </>
           )}
