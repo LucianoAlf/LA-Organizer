@@ -43,7 +43,25 @@ function formatarResumoGovernanca(dados) {
   const reincidentes = placar && Array.isArray(placar.reincidentes) ? placar.reincidentes : [];
   const emParada = placar && Array.isArray(placar.emParada) ? placar.emParada : [];
 
-  const linhas = ['📊 *Governança (24h)*'];
+  // GOVRESUMO-JANELA-ROTULO-ENGANA (14/08): o rótulo "(24h)" fazia o leitor entender "hoje".
+  // A janela é ROLANTE — às 07:00 ela cobre ontem-07:00 → hoje-07:00 — e o ciclo do dia só
+  // roda às 08:00. Em 14/08 esta DM anunciou a correção de ONTEM como se fosse a de hoje,
+  // enquanto o grupo, uma hora depois, anunciou a verdadeira: dois relatórios do mesmo
+  // sistema se contradizendo na frente do dono.
+  //
+  // Irmão do GOVRESUMO-CICLO-ALARME-FALSO: lá a janela do produtor não era a do consumidor
+  // ao dizer "não rodou"; aqui é ao dizer "o que rodou".
+  //
+  // A correção é o RÓTULO, não a janela: datar o que está sendo mostrado, para quem lê
+  // descobrir sozinho que é o ciclo de ontem. Sem data conhecida, não inventa.
+  const _ymdDaCorrecao = (() => {
+    const ts = correcoes.map((c) => c && c.corrigido_em).filter(Boolean).sort().pop();
+    if (!ts) return null;
+    try { return _FMT_BRT.format(new Date(ts)); } catch (_) { return null; }
+  })();
+  const linhas = [_ymdDaCorrecao
+    ? `📊 *Governança — ciclo de ${_ddmm(_ymdDaCorrecao)}*`
+    : '📊 *Governança (últimas 24h)*'];
 
   // O caso mais valioso do relatório: o ciclo parou de rodar e ninguém percebeu.
   //

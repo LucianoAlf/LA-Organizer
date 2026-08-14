@@ -188,3 +188,34 @@ test('sem nenhuma rodada registrada: para, sem data e sem lixo', async () => {
   assert.strictEqual(d.cicloRodou, false);
   assert.strictEqual(d.ultimoCicloYmd, null);
 });
+
+// ── GOVRESUMO-JANELA-ROTULO-ENGANA (14/08/2026) ──────────────────────────────────────
+// A DM das 07h dizia "Governança (24h)" e o Alf leu como "o ciclo de hoje". Mas a janela é
+// ROLANTE: às 07:00 ela cobre ontem-07:00 → hoje-07:00, e o ciclo de hoje só roda às 08:00.
+// Resultado: o relatório das 07h de 14/08 anunciou `TASK-COMPLETE-ALVO-NAO-ACHADO` como
+// correção do dia — era a de 13/08 — enquanto o grupo, às 08:00, anunciou a de verdade
+// (`SKILL-ROUTER-QUOTE-CONTAMINATION`). Dois relatórios do mesmo sistema se contradizendo.
+//
+// Irmão do GOVRESUMO-CICLO-ALARME-FALSO: lá a janela do produtor não era a do consumidor na
+// hora de dizer "não rodou"; aqui é na hora de dizer "o que rodou". Mesma raiz, outro lado.
+//
+// A correção é o RÓTULO, não a janela: datar o que está sendo mostrado. Quem lê descobre
+// sozinho que é o ciclo de ontem.
+test('cabeçalho leva a DATA do ciclo mostrado, não "24h"', () => {
+  const txt = formatarResumoGovernanca({
+    cicloRodou: true, hojeYmd: '2026-08-14', ultimoCicloYmd: '2026-08-13',
+    correcoes: [{ codigo: 'TASK-COMPLETE-ALVO-NAO-ACHADO', corrigido_em: '2026-08-13T11:20:00Z' }],
+    achadosFechados: 7,
+  });
+  assert.match(txt, /Governança — ciclo de 13\/08/);
+  assert.doesNotMatch(txt, /\(24h\)/);
+});
+
+test('sem correções, o rótulo não inventa data', () => {
+  const txt = formatarResumoGovernanca({
+    cicloRodou: true, hojeYmd: '2026-08-14', ultimoCicloYmd: '2026-08-14',
+    correcoes: [], achadosFechados: 0,
+  });
+  assert.match(txt, /Governança/);
+  assert.doesNotMatch(txt, /ciclo de undefined|ciclo de NaN/);
+});

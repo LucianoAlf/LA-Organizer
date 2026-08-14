@@ -22,16 +22,33 @@ const FORMAS = [
   { chave: 'corrigidos', re: /(\d+)\s+corrigid[oa]s?\b/gi },
   { chave: 'corrigidos', re: /\bcorrigi\s+(\d+)/gi },
   { chave: 'corrigidos', re: /(\d+)\s+known\s+issues?\b/gi },
+  // MEDIDO EM PRODUÇÃO (14/08, 1ª rodada real): o relatório escreve "*1 correção* no ar" e
+  // "Correção (1, no ar em 3ca53dc)". Nenhum dos padrões acima casa com "correção" — a trava
+  // existia e ficou muda no dia da estreia. Trava que não fala a língua do texto que audita
+  // é decoração; só apareceu confrontando o literal do relatório real.
+  { chave: 'corrigidos', re: /(\d+)\s+corre[çc][ãa]o|corre[çc][õo]es/gi },
+  { chave: 'corrigidos', re: /\bcorre[çc][ãa]o\s*\(\s*(\d+)/gi },
 ];
 
 /** Extrai as contagens afirmadas no texto. Pura. @returns {{chave:string,n:number}[]} */
 function extrairAfirmacoes(texto) {
   const t = typeof texto === 'string' ? texto.replace(RUIDO, ' ') : '';
   const out = [];
+  // Dedup por (chave, n): a mesma afirmação casa em mais de uma forma — "corrigi 2 known
+  // issues" bate em `corrigi N` E em `N known issues`. Sem isto, uma divergência sairia
+  // repetida no relatório, e aviso repetido ensina a ignorar o aviso.
+  const vistos = new Set();
   for (const f of FORMAS) {
     f.re.lastIndex = 0;
     let m;
-    while ((m = f.re.exec(t)) !== null) out.push({ chave: f.chave, n: Number(m[1]) });
+    while ((m = f.re.exec(t)) !== null) {
+      const n = Number(m[1]);
+      if (!Number.isFinite(n)) continue;
+      const k = `${f.chave}:${n}`;
+      if (vistos.has(k)) continue;
+      vistos.add(k);
+      out.push({ chave: f.chave, n });
+    }
   }
   return out;
 }
