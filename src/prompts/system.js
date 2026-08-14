@@ -17,6 +17,7 @@ const financeService = require('../services/financeiro-service');
 // o LLM precisa VER eventos work passados sem fechamento, senão diz "semana limpa".
 const { getStaleWorkEvents } = require('../services/open-pendencies');
 const { renderRecentMediaBlock } = require('../utils/media-context');
+const { stripReplyScaffold } = require('../events/detect-approval-reply');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -942,7 +943,22 @@ function renderPendingDecisions(notifications) {
 }
 
 // ---------- BLOCK 4 — SKILL ATIVA (conditional, max 1) ----------
+// Roteadores de TÓPICO (banda 4.65/4.7/4.8). Nomeados porque rodam duas vezes: na banda de
+// prioridade lendo a FALA REAL, e como último recurso lendo o texto cru — ver pickSkill.
+const TOPIC_GERENCIA_RE = /(\brisco\s+de\s+evas|\bevas[ãa]o\b|\bretenç[ãa]o\b|\brecuperaç[ãa]o\s+(?:de\s+)?aluno|\bexperi[êe]ncia\s+da\s+unidade|\bproblema\s+de\s+atendimento|\barticul(?:ar|ação)\s+(?:recepç|secretari|coord)|\bgerente\b|\bger[êe]ncia\b|\bjereh\b|\bclayton\b|\bkrissya\b|\bnegoci(?:ar|ação)\s+(?:permanência|sa[ií]da|condiç)|\bpai\s+(?:insatisfeito|querendo\s+sair|reclamando\s+do\s+atendimento)|\baciona\s+(?:a\s+)?ger[êe]ncia|\brecepç[ãa]o\b|\bsecretari[ao]\b|\bpr[ée][\s-]?atendimento)/i;
+const TOPIC_PEDAGOGICO_RE = /(\b(aluno[as]?|professor[a]?(?:es)?|turma[s]?|recital(?:is)?|banda[s]?|coordena[çc][ãa]o\s+pedag|assistent[ea]\s+pedag|mentor[ea]?\s+pedag|kids|school|infantil|musicaliza[çc][ãa]o|aula(?:s)?\s+(?:do|da|de))\b|\b(juliana|quintela|peterson|kinho|renan|matheus\s+felipe|jordan|leo|ramon|dai|rodrigo)\b)/i;
+const TOPIC_OPERACOES_RE = /\b(sala\s+\d|ar.condicion|l[âa]mpada|equipamento[s]?|inst[ru]mento[s]?|infra(?:estrutura)?|manuten[çc][ãa]o|reposi[çc][ãa]o|estoque|teclado|amplificador|microfone|cabo[s]?|caixa\s+de\s+som|t[ée]cnico|incidente|baqueta[s]?|palheta[s]?|corda[s]?\s+(?:de|do|para|pra)|tinta|caneta|impressora|computador|wifi|internet)\b/i;
+
 async function pickSkill(collab, lastUserMessage, recentHistory) {
+  // SKILL-ROUTER-QUOTE-CONTAMINATION (caso Quintela 12-13/08): num reply-quote o webhook prepende
+  // a mensagem CITADA do TOM à fala do usuário. Os roteadores de TÓPICO abaixo (gerencia 4.65 /
+  // pedagogico 4.7 / operacoes-tecnicas 4.8) decidem por substantivo de domínio, então o título de
+  // tarefa que o próprio TOM citou ("Onboard *professora* nova") sequestrava a rota e a
+  // checklist-tarefas (priority 5) nunca carregava. Só ELES leem a fala real: medido em 215
+  // reply-quotes de produção, aplicar o strip no pickSkill inteiro mudaria 133 rotas e deixaria 94
+  // sem skill nenhuma — pior que a skill errada, porque aí o LLM improvisa o marker.
+  const realUserMessage = stripReplyScaffold(String(lastUserMessage || '')).userText || lastUserMessage;
+
   // Priority 1: onboarding active.
   if (collab && collab.onboarding_completed === false) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
@@ -1345,19 +1361,19 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // Gatilhos restritos: nomes dos gerentes + termos gerenciais explícitos (risco evasão,
   // retenção, atendimento, recepção, secretaria, articulação interna).
   // Frases com "aluno"/"responsável" SEM qualificador gerencial caem em pedagogico abaixo.
-  if (/(\brisco\s+de\s+evas|\bevas[ãa]o\b|\bretenç[ãa]o\b|\brecuperaç[ãa]o\s+(?:de\s+)?aluno|\bexperi[êe]ncia\s+da\s+unidade|\bproblema\s+de\s+atendimento|\barticul(?:ar|ação)\s+(?:recepç|secretari|coord)|\bgerente\b|\bger[êe]ncia\b|\bjereh\b|\bclayton\b|\bkrissya\b|\bnegoci(?:ar|ação)\s+(?:permanência|sa[ií]da|condiç)|\bpai\s+(?:insatisfeito|querendo\s+sair|reclamando\s+do\s+atendimento)|\baciona\s+(?:a\s+)?ger[êe]ncia|\brecepç[ãa]o\b|\bsecretari[ao]\b|\bpr[ée][\s-]?atendimento)/i.test(lastUserMessage || '')) {
+  if (TOPIC_GERENCIA_RE.test(realUserMessage || '')) {
     return { name: 'gerencia', body: loadSkill('gerencia') };
   }
 
   // Sprint 19 — Priority 4.7: contexto PEDAGÓGICO (vence checklist-tarefas e operacoes-tecnicas).
   // Gatilhos: aluno/professor/turma/recital/banda/kids/school + nomes da equipe pedagógica.
   // Quando dispara, TOM usa skill pedagogico.md como PRIMARY → emite TASK_UPDATE com department_id pedagogico.
-  if (/(\b(aluno[as]?|professor[a]?(?:es)?|turma[s]?|recital(?:is)?|banda[s]?|coordena[çc][ãa]o\s+pedag|assistent[ea]\s+pedag|mentor[ea]?\s+pedag|kids|school|infantil|musicaliza[çc][ãa]o|aula(?:s)?\s+(?:do|da|de))\b|\b(juliana|quintela|peterson|kinho|renan|matheus\s+felipe|jordan|leo|ramon|dai|rodrigo)\b)/i.test(lastUserMessage || '')) {
+  if (TOPIC_PEDAGOGICO_RE.test(realUserMessage || '')) {
     return { name: 'pedagogico', body: loadSkill('pedagogico') };
   }
   // Sprint 19 — Priority 4.8: contexto OPERAÇÕES TÉCNICAS (infra/equipamento/material).
   // Vence apenas se NÃO for pedagógico. Garante department_id=operacoes-tecnicas no marker.
-  if (/\b(sala\s+\d|ar.condicion|l[âa]mpada|equipamento[s]?|inst[ru]mento[s]?|infra(?:estrutura)?|manuten[çc][ãa]o|reposi[çc][ãa]o|estoque|teclado|amplificador|microfone|cabo[s]?|caixa\s+de\s+som|t[ée]cnico|incidente|baqueta[s]?|palheta[s]?|corda[s]?\s+(?:de|do|para|pra)|tinta|caneta|impressora|computador|wifi|internet)\b/i.test(lastUserMessage || '')) {
+  if (TOPIC_OPERACOES_RE.test(realUserMessage || '')) {
     return { name: 'operacoes-tecnicas', body: loadSkill('operacoes-tecnicas') };
   }
 
@@ -1429,6 +1445,21 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   if (hasCoordLevel(collab)
       && /(la\s*educa|estagi[áa]rios?|mentor(?:i?a)?|ancoragem|certificado\s*alfa|trilha)/i.test(lastUserMessage || '')) {
     return { name: 'la-educa', body: loadSkill('la-educa') };
+  }
+
+  // Último recurso: os roteadores de tópico lendo o texto CRU (com a citação). Acima eles leem só
+  // a fala real, pra não sequestrar a rota de quem só respondeu "feito" a uma cobrança — mas se
+  // NADA mais casou, skill errada ainda é melhor que skill nenhuma: sem skill o LLM não tem
+  // template de marker e improvisa (28/04, marker em YAML, parser dropou, "Anotado" virou mentira).
+  // Sem isto, o strip acima criaria 15 buracos novos nos 215 reply-quotes medidos em produção.
+  if (TOPIC_GERENCIA_RE.test(lastUserMessage || '')) {
+    return { name: 'gerencia', body: loadSkill('gerencia') };
+  }
+  if (TOPIC_PEDAGOGICO_RE.test(lastUserMessage || '')) {
+    return { name: 'pedagogico', body: loadSkill('pedagogico') };
+  }
+  if (TOPIC_OPERACOES_RE.test(lastUserMessage || '')) {
+    return { name: 'operacoes-tecnicas', body: loadSkill('operacoes-tecnicas') };
   }
 
   return null;
@@ -3914,4 +3945,4 @@ function formatMessages(recent, currentText) {
   return msgs;
 }
 
-module.exports = { buildSystemPrompt, formatMessages, fetchCollaboratorContext, nameFor, todaySaoPaulo, buildAccessBlock };
+module.exports = { buildSystemPrompt, formatMessages, fetchCollaboratorContext, nameFor, todaySaoPaulo, buildAccessBlock, pickSkill };
