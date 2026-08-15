@@ -30,6 +30,24 @@ const FORMAS = [
   { chave: 'corrigidos', re: /\bcorre[çc][ãa]o\s*\(\s*(\d+)/gi },
 ];
 
+// Preposição logo depois da contagem costuma abrir um RECORTE ("65 achados DE frustration"),
+// e a única fonte que a trava tem é o TOTAL. Comparar recorte com total é alarme falso
+// garantido — foi o 15/08: o 65 estava certo (45 frustration + 21 "não consegui registrar"),
+// a fonte tinha 159, e o rodapé cravou "o erro é o dado".
+//
+// Mas preposição sozinha não decide: "10 achados NO ACERVO" é o total, escrito com preposição.
+// O que separa os dois é a palavra REGIDA. Por isso a exceção de totalidade — sem ela a trava
+// emudeceria pro claim que ela existe pra pegar (o teste do incidente de 10/08 usa "no
+// acervo"), que é o outro jeito de perdê-la. Adjetivo solto ("10 achados abertos") também
+// segue conferindo.
+const RECORTE = /^\s*(?:de|da|do|das|dos|com|sem|em|na|no|nas|nos)\s+(\p{L}+)/iu;
+const TOTALIDADE = /^(?:acervo|total|geral|aberto|abertos|aberta|abertas|banco|fonte|base|backlog)$/i;
+
+function _ehRecorte(resto) {
+  const m = RECORTE.exec(resto);
+  return !!m && !TOTALIDADE.test(m[1]);
+}
+
 /** Extrai as contagens afirmadas no texto. Pura. @returns {{chave:string,n:number}[]} */
 function extrairAfirmacoes(texto) {
   const t = typeof texto === 'string' ? texto.replace(RUIDO, ' ') : '';
@@ -44,6 +62,7 @@ function extrairAfirmacoes(texto) {
     while ((m = f.re.exec(t)) !== null) {
       const n = Number(m[1]);
       if (!Number.isFinite(n)) continue;
+      if (_ehRecorte(t.slice(m.index + m[0].length))) continue; // subconjunto: sem fonte pra ele
       const k = `${f.chave}:${n}`;
       if (vistos.has(k)) continue;
       vistos.add(k);
