@@ -57,3 +57,51 @@ test('detectRecurring: gastos esporádicos (não mensais) ficam fora', () => {
   ];
   assert.equal(detectRecurring(txns).length, 0);
 });
+
+// GOVFIN-RECURRING-ALERTA-ETERNO — caso real da Rose: Google Canva cobrou 27/06 e 27/07 (2
+// ocorrências estáveis), e o TOM mandou "entrou nas suas recorrências" TODO dia de 27/07 até
+// 15/08 (19 dias), porque nada olhava QUANDO foi a última cobrança — só quantas existem.
+test('detectRecurring: 2ª ocorrência RECENTE → isNewSubscription (refYmd dentro da janela)', () => {
+  const txns = [
+    { descricao: 'Google Canva AI PhotoSA', valor: 34.90, data: '2026-06-27' },
+    { descricao: 'Google Canva AI PhotoSA', valor: 34.90, data: '2026-07-27' },
+  ];
+  const canva = detectRecurring(txns, '2026-07-29').find((x) => x.merchant.includes('canva'));
+  assert.ok(canva);
+  assert.equal(canva.isNewSubscription, true);
+});
+
+test('detectRecurring: 2ª ocorrência ANTIGA → isNewSubscription para de alertar (o bug da Rose)', () => {
+  const txns = [
+    { descricao: 'Google Canva AI PhotoSA', valor: 34.90, data: '2026-06-27' },
+    { descricao: 'Google Canva AI PhotoSA', valor: 34.90, data: '2026-07-27' },
+  ];
+  // 15/08 é 19 dias depois da 2ª cobrança — exatamente o dia do relatório da Rose.
+  const canva = detectRecurring(txns, '2026-08-15').find((x) => x.merchant.includes('canva'));
+  assert.ok(canva, 'ainda detecta a recorrência (occurrences/amounts intactos)');
+  assert.equal(canva.isNewSubscription, false);
+});
+
+test('detectRecurring: priceCreep também respeita a janela de recência', () => {
+  const txns = [
+    { descricao: 'NETFLIX.COM', valor: 55, data: '2026-04-15' },
+    { descricao: 'NETFLIX.COM', valor: 55, data: '2026-05-15' },
+    { descricao: 'NETFLIX.COM', valor: 68, data: '2026-06-15' },
+  ];
+  const recente = detectRecurring(txns, '2026-06-17').find((x) => x.merchant === 'netflix com');
+  assert.equal(recente.priceCreep, true);
+  const velho = detectRecurring(txns, '2026-08-15').find((x) => x.merchant === 'netflix com');
+  assert.equal(velho.priceCreep, false);
+});
+
+// Sem refYmd o comportamento é o de sempre (compat com os testes acima que não passam data de
+// referência) — produção (dispatcher.js) sempre passa; é o "sem filtro" que fica só pra quem
+// não se importa com recência.
+test('detectRecurring: sem refYmd, sem filtro de recência (compat)', () => {
+  const txns = [
+    { descricao: 'Spotify', valor: 23, data: '2020-01-10' },
+    { descricao: 'Spotify', valor: 23, data: '2020-02-10' },
+  ];
+  const sp = detectRecurring(txns).find((x) => x.merchant === 'spotify');
+  assert.equal(sp.isNewSubscription, true);
+});

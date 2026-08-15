@@ -13,8 +13,27 @@ function normalizeMerchant(desc) {
     .trim();
 }
 
+// GOVFIN-RECURRING-ALERTA-ETERNO (15/08, Rose): sem janela de recência, isNewSubscription e
+// priceCreep ficam verdadeiros enquanto a contagem de ocorrências não mudar — a checagem só
+// olha "tem exatamente 2 (ou 3+) ocorrências estáveis nos últimos N meses", nunca QUANDO a
+// última aconteceu. Uma assinatura mensal com só 2 cobranças passa ~30 dias como "2 ocorrências"
+// até a 3ª chegar — o alerta "entrou nas suas recorrências" repetia TODO dia nesse intervalo
+// inteiro. Caso real: Google Canva cobrou em 27/06 e 27/07, e o TOM mandou "Fica de olho, Canva
+// entrou nas recorrências" de 27/07 até 15/08 — 19 dias seguidos da mesma frase pra Rose.
+//
+// refYmd ('YYYY-MM-DD') ativa a janela: só alerta se a ÚLTIMA ocorrência caiu nos últimos
+// JANELA_DIAS_ALERTA dias. Omitido preserva o comportamento antigo (sem filtro de recência) —
+// é o que os testes sem `refYmd` continuam exercendo. Produção (dispatcher.js) SEMPRE passa.
+const JANELA_DIAS_ALERTA = 7;
+
+function diffDias(refYmd, dataYmd) {
+  const [y1, m1, d1] = String(refYmd).split('-').map(Number);
+  const [y2, m2, d2] = String(dataYmd).split('-').map(Number);
+  return Math.round((Date.UTC(y1, m1 - 1, d1) - Date.UTC(y2, m2 - 1, d2)) / 86400000);
+}
+
 // transactions: [{ descricao|description, valor|amount, data|transaction_date }]
-function detectRecurring(transactions) {
+function detectRecurring(transactions, refYmd) {
   const groups = new Map();
   for (const t of (transactions || [])) {
     const m = normalizeMerchant(t.descricao != null ? t.descricao : t.description);
@@ -49,14 +68,16 @@ function detectRecurring(transactions) {
     const prevStable = spread(amounts.slice(0, -1)) <= 0.10;
     const allStable = spread(amounts) <= 0.10;
     const priceUp = prev > 0 && last > prev && (last - prev) / prev >= 0.05;
+    const lastDate = occ[occ.length - 1].date;
+    const recente = !refYmd || diffDias(refYmd, lastDate) <= JANELA_DIAS_ALERTA;
     out.push({
       merchant,
       occurrences: occ.length,
       lastAmount: last,
       prevAmount: prev,
       deltaPct: prev ? Math.round(((last - prev) / prev) * 100) : 0,
-      priceCreep: occ.length >= 3 && prevStable && priceUp,
-      isNewSubscription: occ.length === 2 && allStable,
+      priceCreep: occ.length >= 3 && prevStable && priceUp && recente,
+      isNewSubscription: occ.length === 2 && allStable && recente,
     });
   }
   return out;

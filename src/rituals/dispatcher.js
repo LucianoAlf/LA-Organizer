@@ -473,7 +473,7 @@ async function checkFinanceProactive(now) {
         }));
         if (line) lines.push(line);
       }
-      lines = lines.concat(buildRecurringLines(detectRecurring(await financeService.recurringTxns(c.id, { months: 4 }))));
+      lines = lines.concat(buildRecurringLines(detectRecurring(await financeService.recurringTxns(c.id, { months: 4 }), ymd)));
     } catch (e) { console.error('[checkFinanceProactive] build', c.full_name, e.message); continue; }
     if (!lines.length) continue; // nada relevante hoje → silêncio (sem spam)
     const q = await isQuietNow(c.id, now, 'personal');
