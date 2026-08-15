@@ -147,6 +147,7 @@ async function main() {
   // Rebaixa a palavra, não bloqueia o achado: "foi enviado" é a verdade que ele tinha.
   const { rebaixarClaimDeEntrega } = require('../lib/claim-entrega');
   const { conferirNumerosAfirmados } = require('../lib/confere-numero');
+  const { tirarFalaDeRestart } = require('../lib/restart-so-do-runner');
 
   // CAMADA 2 da trava anti-vacuidade: o número que o relatório AFIRMA, conferido contra a
   // fonte. A camada textual não pega isto — ela depende de o agente declarar que não
@@ -170,7 +171,14 @@ async function main() {
   };
 
   const postar = async (txt) => {
-    const g = rebaixarClaimDeEntrega(txt);
+    // Quem fala de restart é este runner, e só ele. O agente escrevia "*Não reiniciei o TOM*"
+    // (obedecendo a ETAPA 7, que só proibia AFIRMAR) e a linha "♻️ TOM reiniciado" saía logo
+    // atrás: duas falas do mesmo role='tom', lidas pelo dono como contradição — e pelo auditor
+    // como confabulação (c4a74feb). Determinístico aqui porque prosa de LLM não é garantia.
+    // Só derruba 1ª pessoa; a linha impessoal deste runner passa intacta (é a prova de entrega).
+    const rr = tirarFalaDeRestart(txt);
+    if (rr.removeu) console.log(`[GovRunner] fala de restart removida do agente: ${rr.trechos.join(' · ')}`);
+    const g = rebaixarClaimDeEntrega(rr.texto);
     if (g.rebaixou) console.log(`[GovRunner] claim de entrega rebaixado: ${g.termos.join(' · ')}`);
     const c = conferirNumerosAfirmados(g.texto, await fontesDeControle());
     if (c.divergiu) {

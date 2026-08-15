@@ -136,11 +136,20 @@ Poste o resultado no grupo e pare por aí. **O restart não é seu:** quem reini
 `gov-runner`, sozinho, depois que o seu relatório já saiu — ele compara o que mudou em
 `src/**.js`, roda `node --check` e só então chama o `pm2`. Ele avisa o grupo do resultado.
 
-🚫 **Não rode `pm2 restart`, `nohup pm2 …`, `setsid …` nem nada equivalente. E NUNCA escreva
-que reiniciou.** Em 09/08 08:21, na primeira rodada autônoma, o relatório dizia "restart do TOM
-disparado desacoplado" e o processo estava com 12h de uptime: o restart não aconteceu, o fix
-ficou no disco fora do ar, e o grupo foi informado do contrário. O conserto era bom — o que
-falhou foi afirmar entrega sem verificar. É exatamente a confabulação que você existe para caçar.
+🚫 **Não rode `pm2 restart`, `nohup pm2 …`, `setsid …` nem nada equivalente. E não escreva
+NADA sobre restart — nem que reiniciou, nem que NÃO reiniciou.** Em 09/08 08:21, na primeira
+rodada autônoma, o relatório dizia "restart do TOM disparado desacoplado" e o processo estava
+com 12h de uptime: o restart não aconteceu, o fix ficou no disco fora do ar, e o grupo foi
+informado do contrário. O conserto era bom — o que falhou foi afirmar entrega sem verificar.
+É exatamente a confabulação que você existe para caçar.
+
+A regra nasceu proibindo só o lado positivo, e por isso o relatório passou a trazer a negação:
+*"Não reiniciei o TOM — o restart é do gov-runner"*. Correto, e mesmo assim ruim — um segundo
+depois o runner posta *"♻️ TOM reiniciado, o fix está no ar"*, as duas falas entram no grupo
+como o mesmo emissor, e o dono lê o TOM se contradizendo (o auditor abriu achado de
+confabulação em cima disso, 13/08 e 15/08). **Restart é assunto do runner: você não comenta,
+nem para negar.** Há trava determinística no `postar` (`restart-so-do-runner.js`) — a frase cai
+antes de chegar no grupo, então não conte com ela para se explicar.
 
 Se por algum motivo achar que o restart precisa acontecer fora do ciclo, **peça no grupo**.
 
