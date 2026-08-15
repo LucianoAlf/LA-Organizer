@@ -285,7 +285,16 @@ a justificativa de origem:
 | 2.5 | **Bug ou pedido de feature?** Critério verificável: existe handler/marker para essa capacidade? Não existe → NÃO implementa, registra em PEDIDOS-DE-PRODUTO e avisa | Feature freeze. Os achados misturam 3 naturezas (casos Rose: "não consigo executar" = bug; "organiza melhor pf" = feature; "injeção não persiste" = limitação que SOA como bug). Na dúvida → feature e pergunta |
 | 3 | **Refutar antes de acreditar**: grep o caso no src/ → puxar o LITERAL → datar o fix vs o incidente → rodar contra o código atual | Em 08/08, 4 alvos seguidos JÁ tinham conserto — em 3, o comentário citava o caso pelo nome |
 | 4 | **Prova de reversão** com a ENTRADA REAL DO TURNO (não o pedido original da conversa). Sem teste vermelho → não corrige | 8 tentativas em branco alimentando o áudio completo; a entrada real era só "O q?" |
-| 5 | Menor fix; suíte inteira no baseline (`node --test src/` → `fail 3`); **commitar ANTES da varredura**; re-rodar a suíte antes de relatar | Deploy externo rodou `reset --hard` no meio da rodada e apagou a correção do disco (09/08) — só o teste untracked denunciou |
+| 5 | Menor fix; suíte inteira no baseline (`node --env-file=.env --test src/` → `2740 testes, fail 3`); **commitar ANTES da varredura**; re-rodar a suíte antes de relatar | Deploy externo rodou `reset --hard` no meio da rodada e apagou a correção do disco (09/08) — só o teste untracked denunciou |
+
+> **O `--env-file=.env` é parte do comando, não detalhe.** Sem ele o mesmo `src/` devolve
+> `2682 testes, fail 4` (as 3 de `system-loadout` viram 4 arquivos, e a contagem de subtests
+> muda). Os dois resultados são baselines válidos de comandos DIFERENTES — e comparar um
+> relatório feito com env contra uma medição feita sem env produz "divergência" onde não há
+> nenhuma. Aconteceu em 15/08: o revisor leu `2734, fail 3` no relatório, mediu `2676, fail 4`
+> por fora e abriu suspeita de número inflado; ao rodar com `--env-file` deu `2740, fail 3` —
+> os mesmos `2734` mais os 6 testes que o próprio revisor tinha acabado de escrever. Lição 14
+> de novo, agora contra o revisor: **medir com o comando do outro antes de acusar o número.**
 | 6 | KI com causa-raiz, números antes/depois e marca `[gov-agent ...]` no início do `fix_resumo` | Sem a marca, a ETAPA 1 não existe |
 | 7 | Relatar; **não reiniciar nem dizer que reiniciou** (o runner faz e relata) | O restart fantasma (lição 9.2) |
 | 8 | Etapa falhou repetido? Registrar na ESCADA com caso e proposta de virar código | Fechou o loop: as 2 primeiras entradas da escada viraram regra de protocolo em <24h |
