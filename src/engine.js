@@ -77,6 +77,7 @@ const spendingAnomaly = require('./finance/spending-anomaly');
 const proactiveMsg = require('./finance/proactive-messages');
 const { reconcileInstallments } = require('./finance/parse-installments');
 const launchConfirm = require('./finance/launch-confirm');
+const confirmPrecedence = require('./finance/confirm-precedence');
 const invoiceReceipt = require('./finance/invoice-receipt');
 const { resolveFinanceCapability, EDIT_WINDOW_HOURS } = require('./finance/finance-capability');
 const { buildHonestRedirect } = require('./finance/finance-honest-redirect');
@@ -8856,7 +8857,11 @@ async function processMessage(phone, text, raw = {}) {
     if (finOpen) {
       // Camada 2: lançamento aguardando confirmação ("sim" → executa os handlers ATUAIS,
       // determinístico, sem LLM). Dormante até o dispatch abrir intents form:launch_confirm.
-      if (finOpen.payload && finOpen.payload.form === 'launch_confirm') {
+      // Cede a vez quando há um invoice_import MAIS RECENTE esperando confirmação: "lançar"
+      // casa nos dois parsers e este consumidor roda antes (Rose 14/08 10:50). Ver
+      // confirm-precedence.js.
+      if (finOpen.payload && finOpen.payload.form === 'launch_confirm'
+          && !confirmPrecedence.launchConfirmYields(_openIntents, finOpen)) {
         const conf = pendingIntents.detectUserConfirmation(String(text || ''));
         // Confirmação GENEROSA (aceita "confirmado"/"pode lançar" — FIN-CONFIRM-WORD-NARROW, Alf 22/06)
         // MAS trava NEGAÇÃO: "Não lança" casava só o verbo "lança" e lançava contra o "não" (Rose
