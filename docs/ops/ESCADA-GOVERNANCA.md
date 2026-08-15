@@ -161,3 +161,37 @@ família não é fila de bug pontual — é raiz aberta.
 Proposta de virar código (reforça a de 13/08): além do `provar(literal, guard)`, o `gov-runner`
 deveria exigir do agente uma **predição escrita ANTES da execução** ("espero ver X; X prova o
 achado porque Y") e recusar o fechamento quando a saída medida não for a predita.
+
+### ETAPA 3/4 — a reprodução usa a FORMA errada de argumento e o falso resultado vira veredito
+
+**Ocorrências:** 2 (14/08, 15/08). **Nas duas o erro estava na minha reprodução, não no código.**
+
+Em 14/08 (`8efa7be0`) rodei o caso pelo `detectCorrection`/`detectFinanceEditIntent`, deu `null`,
+e por pouco não li isso como "o desvio não passa por aqui" — a reprodução é que estava no lugar
+errado; o `pickSkill` mostrou o bug vivo.
+
+Em 15/08 o mesmo padrão, agora com o sinal INVERTIDO — mais perigoso, porque falha para o lado
+de "ainda quebrado" e nada te avisa. Testando o achado `4ab5a8ad` (Kailane, briefing de domingo)
+chamei `isQuietNow(uuid, new Date('2026-06-21T22:19:55Z'), 'work')` e recebi
+`{quiet:false}` — leitura: guard não pega, achado segue aberto. **Errado.** A assinatura é
+`isQuietNow(collabOrId, now, context)` onde `now` é `{hour, minute, dow}` (documentado em
+`quiet-hours.js:8`), não um `Date`. Com um `Date`, `now.dow` é `undefined` e
+`w.days.includes(undefined)` é sempre `false`: **o silêncio inteiro fica invisível e o guard
+devolve "não é quiet" para qualquer entrada.** Re-rodado com `{hour:19,minute:19,dow:0}`:
+`{quiet:true, reason:"quiet_day_work:0"}`, e o achado fechou com prova.
+
+O que salvou: a predição escrita antes de rodar (regra de 14/08). Eu tinha escrito "espero
+`quiet:true` com razão de quiet_day"; o medido veio `quiet:false` **e sem reason nenhum** — um
+guard que ignora a config não devolve nem o motivo. A discrepância entre o predito e o medido é
+que mandou conferir a assinatura em vez de aceitar o resultado.
+
+Regra que isto sugere: **quando a execução devolve o resultado NEUTRO (`false`/`null`/`{}`),
+confira a assinatura antes de concluir qualquer coisa.** Resultado neutro é o que uma chamada
+malformada devolve — é indistinguível de "o guard não pega", e só a assinatura desempata.
+Resultado positivo é auto-evidente; resultado neutro exige uma chamada de controle que você
+saiba que DEVE disparar (aqui: `dow:0` vs `dow:1` no mesmo colaborador).
+
+Proposta de virar código: o `provar(literal, guard)` do `gov-runner` (proposto em 13/08) deve
+rodar **dois** casos por fechamento — o do incidente e um controle que obrigatoriamente dispara —
+e recusar o fechamento quando os dois derem o mesmo resultado neutro, porque aí o que está
+quebrado é a chamada, não o código sob teste.
