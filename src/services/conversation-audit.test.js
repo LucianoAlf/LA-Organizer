@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   normalizeSummary, signatureFor, parseFindings, rankFindings, upsertFinding, formatGroupTranscript,
+  loadGroupConversation,
 } = require('./conversation-audit');
 
 // Supabase fake p/ upsertFinding: from→select→eq resolve {data}; update/insert registram.
@@ -205,6 +206,52 @@ test('formatGroupTranscript aguenta sender ausente sem perder a linha', () => {
   ]);
   assert.match(t, /pode finalizar/);
   assert.match(t, /alguém do grupo/i);
+});
+
+// AUDIT-GROUP-OUTRO-AGENTE-VIRA-TOM (15/08): no grupo "Financeiro" quem responde a Rose é a
+// MARIA — outro agente, com WhatsApp próprio. Ela entra como role='member' e sender_id=null
+// (não é colaboradora cadastrada), então caía em "alguém do grupo". O auditor recebia
+//   Rose: Destrincha o e-mail 1 pfvr
+//   alguém do grupo: Sobre o e-mail: nada de novo nas caixas até agora hoje
+// e concluiu "o TOM respondeu outra coisa e não destrinchou" — achado f2ed069e, além de uma
+// "contradição" (5e1861e0) montada com duas falas da Maria sobre prints diferentes. O TOM
+// levou a culpa pelo trabalho de outro agente, e o nome estava na tabela o tempo todo:
+// group_chat_messages.wa_sender_name = 'Maria - Financeiro'.
+test('formatGroupTranscript usa wa_sender_name quando quem falou não é colaborador', () => {
+  const t = formatGroupTranscript([
+    { role: 'member', content: 'Destrincha o e-mail 1 pfvr', created_at: '2026-08-14T09:03:00-03:00',
+      sender: { preferred_name: 'Rose', full_name: 'Rose Silva' }, wa_sender_name: null },
+    { role: 'member', content: 'Sobre o e-mail: nada de novo nas caixas até agora hoje',
+      created_at: '2026-08-14T09:06:00-03:00', sender: null, wa_sender_name: 'Maria - Financeiro' },
+  ]);
+  assert.match(t, /Maria - Financeiro: Sobre o e-mail/);
+  assert.doesNotMatch(t, /alguém do grupo/i); // era aqui que a Maria virava "o TOM"
+});
+
+// Colaborador cadastrado é fonte mais forte que o nome que veio do WhatsApp (apelido editável,
+// pode vir vazio ou trocado). wa_sender_name é FALLBACK, não substituto.
+test('formatGroupTranscript prefere o colaborador cadastrado ao wa_sender_name', () => {
+  const t = formatGroupTranscript([
+    { role: 'member', content: 'pode finalizar', created_at: '2026-08-12T19:21:00-03:00',
+      sender: { preferred_name: 'Rose', full_name: 'Rose Silva' }, wa_sender_name: 'Rosinha 📱' },
+  ]);
+  assert.match(t, /Rose: pode finalizar/);
+});
+
+// A OUTRA PORTA: nomear certo no formatter não adianta se a query não trouxer a coluna. O
+// achado de 15/08 nasceu de um SELECT cego — wa_sender_name existia na tabela, preenchida, e
+// loadGroupConversation não pedia. Sem este teste o fix vira NOOP silencioso em produção.
+test('loadGroupConversation pede wa_sender_name no select', async () => {
+  let colunas = '';
+  const sbFake = {
+    from: () => ({
+      select: (cols) => { colunas = cols; return {
+        eq: () => ({ gte: () => ({ order: () => ({ limit: async () => ({ data: [] }) }) }) }),
+      }; },
+    }),
+  };
+  await loadGroupConversation(sbFake, 'grupo-x', 24);
+  assert.match(colunas, /wa_sender_name/);
 });
 
 test('formatGroupTranscript: entrada vazia ou inválida vira string vazia', () => {

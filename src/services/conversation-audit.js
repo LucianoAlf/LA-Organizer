@@ -136,9 +136,16 @@ function formatGroupTranscript(rows) {
   return (Array.isArray(rows) ? rows : [])
     .map((m) => {
       if (!m) return null;
+      // Ordem: TOM → colaborador cadastrado → nome do WhatsApp → anônimo.
+      // wa_sender_name entra ANTES do anônimo porque no grupo "Financeiro" quem responde é a
+      // MARIA (outro agente, WhatsApp próprio, sem cadastro em collaborators). Sem ele ela
+      // virava "alguém do grupo" e o auditor punha a fala dela na conta do TOM — os achados
+      // f2ed069e e 5e1861e0 de 15/08 são isso. Ver AUDIT-GROUP-OUTRO-AGENTE-VIRA-TOM.
       const quem = m.role === 'tom'
         ? 'TOM'
-        : ((m.sender && (m.sender.preferred_name || m.sender.full_name)) || 'alguém do grupo');
+        : ((m.sender && (m.sender.preferred_name || m.sender.full_name))
+          || (m.wa_sender_name && String(m.wa_sender_name).trim())
+          || 'alguém do grupo');
       const txt = String(m.content || m.media_extracted_text || '').slice(0, 1600);
       if (!txt) return null;
       return `[${_stampBrt(m.created_at)}] ${quem}: ${txt}`;
@@ -152,7 +159,7 @@ function formatGroupTranscript(rows) {
 async function loadGroupConversation(sb, groupId, hours = 24) {
   const sinceIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
   const { data } = await sb.from('group_chat_messages')
-    .select('content, media_extracted_text, role, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(preferred_name, full_name)')
+    .select('content, media_extracted_text, role, created_at, wa_sender_name, sender:collaborators!group_chat_messages_sender_id_fkey(preferred_name, full_name)')
     .eq('group_id', groupId)
     .gte('created_at', sinceIso)
     .order('created_at', { ascending: true })
