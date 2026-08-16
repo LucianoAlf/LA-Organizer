@@ -5,7 +5,6 @@
 'use strict';
 const crypto = require('crypto');
 const supabase = require('../src/supabase/client');
-const proactiveLink = require('../src/services/proactive-link');
 
 const PORTA = Number(process.env.PORT_LAB || 3199);
 const SEGREDO = process.env.WEBHOOK_SECRET;
@@ -41,9 +40,17 @@ async function ultimaResposta(cid, desdeIso) {
     assigned_to: cid, created_by: cid, title: 'QA Bombinha do dia', status: 'pending',
     due_date: new Date().toISOString().slice(0, 10),
   }).select('id, title').single();
-  // Lembrete REAL — grava ref_type='task' em conversation_history, igual produção.
-  await proactiveLink.sendAndLink(supabase, { phone: QA_PHONE, content: `⏰ lembrete: *${tk.title}* — tudo certo?`, collaboratorId: cid, refType: 'task', refId: tk.id });
-  await dorme(1500);
+  // Ref do lembrete gravada direto no histórico — MESMA linha que o sendAndLink produz em
+  // produção (ref_type='task', ref_id). Direto porque o telefone QA é fake e o UAZAPI real
+  // devolve 500: o sendAndLink só grava a ref APÓS envio ok, então dependê-lo tornaria o
+  // cenário flaky. A plumbing do sendAndLink já é coberta no teste da Task 2; aqui o alvo é o
+  // interceptor.
+  await supabase.from('conversation_history').insert({
+    collaborator_id: cid, direction: 'outbound', message_type: 'text',
+    content: `⏰ lembrete: *${tk.title}* — tudo certo?`, ref_type: 'task', ref_id: tk.id,
+    created_at: new Date().toISOString(),
+  });
+  await dorme(800);
 
   const t0 = new Date().toISOString();
   await falar(QA_PHONE, 'feito');
