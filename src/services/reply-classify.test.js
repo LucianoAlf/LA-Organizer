@@ -7,7 +7,51 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { hasTrailingQuestion, isInfoGatheringReply } = require('./reply-classify');
+const { hasTrailingQuestion, isInfoGatheringReply, isContentSolicitationReply, isConfirmSeekingReply } = require('./reply-classify');
+
+// ─────────────────────────────────────────────────────────────────
+// FATIA 2 (falso-fire composição, 16/08) — isInfoGatheringReply é a UNIÃO de duas metades
+// semânticas. A camada FORTE do chokepoint só pode ser vetada pela metade CONTENT-SOLICITATION
+// ("me manda / pode mandar / vai listando" = TOM pede insumo = composição), NUNCA pela
+// CONFIRM-SEEKING ("certo? / responde sim-não" = confirma ação pendente = pode ser confab real).
+// Estes testes travam a separação: o que casa uma metade NÃO pode casar a outra por engano.
+// ─────────────────────────────────────────────────────────────────
+test('isContentSolicitationReply: ADM "Anotado! Pode mandar o próximo!" → true (pede conteúdo)', () => {
+  assert.strictEqual(isContentSolicitationReply('Anotado! Pode mandar o próximo!'), true);
+});
+test('isContentSolicitationReply: "Me manda ela de novo que eu insiro" → true', () => {
+  assert.strictEqual(isContentSolicitationReply('Me manda ela de novo que eu insiro os professores.'), true);
+});
+test('isContentSolicitationReply: "Vai listando que eu registro" → true', () => {
+  assert.strictEqual(isContentSolicitationReply('Pode mandar! Vai listando os gastos que eu registro.'), true);
+});
+// SEPARAÇÃO-CHAVE (Bianca): confirm-seeking NÃO é content-solicitation — senão o veto da camada
+// forte engoliria o confab real que a remoção de 09/08 justamente reabriu se não separasse.
+test('isContentSolicitationReply: Bianca "quer tirar o lembrete, certo?" → false (confirm-seeking)', () => {
+  assert.strictEqual(isContentSolicitationReply('Entendi: quer tirar o lembrete, certo?'), false);
+});
+test('isContentSolicitationReply: "Responde *sim* ou *não*." → false (confirm-seeking)', () => {
+  assert.strictEqual(isContentSolicitationReply('Adicionar Matheus e enviar o convite? Responde *sim* ou *não*.'), false);
+});
+test('isContentSolicitationReply: confab puro "✅ Criada, Ana!" → false', () => {
+  assert.strictEqual(isContentSolicitationReply('✅ Criada, Ana!\n• 16h — cobrança'), false);
+});
+test('isConfirmSeekingReply: Bianca "quer tirar o lembrete, certo?" → true', () => {
+  assert.strictEqual(isConfirmSeekingReply('Entendi: quer tirar o lembrete, certo?'), true);
+});
+test('isConfirmSeekingReply: content-solicitation pura "Pode mandar o próximo!" → false', () => {
+  assert.strictEqual(isConfirmSeekingReply('Pode mandar o próximo!'), false);
+});
+test('isInfoGatheringReply permanece a UNIÃO (retrocompat): ambas as metades → true', () => {
+  assert.strictEqual(isInfoGatheringReply('Pode mandar o próximo!'), true);
+  assert.strictEqual(isInfoGatheringReply('Entendi: quer tirar o lembrete, certo?'), true);
+});
+test('isContentSolicitationReply/isConfirmSeekingReply: vazio/nulo → false sem lançar', () => {
+  for (const v of [null, undefined, '', '   ']) {
+    assert.strictEqual(isContentSolicitationReply(v), false);
+    assert.strictEqual(isConfirmSeekingReply(v), false);
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────
 // Sprint 31.19 — pedido de CONFIRMAÇÃO no meio da msg não é promessa quebrada (caso Dai 05/06)

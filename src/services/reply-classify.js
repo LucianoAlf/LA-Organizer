@@ -59,15 +59,35 @@ const _INFO_GATHERING_RE = /\b(?:me\s+(?:manda|mande|envia|envie|diz|diga|passa|
 // sim/não" como confirm-seeking. (\brespond[ae]\b não casa "respondendo" — o \b barra.)
 const _CONFIRM_SEEKING_RE = /\bse\s+(?:voc[êe]\s+)?(?:confirmar|confirma|ok|aprovar|topar|fechar)\b|\b(?:certo|confirma|confirmo|confirmar)\b[^?\n]{0,15}\?|\brespond[ae]\b[^?\n]{0,30}\b(?:sim|n[ãa]o)\b/i;
 
+// FATIA 2 (16/08) — as duas metades semânticas de info-gathering, separadas. O chokepoint de
+// honestidade (enforceNoMarkerHonesty) só pode vetar a camada FORTE pela metade CONTENT-
+// SOLICITATION: "TOM pede insumo" ⇒ ele NÃO afirmou ação feita ⇒ turno de composição, o rodapé
+// de erro é falso-fire. A metade CONFIRM-SEEKING ("certo? / responde sim-não") acompanha AÇÃO
+// pendente e pode vir com claim de confab real — vetá-la reabriria a Bianca (09/08). Por isso
+// a remoção de 09/08 tirou o veto INTEIRO; aqui devolvemos só a metade segura.
+
+/** TOM pede que o user mande/liste conteúdo pra ele agir depois — composição, não ação feita. */
+function isContentSolicitationReply(reply) {
+  const s = String(reply == null ? '' : reply);
+  if (!s.trim()) return false;
+  return _INFO_GATHERING_RE.test(s);
+}
+
+/** TOM pede CONFIRMAÇÃO de uma ação pendente ("certo?", "responde sim/não") antes de agir. */
+function isConfirmSeekingReply(reply) {
+  const s = String(reply == null ? '' : reply);
+  if (!s.trim()) return false;
+  return _CONFIRM_SEEKING_RE.test(s);
+}
+
 /**
  * A reply pede um insumo ao user pra prosseguir (convite/futuro) OU pede confirmação
  * antes de agir — logo não é ação concluída. Ex.: "Vai listando que eu registro",
  * "Me manda de novo", "Certo? Se confirmar, fecho a tarefa antiga".
+ * União das duas metades — comportamento preservado para os consumidores existentes.
  */
 function isInfoGatheringReply(reply) {
-  const s = String(reply == null ? '' : reply);
-  if (!s.trim()) return false;
-  return _INFO_GATHERING_RE.test(s) || _CONFIRM_SEEKING_RE.test(s);
+  return isContentSolicitationReply(reply) || isConfirmSeekingReply(reply);
 }
 
-module.exports = { hasTrailingQuestion, isInfoGatheringReply };
+module.exports = { hasTrailingQuestion, isInfoGatheringReply, isContentSolicitationReply, isConfirmSeekingReply };

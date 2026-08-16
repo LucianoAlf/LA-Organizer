@@ -301,7 +301,15 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   // caminho mais comum. Uma pergunta ao lado não torna a afirmação verdadeira, e `nothingPersisted`
   // já é o gate duro. O veto continua valendo para a camada FRACA, que é onde mora o falso-fire
   // de banter ("Beleza! Quer que eu veja mais alguma coisa?") — ali a pergunta É o sinal.
-  const strong = hasCompletionClaim(reply);
+  let strong = hasCompletionClaim(reply);
+  // FALSEFIRE-COMPOSICAO (Rose ADM 14/08): quando o TOM PEDE conteúdo/insumo (content-solicitation:
+  // "Anotado! Pode mandar o próximo") e NENHUM marker foi tentado no turno, ele não afirmou ação de
+  // domínio — é rascunho de mensagem, e `nothingPersisted` é o estado CORRETO, não sintoma. Veta só
+  // a camada FORTE. O que NÃO desarma: confirm-seeking (Bianca 09/08 "quer tirar o lembrete, certo?"
+  // ✅ removido → contentSolicitation=false) e marker tentado-e-rejeitado (markerAttempted=true).
+  // Opt ausente ⇒ veto inerte ⇒ zero-regressão para chamadores antigos. Ver reply-classify.js
+  // (isContentSolicitationReply) e project_naoregistrei_balde_sintoma_fatias (Fatia 2).
+  if (strong && o.contentSolicitation && !o.markerAttempted) strong = false;
   const weak = !strong && !o.infoGathering && !!o.pendingActionRecent
     && !o.userProgressStatus && hasWeakCompletionClaim(reply);
   if (!strong && !weak) return wrap(reply, false);

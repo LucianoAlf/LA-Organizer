@@ -413,3 +413,59 @@ test('SILENT-LIE anti-FP: claim FRACA + pergunta continua vetada pelo info-gathe
     { nothingPersisted: true, infoGathering: true, awaitingConfirm: false, pendingActionRecent: true }, { meta: true });
   assert.strictEqual(out.fired, false, 'a camada fraca não pode disparar em pergunta — é banter');
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// FATIA 2 (falso-fire composição, 16/08) — o guard colava o rodapé de erro em turno de
+// COMPOSIÇÃO (caso Rose ADM 14/08: "me ajuda a montar a mensagem, vou te mandando"). Quando o
+// TOM pede conteúdo (content-solicitation) e nenhum marker foi tentado, ele não afirmou ação
+// feita — é rascunho. Veto só na camada FORTE; confirm-seeking e marker-rejeitado seguem pegos.
+// ─────────────────────────────────────────────────────────────────────────
+test('FALSEFIRE-COMPOSICAO: "Anotado! Pode mandar o próximo." + contentSolicitation → NÃO dispara', () => {
+  const real = 'Anotado! Pode mandar o próximo.';
+  const out = enforceNoMarkerHonesty(real, {
+    nothingPersisted: true, infoGathering: true, contentSolicitation: true, markerAttempted: false,
+  }, { meta: true });
+  assert.strictEqual(out.fired, false, 'composição não pode levar rodapé de erro');
+  assert.strictEqual(out.reply, real, 'a resposta de composição tem que sobreviver intacta');
+});
+
+test('FALSEFIRE-COMPOSICAO: reply comida — só sobra o rodapé — não acontece mais', () => {
+  // Antes: "Adicionado à lista: item X" era strippado e virava SÓ o rodapé.
+  const real = 'Adicionado à lista:\n1. Ter atenção nos valores\n\nPode mandar o próximo!';
+  const out = enforceNoMarkerHonesty(real, {
+    nothingPersisted: true, infoGathering: true, contentSolicitation: true, markerAttempted: false,
+  }, { meta: true });
+  assert.strictEqual(out.fired, false);
+  assert.strictEqual(out.reply, real);
+});
+
+test('FREIO Bianca: confirm-seeking + claim (contentSolicitation=false) SEGUE disparando', () => {
+  const out = enforceNoMarkerHonesty(REAL_BIANCA, {
+    nothingPersisted: true, infoGathering: true, contentSolicitation: false, markerAttempted: false,
+  }, { meta: true });
+  assert.strictEqual(out.fired, true, 'confab real (removido sem persistir) tem que disparar');
+  assert.ok(/n[ãa]o consegui registrar/i.test(out.reply));
+});
+
+test('FREIO confab clássico: "✅ Criada, Ana!" sem content-solicitation dispara', () => {
+  const out = enforceNoMarkerHonesty('✅ Criada, Ana!\n• 16h — cobrança inadimplentes', {
+    nothingPersisted: true, contentSolicitation: false, markerAttempted: false,
+  }, { meta: true });
+  assert.strictEqual(out.fired, true);
+});
+
+test('FREIO marker rejeitado: "✅ Criei. Me manda a próxima." + markerAttempted=true dispara', () => {
+  // Houve ação na mesa (marker tentado e rejeitado) → não é composição → rodapé vale.
+  const out = enforceNoMarkerHonesty('✅ Criei. Me manda a próxima.', {
+    nothingPersisted: true, contentSolicitation: true, markerAttempted: true,
+  }, { meta: true });
+  assert.strictEqual(out.fired, true, 'marker tentado e falho não pode ser tratado como rascunho');
+});
+
+test('ZERO-REGRESSAO: opt contentSolicitation AUSENTE → comportamento idêntico (dispara)', () => {
+  // Chamador antigo / sem a opt: o veto não pode ativar sozinho.
+  const out = enforceNoMarkerHonesty('Anotado! Pode mandar o próximo.', {
+    nothingPersisted: true,
+  }, { meta: true });
+  assert.strictEqual(out.fired, true, 'sem a opt explícita, a camada forte segue como antes');
+});

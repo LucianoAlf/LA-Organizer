@@ -21,7 +21,7 @@ const supabase = require('./supabase/client');
 const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
-const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
+const { hasTrailingQuestion, isInfoGatheringReply, isContentSolicitationReply } = require('./services/reply-classify');
 const { shiftRemindersByReschedule, shiftTaskRemindAt, planReminderFloor, planRescheduleReminders } = require('./services/reschedule-reminders');
 const { buildEventReminderRows } = require('./services/event-reminders');
 const { matchRowsByShortId } = require('./services/short-id-match');
@@ -13223,12 +13223,20 @@ async function processMessage(phone, text, raw = {}) {
     const sinceIso = new Date(_t0 - 1000).toISOString();
     const { data: recentMarkers } = await supabase
       .from('marker_logs')
-      .select('marker_type')
+      .select('marker_type, result')
       .eq('collaborator_id', collab.id)
-      .eq('result', 'executed')
+      .in('result', ['executed', 'rejected'])
       .gte('created_at', sinceIso);
-    const fired = (recentMarkers || []).map(r => r.marker_type).filter(t =>
-      t && !['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER'].includes(t));
+    // Tipos META (não são ação de domínio): fora da conta de "marker tentado".
+    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT'];
+    const _isDomainMarker = (t) => t && !_NON_DOMAIN_MARKERS.includes(t);
+    const fired = (recentMarkers || []).filter(r => r.result === 'executed' && _isDomainMarker(r.marker_type)).map(r => r.marker_type);
+    // FATIA 2 (falso-fire composição): houve marker de DOMÍNIO tentado — executado OU rejeitado —
+    // neste turno? Se sim, o turno carrega AÇÃO NA MESA e o veto de composição do chokepoint NÃO
+    // pode desarmar (marker rejeitado = tentou e falhou = o rodapé honesto vale). É eixo SEPARADO
+    // do nothingPersisted (que só olha executed): rejeitado deixa nothingPersisted=true mas
+    // markerAttempted=true → guard dispara. Ver optimistic-confirm.js (enforceNoMarkerHonesty).
+    _metrics.marker_attempted = (recentMarkers || []).some(r => _isDomainMarker(r.marker_type));
     if (fired.length > 0) {
       _metrics.marker_emitted = fired.join(',').slice(0, 100);
       _metrics.marker_result = 'executed';
@@ -13488,6 +13496,11 @@ Output AGORA, apenas o marker:`;
       // CONFAB-CHOKEPOINT-SCOPE (24/06): recomputa local (não ler _replyIsInfoGathering — `const`
       // de outro try, fora de escopo → ReferenceError). Mesmas funções de módulo (reply-classify).
       infoGathering: hasTrailingQuestion(reply) || isInfoGatheringReply(reply),
+      // FATIA 2 (falso-fire composição, Rose ADM 14/08): content-solicitation ("Pode mandar o
+      // próximo") + nenhum marker de domínio tentado ⇒ TOM está compondo/coletando, não afirmando
+      // ação feita → veta SÓ a camada forte. Confirm-seeking (Bianca) não casa contentSolicitation.
+      contentSolicitation: isContentSolicitationReply(reply),
+      markerAttempted: !!_metrics.marker_attempted,
       awaitingConfirm: !!_metrics.awaiting_user_confirm,
       // CHOKEPOINT-PROGRESS-FALSEFIRE (01/08, caso Alf): "To fazendo, Tom" respondendo à
       // cobrança é STATUS, não confirmação de ação — não há o que persistir, então a camada
