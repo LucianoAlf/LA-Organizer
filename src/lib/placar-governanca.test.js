@@ -41,6 +41,34 @@ test('reincidência só conta incidente DEPOIS do fix', () => {
   assert.strictEqual(depois.reincidentes[0].vezes, 1);
 });
 
+// FANTASMA REAL (TASK-COMPLETE-ALVO-NAO-ACHADO, 16/08): a triagem casou o incidente a OUTRO
+// KI por sintoma (matched=TASK-CONFIRM-DONE-NOOP) e o agente promoveu pra TASK-COMPLETE. O
+// veredito de "regressão" foi calculado contra o corrigido_em do matched, não do promoted —
+// quando são diferentes, a comparação de datas não vale, e a família entrava em PARADA à toa.
+// Mesma raiz do banner "REGRESSÃO [X]": promovido a código diferente = raiz nova, não
+// recorrência. (regressao-reconcilia.ehRegressaoConfirmada)
+test('promovido a código DIFERENTE do casado NÃO conta como reincidência', () => {
+  const kis = [ki('TASK-COMPLETE', { corrigido_em: '2026-08-13T11:20:00Z' })];
+  const fantasma = {
+    promoted_code: 'TASK-COMPLETE',
+    incident_at: '2026-08-11T16:48:00Z',  // ANTES do fix
+    auto_triage: { decision: 'regression', matched_code: 'TASK-CONFIRM-DONE-NOOP', decided_at: '2026-08-13T08:00:00Z' },
+  };
+  const r = calcularPlacar(kis, [fantasma]);
+  assert.strictEqual(r.reincidentes.length, 0, 'verdito de regressão era de outro KI — não transfere');
+  assert.strictEqual(r.emParada.length, 0);
+});
+
+test('promovido ao MESMO código do casado segue contando (recorrência real)', () => {
+  const kis = [ki('A', { corrigido_em: '2026-08-01T12:00:00Z' })];
+  const real = {
+    promoted_code: 'A',
+    incident_at: '2026-08-06T10:00:00Z',  // depois do fix
+    auto_triage: { decision: 'regression', matched_code: 'A', decided_at: '2026-08-06T10:00:00Z' },
+  };
+  assert.strictEqual(calcularPlacar(kis, [real]).reincidentes.length, 1);
+});
+
 test('só conta finding triado como regressão', () => {
   const kis = [ki('A')];
   const r = calcularPlacar(kis, [finding('A', '2026-08-06T10:00:00Z', 'keep')]);

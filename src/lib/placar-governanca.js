@@ -10,6 +10,8 @@
 // ele é livre, então zero migration. Sem a marca o agente mediria os fixes do Catraca e do
 // Hugo como se fossem dele.
 
+const { ehRegressaoConfirmada } = require('./regressao-reconcilia');
+
 const MARCA_AGENTE = '[gov-agent]';
 const LIMITE_PARADA = 2;   // mesmo KI voltando 2x = fix pontual não resolve; escala
 
@@ -63,7 +65,11 @@ function calcularPlacar(kis, findings) {
     const codigo = String(f.promoted_code);
     if (!porCodigo.has(codigo)) continue;                       // não é KI meu
     const triagem = f.auto_triage || {};
-    if (triagem.decision !== 'regression') continue;
+    // Fonte única (regressao-reconcilia): promovido a um código DIFERENTE do casado = raiz
+    // nova, não recorrência do promoted_code — o veredito de "regressão" foi calculado contra
+    // o corrigido_em do matched, e comparar datas de outro KI não vale (fantasma
+    // TASK-COMPLETE-ALVO-NAO-ACHADO 16/08, mesma raiz do banner "REGRESSÃO [X]").
+    if (!ehRegressaoConfirmada(f)) continue;
     const tFix = porCodigo.get(codigo);
     const tInc = Date.parse(f.incident_at || '');
     if (!Number.isFinite(tFix) || !Number.isFinite(tInc)) continue;
