@@ -76,7 +76,7 @@ resolverConclusaoDeLembrete({ reply, refsRecentes, agoraMs }) →
 
 - `refsRecentes`: `[{ task_id, title, reminded_at }]` — o engine passa as linhas de `conversation_history` outbound com `ref_type='task'` dos últimos 24h. Dedup por `task_id` (a mais recente do MESMO id vence — colapsa lembrete repetido da mesma tarefa). **"A mais recente vence" NUNCA se aplica entre tarefas DISTINTAS** (freio do Alf): duas tarefas diferentes lembradas em 24h = ambiguidade real, sempre pergunta.
 - **Detecção de conclusão:** reutiliza o detector de confirmação existente onde possível (`pending-intents.detectUserConfirmation` / `WEAK_COMPLETION_RE` de `optimistic-confirm.js`), com **veto de negação** ("não fiz", "ainda não") e **veto de pergunta** (termina em "?"). Whitelist conservadora: "feito", "pronto", "concluí", "ok"/"okay", "isso", "pode marcar/fechar", "<coisa> ok". Na dúvida → `nenhum` (deixa o fluxo atual seguir; não inventa conclusão).
-- **Ambiguidade real:** se as refs recentes são de tarefas distintas → `ambiguo` (pergunta). Se são a mesma série (via `serieDe` de `task-target.js`) → resolve a ocorrência corrente com `resolveTaskTarget` e vira `exato`.
+- **Ambiguidade real:** qualquer >1 `task_id` DISTINTO lembrado na janela → `ambiguo` (pergunta). **Colapso de série ADIADO** (freio #2, conservador): 2 instâncias da mesma série lembradas em 24h também caem em `ambiguo` nesta fatia — perguntar é seguro, e o caso (2 instâncias da mesma série lembradas no mesmo dia) é raro. Resolver série vira refinamento de fatia futura, se a medição pedir.
 - Puro: sem banco, sem LLM, sem relógio interno (`agoraMs` injetado). Prova por mutação.
 
 **2. Engine — interceptor pré-LLM (`src/engine.js`, família das pending-intents)**
