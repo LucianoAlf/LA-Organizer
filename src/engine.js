@@ -13459,6 +13459,38 @@ Output AGORA, apenas o marker:`;
               _metrics.confirm_parse_coord = 1;
             }
           } catch (e) { console.warn('[PendingIntents] coord parse-on-open err (non-fatal):', e.message); }
+          // FATIA 4 (confirmação parse-on-open, complete/fechamento): se a pergunta é um fechamento
+          // ("Confirma o fechamento destas 2 tarefas: *X*, *Y*?"), resolve título→short-id
+          // (fail-closed via resolveTaskTarget) e estagia batch_complete — o "sim" fecha
+          // determinístico (executor @10199, executeBatchComplete re-checa o dono). FAIL-CLOSED:
+          // só estagia se TODOS os títulos resolverem 'exato'; qualquer ambíguo/não-achado → payload
+          // segue só-texto. Fechar a tarefa errada é o risco (dor #1 TASK_UPDATE). Skip se a
+          // coordenação já estagiou (uma pergunta não é as duas coisas).
+          if (!payload.coordination) {
+            try {
+              const { parseCompleteConfirmQuestion } = require('./utils/complete-question-parse');
+              const _comp = parseCompleteConfirmQuestion(reply);
+              if (_comp) {
+                const { resolveTitlesToBatchComplete } = require('./utils/complete-titles-resolve');
+                const { resolveTaskTarget } = require('./lib/task-target');
+                const _qCand = async (title) => {
+                  const { data } = await supabase.from('tasks')
+                    .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at')
+                    .eq('assigned_to', collab.id)
+                    .ilike('title', `%${String(title).slice(0, 60)}%`)
+                    .not('status', 'in', '("done","cancelled")')
+                    .order('due_date', { ascending: true, nullsFirst: false })
+                    .limit(100);
+                  return data || [];
+                };
+                const _res = await resolveTitlesToBatchComplete({ queryCandidatos: _qCand, resolveTaskTarget, titles: _comp.titles });
+                if (_res && _res.ids.length) {
+                  payload.batch_complete = _res.ids;
+                  _metrics.confirm_parse_complete = _res.ids.length;
+                }
+              }
+            } catch (e) { console.warn('[PendingIntents] complete parse-on-open err (non-fatal):', e.message); }
+          }
           await pendingIntents.openIntent(collab.id, detected.kind, payload, reply.slice(0, 500));
           _metrics.pending_intent_opened = detected.kind;
         }
