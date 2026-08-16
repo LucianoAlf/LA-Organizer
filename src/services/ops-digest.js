@@ -15,6 +15,7 @@
 // de um fix (vai pro topo, é o que mais dói).
 
 const { entregar } = require('../lib/entrega');
+const { ehRegressaoConfirmada } = require('../lib/regressao-reconcilia');
 
 const TETO_PADRAO = 5;        // itens listados; acima disso o digest diz quantos ficaram
 const MAX_LITERAL = 120;      // a fala real, cortada pra caber numa linha de celular
@@ -164,7 +165,9 @@ async function carregarDigest(sb, { horas = JANELA_HORAS } = {}) {
       quando: horaBrt(f.incident_at || f.last_seen),
       literal: fala.texto,
       falaDe: fala.quem,
-      regressao: (f.auto_triage || {}).decision === 'regression',
+      // fonte única (regressao-reconcilia): promovido a código diferente = raiz nova, não
+      // regressão do matched_code — mesma regra que a DM das 07h (16/08).
+      regressao: ehRegressaoConfirmada(f),
       codigo: f.promoted_code || null,
       };
     });

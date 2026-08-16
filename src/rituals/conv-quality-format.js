@@ -21,9 +21,15 @@ function formatConvQuality(findings, opts = {}) {
   const SEV_EMOJI = { alto: '🔴', medio: '🟠', baixo: '🟡' };
   const SEV_RANK = { alto: 0, medio: 1, baixo: 2 };
   const dec = f => (f.auto_triage && f.auto_triage.decision) || 'keep';
+  // "É mesmo regressão?" mora em regressao-reconcilia.js — fonte ÚNICA compartilhada com o
+  // digest do grupo (ops-digest), pros dois relatórios nunca divergirem na frente do dono.
+  // Promovido a um código DIFERENTE = raiz nova, não recorrência do matched_code (16/08).
+  const { ehRegressaoConfirmada } = require('../lib/regressao-reconcilia');
   const suppressed = findings.filter(f => dec(f) === 'suppress');
-  const regressions = findings.filter(f => dec(f) === 'regression');
-  const body = findings.filter(f => dec(f) === 'keep');
+  const regressions = findings.filter(ehRegressaoConfirmada);
+  // corpo = tudo que não foi suprimido nem ficou como regressão (inclui o finding promovido a
+  // raiz nova, que volta a ser uma falha normal pra revisar, sem o rótulo errado).
+  const body = findings.filter(f => dec(f) !== 'suppress' && !ehRegressaoConfirmada(f));
 
   const counts = [];
   if (inactiveCount) counts.push(`🗃️ ${inactiveCount} abertos de dias anteriores (painel)`);

@@ -563,7 +563,7 @@ async function checkConversationQuality() {
   // findings abertos da JANELA (atividade recente) + veredito de auto-triagem
   const { data, error } = await supabase
     .from('tom_audit_findings')
-    .select('id, category, severity, summary, occurrences, collaborator_id, auto_triage, collaborators:collaborator_id(full_name)')
+    .select('id, category, severity, summary, occurrences, collaborator_id, auto_triage, promoted_code, collaborators:collaborator_id(full_name)')
     .in('status', ['novo', 'confirmado'])
     .gte('last_seen', windowIso)
     .order('occurrences', { ascending: false })
