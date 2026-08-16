@@ -38,3 +38,30 @@ test('candidato sem descrição não quebra (description null)', () => {
   // "essa" → recente; não estoura no byName apesar de description null
   assert.deepStrictEqual(resolveTxnTarget('essa', c2), { kind: 'one', txn: c2[0] });
 });
+
+// ── FATIA #2 (16/08): fail-closed no alvo errado destrutivo (caso Rose "apaga fatura Itaú
+// de R$950,21" → apagou Canva). Especificidade que não bate NÃO pode chutar o mais recente. ──
+test('VALOR especificado sem match → none (não chuta o recente)', () => {
+  assert.deepStrictEqual(resolveTxnTarget('era 999', cands), { kind: 'none' });
+});
+test('caso Rose: "apaga a fatura Itaú de R$950,21" (valor 950 não casa) → none', () => {
+  assert.deepStrictEqual(resolveTxnTarget('apaga a fatura Itaú de R$950,21', cands), { kind: 'none' });
+});
+test('valor não casa MAS nome casa → usa o nome (não fail-closa cedo demais)', () => {
+  // "a do mercado de 999": 999 não casa, mas "mercado" casa → Mercado.
+  assert.deepStrictEqual(resolveTxnTarget('apaga a do mercado de 999', cands), { kind: 'one', txn: cands[1] });
+});
+test('NOME-ref inexistente (sem valor): "apaga a fatura do Itaú" → none', () => {
+  assert.deepStrictEqual(resolveTxnTarget('apaga a fatura do Itaú', cands), { kind: 'none' });
+});
+test('NOME-ref inexistente: "apaga a farmácia" → none', () => {
+  assert.deepStrictEqual(resolveTxnTarget('apaga a farmácia', cands), { kind: 'none' });
+});
+// NÃO-REGRESSÃO explícita dos caminhos legítimos (o mais delicado é o edit "pra lazer"):
+test('NÃO-REGRESSÃO: "muda a categoria pra lazer" segue no mais recente', () => {
+  assert.deepStrictEqual(resolveTxnTarget('muda a categoria pra lazer', cands), { kind: 'one', txn: cands[0] });
+});
+test('NÃO-REGRESSÃO: "apaga a última" e "exclui essa" seguem no mais recente', () => {
+  assert.deepStrictEqual(resolveTxnTarget('apaga a última', cands), { kind: 'one', txn: cands[0] });
+  assert.deepStrictEqual(resolveTxnTarget('exclui essa', cands), { kind: 'one', txn: cands[0] });
+});
