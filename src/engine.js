@@ -48,6 +48,8 @@ const projectStatusLib = require('./lib/project-status');
 const { applyProjectStatusChange } = require('./services/project-status-exec');
 const { detectExplicitDayIntent, resolveExplicitWeekdayDate } = require('./utils/temporal-intent');
 const { resolveTaskTarget, serieDe } = require('./lib/task-target');
+const { resolverConclusaoDeLembrete } = require('./lib/completion-from-reminder');
+const { buildReminderRefsQuery, mapRefRows } = require('./lib/reminder-refs-query');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply } = require('./lib/optimistic-confirm');
 const { isActionConfirmQuestion } = require('./lib/confirm-question');
@@ -8706,6 +8708,10 @@ async function processMessage(phone, text, raw = {}) {
   // em tom_metrics no fim. Falha silenciosa via metricsService.
   const _metrics = {
     message_kind: /^\[áudio transcrito\]/i.test(String(text || '')) ? 'audio' : 'text',
+    // Fatia 1 (confirmação seca → tarefa recém-lembrada): setado SÓ no sucesso/idempotência
+    // real da conclusão determinística. Dobra no `nothingPersisted` do enforceNoMarkerHonesty
+    // pra o guard não desmentir uma ação que FOI executada (freio #4).
+    deterministic_complete_ok: false,
   };
 
   // Sprint 32 — Decompositor de áudio longo. Quando o transcript é grande e tem
@@ -10767,6 +10773,47 @@ async function processMessage(phone, text, raw = {}) {
   // grava opts.activeSkill como out-param, lido em :9641 — cópia perderia a telemetria da skill).
   // null (flag off/operational) → buildSystemPrompt ignora e faz o de hoje byte a byte.
   _promptOpts.loadout = _mapa.loadout;
+  // FATIA 1 (não-consegui-registrar 1a): confirmação seca amarra na tarefa que o TOM lembrou
+  // nas últimas 24h (sendAndLink gravou ref_type='task' em conversation_history). Resolve/executa
+  // DETERMINÍSTICO por id exato ANTES do LLM; o LLM só escreve a confirmação na voz (voz sagrada).
+  // NÃO dá return — segue pro LLM. Roda antes do buildSystemPrompt de propósito: a tarefa concluída
+  // já sai da lista de pendentes que o prompt injeta, reduzindo o risco de o LLM re-emitir marker.
+  let _remCompleteHint = null;
+  try {
+    const _agoraCfr = Date.now();
+    const _desdeCfr = new Date(_agoraCfr - 24 * 3600 * 1000).toISOString();
+    const { data: _remRows } = await buildReminderRefsQuery(supabase, collab.id, _desdeCfr);
+    const _cfr = resolverConclusaoDeLembrete({ reply: text, refsRecentes: mapRefRows(_remRows), agoraMs: _agoraCfr });
+
+    if (_cfr.modo === 'exato') {
+      const { data: _tkCfr } = await supabase.from('tasks')
+        .select('id, title, status').eq('id', _cfr.taskId).maybeSingle();
+      if (_tkCfr && _tkCfr.status === 'done') {
+        // Idempotência real: já estava concluída → sucesso (freio #4 permite suprimir o guard).
+        _metrics.deterministic_complete_ok = true;
+        _remCompleteHint = `### ✅ AÇÃO JÁ REGISTRADA\nA tarefa *${_tkCfr.title}* JÁ estava concluída. O usuário confirmou de novo — responda breve e leve, na sua voz. NÃO emita marker de conclusão pra ela (já está feita), NÃO diga que não conseguiu, NÃO peça pra mandar de novo.`;
+      } else if (_tkCfr) {
+        const _idCurto = String(_tkCfr.id).replace(/-/g, '').slice(0, 8);
+        const _rCfr = await applyTaskActions(collab, [{ action: 'complete', id: _idCurto }], { inboundText: text });
+        if (_rCfr && _rCfr.okCount >= 1) {
+          // Sucesso REAL → pode suprimir o guard (freio #4).
+          _metrics.deterministic_complete_ok = true;
+          _remCompleteHint = `### ✅ AÇÃO JÁ REGISTRADA\nVocê acabou de concluir *${_tkCfr.title}* (o usuário confirmou o lembrete). JÁ está registrada no sistema. Confirme calorosamente na sua voz. NÃO emita marker de conclusão pra essa tarefa (já está feita), NÃO diga que não conseguiu, NÃO peça pra mandar de novo.`;
+        }
+        // Falhou (okCount 0) → NÃO seta flag, NÃO injeta hint: o fluxo honesto atual vale (freio #4).
+      }
+    } else if (_cfr.modo === 'ambiguo') {
+      const _idsCfr = _cfr.candidatos.map((c) => c.taskId);
+      const { data: _tksCfr } = await supabase.from('tasks').select('id, title').in('id', _idsCfr);
+      const _listaCfr = (_tksCfr || []).map((t) => `- *${t.title}*`).join('\n');
+      // NÃO completa nada (freio #2). Pede desambiguação; a pergunta sai na voz do LLM.
+      _remCompleteHint = `### ❓ QUAL TAREFA?\nO usuário confirmou uma conclusão, mas ele foi lembrado de MAIS DE UMA tarefa nas últimas horas:\n${_listaCfr}\nPergunte QUAL delas ele concluiu. NÃO conclua nenhuma até ele dizer.`;
+    }
+  } catch (e) {
+    // Freio #5: qualquer erro aqui degrada pro fluxo atual, nunca quebra o turno.
+    console.warn('[CompletionFromReminder] non-fatal:', e.message);
+  }
+
   let { systemPrompt, ctx } = await buildSystemPrompt(collab, _promptOpts);
   _metrics.skill_active = _promptOpts.activeSkill || 'none'; // Fatia J: telemetria da skill ativa (era coluna morta)
   const _tt = ctx.todayTasks || {};
@@ -10789,6 +10836,9 @@ async function processMessage(phone, text, raw = {}) {
     const credBlock = await require('./services/notes').credentialLookupContext({ supabase, collaboratorId: collab.id, text });
     if (credBlock) systemPrompt += '\n\n' + credBlock;
   } catch (err) { console.warn('[NOTE_CRED_LOOKUP] failed:', err.message); }
+
+  // Fatia 1: dica de voz da conclusão/desambiguação resolvida acima (mesmo padrão do relayHint).
+  if (_remCompleteHint) systemPrompt += '\n\n' + _remCompleteHint;
 
   if (_decompose.decomposed) {
     systemPrompt +=
@@ -13431,7 +13481,9 @@ Output AGORA, apenas o marker:`;
   } catch (_) {}
   try {
     const _hon = enforceNoMarkerHonesty(reply, {
-      nothingPersisted: !_metrics.marker_emitted && !_metrics.auto_retry_succeeded,
+      // deterministic_complete_ok: a Fatia 1 concluiu por id exato ANTES do LLM (ou idempotência
+      // real). Só é setado no SUCESSO — falha não seta, e aí o caminho honesto continua valendo (freio #4).
+      nothingPersisted: !_metrics.marker_emitted && !_metrics.auto_retry_succeeded && !_metrics.deterministic_complete_ok,
       pendingActionRecent: _pendingActionRecent,
       // CONFAB-CHOKEPOINT-SCOPE (24/06): recomputa local (não ler _replyIsInfoGathering — `const`
       // de outro try, fora de escopo → ReferenceError). Mesmas funções de módulo (reply-classify).
