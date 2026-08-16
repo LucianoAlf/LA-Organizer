@@ -10302,11 +10302,21 @@ async function processMessage(phone, text, raw = {}) {
         const { podeLiberarCriacao } = require('./utils/confirm-create-gate');
         const _gateOn = process.env.TOM_CONFIRM_CREATE_GATE !== '0';
         const _liberaCriacao = _gateOn && !hasConcrete && podeLiberarCriacao(target.question_text);
+        // FATIA 8: análogo do create-gate para RECADO implícito. Se a pergunta é proposta de recado
+        // e o usuário confirmou, instrui o LLM a compor+emitir COORDINATION_REQUEST — e o handler
+        // despacha DIRETO (preConfirmed, sem re-estagiar/loopar). Flag de rollback
+        // TOM_CONFIRM_RECADO_GATE=0. Só quando NÃO é criação (create-gate tem precedência).
+        const { podeLiberarRecado } = require('./coordination/confirm-coord-gate');
+        const _liberaRecado = process.env.TOM_CONFIRM_RECADO_GATE !== '0' && !hasConcrete
+          && !_liberaCriacao && podeLiberarRecado(target.question_text);
+        if (_liberaRecado) _metrics.recado_preconfirmed = true;
         let markerRule = hasConcrete
           ? 'Emita o marker apropriado APENAS para os itens do payload acima (ex: <<TASK_UPDATE>> com action=create para cada draft). NÃO crie, edite ou reagende NENHUM item que não esteja no payload.'
           : (_liberaCriacao
             ? 'O payload não tem ids, MAS a pergunta acima é uma proposta de CRIAÇÃO que VOCÊ mesmo formulou e o usuário aprovou. Emita o marker de criação (action=create) reproduzindo EXATAMENTE os dados que você propôs ali — mesmo título, mesma data, mesma hora, mesma pessoa. NÃO invente nenhum dado que não esteja na sua proposta. E NÃO edite, reagende, conclua, delegue nem apague NENHUM item já existente.'
-            : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.');
+            : (_liberaRecado
+              ? 'O payload não tem ids, MAS a pergunta acima é um RECADO/aviso que VOCÊ mesmo propôs e o usuário aprovou. Emita <<COORDINATION_REQUEST>> para o destinatário que você citou ali, compondo a mensagem FIEL à intenção que você propôs — mesmo destinatário, mesmo teor. NÃO invente destinatário nem mude o assunto. NÃO edite, reagende, conclua, delegue nem apague NENHUM item existente.'
+              : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.'));
 
         // TASK-HONESTY-NEGA-BAIXA-FEITA (Kailane 12/08 19:21) — irmão do COORD-HONESTY nas TAREFAS.
         // A instrução acima afirma o ABSOLUTO "você NÃO consegue executar isso agora", mas sua
@@ -12559,7 +12569,9 @@ async function processMessage(phone, text, raw = {}) {
       // default=true → NUNCA envia sem confirmar. A pergunta é a prosa do LLM (voz intacta),
       // fallback = buildCoordinationConfirmPreview. Espelha o staging do financeiro.
       const { shouldStageCoordination, buildCoordinationConfirmPreview, resolveStageConfirmPrompt } = require('./coordination/coord-confirm');
-      if (shouldStageCoordination(parsedCoord.items)) {
+      // FATIA 8: se o recado JÁ foi confirmado no turno anterior (proposta "Mando pro X?" + "sim"),
+      // o gate marcou _metrics.recado_preconfirmed → despacha direto (else abaixo), sem re-estagiar.
+      if (shouldStageCoordination(parsedCoord.items, { preConfirmed: !!_metrics.recado_preconfirmed })) {
         // COORD-CONFIRM-STAGE-PROSE-CONFAB (Fabi 11/07): a prosa de estágio é GARANTIDA pergunta.
         // Se o LLM afirmou envio ("Mandando agora ✅") em vez de perguntar, o user achava que já
         // foi e nunca dava "sim" → recado estagiado, nunca enviado. resolveStageConfirmPrompt troca

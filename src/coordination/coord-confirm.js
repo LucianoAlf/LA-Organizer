@@ -13,7 +13,11 @@
 // omissão" (fail-OPEN = envio cego sem confirmação = proibido). O parser já rejeita mode
 // fora do escopo (schema_invalid), mas este helper NÃO depende disso — retorna true pra
 // qualquer lista não-vazia; só uma exceção FUTURA explicitamente segura retornaria false.
-function shouldStageCoordination(items, _opts = {}) {
+function shouldStageCoordination(items, opts = {}) {
+  // FATIA 8: preConfirmed = o recado JÁ foi confirmado no turno anterior (o TOM propôs "Mando pro
+  // X?" e o usuário disse sim). Não re-estagia — o handler despacha direto. Fora isso, estagia
+  // sempre (fail-safe: NUNCA envia sem confirmar).
+  if (opts && opts.preConfirmed) return false;
   return Array.isArray(items) && items.length > 0;
 }
 

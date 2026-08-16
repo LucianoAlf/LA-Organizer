@@ -64,3 +64,12 @@ test('cleanText vazio/null/branco → pergunta determinística', () => {
 test('prosa dúbia sem "?" nem "confirma" → fail-safe pra pergunta determinística', () => {
   assert.strictEqual(resolveStageConfirmPrompt('Beleza então', ST_ITEMS), 'Aviso o Luciano? Confirma?');
 });
+
+// FATIA 8: preConfirmed pula o estágio (o recado já foi confirmado no turno anterior → despacha direto).
+test('shouldStageCoordination: preConfirmed=true → false (despacha direto, sem re-estagiar)', () => {
+  assert.strictEqual(shouldStageCoordination([{ recipient_name: 'Jhonatan', message_body: 'valeu', mode: 'relay_assisted' }], { preConfirmed: true }), false);
+});
+test('shouldStageCoordination: sem preConfirmed → segue estagiando (default true)', () => {
+  assert.strictEqual(shouldStageCoordination([{ recipient_name: 'Jhonatan' }]), true);
+  assert.strictEqual(shouldStageCoordination([{ recipient_name: 'Jhonatan' }], { preConfirmed: false }), true);
+});
