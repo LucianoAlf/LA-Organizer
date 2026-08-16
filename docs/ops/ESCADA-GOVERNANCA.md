@@ -195,3 +195,49 @@ Proposta de virar código: o `provar(literal, guard)` do `gov-runner` (proposto 
 rodar **dois** casos por fechamento — o do incidente e um controle que obrigatoriamente dispara —
 e recusar o fechamento quando os dois derem o mesmo resultado neutro, porque aí o que está
 quebrado é a chamada, não o código sob teste.
+
+### ETAPA 2 (varredura) — metade do acervo antigo é IRREFUTÁVEL por construção
+
+**Ocorrências:** 1 (16/08), mas é uma medição de população, não um caso isolado.
+
+O protocolo manda varrer o acervo do mais antigo para o mais novo, na expectativa de que "quase
+todos são anteriores a dezenas de correções e devem cair como 'já corrigido'". **Em 16/08 a
+varredura fechou ZERO por "já corrigido"** — três ângulos independentes, todos honestamente
+negativos:
+
+1. Cruzamento por `marker_logs` (chokepoint `promise_nomarker`) em todos os abertos não-altos:
+   só 2 casaram, e nos dois o guard segue disparando **corretamente** ("✅ Academia e bombinha da
+   Alice — anotado!" é promessa vazia de verdade). O fix do dia não os alcança.
+2. Guard a guard: `falha-diz-alvo` só dispara com `okCount===0` (não cobre "Registrei 1 de 2");
+   `task-done-recente` injeta instrução com janela de 10 min (não cobre "já foram feitos há muito
+   tempo"); `count-honesty` compara prosa contra markers do MESMO turno (não cobre contagem de
+   fechamento semanal).
+3. Ao ir buscar o literal, o motivo real apareceu.
+
+**A medição.** No subconjunto inequívoco (evidência com `USUÁRIO:`, janela ±2h, casamento por 25
+caracteres): **37 achados, 19 literais recuperados, 18 ausentes — 49%.** E **10 dos 18 não têm
+NENHUMA mensagem inbound na janela de ±2h**: a conversa inteira sumiu do `conversation_history`.
+
+Consequência direta no protocolo: a ETAPA 3 exige o literal do banco, e a regra de 13/08 exige
+rodar esse literal pela função. **Para ~metade do acervo antigo, esses dois passos são impossíveis
+— não por falta de esforço, mas porque a evidência não existe mais.** Esses achados não podem ser
+nem confirmados nem refutados; ficam abertos para sempre e inflam o número que a ETAPA 1 lê. O
+acervo não é uma fila que a refutação drena; é uma fila com um piso duro.
+
+Dos 19 recuperáveis, a maioria se confirmou BUG REAL e ficou aberta (`edba1c46`, `da5f0750`,
+`cfdf9bdb`, `ded67aeb`, `bf25d692`, `4b815042`, `784e4eb0`, `de6a1feb`, `c7fe3096`, `735239a9`,
+`03f2c79b`). O único fechamento possível foi por **falso positivo do auditor** (3): `f63e65fa`
+(resumo dizia "usuário repetiu a solicitação"; o literal mostra duas perguntas distintas, ambas
+atendidas de primeira) e `733a461a`/`b15b871f`, que são **o mesmo turno duplicado** — mesmo
+`occurred_at` ao microssegundo — e onde o TOM acertou ao pedir esclarecimento.
+
+Três propostas de virar código, em ordem de retorno:
+
+1. **Marcar `irrefutavel` no próprio achado.** Um passe do `gov-runner` tenta recuperar o literal
+   de cada aberto; falhando, grava `status='irrefutavel'` com a razão. Sem isso o agente re-tenta
+   os mesmos 18 toda rodada e paga o custo de novo.
+2. **O auditor deveria persistir o literal no finding, no momento em que abre.** A causa raiz é
+   que o achado guarda um `summary` gerado e um ponteiro para uma conversa que depois some. Se o
+   turno viesse anexado, a refutação seria sempre possível.
+3. **Deduplicar por `occurred_at` + colaborador na abertura.** `733a461a` e `b15b871f` são o mesmo
+   evento contado duas vezes no acervo.
