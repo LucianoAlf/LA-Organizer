@@ -13441,6 +13441,24 @@ Output AGORA, apenas o marker:`;
             last_user_text: String(text || '').slice(0, 600),
             last_tom_reply: reply.slice(0, 900),
           };
+          // FATIA 3 (confirmação parse-on-open, coordenação): se a pergunta do TOM é um recado
+          // ("Aviso o X? Segue o texto: '…'. Confirma?") com destinatário E texto explícitos,
+          // estagia coordination.items ESTRUTURADO — aí o "sim" despacha determinístico (executor
+          // @10221) em vez de o LLM re-emitir e confabular "perdi o fio". FAIL-CLOSED: sem extração
+          // fiel, payload segue só-texto (comportamento de hoje). Parse na fala do TOM, nunca no
+          // texto do usuário. Ver coordination/coord-question-parse.js.
+          try {
+            const { parseCoordinationConfirmQuestion } = require('./coordination/coord-question-parse');
+            const _coord = parseCoordinationConfirmQuestion(reply);
+            if (_coord) {
+              payload.coordination = { items: [{
+                recipient_name: _coord.recipient_name,
+                message_body: _coord.message_body,
+                mode: 'relay_assisted',
+              }] };
+              _metrics.confirm_parse_coord = 1;
+            }
+          } catch (e) { console.warn('[PendingIntents] coord parse-on-open err (non-fatal):', e.message); }
           await pendingIntents.openIntent(collab.id, detected.kind, payload, reply.slice(0, 500));
           _metrics.pending_intent_opened = detected.kind;
         }
