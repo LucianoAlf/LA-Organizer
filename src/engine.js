@@ -10239,6 +10239,29 @@ async function processMessage(phone, text, raw = {}) {
         try { await whatsapp.sendMessage(phone, _outC); await logConversation(collab.id, 'outbound', _outC); } catch (_) { /* já persistiu */ }
         console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (coord_confirm_${_okC}/${_items.length})`);
         return;
+      } else if (userConfirm === 'yes' && target.payload?.delegation
+                 && target.payload.delegation.task_id && target.payload.delegation.to_name) {
+        // FATIA 5 (confirmação parse-on-open, delegação): confirmação de "Delego pra X — '…'?".
+        // Executa determinístico reusando o handler `delegate` (applyTaskActions @5835 — resolve
+        // dono via resolveTaskByShortId, destinatário via resolveCollaboratorByName, fail-closa em
+        // ambíguo/não-achado, notifica o destinatário). Retorna cedo → o LLM NÃO re-estágia/loopa.
+        const _d = target.payload.delegation;
+        let _rd;
+        try {
+          _rd = await applyTaskActions(collab, [{ action: 'delegate', id: _d.task_id, to_name: _d.to_name }], { inboundText: _confirmText });
+        } catch (e) { console.warn('[DelegateConfirm] exec err:', e.message); _rd = { okCount: 0, failCount: 1, failMessages: [] }; }
+        await pendingIntents.resolveIntent(target.id, 'confirmed', `delegate confirm (engine) ${_rd.okCount || 0}/1`);
+        let _outD;
+        if (_rd.integrityPayload && _rd.integrityPayload.type === 'ambiguous_recipient') {
+          _outD = collabResolver.buildAmbiguityQuestion(_rd.integrityPayload.candidates);
+        } else if ((_rd.okCount || 0) >= 1) {
+          _outD = `📋 Delegado pra *${_d.to_name}*.`;
+        } else {
+          _outD = (_rd.failMessages && _rd.failMessages[0]) || `Não consegui delegar "${_d.to_name}" — confere o nome pra mim?`;
+        }
+        try { await whatsapp.sendMessage(phone, _outD); await logConversation(collab.id, 'outbound', _outD); } catch (_) { /* já persistiu */ }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (delegate_confirm_${_rd.okCount || 0})`);
+        return;
       } else if (userConfirm === 'yes') {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
         // Injeta contexto inline pra LLM saber o que confirmar.
@@ -13490,6 +13513,36 @@ Output AGORA, apenas o marker:`;
                 }
               }
             } catch (e) { console.warn('[PendingIntents] complete parse-on-open err (non-fatal):', e.message); }
+          }
+          // FATIA 5 (confirmação parse-on-open, delegação): "Delego pra X — '…'. Confirma?" — extrai
+          // {task_title, to_name}, resolve o título→short-id (fail-closed, reuso), e estagia
+          // payload.delegation. O "sim" delega determinístico (branch nova, reusa o handler delegate
+          // via applyTaskActions, que resolve dono + destinatário e fail-closa em ambíguo). Skip se
+          // coord/complete já estagiaram (uma pergunta não é duas coisas). FAIL-CLOSED total.
+          if (!payload.coordination && !payload.batch_complete) {
+            try {
+              const { parseDelegateConfirmQuestion } = require('./utils/delegate-question-parse');
+              const _deleg = parseDelegateConfirmQuestion(reply);
+              if (_deleg) {
+                const { resolveTitlesToBatchComplete } = require('./utils/complete-titles-resolve');
+                const { resolveTaskTarget } = require('./lib/task-target');
+                const _qCandD = async (title) => {
+                  const { data } = await supabase.from('tasks')
+                    .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at')
+                    .eq('assigned_to', collab.id)
+                    .ilike('title', `%${String(title).slice(0, 60)}%`)
+                    .not('status', 'in', '("done","cancelled")')
+                    .order('due_date', { ascending: true, nullsFirst: false })
+                    .limit(100);
+                  return data || [];
+                };
+                const _resD = await resolveTitlesToBatchComplete({ queryCandidatos: _qCandD, resolveTaskTarget, titles: [_deleg.task_title] });
+                if (_resD && _resD.ids.length === 1) {
+                  payload.delegation = { task_id: _resD.ids[0], to_name: _deleg.to_name };
+                  _metrics.confirm_parse_deleg = 1;
+                }
+              }
+            } catch (e) { console.warn('[PendingIntents] delegate parse-on-open err (non-fatal):', e.message); }
           }
           await pendingIntents.openIntent(collab.id, detected.kind, payload, reply.slice(0, 500));
           _metrics.pending_intent_opened = detected.kind;
