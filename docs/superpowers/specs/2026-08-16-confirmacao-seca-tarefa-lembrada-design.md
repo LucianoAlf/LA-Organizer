@@ -36,6 +36,15 @@ Quando o usuário confirma conclusão logo após o TOM ter lembrado de uma taref
 - **Janela:** 24h. Confirmação até 24h após o lembrete amarra automaticamente; depois disso, fluxo atual.
 - **Voz:** o engine resolve/executa o ALVO determinístico, mas a **fala final passa pelo LLM** (voz do TOM é sagrada). Sem template robótico.
 
+## Freios obrigatórios (viram teste, não são recomendação)
+
+1. Resolver **só** confirmação seca após lembrete de tarefa com `ref_type='task'` nas últimas 24h.
+2. **>1 tarefa DISTINTA lembrada → pergunta qual; NUNCA escolhe por recência.** (teste obrigatório)
+3. Executar conclusão por `taskId` **exato**, sem title-lookup/fuzzy.
+4. **Suprimir `enforceNoMarkerHonesty` SÓ se a conclusão determinística retornou sucesso ou idempotência real de "já estava concluída".** Falhou → não suprime. (teste obrigatório)
+5. Query de refs falha → degrada pro fluxo atual (nunca quebra o turno).
+6. Replay: lembrete → "feito" solto → tarefa `done`, sem `all_failed`, sem "não consegui registrar", resposta na voz do TOM.
+
 ## Arquitetura
 
 Padrão da casa: **resolvedor PURO** (igual `task-target.js`) + engine busca os candidatos e injeta o resultado. Interceptor **antes do LLM** (família das `pending-intents`), porque assim funciona mesmo quando o LLM nem emitiria marker (o caso `confab:unknown`), não só quando erra o título.
@@ -65,7 +74,7 @@ resolverConclusaoDeLembrete({ reply, refsRecentes, agoraMs }) →
   { modo: 'nenhum', motivo }                        // 0 refs, fora da janela, negação, pergunta, ou não é conclusão
 ```
 
-- `refsRecentes`: `[{ task_id, title, reminded_at }]` — o engine passa as linhas de `conversation_history` outbound com `ref_type='task'` dos últimos 24h (dedup por `task_id`, a mais recente vence).
+- `refsRecentes`: `[{ task_id, title, reminded_at }]` — o engine passa as linhas de `conversation_history` outbound com `ref_type='task'` dos últimos 24h. Dedup por `task_id` (a mais recente do MESMO id vence — colapsa lembrete repetido da mesma tarefa). **"A mais recente vence" NUNCA se aplica entre tarefas DISTINTAS** (freio do Alf): duas tarefas diferentes lembradas em 24h = ambiguidade real, sempre pergunta.
 - **Detecção de conclusão:** reutiliza o detector de confirmação existente onde possível (`pending-intents.detectUserConfirmation` / `WEAK_COMPLETION_RE` de `optimistic-confirm.js`), com **veto de negação** ("não fiz", "ainda não") e **veto de pergunta** (termina em "?"). Whitelist conservadora: "feito", "pronto", "concluí", "ok"/"okay", "isso", "pode marcar/fechar", "<coisa> ok". Na dúvida → `nenhum` (deixa o fluxo atual seguir; não inventa conclusão).
 - **Ambiguidade real:** se as refs recentes são de tarefas distintas → `ambiguo` (pergunta). Se são a mesma série (via `serieDe` de `task-target.js`) → resolve a ocorrência corrente com `resolveTaskTarget` e vira `exato`.
 - Puro: sem banco, sem LLM, sem relógio interno (`agoraMs` injetado). Prova por mutação.
@@ -74,7 +83,7 @@ resolverConclusaoDeLembrete({ reply, refsRecentes, agoraMs }) →
 
 - Busca `refsRecentes` (uma query nova, escopada: `conversation_history` do colaborador, `direction='outbound'`, `ref_type='task'`, `created_at > now()-24h`, ordem desc).
 - Chama `resolverConclusaoDeLembrete`.
-  - `exato` → executa a conclusão pelo caminho determinístico já existente (o mesmo handler `complete` por **id exato**, que não passa por título → não dá `all_failed`), com idempotência (se já concluída, no-op gracioso). Injeta no contexto do LLM: "O usuário confirmou a conclusão de *<title>* (que você lembrou) — já registrei; confirme na sua voz." **Suprime a Camada-1 (`enforceNoMarkerHonesty`) neste turno** (a ação FOI executada; o guard não pode desmentir — senão vira o confab-inverso de novo).
+  - `exato` → executa a conclusão pelo caminho determinístico já existente (o mesmo handler `complete` por **id exato**, que não passa por título → não dá `all_failed`), com idempotência (se já concluída, no-op gracioso). **A supressão da Camada-1 é CONDICIONADA ao resultado real da execução** (freio do Alf): só suprime `enforceNoMarkerHonesty` se o complete retornou **sucesso OU idempotência real de "já estava concluída"**. Se o complete por id **falhar** (erro de banco, tarefa sumiu, permissão), **NÃO suprime** — deixa o fluxo honesto atual valer, senão a gente troca "não consegui registrar" por confirmação FALSA. No sucesso, injeta no contexto do LLM: "O usuário confirmou a conclusão de *<title>* (que você lembrou) — já registrei; confirme na sua voz."
   - `ambiguo` → injeta os candidatos e instrui o LLM a **perguntar qual** (não completa nada).
   - `nenhum` → não faz nada; segue o pipeline atual intacto.
 
