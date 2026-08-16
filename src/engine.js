@@ -4407,6 +4407,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   const failMessages = [];
   // Avisos de sucesso de grupos (cascata) — anexados à resposta no caminho de SUCESSO.
   const groupNotices = [];
+  // FATIA 6 (#1): horários de lembrete das tarefas CRIADAS neste lote (remind_at one-shot +
+  // reminders_at). O caller anexa "🔔 Lembro às HHh" quando a fala do TOM omite a hora.
+  const createdReminderTimes = [];
   const last4 = String(collaborator.phone || '').slice(-4);
   // Guardrail anti-bomba (BULK-RECUR): se o lote tem >10 creates de título
   // idêntico, bloqueia esse grupo e orienta o caminho recorrente. Backstop
@@ -5547,6 +5550,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           if (rErr) console.error('[Task] reminders insert err:', rErr.message);
           else attachedReminders = rows.length;
         }
+        // FATIA 6 (#1): guarda os horários de lembrete desta tarefa criada (one-shot + múltiplos)
+        // pra o caller poder surfacer "🔔 Lembro às HHh" se a fala do TOM não citar a hora.
+        if (insertRow.remind_at) createdReminderTimes.push(insertRow.remind_at);
+        if (reminders.length) createdReminderTimes.push(...reminders);
         // Subtarefas/checklist (2026-06-26): create com subtasks:[...] → cria as filhas (helper
         // LITE; herda context/assigned do pai). Best-effort: o pai já persistiu, falha das filhas
         // não derruba o create nem inventa "checklist criado".
@@ -6107,7 +6114,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       failCount++;
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -11169,7 +11176,7 @@ async function processMessage(phone, text, raw = {}) {
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -11276,6 +11283,18 @@ async function processMessage(phone, text, raw = {}) {
         // Cascata de grupo — só no caminho de sucesso (okCount > 0).
         if (groupNotices && groupNotices.length > 0 && okCount > 0) {
           base = (base ? base + '\n\n' : '') + groupNotices.join('\n');
+        }
+        // FATIA 6 (#1): a tarefa nasce com remind_at CERTO (o lembrete dispara), mas a fala do TOM
+        // às vezes omite a hora ("Anotado — até 12/08") e a pessoa acha que sumiu. Anexa
+        // "🔔 Lembro às HHh" quando a resposta NÃO cita a hora (dedup na fala). Só no sucesso;
+        // determinístico (voz aprovada pelo Alf). Ver utils/reminder-notice.js.
+        if (okCount > 0 && Array.isArray(createdReminderTimes) && createdReminderTimes.length) {
+          try {
+            const { buildReminderNotice } = require('./utils/reminder-notice');
+            const _alvoTxt = base || reply || '';
+            const _rn = buildReminderNotice(createdReminderTimes, _alvoTxt);
+            if (_rn) base = (_alvoTxt ? _alvoTxt + '\n\n' : '') + _rn;
+          } catch (e) { console.warn('[ReminderNotice] non-fatal:', e.message); }
         }
         reply = base || reply;
       }
