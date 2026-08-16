@@ -148,27 +148,25 @@ async function main() {
   const { rebaixarClaimDeEntrega } = require('../lib/claim-entrega');
   const { conferirNumerosAfirmados } = require('../lib/confere-numero');
   const { tirarFalaDeRestart } = require('../lib/restart-so-do-runner');
+  const { contarCorrigidosDesde, contarAcervoAberto } = require('../lib/confere-fontes');
+
+  // Âncora do ciclo: capturada ANTES de rodarCicloGovernanca, então todas as correções que o
+  // agente marca durante a rodada têm corrigido_em > cicloInicio, e tudo que o humano-catraca
+  // fez antes fica de fora. É isso que separa "correções DESTE ciclo" de "correções nas
+  // últimas 24h" — a janela rolante contava minhas inserções manuais da véspera e acusava o
+  // número certo do agente (GOVAGENT-CONFERE-CORRIGIDOS-CONTA-CATRACA, 16/08).
+  const cicloInicio = new Date().toISOString();
 
   // CAMADA 2 da trava anti-vacuidade: o número que o relatório AFIRMA, conferido contra a
   // fonte. A camada textual não pega isto — ela depende de o agente declarar que não
   // conseguiu ler, e o caso pior não declara nada: afirma errado com confiança. Em 10/08 ele
   // somou "1+9" e escreveu 10; eram 11.
   // Falha na consulta devolve `null` → INDEFINIDO, nunca "conferido".
-  const fontesDeControle = async () => {
-    const out = { achados: null, corrigidos: null };
-    try {
-      const { count } = await supabase.from('tom_audit_findings')
-        .select('id', { count: 'exact', head: true }).in('status', ['novo', 'confirmado']);
-      if (Number.isFinite(count)) out.achados = count;
-    } catch (_) { /* indefinido, de propósito */ }
-    try {
-      const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-      const { count } = await supabase.from('tom_known_issues')
-        .select('id', { count: 'exact', head: true }).gte('corrigido_em', desde);
-      if (Number.isFinite(count)) out.corrigidos = count;
-    } catch (_) { /* indefinido, de propósito */ }
-    return out;
-  };
+  const fontesDeControle = async () => ({
+    achados: await contarAcervoAberto(supabase),
+    // Início do CICLO, não "agora − 24h": conta só o que o agente corrigiu nesta rodada.
+    corrigidos: await contarCorrigidosDesde(supabase, cicloInicio),
+  });
 
   const postar = async (txt) => {
     // Quem fala de restart é este runner, e só ele. O agente escrevia "*Não reiniciei o TOM*"
