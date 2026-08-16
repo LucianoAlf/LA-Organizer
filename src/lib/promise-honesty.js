@@ -19,17 +19,26 @@ const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:h
 const PROMISE_NOMARKER_DISCLAIMER =
   '_⚠️ Na real: deu um problema técnico e essa ação NÃO foi executada — nada entrou na agenda e ninguém foi acionado. Me pede de novo que eu faço na hora._';
 
+// OFERTA CONDICIONAL (Ana Paula, 15/08 22:01) — o verbo de promessa é o CONSEQUENTE de um
+// pedido futuro do usuário ("qualquer coisa, só manda que eu registro"). Não é compromisso
+// deste turno: não há ação pendente, logo não há vazio a rebaixar. Exige o gatilho E o "que
+// eu" na MESMA frase — sem isso, "vou criar a tarefa e qualquer coisa te aviso às 15h" (uma
+// promessa de verdade) escaparia pelo "qualquer coisa".
+const OFERTA_CONDICIONAL_RE =
+  /(?:\b(?:se|quando)\s+(?:voc[êe]\s+)?(?:precisar|quiser|surgir|aparecer)\b|\bqualquer\s+coisa\b|(?:[ée]\s+)?\bs[óo]\s+(?:me\s+)?(?:mandar?|chamar?|falar?|avisar?|pedir?)\b|\bme\s+(?:manda|chama|fala|avisa)\b)[^.!?]*\bque\s+eu\b/i;
+
 // Rebaixa promessa comprovadamente vazia: remove a(s) linha(s) de promessa e anexa o aviso
 // honesto (lição Ana 30/06: anexar SEM remover = contradição intra-mensagem). Puro; o engine
 // só chama quando JÁ PROVOU o vazio (actionable + zero markers + retry não persistiu).
 function downgradeEmptyPromise(text) {
   const s = String(text || '');
-  if (!REPLY_PROMISE_RE.test(s)) return { reply: s, fired: false };
-  const kept = s
-    .split('\n')
+  const ehPromessa = (t) => REPLY_PROMISE_RE.test(t) && !OFERTA_CONDICIONAL_RE.test(t);
+  const linhas = s.split('\n');
+  if (!linhas.some(ehPromessa)) return { reply: s, fired: false };
+  const kept = linhas
     .filter((line) => {
       if (!line.trim()) return false; // colapsa linhas em branco órfãs (espelha coord-send-honesty)
-      return !REPLY_PROMISE_RE.test(line);
+      return !ehPromessa(line);
     });
   const stripped = kept.join('\n').trim();
   return {
@@ -38,4 +47,4 @@ function downgradeEmptyPromise(text) {
   };
 }
 
-module.exports = { downgradeEmptyPromise, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER };
+module.exports = { downgradeEmptyPromise, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER, OFERTA_CONDICIONAL_RE };

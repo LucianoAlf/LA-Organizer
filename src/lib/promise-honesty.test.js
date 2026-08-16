@@ -52,6 +52,38 @@ test('CONTROLE: o próprio disclaimer não re-dispara (idempotente)', () => {
   assert.strictEqual(twice.fired, false, 'rodar 2x não pode duplicar aviso');
 });
 
+// CONFAB-INVERSO-OFERTA-CONDICIONAL (Ana Paula, 15/08 22:01 BRT).
+// O PREFS_UPDATE dos "domingos silenciosos" executou ok=1 fail=0 às 22:00:58. No turno
+// seguinte a Ana só encerrou o assunto ("Caso eu precise eu faço a anotação") e o TOM
+// respondeu com uma OFERTA condicional. "registro" casou a REPLY_PROMISE_RE, era a única
+// linha, e a resposta inteira virou "essa ação NÃO foi executada" — desmentindo um sucesso.
+// Oferta que depende de um pedido FUTURO do user não é promessa deste turno: não há nada
+// pra persistir, logo não há vazio a rebaixar.
+const ANA_OFERTA = 'Perfeito, Ana! Qualquer coisa que surgir, só manda que eu registro. Bom domingo! ☀️';
+
+test('caso real (Ana, 15/08): oferta condicional não é promessa vazia → não rebaixa', () => {
+  const r = downgradeEmptyPromise(ANA_OFERTA);
+  assert.strictEqual(r.fired, false, 'oferta condicional não pode ser rebaixada');
+  assert.strictEqual(r.reply, ANA_OFERTA, 'reply sai intacta');
+});
+
+test('variantes de oferta condicional não disparam', () => {
+  for (const s of [
+    'Beleza! Se precisar, é só me mandar que eu anoto.',
+    'Tranquilo. Quando quiser, me chama que eu registro.',
+    'Fechado! Qualquer coisa, só falar que eu adiciono.',
+  ]) {
+    assert.strictEqual(downgradeEmptyPromise(s).fired, false, s);
+  }
+});
+
+test('CONTROLE: promessa real + oferta condicional → rebaixa só a promessa', () => {
+  const r = downgradeEmptyPromise('Vou criar na agenda pros 8.\nQualquer coisa, só manda que eu registro.');
+  assert.strictEqual(r.fired, true, 'a promessa real ainda tem que ser pega');
+  assert.ok(!/vou criar na agenda/i.test(r.reply), 'a promessa vazia some');
+  assert.match(r.reply, /só manda que eu registro/i, 'a oferta condicional permanece');
+});
+
 test('REPLY_PROMISE_RE exportada casa o vocabulário do engine (amostra)', () => {
   for (const s of ['vou criar', 'criando', 'criei', 'reagendei pra sexta', 'marquei para amanhã', 'te lembro às 9h']) {
     assert.ok(REPLY_PROMISE_RE.test(s), s);
