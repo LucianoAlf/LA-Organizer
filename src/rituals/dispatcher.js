@@ -461,9 +461,11 @@ async function checkFinanceProactive(now) {
   const { forecastInvoiceAlert } = require('../finance/forecast-invoice');
   const { detectRecurring } = require('../finance/recurring-detect');
   const { buildForecastLine, buildRecurringLines } = require('../finance/proactive-messages');
+  const { selectNewAlerts } = require('../finance/recurring-alert-ledger');
   for (const c of await financeService.collaboratorsForFinanceRitual()) {
     if (await alreadySent(c.id, 'financeiro_proativo', ymd)) continue;
     let lines = [];
+    let recurringKeys = [];
     try {
       for (const card of await financeService.listCards(c.id)) {
         const openInv = await financeService.cardInvoice(c.id, card.id, financeService.currentCompetencia(card));
@@ -473,7 +475,11 @@ async function checkFinanceProactive(now) {
         }));
         if (line) lines.push(line);
       }
-      lines = lines.concat(buildRecurringLines(detectRecurring(await financeService.recurringTxns(c.id, { months: 4 }), ymd)));
+      // GOVFIN-RECURRING-ALERTA-ETERNO (raiz): ledger de idempotência — cada recorrência avisa 1×.
+      const detected = detectRecurring(await financeService.recurringTxns(c.id, { months: 4 }), ymd);
+      const fresh = selectNewAlerts(detected, await financeService.listAlertedRecurring(c.id));
+      recurringKeys = fresh.keys;
+      lines = lines.concat(buildRecurringLines(fresh.items));
     } catch (e) { console.error('[checkFinanceProactive] build', c.full_name, e.message); continue; }
     if (!lines.length) continue; // nada relevante hoje → silêncio (sem spam)
     const q = await isQuietNow(c.id, now, 'personal');
@@ -483,6 +489,11 @@ async function checkFinanceProactive(now) {
     try {
       const nome = String(c.full_name || '').split(' ')[0];
       await whatsapp.sendMessage(c.phone, `👋 Bom dia, ${nome}! Fica de olho 👀\n\n${lines.join('\n')}`);
+      // Só grava o ledger DEPOIS do envio confirmado; erro aqui não desfaz o envio nem reenvia.
+      if (recurringKeys.length) {
+        try { await financeService.recordRecurringAlerts(c.id, recurringKeys); }
+        catch (e2) { console.error('[checkFinanceProactive] ledger', c.full_name, e2.message); }
+      }
     } catch (err) {
       console.error('[checkFinanceProactive]', c.full_name, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);

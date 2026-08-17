@@ -902,6 +902,21 @@ async function recurringTxns(collaboratorId, { months = 4 } = {}) {
   if (error) return [];
   return (data || []).map((r) => ({ descricao: r.description, valor: r.amount, data: r.transaction_date }));
 }
+// Ledger de idempotência do alerta proativo de recorrência (pf_recurring_alerts).
+// Raiz do GOVFIN-RECURRING-ALERTA-ETERNO: sem "já avisei", o alerta repetia toda manhã.
+async function listAlertedRecurring(collaboratorId) {
+  const { data, error } = await supabase.from('pf_recurring_alerts')
+    .select('merchant, dedup_key').eq('collaborator_id', collaboratorId);
+  if (error) return [];
+  return data || [];
+}
+// Grava (idempotente) as chaves anunciadas. keys: [{ merchant, kind, amount_cents, dedup_key }].
+async function recordRecurringAlerts(collaboratorId, keys) {
+  if (!Array.isArray(keys) || !keys.length) return;
+  const rows = keys.map((k) => ({ collaborator_id: collaboratorId, merchant: k.merchant, kind: k.kind, amount_cents: k.amount_cents, dedup_key: k.dedup_key }));
+  await supabase.from('pf_recurring_alerts')
+    .upsert(rows, { onConflict: 'collaborator_id,merchant,dedup_key', ignoreDuplicates: true });
+}
 // Fase E — uso de crédito AGREGADO de todos os cartões ativos (p/ health score).
 async function creditUtilization(collaboratorId) {
   const cards = await listCards(collaboratorId);
@@ -942,6 +957,7 @@ module.exports = {
   dueItemsForDigest,
   // Fase C — proativo
   lastClosedInvoiceTotals, merchantSpendHistory, recurringTxns,
+  listAlertedRecurring, recordRecurringAlerts,
   // Fase E — health score
   creditUtilization,
   // Fase D — Open Finance / Pluggy
