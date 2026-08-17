@@ -105,6 +105,11 @@ function pickVisibleCompletionTarget(rows, todayYmd) {
   const visiveis = dropOpenWithDoneTwin(Array.isArray(rows) ? rows : [])
     .filter((t) => t && t.is_group !== true)
     .filter((t) => categorize(t.due_date, todayYmd, t.created_ymd) !== 'retroativa')
+    // "feito" conclui o ciclo corrente/atrasado — NUNCA um ciclo recorrente FUTURO (due > hoje):
+    // se o corrente já está done, não "conclui" o próximo mês. Avulsa (não-recorrente) futura
+    // segue liberada (dá pra concluir cedo). Fecha a mina do caso Rose 17/08 pós-remediação.
+    .filter((t) => !(todayYmd && String(t.due_date || '') > todayYmd
+      && (t.recurrence_parent_id != null || t.recurrence_rule != null)))
     .sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
   return pickInstanceTarget(visiveis);
 }

@@ -53,6 +53,20 @@ test('retroativa (criada depois do vencimento, já vencida) é escondida como no
   assert.strictEqual(target.id, '67d9884e');
 });
 
+test('nunca conclui ciclo RECORRENTE futuro por "feito" (só sobrou a de 09/17)', () => {
+  const rows = [
+    { id: 'sep', title: T, due_date: '2026-09-17', status: 'pending', created_ymd: '2026-08-03', is_group: false, recurrence_rule: null, recurrence_parent_id: '19a76e5b' },
+  ];
+  assert.strictEqual(pickVisibleCompletionTarget(rows, '2026-08-17'), null);
+});
+
+test('tarefa AVULSA futura ainda pode ser concluída cedo (guard só vale p/ recorrente)', () => {
+  const rows = [
+    { id: 'oneoff', title: T, due_date: '2026-09-17', status: 'pending', created_ymd: '2026-08-03', is_group: false, recurrence_rule: null, recurrence_parent_id: null },
+  ];
+  assert.strictEqual(pickVisibleCompletionTarget(rows, '2026-08-17').id, 'oneoff');
+});
+
 test('todas com gêmea concluída → null (falha honesta, cai no fallback)', () => {
   const rows = [
     { id: 'open', title: T, due_date: '2026-07-17', status: 'pending', created_ymd: '2026-06-12', is_group: false, recurrence_rule: null, recurrence_parent_id: '19a76e5b' },
