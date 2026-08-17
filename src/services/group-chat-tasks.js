@@ -10,6 +10,10 @@
 // normalizados ≥ THRESHOLD) e, se achar, ATUALIZAMOS no lugar (due_date/remind_at)
 // em vez de criar outra. Resolve o caso de correção e o de paráfrase do mesmo pedido.
 
+// Filtro de VISIBILIDADE do digest, reusado (fonte única: completer e relatório NÃO podem divergir).
+// dropOpenWithDoneTwin esconde ocorrência com gêmea concluída; categorize marca retroativa.
+const { dropOpenWithDoneTwin, categorize } = require('./group-report-builder');
+
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000; // só dedup contra tarefas recentes (mesma conversa)
 const SIM_THRESHOLD = 0.7;                    // Jaccard mínimo p/ considerar "mesma tarefa"
 const _STOPWORDS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'o', 'a', 'os', 'as', 'para', 'pra', 'pro', 'que', 'esse', 'essa', 'esses', 'essas', 'um', 'uma', 'no', 'na', 'em', 'com', 'ao', 'aos', 'à', 'às', 'the']);
@@ -89,6 +93,20 @@ function pickInstanceTarget(rows) {
   // molde escondido). Fallback: tarefa simples/one-off (sem ciclo) usa a própria linha.
   const cyclic = instances.filter((r) => r.recurrence_parent_id != null);
   return cyclic[0] || instances[0] || null;
+}
+
+// GROUPCHAT-COMPLETE-WRONG-CYCLE-STALE-TWIN (Rose 17/08): o alvo da conclusão tem que ser só o que
+// o digest MOSTRA. O completer mirava por título+due_date ASC e pegava a ocorrência mais ANTIGA
+// aberta — mas o relatório esconde as com gêmea-concluída (dropOpenWithDoneTwin) e as retroativas.
+// Assim o TOM fechou o ciclo velho de 17/07 (que já tinha gêmea done) e a de HOJE seguiu aberta.
+// Aqui: mesmo filtro do digest → sobra o pool VISÍVEL; pickInstanceTarget mira o ciclo corrente.
+// rows: pool por título (ABERTAS + DONE p/ detectar gêmea), cada linha com created_ymd. Pura.
+function pickVisibleCompletionTarget(rows, todayYmd) {
+  const visiveis = dropOpenWithDoneTwin(Array.isArray(rows) ? rows : [])
+    .filter((t) => t && t.is_group !== true)
+    .filter((t) => categorize(t.due_date, todayYmd, t.created_ymd) !== 'retroativa')
+    .sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
+  return pickInstanceTarget(visiveis);
 }
 
 // Dado candidatos por título, acha o MOLDE da série (recurrence_rule != null). Pura.
@@ -324,17 +342,17 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // (concluir o molde mata a série — materializeAll não regenera molde done).
         const { data: found } = await supabase
           .from('tasks')
-          // `recurrence_parent_id` é OBRIGATÓRIO aqui: é por ele que pickInstanceTarget separa
-          // a filha-INSTÂNCIA (tem) da filha-TEMPLATE (não tem). Sem a coluna toda linha vem
-          // `undefined`, o filtro de ciclo esvazia e ele cai no fallback `instances[0]` — a
-          // primeira por due_date, que EMPATA entre a real e a fantasma. Foi assim que o TOM
-          // fechou 4 tarefas existindo 2 (caso Rose 12/08, reproduzido no cenário D do Replay Lab).
-          .select('id, title, recurrence_rule, recurrence_parent_id, is_group')
+          // `recurrence_parent_id` separa a filha-INSTÂNCIA (tem) da filha-TEMPLATE (não tem).
+          // Inclui DONE (pra detectar a GÊMEA concluída — dropOpenWithDoneTwin) e created_at (pra
+          // retroativa): o alvo tem que ser só o que o digest MOSTRA. Sem isso o completer pegava a
+          // ocorrência mais antiga aberta e fechava o ciclo velho (fechou 4 existindo 2, Rose 12/08;
+          // fechou 17/07 com gêmea done deixando a de HOJE aberta, Rose 17/08). Cancelada fora.
+          .select('id, title, recurrence_rule, recurrence_parent_id, is_group, status, due_date, created_at')
           .eq('assigned_group_id', groupId)
-          .neq('status', 'done')
+          .neq('status', 'cancelled')
           .ilike('title', title)
-          .order('due_date', { ascending: true })
-          .limit(5);
+          .order('due_date', { ascending: false })
+          .limit(30);
         // GROUPPKG-CONTAINER-COMPLETABLE-GROUP (05/08): container de pacote é PASTA, não
         // tarefa. Concluí-lo fecha a pasta e deixa as filhas abertas por dentro — o mesmo
         // dano do caso Rose (03/08) por outra porta. Aquela veio pelo chat 1:1, onde o
@@ -346,7 +364,12 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // Vale só para o COMPLETE. O reschedule logo abaixo continua alcançando container
         // de propósito: mover o prazo do pacote é operação legítima (é o que o PWA faz).
         const semContainer = (t) => !!t && t.is_group !== true;
-        let target = pickInstanceTarget((found || []).filter(semContainer));
+        const _spYmd = (ts) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(ts)); } catch (_) { return null; } };
+        const _todayYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+        const _rows = (found || []).map((t) => ({ ...t, created_ymd: _spYmd(t.created_at) }));
+        const _open = _rows.filter((t) => t.status !== 'done' && t.status !== 'cancelled');
+        // Mira só o pool VISÍVEL (espelha o digest): esconde gêmea-concluída e retroativa.
+        let target = pickVisibleCompletionTarget(_rows, _todayYmd);
         // Fallback (GROUPCHAT-COMPLETE-COMPOSITE-LABEL-NOMATCH): a pessoa colou o label do
         // relatório ("{Pacote}: {Filha} ({Resp})") → o ilike exato não bate no title cru.
         // O fallback é compartilhado com o reschedule, então o guard fica aqui, no ramo.
@@ -365,7 +388,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // é ele que gera os meses seguintes. A instância done na mesma data também faz o molde
         // sumir do pool sozinho, via dropOpenWithDoneTwin (casa por título|due_date).
         if (!target) {
-          let _tpl = resolveSeriesTemplate((found || []).filter(semContainer));
+          let _tpl = resolveSeriesTemplate(_open.filter(semContainer));
           // O `ilike` exato acima só acha quando o LLM emite o título inteiro. A pessoa fala
           // apelido ("relatório"), e o matchPoolByPhrase também não salva: ele exige o título
           // CONTIDO na frase, que é a direção oposta da que se fala. Aqui a busca é PARCIAL e
@@ -543,7 +566,7 @@ async function reviveSeries({ supabase, groupId, title }) {
 }
 
 module.exports = {
-  applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget,
+  applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, pickVisibleCompletionTarget,
   findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, matchPoolByPhrase,
   resolveSeriesTemplate, endSeries, reviveSeries, _resolvePackageChildByLabel,
 };
