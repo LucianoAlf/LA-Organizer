@@ -241,3 +241,75 @@ Três propostas de virar código, em ordem de retorno:
    turno viesse anexado, a refutação seria sempre possível.
 3. **Deduplicar por `occurred_at` + colaborador na abertura.** `733a461a` e `b15b871f` são o mesmo
    evento contado duas vezes no acervo.
+
+### ETAPA 3/4 — o resultado NEUTRO reincidiu, e a regra de 15/08 PAGOU
+
+**Ocorrências:** 3 (14/08, 15/08, 17/08). **Em 17/08 a regra funcionou: pegou o erro na hora.**
+
+Verificando o alto `771b5bc1` (Rose, "apaga a fatura Itaú de R$ 950,21" → apagou Canva de
+R$34,90) rodei `resolveTxnTarget` com o literal e recebi `{kind:'none'}` — o resultado que o fix
+`b29a726` promete. Ia anotar "corrigido". O controle que a regra de 15/08 obriga
+(`'apaga a de 34,90'`, valor que EXISTE entre os candidatos) devolveu **`none` também**. Dois
+neutros → chamada malformada, não veredito.
+
+Lendo a função: o regex captura só a parte inteira (`34`) e compara com
+`Math.round(Number(c.amount))`, que para `34.90` dá **35**. O controle nunca poderia casar. Com
+um candidato de valor inteiro (`180`) o controle virou `one:merc`, e o segundo controle
+(`'apaga isso'`, sem referência) virou `one:canva` — o fallback legítimo, preservado. Só então a
+comparação antes/depois teve valor: pré-`b29a726` o caso Rose dava **`one:canva`** (o sintoma
+exato), pós dá `none`.
+
+Refinamento que isto acrescenta à regra: **o controle tem que ser escolhido contra a COMPARAÇÃO
+que a função faz, não contra "um valor que existe nos dados".** Aqui o dado existia e mesmo assim
+não casava, porque a comparação é sobre o inteiro arredondado. Controle mal escolhido é
+indistinguível de código quebrado — e produz exatamente o mesmo neutro que ele deveria desempatar.
+
+### ETAPA 2 (varredura) — `auto_triage.decision='suppress'` NÃO é evidência, nem a 0.95
+
+**Ocorrências:** 1 (17/08), medida no candidato de MAIOR confiança do acervo.
+
+O acervo traz `auto_triage` com `decision`, `matched_code` e `match_confidence`. É tentador
+tratar `suppress` + confiança alta como "já corrigido" e fechar em lote — são só 7 entre os 145
+abertos não-altos, o que parece uma varredura barata e segura.
+
+Testei a de confiança mais alta. `de012fc1` (Anne, 05/08 22:05 BRT): `suppress`,
+`match_confidence 0.95`, `matched_code CONFAB-WRITE-DATE-NO-RELLABEL`, cujo KI está `corrigido`
+em 09/08 — **posterior ao incidente**, o filtro clássico. O literal: _"Pode mudar e colocar pra
+amanhã"_ numa QUARTA (05/08) → o TOM respondeu _"reagendei pra amanhã (sex 07/08)"_, quando
+amanhã era quinta 06/08.
+
+Rodei o guard com o literal, nas duas hipóteses do que foi gravado (06/08 e 07/08):
+`corrigeRotuloDeEscrita` devolve **`{corrigiu:false, motivo:'data_colada'}` nas duas**. O próprio
+módulo documenta o porquê — uma data numérica colada ao rótulo ("amanhã (sex 07/08)") é território
+do `date-claim.js`, e ele se abstém de propósito. Controle sem data colada corrige normalmente
+(`amanhã` → `sexta (07/08)`), então a chamada estava boa. **O achado segue aberto e a supressão de
+0.95 estava errada.**
+
+Isto estende a regra de 13/08 para um alvo novo: antes eu tinha medido que *eu* não podia fechar
+por regex+data; agora está medido que **o pipeline de auto-triagem fecha pelo mesmo critério fraco
+que me é proibido**, e erra no caso em que está mais confiante.
+
+Proposta de virar código: o `auto_triage` não deveria poder gravar `suppress` só com
+`matched_code` + comparação de datas. Deveria ser obrigado a rodar o literal pelo guard do
+`matched_code` (o mesmo `provar(literal, guard)` proposto em 13/08) e registrar `{antes, depois}`
+no próprio campo; sem isso, `decision` no máximo `candidato`, nunca `suppress`.
+
+### ETAPA 2 (varredura) — "mesma família do fix de hoje" quase virou fechamento
+
+**Ocorrências:** 3 (13/08, 14/08, 17/08). É a mesma regra reincidindo pela terceira vez.
+
+A correção de 17/08 (`DUP-INTENT-NOT-CLOSED-CHOICE13`) fechou a intent de dup nas escolhas "1"/"3".
+Na varredura apareceu `06576ec4` (Ana, 07/07 07:05 BRT): menu de dup oferecendo _"Liberar a folha
+para conferência da Direção"_, usuária responde **"2"**, e o TOM cria **"Avisar William sobre
+treinamentos"** — outra tarefa. Mesmo sintoma de superfície do achado que eu tinha acabado de
+corrigir, mesma família, mesmo dia da mesma pessoa.
+
+Não é o mesmo bug. O meu era intent RESPONDIDA que ficava aberta e era ressuscitada por uma
+afirmativa posterior. Neste, o `pendingDupTasks` é um Map **chaveado só por `collab.id`**: menus de
+dup sucessivos no mesmo turno sobrescrevem um ao outro, e o "2" amarra no último escrito, não no
+menu exibido. O meu fix não encosta nisso — fechar `06576ec4` apontando pro meu KI teria enterrado
+um buraco vivo e ainda declarado progresso.
+
+Regra: **"mesma família" é o começo da investigação, nunca a conclusão dela.** O que fecha continua
+sendo a execução reproduzindo o sintoma DAQUELE achado. Vale inclusive — principalmente — contra o
+fix que você mesmo acabou de escrever, que é quando a tentação é maior.
