@@ -7537,9 +7537,23 @@ async function tryDupBypass(collab, text) {
     if (!hasEv && !hasTk) return null;
   }
 
+  // DUP-INTENT-NOT-CLOSED (Ana 28/07 22:09→22:12 BRT): só o caminho '2' fechava a intent no
+  // banco. "1"/"3" limpavam o Map e deixavam a intent ABERTA — aí o fallback do banco a
+  // ressuscitava num "pode criar" dirigido a OUTRA tarefa (dentro dos 10min) e criava a errada.
+  const closeDupIntent = async (resolution, note) => {
+    try {
+      const id = pendingTk && pendingTk._intentId;
+      if (id) { await pendingIntents.resolveIntent(id, resolution, note); return; }
+      const open = (await pendingIntents.listOpenIntents(collab.id))
+        .find(i => i.kind === 'task_creation' && i.payload?._dup_bypass);
+      if (open) await pendingIntents.resolveIntent(open.id, resolution, note);
+    } catch (_e) { /* non-fatal */ }
+  };
+
   if (choice === '3') {
     if (hasEv) pendingDupEvents.delete(collab.id);
     if (hasTk) pendingDupTasks.delete(collab.id);
+    await closeDupIntent('denied', 'dup_bypass choice=3');
     return { reply: 'Ok, cancelado. Me passa de novo quando quiser criar.' };
   }
 
@@ -7567,7 +7581,10 @@ async function tryDupBypass(collab, text) {
     pendingDupTasks.delete(collab.id);
     const tk = pendingTk.task;
     console.log(`[DupBypass] task choice=${choice} "${String(tk.title).slice(0,40)}"`);
-    if (choice === '1') return { reply: `Certo! Já está anotado como _${tk.title}_. Nada mudou.` };
+    if (choice === '1') {
+      await closeDupIntent('denied', 'dup_bypass choice=1');
+      return { reply: `Certo! Já está anotado como _${tk.title}_. Nada mudou.` };
+    }
     // choice === '2': inserir task diretamente (bypass dup check)
     // Sprint 31.4 Bug-B fix: insertRow vem do validated insertRow (armazenado no Map/DB),
     // não mais reconstruído do action bruto do LLM. Garante created_by=collab.id,
@@ -7589,16 +7606,7 @@ async function tryDupBypass(collab, text) {
       console.error('[DupBypass] task insert ABORT: no assignedTo');
       return { reply: '_Não consegui salvar a tarefa porque não identifiquei pra quem é. Tenta de novo me dizendo o que é._' };
     }
-    // Resolve intent do DB se veio do fallback (DB fallback path)
-    if (pendingTk._intentId) {
-      try { await pendingIntents.resolveIntent(pendingTk._intentId, 'confirmed', 'dup_bypass choice=2'); } catch (_e) { /* non-fatal */ }
-    } else {
-      // Limpa intent ativa do DB mesmo quando veio do Map (Map foi populado recentemente)
-      try {
-        const _dbI = (await pendingIntents.listOpenIntents(collab.id)).find(i => i.kind === 'task_creation' && i.payload?._dup_bypass);
-        if (_dbI) await pendingIntents.resolveIntent(_dbI.id, 'confirmed', 'dup_bypass choice=2');
-      } catch (_e) { /* non-fatal */ }
-    }
+    await closeDupIntent('confirmed', 'dup_bypass choice=2');
     const { data: inserted, error: insErr } = await supabase.from('tasks').insert(insertRow).select('id, title').single();
     if (insErr) {
       // Sprint 23.6 — log detalhado pra diagnosticar (FK? RLS? not-null violation?)
@@ -15422,4 +15430,5 @@ module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamS
   // Fase 3 chat de grupo — parsers/appliers de trabalho reusados no chat (auditados send-free;
   // applyEventActions gateia o único send via opts.suppressNotify). WhatsApp inalterado.
   parseEventCreateMarker, applyEventActions, parseCheckpointBatchMarker, applyCheckpointBatch,
-  parseChecklistActionMarker, applyChecklistAction };
+  parseChecklistActionMarker, applyChecklistAction,
+  tryDupBypass };
