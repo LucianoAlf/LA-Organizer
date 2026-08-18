@@ -4511,6 +4511,36 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             a.id = byTitleC.id.replace(/-/g, '').slice(0, 8);
             console.log(`[Task] complete title-lookup: "${a.title}" → id=${a.id}`);
           } else {
+            // FALLBACK FUZZY (audit 27/07 dor #1; Dai 17/08 "registrei 1 de 4"): o substring
+            // `.ilike('%titulo%')` acima falha quando o TOM ABREVIA/reordena o título (as palavras
+            // não ficam contíguas). Aqui buscamos o pool ABERTO do usuário e resolvemos por
+            // SOBREPOSIÇÃO DE TOKENS — SÓ aceita match ÚNICO; ≥2 candidatos → pergunta (guard contra
+            // os 60% de títulos duplicados: 6× "Reunião ADM" do Marcos vira pergunta, não chute).
+            // Exclui molde recorrente (recurrence_rule) — fechar o molde mata a série.
+            try {
+              const { resolveByTitleFuzzy } = require('./lib/task-title-resolver');
+              const { data: _poolF } = await supabase
+                .from('tasks').select('id, title')
+                .eq('assigned_to', collaborator.id)
+                .is('recurrence_rule', null)
+                .not('status', 'in', '("done","cancelled")')
+                .order('created_at', { ascending: false }).limit(200);
+              const _rf = resolveByTitleFuzzy(a.title, _poolF || []);
+              if (_rf.match) {
+                a.id = _rf.match.id.replace(/-/g, '').slice(0, 8);
+                console.log(`[Task] complete FUZZY-lookup: "${a.title}" → "${_rf.match.title}" id=${a.id}`);
+                try { await logMarker(collaborator.id, 'TASK_TARGET_FUZZY', 'executed', `handler=complete pedido="${String(a.title).slice(0, 60)}" alvo="${String(_rf.match.title).slice(0, 60)}"`, null); } catch (_) { /* best-effort */ }
+              } else if (_rf.ambiguous) {
+                const _lista = _rf.scored.filter((s) => s.contain >= 1).slice(0, 4).map((s) => `• *${s.c.title}*`).join('\n');
+                failMessages.push(`Achei mais de uma tarefa que combina com _"${String(a.title).slice(0, 60)}"_ — qual delas?\n${_lista}`);
+                try { await logMarker(collaborator.id, 'TASK_TARGET_FUZZY', 'skipped', `handler=complete AMBIGUO pedido="${String(a.title).slice(0, 60)}" n=${_rf.scored.filter((s) => s.contain >= 1).length}`, null); } catch (_) { /* best-effort */ }
+                console.warn(`[Task] complete FUZZY ambiguo: "${a.title}" (${_rf.scored.filter((s) => s.contain >= 1).length} candidatos)`);
+                failCount++;
+                continue;
+              }
+            } catch (_e) { console.warn('[Task] complete fuzzy fallback err:', _e.message); }
+          }
+          if (!a.id) {
             // TASK-COMPLETE-ALVO-NAO-ACHADO (Clayton 11/08, Mayra 11/08): sair daqui sem
             // failMessage joga o caller no genérico "me manda de novo" (engine.js:11054) — que
             // é beco quando a tarefa é de outra pessoa, porque este handler casa só por
