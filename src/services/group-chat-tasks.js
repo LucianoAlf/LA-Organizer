@@ -85,7 +85,13 @@ function matchPoolByPhrase(pool, phrase) {
 // molde cancelado/concluído, então nunca mais regenera (caso Conciliação de Cartões/
 // Rose 17/06). Rotina sempre mira a instância visível; parar a série é ação à parte.
 function pickInstanceTarget(rows) {
-  const list = Array.isArray(rows) ? rows : [];
+  // VERDADE ÚNICA (Fatia 2): o blueprint (molde + filhas-template) NUNCA é trabalho vivo.
+  // Este é o CHOKEPOINT — todo resolvedor de ação por título (complete via
+  // pickVisibleCompletionTarget, cancel, reschedule, _resolveByPhraseFallback,
+  // _resolvePackageChildByLabel) funila aqui. Barrar pelo marcador intrínseco fecha as bordas
+  // que a heurística de rpid/rule deixava passar (molde cancelado, instância sumida). As queries
+  // que alimentam este picker precisam SELECIONAR is_recurrence_template (senão o filtro é no-op).
+  const list = (Array.isArray(rows) ? rows : []).filter((r) => r && r.is_recurrence_template !== true);
   const instances = list.filter((r) => r && r.recurrence_rule == null);
   // GROUPREPORT-MOLDE-CICLO-TWIN: num pacote, molde e ciclo são ambos rule=null. O ciclo (ocorrência
   // VISÍVEL) tem recurrence_parent_id preenchido; o molde (blueprint escondido) tem null. Rotina
@@ -170,7 +176,7 @@ function filterNewSubtasks(existingChildTitles, subtasks, threshold = SIM_THRESH
 async function _resolveByPhraseFallback({ supabase, groupId, phrase, excludeCancelled = false }) {
   try {
     let q = supabase.from('tasks')
-      .select('id, title, recurrence_rule, recurrence_parent_id, due_date, is_group')
+      .select('id, title, recurrence_rule, recurrence_parent_id, due_date, is_group, is_recurrence_template')
       .eq('assigned_group_id', groupId).neq('status', 'done');
     if (excludeCancelled) q = q.neq('status', 'cancelled');
     const { data: pool } = await q.limit(200);
@@ -196,7 +202,7 @@ async function _resolvePackageChildByLabel({ supabase, groupId, label }) {
     const child = _normTitle(label.slice(i + 1));
     if (!pkg || !child) return null;
     const { data } = await supabase.from('tasks')
-      .select('id, title, due_date, parent_task_id, is_group, recurrence_rule, recurrence_parent_id')
+      .select('id, title, due_date, parent_task_id, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template')
       .eq('assigned_group_id', groupId).neq('status', 'done').neq('status', 'cancelled').limit(300);
     const rows = data || [];
     const containers = new Set(rows.filter((r) => r.is_group === true && _normTitle(r.title) === pkg).map((r) => r.id));
@@ -352,7 +358,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           // retroativa): o alvo tem que ser só o que o digest MOSTRA. Sem isso o completer pegava a
           // ocorrência mais antiga aberta e fechava o ciclo velho (fechou 4 existindo 2, Rose 12/08;
           // fechou 17/07 com gêmea done deixando a de HOJE aberta, Rose 17/08). Cancelada fora.
-          .select('id, title, recurrence_rule, recurrence_parent_id, is_group, status, due_date, created_at')
+          .select('id, title, recurrence_rule, recurrence_parent_id, is_group, status, due_date, created_at, is_recurrence_template')
           .eq('assigned_group_id', groupId)
           .neq('status', 'cancelled')
           .ilike('title', title)
@@ -455,7 +461,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           // recurrence_parent_id obrigatório — ver a nota no ramo `complete`. Cancelar a
           // filha-template no lugar da real é pior que concluir: some trabalho da frente
           // de todo mundo e o molde fica marcado.
-          .select('id, title, is_group, recurrence_rule, recurrence_parent_id')
+          .select('id, title, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template')
           .eq('assigned_group_id', groupId)
           .neq('status', 'done')
           .neq('status', 'cancelled')
@@ -493,7 +499,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           // recurrence_parent_id obrigatório — ver a nota no ramo `complete`. Remarcar a
           // filha-template move o molde e descasa a série: foi o que fez o TOM "criar 3
           // duplicadas" ao remanejar os Repasses da Rose em 31/07.
-          .select('id, title, recurrence_rule, recurrence_parent_id, is_group').eq('assigned_group_id', groupId)
+          .select('id, title, recurrence_rule, recurrence_parent_id, is_group, is_recurrence_template').eq('assigned_group_id', groupId)
           .neq('status', 'done').neq('status', 'cancelled').ilike('title', title)
           .order('due_date', { ascending: true }).limit(5);
         let target = pickInstanceTarget(found);
@@ -539,6 +545,10 @@ async function endSeries({ supabase, templateId }) {
   // FATIA 2: series_ended_at é o que de fato PARA a série pós-flip (o guard novo ignora status).
   await supabase.from('tasks').update({ status: 'cancelled', series_ended_at: new Date().toISOString() }).eq('id', templateId);
   await supabase.from('tasks').update({ status: 'cancelled' }).eq('recurrence_parent_id', templateId).neq('status', 'done');
+  // FATIA 4: as filhas-BLUEPRINT (parent_task_id=molde, recurrence_parent_id null) não têm lineage de
+  // instância, então a linha acima não as pega — ficavam pending órfãs (invisíveis só por sorte do
+  // filtro do relatório; com o flag, invisíveis, mas ainda pending no banco). Cancela por higiene.
+  await supabase.from('tasks').update({ status: 'cancelled' }).eq('parent_task_id', templateId).neq('status', 'done');
   return { ended: true, id: templateId };
 }
 
@@ -570,8 +580,33 @@ async function reviveSeries({ supabase, groupId, title }) {
   return { revived: true, id: tpl.id, title: tpl.title };
 }
 
+// DERECUR ("só o primeiro mês" — refat verdade-única, Fatia 3): para de REPETIR mas MANTÉM o
+// ciclo corrente. Difere do endSeries (que cancela TUDO, inclusive o corrente): aqui só o
+// PRÓXIMO ciclo em diante cai. Mesmo par molde do endSeries (status cancelled + series_ended_at)
+// pra continuar religável pelo reviveSeries ("volta a recorrência"). O flag is_recurrence_template
+// já esconde o molde/blueprint; series_ended_at para o cron; a filha-blueprint órfã é tratada na
+// Fatia 4 (endSeries) — aqui ela nasce invisível pelo flag.
+async function derecurSeries({ supabase, templateId }) {
+  const nowIso = new Date().toISOString();
+  const todayYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const [y, m] = todayYmd.split('-').map(Number);
+  const ultimoDia = new Date(Date.UTC(y, m, 0)).getUTCDate(); // m é 1-based → dia 0 do mês seguinte
+  const fimMes = `${todayYmd.slice(0, 8)}${String(ultimoDia).padStart(2, '0')}`;
+  // Molde: para o cron (series_ended_at) e fica localizável pra religar (status cancelled).
+  await supabase.from('tasks').update({ status: 'cancelled', series_ended_at: nowIso }).eq('id', templateId);
+  // Só o PRÓXIMO ciclo em diante (due > fim do mês corrente); o corrente + filhas ficam intactos.
+  const { data: futuras } = await supabase.from('tasks')
+    .select('id').eq('recurrence_parent_id', templateId).neq('status', 'done').gt('due_date', fimMes);
+  const futIds = (futuras || []).map((r) => r.id);
+  if (futIds.length) {
+    await supabase.from('tasks').update({ status: 'cancelled' }).in('id', futIds);
+    await supabase.from('tasks').update({ status: 'cancelled' }).in('parent_task_id', futIds).neq('status', 'done');
+  }
+  return { derecurred: true, id: templateId, futurasCanceladas: futIds.length };
+}
+
 module.exports = {
   applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, pickVisibleCompletionTarget,
   findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, matchPoolByPhrase,
-  resolveSeriesTemplate, endSeries, reviveSeries, _resolvePackageChildByLabel,
+  resolveSeriesTemplate, endSeries, reviveSeries, derecurSeries, _resolvePackageChildByLabel,
 };

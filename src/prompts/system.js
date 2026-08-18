@@ -1840,7 +1840,7 @@ async function fetchCollaboratorContext(collaborator) {
       // filhas-template (paridade com o PWA fetchGroupsForDay), senão o TOM conta o ciclo
       // de grupo em dobro (template + instância). Busca com margem e filtra pós-fetch.
       const { data: gt } = await supabase.from('tasks')
-        .select('id, title, description, due_date, status, assigned_group_id, is_group, recurrence_rule, parent_task_id, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
+        .select('id, title, description, due_date, status, assigned_group_id, is_group, recurrence_rule, parent_task_id, is_recurrence_template, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
         .in('assigned_group_id', myGids)
         .eq('status', 'pending')
         .order('due_date', { ascending: true, nullsFirst: false })

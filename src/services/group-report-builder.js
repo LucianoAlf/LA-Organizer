@@ -205,7 +205,7 @@ async function queryGroupTasks(supabase, groupId, now = new Date()) {
   const { filterVisibleGroupTasks, idsDeMoldeDosPais } = require('../utils/group-task-visibility');
   const { data } = await supabase.from('tasks')
     .select('id, title, due_date, status, is_group, recurrence_rule, recurrence_parent_id, parent_task_id, ' +
-            'created_by, created_at, ' +
+            'is_recurrence_template, created_by, created_at, ' +
             'creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
     .eq('assigned_group_id', groupId)
     .neq('status', 'cancelled')

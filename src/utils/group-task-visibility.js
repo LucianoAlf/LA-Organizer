@@ -39,7 +39,13 @@ function filterVisibleGroupTasks(tasks, idsDeMolde) {
   const arr = Array.isArray(tasks) ? tasks : [];
   const templateIds = new Set(arr.filter(isRecurringTemplate).map((t) => t.id));
   if (idsDeMolde) for (const id of idsDeMolde) templateIds.add(String(id));
-  return arr.filter((t) => t && !isRecurringTemplate(t) && !templateIds.has(t.parent_task_id));
+  // VERDADE ÚNICA (Fatia 2): o marcador intrínseco `is_recurrence_template` fecha, por
+  // construção, a borda que o parentesco só pegava com o round-trip idsDeMoldeDosPais (molde
+  // cancelado fora da página). REFORÇA — compõe com a lógica de parentesco, nunca esconde
+  // MENOS que o legado; degrada pro comportamento antigo se a coluna não vier no select. A
+  // remoção da maquinaria de parentesco fica pra Fatia 5, quando o flag estiver provado.
+  return arr.filter((t) => t && !isRecurringTemplate(t) && t.is_recurrence_template !== true
+    && !templateIds.has(t.parent_task_id));
 }
 
 /**

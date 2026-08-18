@@ -108,6 +108,18 @@ async function candidatosDoResolvedor(groupId, titulo) {
   return data || [];
 }
 
+// Lê uma filha específica por (parent, título). Blueprint: parent=molde; instância: parent=mãe-inst.
+async function acharFilha(parentId, titulo) {
+  const { data } = await supabase.from('tasks')
+    .select('id, title, status, due_date, is_recurrence_template, recurrence_parent_id')
+    .eq('parent_task_id', parentId).ilike('title', titulo).maybeSingle();
+  return data;
+}
+async function contarTarefas(groupId) {
+  const { count } = await supabase.from('tasks').select('id', { count: 'exact', head: true }).eq('assigned_group_id', groupId);
+  return count || 0;
+}
+
 const linha = (n, nome, ok, got, exp, extra) =>
   console.log(`CENARIO ${n} [${nome}]: ${ok ? 'PASS' : 'FAIL'} — medido=${got} esperado=${exp}${extra ? ` · ${extra}` : ''}`);
 
@@ -151,13 +163,34 @@ const linha = (n, nome, ok, got, exp, extra) =>
     resultados.push({ n: '1b', ok: okCG });
   } catch (e) { linha(1, 'double-truth', false, `ERRO ${e.message}`, 'vivas=1'); resultados.push({ n: 1, ok: false }); }
 
-  // ── Cenário 2: derecur ("só o primeiro mês") existe ───────────────────────────
+  // ── Cenário 2: derecur ("só esse mês") — para de repetir, MANTÉM o ciclo corrente ─
   try {
-    const existe = typeof groupTasks.derecurSeries === 'function';
-    linha(2, 'derecur-existe', existe, existe ? 'presente' : 'ausente', 'presente',
-      'operação "para de repetir, mantém o ciclo corrente"');
-    resultados.push({ n: 2, ok: existe });
-  } catch (e) { linha(2, 'derecur-existe', false, `ERRO ${e.message}`, 'presente'); resultados.push({ n: 2, ok: false }); }
+    if (typeof groupTasks.derecurSeries !== 'function') throw new Error('derecurSeries ausente');
+    const pacote = await montarPacote(groupId, collab.id);
+    const { data: maesAntes } = await supabase.from('tasks')
+      .select('id, due_date, status').eq('recurrence_parent_id', pacote.motherTemplateId).eq('is_group', true);
+    const correnteAntes = (maesAntes || []).filter((m) => String(m.due_date) <= fim).length;
+    const futurasAntes = (maesAntes || []).filter((m) => String(m.due_date) > fim).length;
+
+    await groupTasks.derecurSeries({ supabase, templateId: pacote.motherTemplateId });
+
+    const { data: molde } = await supabase.from('tasks')
+      .select('series_ended_at, status').eq('id', pacote.motherTemplateId).maybeSingle();
+    const { data: maesDepois } = await supabase.from('tasks')
+      .select('id, due_date, status').eq('recurrence_parent_id', pacote.motherTemplateId).eq('is_group', true);
+    const correnteViva = (maesDepois || []).filter((m) => String(m.due_date) <= fim && m.status === 'pending').length;
+    const futurasVivas = (maesDepois || []).filter((m) => String(m.due_date) > fim && m.status === 'pending').length;
+    const { data: filhasCorrente } = await supabase.from('tasks')
+      .select('id').eq('parent_task_id', pacote.groupId).eq('status', 'pending');
+    const ok = molde && molde.series_ended_at != null
+      && correnteAntes >= 1 && correnteViva === correnteAntes
+      && futurasAntes >= 1 && futurasVivas === 0
+      && (filhasCorrente || []).length >= 1;
+    linha(2, 'derecur', ok,
+      `molde_ended=${!!(molde && molde.series_ended_at)} corrente_viva=${correnteViva}/${correnteAntes} futuras_vivas=${futurasVivas}/${futurasAntes} filhas_corrente=${(filhasCorrente || []).length}`,
+      'molde_ended=true corrente mantida futuras_vivas=0', 'para de repetir mantendo o ciclo corrente');
+    resultados.push({ n: 2, ok });
+  } catch (e) { linha(2, 'derecur', false, `ERRO ${e.message}`, 'molde_ended, corrente viva, futuras 0'); resultados.push({ n: 2, ok: false }); }
 
   // ── Cenário 5: endSeries não deixa filha-blueprint pending órfã ───────────────
   try {
@@ -191,10 +224,42 @@ const linha = (n, nome, ok, got, exp, extra) =>
     resultados.push({ n: 6, ok });
   } catch (e) { linha(6, 'motor-idempotente', false, `ERRO ${e.message}`, 'estável'); resultados.push({ n: 6, ok: false }); }
 
-  // ── Pendentes de comportamento (fatias 2–3, via integração/LLM) ───────────────
-  console.log('CENARIO 3 [conclui-instancia]: PENDENTE — Fatia 2 (predicado único no completer)');
-  console.log('CENARIO 4 [remarca-cascata]: PENDENTE — Fatia 2 (reschedule não move blueprint)');
-  console.log('CENARIO 7 [template-only]: PENDENTE — Fatia 2 (concluir ciclo sem instância)');
+  // ── Cenário 3: concluir mira a INSTÂNCIA viva, blueprint intocado (handler real) ──
+  try {
+    const pacote = await montarPacote(groupId, collab.id);
+    await groupTasks.applyGroupChatTaskActions({
+      supabase, groupId, senderCollabId: collab.id, actions: [{ action: 'complete', title: T1 }],
+    });
+    const bp = await acharFilha(pacote.motherTemplateId, T1);   // blueprint
+    const inst = await acharFilha(pacote.groupId, T1);          // instância viva
+    const ok = inst && inst.status === 'done' && bp && bp.status === 'pending';
+    linha(3, 'conclui-instancia', ok, `inst=${inst && inst.status} blueprint=${bp && bp.status}`,
+      'inst=done blueprint=pending', 'complete resolve a instância, nunca o blueprint');
+    resultados.push({ n: 3, ok });
+  } catch (e) { linha(3, 'conclui-instancia', false, `ERRO ${e.message}`, 'inst=done blueprint=pending'); resultados.push({ n: 3, ok: false }); }
+
+  // ── Cenário 4: remarca a INSTÂNCIA; blueprint + contagem intactos (Rose 31/07) ────
+  try {
+    const pacote = await montarPacote(groupId, collab.id);
+    const bpAntes = await acharFilha(pacote.motherTemplateId, T1);
+    const nAntes = await contarTarefas(groupId);
+    const novaDue = `${ini.slice(0, 8)}20`; // dia 20 do mês corrente (difere do dia 3, mesmo ciclo)
+    await groupTasks.applyGroupChatTaskActions({
+      supabase, groupId, senderCollabId: collab.id, actions: [{ action: 'reschedule', title: T1, new_due_date: novaDue }],
+    });
+    const bpDepois = await acharFilha(pacote.motherTemplateId, T1);
+    const instDepois = await acharFilha(pacote.groupId, T1);
+    const nDepois = await contarTarefas(groupId);
+    const ok = instDepois && instDepois.due_date === novaDue
+      && bpDepois && bpDepois.due_date === bpAntes.due_date
+      && nDepois === nAntes;
+    linha(4, 'remarca-cascata', ok,
+      `inst_due=${instDepois && instDepois.due_date} bp_due=${bpDepois && bpDepois.due_date} novas=${nDepois - nAntes}`,
+      `inst_due=${novaDue} bp_due=${bpAntes && bpAntes.due_date} novas=0`, 'remarca instância; blueprint e contagem intactos');
+    resultados.push({ n: 4, ok });
+  } catch (e) { linha(4, 'remarca-cascata', false, `ERRO ${e.message}`, 'blueprint intacto'); resultados.push({ n: 4, ok: false }); }
+
+  console.log('CENARIO 7 [template-only]: PENDENTE — Fatia 2 (concluir ciclo sem instância; lógica intocada)');
   console.log('CENARIO 8 [re-emitir-create]: PENDENTE — Fatia 3/5 (idempotência de re-criação)');
 
   await limpar(groupId);
@@ -204,13 +269,11 @@ const linha = (n, nome, ok, got, exp, extra) =>
   const verdes = resultados.filter((r) => r.ok).map((r) => r.n);
   console.log(`\n[cenario-grupo-recorrencia] VERMELHO: ${vermelhos.join(',') || 'nenhum'} · VERDE: ${verdes.join(',') || 'nenhum'}`);
 
-  // GUARDS SEMPRE-VERDES gateiam o exit code (independem de qual fatia já landou):
-  //   6  = motor de recorrência intocado (idempotente)
-  //   1b = clone-guard (materializeSeries não propaga o flag do molde)
-  // Os cenários de progresso (1,2,5 + comportamento) são REPORTADOS e viram verde conforme
-  // as fatias entram. Assim o mesmo trilho serve de Fatia 0 (1,2,5 red) até o fim (tudo verde),
-  // e só quebra o build se o motor ou o clone-guard regredirem.
-  const guardas = [6, '1b'];
+  // GUARDS SEMPRE-VERDES gateiam o exit code = cenários cuja fatia JÁ LANDOU (regressão bloqueia):
+  //   6  = motor de recorrência intocado (idempotente) · 1b = clone-guard
+  //   1 double-truth (F1) · 3 conclui instância · 4 remarca sem mover blueprint (F2) · 2 derecur (F3)
+  //   · 5 endSeries limpa órfã (F4). Só 7/8 (comportamento LLM/re-emissão) ficam PENDENTE fora do gate.
+  const guardas = [1, '1b', 2, 3, 4, 5, 6];
   const guardaVermelha = guardas.filter((g) => vermelhos.includes(g));
   if (guardaVermelha.length) {
     console.log(`[cenario-grupo-recorrencia] REGRESSÃO DE GUARDA: ${guardaVermelha.join(',')} — motor/clone-guard quebrou. BLOQUEIA.`);

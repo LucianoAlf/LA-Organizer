@@ -8,7 +8,7 @@
 // Isso garante a quebra de linha/hierarquia (não depende de markdown) e dá a riqueza visual.
 const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
-const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, endSeries, resolveSeriesTemplate, reviveSeries } = require('./group-chat-tasks');
+const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, endSeries, resolveSeriesTemplate, reviveSeries, derecurSeries } = require('./group-chat-tasks');
 const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
 const { buildGroupReport, dropOpenWithDoneTwin, categorize, spYmd } = require('./group-report-builder');
 const { detectaDataAfirmadaErrada } = require('../utils/date-claim');
@@ -38,7 +38,7 @@ async function loadContext(supabase, groupId, senderCollabId) {
     // ver molde E instância e cobrar em dobro — mas disparava também quando NÃO HÁ instância,
     // e aí escondia trabalho real. Agora o molde vem, e quem some é só o que tem instância viva
     // (decidido abaixo, com consulta ao banco).
-    supabase.from('tasks').select('id, title, status, due_date, created_at, is_group, parent_task_id, description, created_by, recurrence_rule, recurrence_parent_id, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
+    supabase.from('tasks').select('id, title, status, due_date, created_at, is_group, parent_task_id, description, created_by, recurrence_rule, recurrence_parent_id, is_recurrence_template, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
       .eq('assigned_group_id', groupId)
       .neq('status', 'cancelled')
       .order('created_at', { ascending: false }).limit(POOL_LIMIT * 2),
@@ -68,7 +68,12 @@ async function loadContext(supabase, groupId, senderCollabId) {
     _comInstancia = new Set((_inst || []).map((r) => String(r.recurrence_parent_id)));
   }
   const pool = escondeMoldeComInstancia(
-    dropOpenWithDoneTwin((poolRows || []).filter((t) => t.is_group !== true)), _comInstancia)
+    // VERDADE ÚNICA (Fatia 2): esconde a filha-BLUEPRINT (marcador intrínseco + rule==null) do
+    // pool que o TOM vê — era double-count com a filha-instância (mesmo título/data). Preciso de
+    // propósito: NÃO toca o MOLDE (rule!=null), que segue governado por escondeMoldeComInstancia
+    // (molde-sem-instância É a ocorrência corrente e precisa aparecer — Rose 06/08).
+    dropOpenWithDoneTwin((poolRows || []).filter((t) => t.is_group !== true
+      && !(t.is_recurrence_template === true && t.recurrence_rule == null))), _comInstancia)
     // `retroativa` = criada DEPOIS de vencer, logo não é atraso de ninguém. Num MOLDE isso não
     // vale: o due_date é a âncora do ciclo (BYMONTHDAY=5), não data de cadastro atrasado — foi
     // o que sumiu com o "Relatório Mensal Financeiro" (venc. 05, criado 06) da Rose.
@@ -216,7 +221,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   try {
     const { data: pend } = await supabase.from('group_chat_pending_confirms')
       .select('*').eq('group_id', groupId).eq('sender_collab_id', senderCollabId)
-      .in('op', ['delete_note', 'end_series']).gt('expires_at', new Date().toISOString()).maybeSingle();
+      .in('op', ['delete_note', 'end_series', 'derecur_series']).gt('expires_at', new Date().toISOString()).maybeSingle();
     if (pend) {
       const verdict = groupNotes.decideConfirm(pend, text);
       if (verdict === 'execute') {
@@ -225,12 +230,18 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           await endSeries({ supabase, templateId: pend.target_id });
           return await postTomText(supabase, groupId, `Encerrei a série *${pend.summary}* — não gera mais tarefa nova. Pra voltar é só pedir "religa a série ${pend.summary}". ✅`);
         }
+        if (pend.op === 'derecur_series') {
+          await derecurSeries({ supabase, templateId: pend.target_id });
+          return await postTomText(supabase, groupId, `Feito — a *${pend.summary}* fica só neste mês e não repete mais nos próximos. Pra voltar a repetir é só pedir "volta a recorrência ${pend.summary}". ✅`);
+        }
         await groupNotes.softDeleteGroupNoteById({ supabase, noteId: pend.target_id });
         return await postTomText(supabase, groupId, `Apaguei a ficha *${pend.summary}* — tá na lixeira. É só pedir "restaura a ficha ${pend.summary}" que eu trago de volta. 🗑️`);
       }
       if (verdict === 'cancel') {
         await supabase.from('group_chat_pending_confirms').delete().eq('id', pend.id);
-        const msg = pend.op === 'end_series' ? `Ok, mantive a série *${pend.summary}* rodando. 👍` : `Ok, não apaguei a ficha *${pend.summary}*. 👍`;
+        const msg = pend.op === 'end_series' ? `Ok, mantive a série *${pend.summary}* rodando. 👍`
+          : pend.op === 'derecur_series' ? `Ok, mantive a recorrência de *${pend.summary}*. 👍`
+          : `Ok, não apaguei a ficha *${pend.summary}*. 👍`;
         return await postTomText(supabase, groupId, msg);
       }
       // 'ignore' → segue o fluxo normal (a pendência expira sozinha em ~10min)
@@ -387,16 +398,17 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     }
   }
 
-  // ─── CICLO DE SÉRIE RECORRENTE (encerrar / religar) ───────────────────────
-  // <<TASK_SERIES>>{action:end|revive, title}<<END>> — group-only. 'end' CONFIRMA (pré-passo);
-  // 'revive' é direto. NÃO passa pelo validateTaskAction do engine (blast radius zero na recorrência).
+  // ─── CICLO DE SÉRIE RECORRENTE (encerrar / parar de repetir / religar) ─────
+  // <<TASK_SERIES>>{action:end|derecur|revive, title}<<END>> — group-only. 'end' e 'derecur'
+  // CONFIRMAM (pré-passo); 'revive' é direto. 'derecur' = para de repetir MAS mantém o ciclo
+  // corrente (Fatia 3). NÃO passa pelo validateTaskAction do engine (blast radius zero).
   const tsMatch = reply.match(/<<TASK_SERIES>>([\s\S]*?)<<END>>/i);
   if (tsMatch) {
     stripBlock(/<<TASK_SERIES>>[\s\S]*?<<END>>/i);
     let ps = null; try { ps = JSON.parse(tsMatch[1].trim()); } catch (_) { ps = null; }
-    if (!ps || (ps.action !== 'end' && ps.action !== 'revive')) {
+    if (!ps || !['end', 'derecur', 'revive'].includes(ps.action)) {
       actions.push({ kind: 'task', status: 'fail', label: 'Série', detail: 'marker malformado' });
-    } else if (ps.action === 'end') {
+    } else if (ps.action === 'end' || ps.action === 'derecur') {
       try {
         const { data: hit } = await supabase.from('tasks')
           .select('id, title, recurrence_rule, recurrence_parent_id')
@@ -410,12 +422,14 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           const { data: t } = await supabase.from('tasks').select('id, title').eq('id', templateId).maybeSingle();
           const summary = (t && t.title) || ps.title;
           const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+          const op = ps.action === 'derecur' ? 'derecur_series' : 'end_series';
+          const detail = ps.action === 'derecur' ? '❓ confirmar parar a recorrência (mantém este mês)' : '❓ confirmar encerramento da série';
           await supabase.from('group_chat_pending_confirms')
-            .upsert({ group_id: groupId, sender_collab_id: senderCollabId, op: 'end_series', target_id: templateId, summary, expires_at: expires }, { onConflict: 'group_id,sender_collab_id,op' });
-          actions.push({ kind: 'task', status: 'pending', label: summary, detail: '❓ confirmar encerramento da série' });
-          console.log(`[GroupChat] task_series end PENDENTE grupo=${groupId}: "${summary}"`);
+            .upsert({ group_id: groupId, sender_collab_id: senderCollabId, op, target_id: templateId, summary, expires_at: expires }, { onConflict: 'group_id,sender_collab_id,op' });
+          actions.push({ kind: 'task', status: 'pending', label: summary, detail });
+          console.log(`[GroupChat] task_series ${ps.action} PENDENTE grupo=${groupId}: "${summary}"`);
         }
-      } catch (e) { console.error('[GroupChat] TASK_SERIES end:', e.message); actions.push({ kind: 'task', status: 'fail', label: ps.title || 'Série', detail: 'não consegui montar' }); }
+      } catch (e) { console.error(`[GroupChat] TASK_SERIES ${ps.action}:`, e.message); actions.push({ kind: 'task', status: 'fail', label: ps.title || 'Série', detail: 'não consegui montar' }); }
     } else {
       try {
         const r = await reviveSeries({ supabase, groupId, title: ps.title });

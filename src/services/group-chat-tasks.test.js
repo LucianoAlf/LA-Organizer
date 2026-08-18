@@ -170,6 +170,31 @@ test('pickInstanceTarget: prefere a subtarefa-do-CICLO (recurrence_parent_id) à
   assert.strictEqual(pickInstanceTarget([{ id: 'one', recurrence_rule: null, recurrence_parent_id: null }]).id, 'one');
 });
 
+test('pickInstanceTarget: exclui filha-BLUEPRINT pelo marcador intrínseco (is_recurrence_template) — verdade única', () => {
+  // Verdade única (Fatia 2): o blueprint é rule=null/rpid=null como uma one-off, e a heurística
+  // de rpid/rule só o pega quando existe um ciclo pra preferir. O marcador intrínseco é o que o
+  // barra SEMPRE — inclusive quando o ciclo sumiu (molde cancelado, instância apagada) e só
+  // sobra o blueprint. Foi a borda que vazou nos incidentes Rose apesar do pickInstanceTarget.
+  const blueprint = { id: 'bp', recurrence_rule: null, recurrence_parent_id: null, is_recurrence_template: true };
+  const inst = { id: 'inst', recurrence_rule: null, recurrence_parent_id: 'bp', is_recurrence_template: false };
+  assert.strictEqual(pickInstanceTarget([blueprint, inst]).id, 'inst');
+  assert.strictEqual(pickInstanceTarget([inst, blueprint]).id, 'inst');
+  assert.strictEqual(pickInstanceTarget([blueprint]), null); // só blueprint → não é trabalho vivo → não opera
+  // one-off de verdade (sem marcador) segue operável
+  assert.strictEqual(pickInstanceTarget([{ id: 'one', recurrence_rule: null, recurrence_parent_id: null }]).id, 'one');
+});
+
+test('endSeries cancela também a filha-BLUEPRINT órfã (parent_task_id=molde) — Fatia 4', async () => {
+  const events = [];
+  const molde = G({ id: 'molde', is_group: true, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=3', is_recurrence_template: true });
+  const bp = G({ id: 'bp', title: 'Dia 3', parent_task_id: 'molde', is_recurrence_template: true }); // filha-blueprint
+  const inst = G({ id: 'inst', is_group: true, recurrence_parent_id: 'molde' });                     // mãe-instância
+  await endSeries({ supabase: makeDb({ tasks: [molde, bp, inst], events }), templateId: 'molde' });
+  assert.strictEqual(molde.status, 'cancelled', 'molde cancelado');
+  assert.strictEqual(inst.status, 'cancelled', 'mãe-instância cancelada');
+  assert.strictEqual(bp.status, 'cancelled', 'filha-blueprint órfã cancelada (senão fica pending fantasma)');
+});
+
 test('cancel NUNCA mata o molde recorrente — mira a instância visível', async () => {
   const events = [];
   const tpl = G({ id: 'tpl', title: 'Conciliação de Cartões', is_group: true, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=1' });

@@ -49,6 +49,16 @@ test('grupo SEM recorrência (mãe is_group + filhas, sem template) passa inteir
   assert.deepStrictEqual(filterVisibleGroupTasks(simples).map((t) => t.id), ['m', 'a', 'b']);
 });
 
+test('Fatia 2: marcador intrínseco esconde blueprint mesmo SEM idsDeMolde (molde off-page)', () => {
+  // A borda que exigia o round-trip idsDeMoldeDosPais: molde fora do array (cancelado/off-page),
+  // então a filha-blueprint não tinha pai denunciável. Com o flag, some por conta própria.
+  const rows = [
+    { id: 'bp', is_group: false, recurrence_rule: null, parent_task_id: 'molde-fora', is_recurrence_template: true },
+    { id: 'inst', is_group: false, recurrence_rule: null, parent_task_id: 'inst-mae', is_recurrence_template: false },
+  ];
+  assert.deepStrictEqual(filterVisibleGroupTasks(rows).map((t) => t.id), ['inst']);
+});
+
 test('tarefas avulsas (não-grupo) passam', () => {
   const avulsas = [
     { id: 'x', is_group: false, recurrence_rule: null, parent_task_id: null },
