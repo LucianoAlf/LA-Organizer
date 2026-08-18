@@ -313,3 +313,67 @@ um buraco vivo e ainda declarado progresso.
 Regra: **"mesma família" é o começo da investigação, nunca a conclusão dela.** O que fecha continua
 sendo a execução reproduzindo o sintoma DAQUELE achado. Vale inclusive — principalmente — contra o
 fix que você mesmo acabou de escrever, que é quando a tentação é maior.
+
+### ETAPA 3 — a medição "49% do acervo é IRREFUTÁVEL" (16/08) era ARTEFATO de coluna errada
+
+**Ocorrências:** 1 (18/08), mas invalida uma conclusão que já estava na memória e na escada.
+
+Em 16/08 ficou registrado que ~metade do acervo antigo não tem mais o literal em
+`conversation_history` (18 de 37), e que por isso a ETAPA 3 seria impossível nesses achados. **Está
+errado.** A query daquela medição selecionava `role` e filtrava `role === 'user'`. A tabela não tem
+`role`: as colunas são **`direction`** (`inbound`/`outbound`) e `content`. No supabase-js, pedir
+coluna inexistente devolve `error` com `data === null` — e um `(data || []).filter(...)` em cima
+disso dá **0 sem estourar exceção**. O resultado é indistinguível de "a conversa sumiu".
+
+Refeito hoje com `direction`, sobre os 152 abertos não-altos:
+
+- 74 achados trazem literal rotulado (`USUÁRIO:`) na evidência;
+- **71 desses 74 têm o literal recuperável** em `conversation_history` (janela ±24h);
+- **67 caem dentro de ±2h**, e o desalinhamento entre `occurred_at` e o instante real da fala tem
+  **mediana 0 min, p90 2 min** — `occurred_at` é confiável, ao contrário do que eu suspeitei no meio
+  da rodada (suspeita nascida de viés de seleção: eu só tinha olhado os casos de 1 inbound);
+- só **3** são de fato irrefutáveis.
+
+Ou seja: ~71 achados antigos estavam contabilizados como impossíveis de refutar e **não são**. O
+piso duro do acervo, descrito em 16/08 como estrutural, não existe.
+
+Isto é a mesma classe do neutro de 15/08 (`isQuietNow` com `Date`), agora numa query em vez de numa
+função: **resultado neutro em BLOCO — 60 de 60 zerados — é sintoma de chamada malformada, não de
+acervo vazio.** O que me fez desconfiar foi rodar um controle (achados recentes, cujo literal eu
+tinha recuperado na mesma rodada) e ver que ele também vinha zerado.
+
+Proposta de virar código: o `gov-runner` expõe `literalDoAchado(finding)` — uma única função que
+sabe o schema, faz o casamento e devolve `{literal, quando, distanciaMin}` ou `null`. Enquanto cada
+rodada reescrever a query à mão, esse erro volta. E o `provar(literal, guard)` proposto em 13/08
+deveria consumir essa função em vez de receber texto solto.
+
+### ETAPA 2 (varredura) — mudar de veredito entre a época e hoje NÃO fecha: falta provar o GATE
+
+**Ocorrências:** 1 (18/08). É o filtro mais forte que testei até agora, e mesmo assim errou.
+
+Montei o que parecia ser finalmente a prova certa, e mecânica: para cada achado, extrair o literal
+do banco, reconstruir a versão do módulo **na data do incidente** (`git rev-list -1 --before=...`) e
+rodar o mesmo literal nas duas versões. Só vira candidato quem **muda de veredito**. Sobre 162
+execuções, deu **2 candidatos** — `cbd0c7b2` e `688dc7e6` (Yuri, 28/07 20:37 BRT), literal
+`"Todas feitas"`, `antes=null → hoje=yes`, exatamente o `CONFIRM-QUANTIFIER-BLIND`. O `summary`
+descrevia o sintoma ao pé da letra ("confirmou que todas as tarefas foram feitas, mas TOM não deu
+baixa e pediu confirmação de novo"). Datas certas, sintoma certo, execução certa. Eu ia fechar os dois.
+
+**Os dois seguem abertos.** O fix é *gated* em `allowDone`, e `allowDone` não é escolha minha: sai de
+`_anchoredComplete || _batchComplete` (`engine.js:10164-10169`), lido do payload da intent ABERTA
+naquele turno. Fui buscar em `pending_intents`: a intent viva às 20:37 (`8853b9d3`) tem payload
+`{last_tom_reply, last_user_text}` — **sem `action`, sem `anchor`, sem `batch_complete`**. Logo
+`allowDone=false`, e com `allowDone=false` o código de hoje devolve `null` para `"Todas feitas"`
+(a própria suíte fixa isso: _"FIX quantificador segue GATED"_). O turno cairia no LLM hoje igual.
+
+Regra que isto acrescenta: **quando o fix é gated, rodar a função com o gate LIGADO prova só que o
+fix existe — não que ele alcança o caso.** O gate tem que ser lido do estado real daquele turno
+(aqui, `pending_intents`), nunca assumido. Chamar com `{allowDone:true}` porque "era um fluxo de
+conclusão" é a versão sofisticada de fechar por parecer.
+
+Subproduto: isso revela um buraco vivo, não corrigido (deixado aberto, fora do teto de 1/rodada).
+A intent de RE-PERGUNTA — criada justamente porque o fechamento em lote falhou — nasce com payload
+`{last_tom_reply, last_user_text}` e **perde o contexto de ação**. Ou seja, `allowDone` está
+desligado exatamente no turno em que o usuário responde a um "confirma que já foi feito?". Todo o
+vocabulário de conclusão ("todas feitas", "já fiz", "feito") fica cego na re-pergunta, que é o
+segundo tempo de um fluxo que já falhou uma vez.
