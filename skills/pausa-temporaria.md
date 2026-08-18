@@ -11,8 +11,9 @@ Ative quando a mensagem expressa pedido claro de pausa:
 - "tô em aula", "tô em reunião", "tô dirigindo"
 - "me chama em 2h", "me lembra mais tarde"
 - "depois", "só mais tarde", "agora não dá"
+- **folga de HOJE declarada pelo próprio colaborador**: "hoje tô de folga", "hoje é minha folga", "dia de folga hoje". É estado de descanso do dia — silencie o resto do dia (ver tabela). **NÃO** vale folga FUTURA ("amanhã é folga" → não silencie hoje), NEGADA ("não tô de folga") nem de OUTRA pessoa ("a folga do Rafinha").
 
-Se a mensagem é só "tô ocupado hoje" ou "tô cansado" sem pedido explícito de pausa, **NÃO ative** — isso é estado emocional, não DND.
+Se a mensagem é só "tô ocupado hoje" ou "tô cansado" sem pedido explícito de pausa **e sem dizer que é folga**, **NÃO ative** — isso é estado emocional, não DND.
 
 ## Como inferir a duração
 
@@ -24,6 +25,7 @@ Se a mensagem é só "tô ocupado hoje" ou "tô cansado" sem pedido explícito d
 | "tô dirigindo" | 30 minutos |
 | "me chama em 2h" / "depois das 18h" | exato (calcule) |
 | "amanhã" | até 8h da manhã do dia seguinte |
+| **folga de hoje** ("tô de folga hoje", "dia de folga") | **até 23:59 de HOJE** (fim do dia local, `-03:00`), `reason:"folga"` |
 | ambíguo de mais | pergunte uma vez: "Te chamo em quanto tempo?" |
 
 **Regra de ouro:** nunca silencie sem teto. **MÁXIMO 24h** por DND. O engine corta se você passar disso.

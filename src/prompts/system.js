@@ -1180,6 +1180,25 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'pausa-temporaria', body: loadSkill('pausa-temporaria') };
   }
 
+  // Priority 1.55 — FOLGA-DND-ROUTING (audit 18/08, Dai): folga DECLARADA de HOJE precisa virar
+  // DND até o fim do dia, senão os rituais da noite cobram na folga (a infra de silêncio existe,
+  // mas nada a aciona). O 1.5 acima só pega pedido explícito de pausa; "tô de folga hoje" é estado,
+  // não "me pausa". Aqui roteamos pra `pausa-temporaria` (que ensina o DND-até-EOD), com guards:
+  // NÃO em folga FUTURA ("amanhã é folga"), NEGADA ("não tô de folga") nem de TERCEIRO ("folga do X").
+  {
+    const _fx = String(lastUserMessage || '');
+    const _folgaHoje = /\b(?:t[oô]|est(?:ou|ô)|to)\s+(?:de\s+)?folga\b|\bminha\s+folga\b|\bdia\s+de\s+folga\b|\bfolga\s+hoje\b|\bde\s+folga\s+hoje\b|\bhoje\s+(?:é|eh|foi|tô|to|est(?:ou|ô))\s+(?:de\s+|minha\s+)?folga\b/i;
+    const _folgaFuturo = /amanh[ãa]|semana\s+que\s+vem|pr[oó]xim[ao]|\b(?:s[aá]bado|domingo|segunda|ter[çc]a|quarta|quinta|sexta)\b/i;
+    const _folgaNaoAgora = /\bn[aã]o\s+(?:t[oô]|est(?:ou|ô)|to)\s+(?:de\s+)?folga\b|\bsem\s+folga\b|\bfolga\s+d[eo]\s+[A-ZÀ-Ý]/;
+    // "hoje" explícito ancora a folga NO DIA — ignora palavra de futuro solta na mesma frase
+    // ("hoje tô de folga, mas amanhã te passo"; "hoje é domingo tô de folga"). Sem "hoje",
+    // exige presente 1ª pessoa e nenhuma palavra de futuro (senão é folga futura).
+    const _folgaAncoraHoje = /\bhoje\b/i.test(_fx);
+    if (_folgaHoje.test(_fx) && !_folgaNaoAgora.test(_fx) && (_folgaAncoraHoje || !_folgaFuturo.test(_fx))) {
+      return { name: 'pausa-temporaria', body: loadSkill('pausa-temporaria') };
+    }
+  }
+
   // Priority 1.6 — Sprint VoiceToggle: opt-in/opt-out de áudios.
   // Captura "para de mandar áudio", "sem áudio", "desliga voz", "manda áudio
   // de novo", "liga voz", "saudades dos áudios" etc. NÃO captura "tô sem fone"
