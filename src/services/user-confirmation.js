@@ -41,6 +41,19 @@ function detectUserConfirmation(userText, opts = {}) {
 function classify(t, opts = {}) {
   const _nWords = t.split(/\s+/).length;
 
+  // PENDING-COMPLETE-EATS-OTHER-ACTION (Ana Paula 17/08 09:01 BRT) — sob allowDone a pergunta
+  // pendente é SEMPRE "confirma que já foi feito?". A Ana respondeu "Pode excluir essa tarefa":
+  // o "pode" casa o YES_RE, 4 palavras passam o F5, e o pedido de EXCLUIR virou confirmação de
+  // CONCLUSÃO. Como o executor é determinístico, saiu "✅ ... concluído." sem marker nenhum e
+  // sem passar pelo chokepoint de confabulação (que só roda no caminho do LLM).
+  // O afirmador abre a frase, mas o VERBO dela é de outra ação — isso é pedido novo, não "sim".
+  // Devolver null manda o turno pro LLM, que roteia a ação certa. Gated em allowDone: sem intent
+  // de conclusão aberta nada muda. Fica DEPOIS do NO_RE pra não mexer em negativa.
+  // Sem `\b` final: em JS `\b` é ASCII e "excluí" termina em vogal acentuada (mesma lição do
+  // COMPLETION_END em optimistic-confirm.js) — o boundary nunca fecharia.
+  const OUTRA_ACAO_RE = /\b(?:exclu[ií]|apag|delet|remov|cancel|reagend|remarc|adia|deleg)\w*(?![\p{L}])/u;
+  const _outraAcao = !!opts.allowDone && OUTRA_ACAO_RE.test(t);
+
   // BATCH-CONFIRM-LONGPHRASE (Daiana 22/06): confirmação AFIRMATIVA que abre com afirmador
   // inequívoco ("Sim, por favor. Pode fechar as 6 tarefas") é clara mesmo com cortesia/objeto.
   // Aceita até 12 palavras DESDE QUE não haja ressalva/negação. A NEGAÇÃO segue restrita a
@@ -48,7 +61,7 @@ function classify(t, opts = {}) {
   // e o executeBatchComplete determinístico nunca disparava (all_failed sob fallback).
   const STRONG_YES_OPEN = /^(sim|isso|claro|perfeito|exato|confirmo|confirmad[oa]|beleza|blz|okay|ok|t[áa]|bora)\b/;
   const RESSALVA = /\b(n[aã]o|nao|nunca|jamais|mas|por[ée]m|depois|amanh[ãa]|espera|aguarda)\b|deixa\s+pra|s[óo]\s+que/;
-  if (_nWords > 4 && _nWords <= 12 && STRONG_YES_OPEN.test(t) && !RESSALVA.test(t)) return 'yes';
+  if (_nWords > 4 && _nWords <= 12 && STRONG_YES_OPEN.test(t) && !RESSALVA.test(t) && !_outraAcao) return 'yes';
 
   // BATCH-CONFIRM-IMPERATIVE-NUM (Rose/2088 28/06): com intent de complete/batch ABERTA
   // (allowDone), uma confirmação por CONCLUSÃO mais longa — "1 e 2 já foram feitas",
@@ -59,7 +72,7 @@ function classify(t, opts = {}) {
   // HESITA: fala QUEBRADA/correção ("Conclui .. esqueci de colocar aqui") tem done-verb mas
   // NÃO é confirmação — reticências/"esqueci"/"pera"/"aliás" = segunda intenção. Exclui.
   const HESITA = /\besqueci\b|\besquece\b|\bpera[íi]?\b|\bperai\b|\bal[ií]as\b|\.\./;
-  if (opts.allowDone && _nWords > 4 && _nWords <= 12 && DONE_ANYWHERE.test(t) && !RESSALVA.test(t) && !HESITA.test(t)) return 'yes';
+  if (opts.allowDone && _nWords > 4 && _nWords <= 12 && DONE_ANYWHERE.test(t) && !RESSALVA.test(t) && !HESITA.test(t) && !_outraAcao) return 'yes';
 
   // F5 (ALVO-FUTURO, auditoria 09/06) — confirmação/negação só em resposta ESSENCIALMENTE
   // curta (≤4 palavras). "Não foi a ADM, foi a de hoje, de governança" começa com "não"
@@ -69,6 +82,9 @@ function classify(t, opts = {}) {
   // Negativas primeiro (mais específicas pra evitar falso positivo)
   const NO_RE = /^(n[aã]o\b|nao\b|deixa\s+pra\s+l[aá]|esquece|cancela|n[aã]o\s+precisa|desconsidera|ainda\s+n[aã]o)/;
   if (NO_RE.test(t)) return 'no';
+
+  // Pedido de OUTRA ação não confirma conclusão (ver PENDING-COMPLETE-EATS-OTHER-ACTION acima).
+  if (_outraAcao) return null;
 
   // Afirmativas
   // `s+\b` (CONFIRM-SHORTYES-S-UNRECOGNIZED): "s"/"ss"/"sss" = sim abreviado (caso Clayton).

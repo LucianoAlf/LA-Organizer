@@ -131,6 +131,36 @@ test('FIX quantificador NÃO vaza: quantificador sem verbo de conclusão → nul
   }
 });
 
+// ── PENDING-COMPLETE-EATS-OTHER-ACTION (Ana Paula 17/08 09:01 BRT) ──────────
+// A guarda temporal perguntou "⚠️ *Montar reunião trimestre* está marcado pra *30/09*
+// (ainda não chegou). Confirma que já foi feito mesmo assim?" e a Ana respondeu
+// "Pode excluir essa tarefa". O "pode" casa o YES_RE, a frase tem 4 palavras (passa o F5),
+// e o pedido de EXCLUIR virava 'yes' pra intent de COMPLETE: o executor determinístico
+// concluiu a tarefa e respondeu "✅ *Montar reunião trimestre* concluído." — sem marker
+// (marker_logs vazio no turno) e sem passar pelo chokepoint de confabulação, que só roda no
+// caminho do LLM. A Ana repetiu o pedido 3× e terminou em "Apenas exclui a tarefa tom".
+//
+// O afirmador abre a frase, mas o VERBO que a frase carrega é de outra ação. Sob allowDone a
+// pergunta pendente é sempre "já foi feito?" — então verbo de excluir/cancelar/reagendar/
+// delegar CONTRADIZ a pergunta e não pode valer como confirmação.
+test('FIX Ana: afirmador + verbo de OUTRA ação sob allowDone → null (não confirma conclusão)', () => {
+  for (const s of ['Pode excluir essa tarefa', 'pode apagar essa tarefa',
+                   'Pode cancelar essa tarefa', 'pode deletar essa',
+                   'pode reagendar pra sexta', 'pode remarcar pra sexta',
+                   'pode adiar pra semana', 'pode delegar pro Rafinha']) {
+    assert.strictEqual(detectUserConfirmation(s, { allowDone: true }), null,
+      `"${s}" pede OUTRA ação — não pode confirmar conclusão`);
+  }
+});
+
+test('FIX Ana: zero-regressão — afirmador puro e verbo de CONCLUSÃO seguem yes', () => {
+  for (const s of ['pode', 'pode sim', 'pode fechar', 'pode concluir',
+                   'pode marcar', 'Sim, por favor. Pode fechar as 6 tarefas', 'sim', 'beleza']) {
+    assert.strictEqual(detectUserConfirmation(s, { allowDone: true }), 'yes',
+      `"${s}" é confirmação legítima de conclusão`);
+  }
+});
+
 // ── defensivo ───────────────────────────────────────────────────────────────
 test('defensivo: não-string / vazio / longo demais → null', () => {
   assert.strictEqual(detectUserConfirmation(null), null);
