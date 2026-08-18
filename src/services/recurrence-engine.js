@@ -326,6 +326,10 @@ function _cloneTemplate(table, template, occurrenceDate) {
   row.recurrence_rule = null;
   row.recurrence_parent_id = template.id;
   row.recurrence_excluded = false;
+  // VERDADE ÚNICA (refat 2026-08-17): o template agora nasce com is_recurrence_template=true;
+  // o clone parte de {...template}, então a instância herdaria `true` e ficaria INVISÍVEL ao
+  // predicado de "vivo". Zerar explícito aqui é o que mantém a instância como trabalho real.
+  row.is_recurrence_template = false;
 
   // Reseta estado operacional pra cada instância nova
   row.status = table === 'tasks' ? 'pending' : 'scheduled';

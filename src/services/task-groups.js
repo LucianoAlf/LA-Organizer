@@ -100,7 +100,11 @@ async function createTaskGroup({ supabase: sb, groupId, createdBy, input, deps }
     : `FREQ=MONTHLY;BYMONTHDAY=${anchorDay}`;
   const tplDue = dayOfMonthToYmd(anchorDay, today);
 
-  const tplId = await _insert(sb, { ...base, title, is_group: true, due_date: tplDue, recurrence_rule: rrule });
+  // VERDADE ÚNICA (refat 2026-08-17): molde + filhas-blueprint nascem marcados como template.
+  // O predicado único `is_recurrence_template = false` = "vivo" é o que impede que o blueprint
+  // vaze pros resolvedores de ação (a raiz dos incidentes Rose). A mãe/filhas-INSTÂNCIA abaixo
+  // NÃO recebem o flag → DEFAULT false → trabalho real do ciclo corrente.
+  const tplId = await _insert(sb, { ...base, title, is_group: true, due_date: tplDue, recurrence_rule: rrule, is_recurrence_template: true });
 
   const childTpls = [];
   let pos = 1;
@@ -108,7 +112,7 @@ async function createTaskGroup({ supabase: sb, groupId, createdBy, input, deps }
     const due = dayOfMonthToYmd(c.day || anchorDay, today);
     const cid = await _insert(sb, {
       ...base, title: String(c.title).trim().slice(0, 200), parent_task_id: tplId,
-      due_date: due, sort_position: pos++,
+      due_date: due, sort_position: pos++, is_recurrence_template: true,
     });
     childTpls.push({ id: cid, due, c });
   }

@@ -81,6 +81,27 @@ test('createTaskGroup mensal: template (recurrence_rule) + instância (recurrenc
   assert.strictEqual(res.groupId, inst.id);
 });
 
+test('createTaskGroup mensal: is_recurrence_template marca molde+blueprint, instância fica false', async () => {
+  const captured = [];
+  const deps = { materializeSeries: async () => {} };
+  await createTaskGroup({
+    supabase: fakeSupabase(captured), groupId: 'g1', createdBy: 'u1', deps,
+    input: { title: 'Conciliação de Cartões', recurrence: 'monthly', groupDay: 1, subtasks: [
+      { title: 'Dia 3', day: 3 }, { title: 'Dia 15', day: 15 },
+    ] },
+  });
+  const tpl = captured.find((t) => t.is_group && t.recurrence_rule);
+  const inst = captured.find((t) => t.is_group && t.recurrence_parent_id === tpl.id);
+  const tplKids = captured.filter((t) => t.parent_task_id === tpl.id);
+  const instKids = captured.filter((t) => t.parent_task_id === inst.id);
+  // molde + filhas-blueprint = template (invisíveis ao predicado de "vivo")
+  assert.strictEqual(tpl.is_recurrence_template, true, 'molde deve ser template');
+  assert.ok(tplKids.length === 2 && tplKids.every((k) => k.is_recurrence_template === true), 'filhas-blueprint devem ser template');
+  // mãe-instância + filhas-instância = NÃO template (DEFAULT false; nunca marcadas)
+  assert.notStrictEqual(inst.is_recurrence_template, true, 'mãe-instância NÃO é template');
+  assert.ok(instKids.length === 2 && instKids.every((k) => k.is_recurrence_template !== true), 'filhas-instância NÃO são template');
+});
+
 test('createTaskGroup mensal weekend_adjust usa a rrule de dia-útil', async () => {
   const captured = [];
   await createTaskGroup({

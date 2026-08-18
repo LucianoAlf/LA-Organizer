@@ -90,16 +90,21 @@ async function montarPacote(groupId, collabId, subtasks) {
   return pacote;
 }
 
-// Espelha EXATAMENTE a query do resolvedor de complete (group-chat-tasks.js:348-360):
-// é o conjunto de candidatos que o handler recebe pra um título. A raiz mora aqui.
+// Espelha a query do resolvedor de complete (group-chat-tasks.js:348-360): é o conjunto de
+// candidatos que o handler recebe pra um título. A raiz mora aqui. Usa `*` de propósito — o
+// flag `is_recurrence_template` só existe pós-migração (Fatia 1); com `*` ele FLUI quando
+// existe e fica `undefined` quando não (contado como vivo → pré-migração dá 2 = o bug real).
+// Selecionar a coluna nominalmente pré-migração faria o PostgREST erdar e devolver 0 —
+// vermelho por vacuidade, não pela dupla verdade.
 async function candidatosDoResolvedor(groupId, titulo) {
-  const { data } = await supabase.from('tasks')
-    .select('id, title, recurrence_rule, recurrence_parent_id, is_group, status, due_date, is_recurrence_template')
+  const { data, error } = await supabase.from('tasks')
+    .select('*')
     .eq('assigned_group_id', groupId)
     .neq('status', 'cancelled')
     .ilike('title', titulo)
     .order('due_date', { ascending: false })
     .limit(30);
+  if (error) throw new Error('candidatosDoResolvedor: ' + error.message);
   return data || [];
 }
 
@@ -111,7 +116,7 @@ const linha = (n, nome, ok, got, exp, extra) =>
   const groupId = await grupoQA(collab.id);
   const { ini, fim } = mesCorrenteBrt();
   console.log(`[cenario-grupo-recorrencia] perfil=${collab.full_name} grupo=${groupId} mês=[${ini}..${fim}]`);
-  console.log('[cenario-grupo-recorrencia] BASELINE esperado (Fatia 0): 1,2,5 FAIL · 6 PASS\n');
+  console.log('[cenario-grupo-recorrencia] guards sempre-verdes: 6 (motor) + 1b (clone). Progresso: 1(F1) 2(F3) 5(F4).\n');
 
   const resultados = [];
 
@@ -120,15 +125,30 @@ const linha = (n, nome, ok, got, exp, extra) =>
     await montarPacote(groupId, collab.id);
     const cand = await candidatosDoResolvedor(groupId, T1);
     const vivas = inv.contarVivasPorCicloTitulo(cand, { titulo: T1, ymdIni: ini, ymdFim: fim });
-    // Estrutura: 1 molde (recurrence_rule≠null) + 1 mãe-instância (is_group, recurrence_parent_id≠null).
+    // 1 molde (recurrence_rule≠null). A mãe-instância é contada SÓ no ciclo corrente — o motor
+    // (materializeSeries) cria legitimamente mães de ciclos futuros; contá-las mediria o motor,
+    // não a dupla verdade do ciclo atual.
     const { data: todas } = await supabase.from('tasks')
-      .select('id, is_group, recurrence_rule, recurrence_parent_id, parent_task_id').eq('assigned_group_id', groupId);
+      .select('id, is_group, recurrence_rule, recurrence_parent_id, due_date').eq('assigned_group_id', groupId);
     const moldes = (todas || []).filter((t) => t.recurrence_rule != null).length;
-    const maesInst = (todas || []).filter((t) => t.is_group === true && t.recurrence_parent_id != null).length;
-    const ok = vivas === 1 && moldes === 1 && maesInst === 1;
-    linha(1, 'double-truth', ok, `vivas=${vivas} moldes=${moldes} maesInst=${maesInst}`, 'vivas=1 moldes=1 maesInst=1',
+    const maesInstCorrente = (todas || []).filter((t) => t.is_group === true && t.recurrence_parent_id != null
+      && String(t.due_date || '') >= ini && String(t.due_date || '') <= fim).length;
+    const ok = vivas === 1 && moldes === 1 && maesInstCorrente === 1;
+    linha(1, 'double-truth', ok, `vivas=${vivas} moldes=${moldes} maesInstCorrente=${maesInstCorrente}`, 'vivas=1 moldes=1 maesInstCorrente=1',
       `candidatos_resolvedor="${T1}"=${cand.length}`);
     resultados.push({ n: 1, ok });
+
+    // TRANSVERSAL clone-guard: nenhuma instância materializada (recurrence_parent_id≠null) pode
+    // ser template. Prova, com o motor REAL, que _cloneTemplate zera o flag herdado do molde.
+    // Pré-deploy é vacuamente verde (nada marcado true ainda); vira significativo pós-Fatia 1.
+    const { data: insts } = await supabase.from('tasks')
+      .select('id, title, is_recurrence_template, recurrence_parent_id').eq('assigned_group_id', groupId)
+      .not('recurrence_parent_id', 'is', null);
+    const instTemplate = (insts || []).filter((t) => t.is_recurrence_template === true);
+    const okCG = instTemplate.length === 0;
+    linha('1b', 'clone-guard', okCG, `instancia_template=${instTemplate.length}`, 'instancia_template=0',
+      'materializeSeries não propaga o flag do molde');
+    resultados.push({ n: '1b', ok: okCG });
   } catch (e) { linha(1, 'double-truth', false, `ERRO ${e.message}`, 'vivas=1'); resultados.push({ n: 1, ok: false }); }
 
   // ── Cenário 2: derecur ("só o primeiro mês") existe ───────────────────────────
@@ -179,18 +199,26 @@ const linha = (n, nome, ok, got, exp, extra) =>
 
   await limpar(groupId);
 
-  // ── Sumário + prova de reversão do baseline ───────────────────────────────────
+  // ── Sumário ───────────────────────────────────────────────────────────────────
   const vermelhos = resultados.filter((r) => !r.ok).map((r) => r.n);
   const verdes = resultados.filter((r) => r.ok).map((r) => r.n);
   console.log(`\n[cenario-grupo-recorrencia] VERMELHO: ${vermelhos.join(',') || 'nenhum'} · VERDE: ${verdes.join(',') || 'nenhum'}`);
 
-  // Fatia 0 exige o baseline exato: 1,2,5 vermelhos e 6 verde. Qualquer desvio = o trilho
-  // não está medindo o que diz (falso verde/vermelho) — sai com 2 (sem garantia), não 0/1.
-  const baselineOk = [1, 2, 5].every((n) => vermelhos.includes(n)) && verdes.includes(6);
-  if (baselineOk) {
-    console.log('[cenario-grupo-recorrencia] BASELINE VERMELHO confirmado (1,2,5 FAIL · 6 PASS) — trilho válido.');
-    process.exit(0);
+  // GUARDS SEMPRE-VERDES gateiam o exit code (independem de qual fatia já landou):
+  //   6  = motor de recorrência intocado (idempotente)
+  //   1b = clone-guard (materializeSeries não propaga o flag do molde)
+  // Os cenários de progresso (1,2,5 + comportamento) são REPORTADOS e viram verde conforme
+  // as fatias entram. Assim o mesmo trilho serve de Fatia 0 (1,2,5 red) até o fim (tudo verde),
+  // e só quebra o build se o motor ou o clone-guard regredirem.
+  const guardas = [6, '1b'];
+  const guardaVermelha = guardas.filter((g) => vermelhos.includes(g));
+  if (guardaVermelha.length) {
+    console.log(`[cenario-grupo-recorrencia] REGRESSÃO DE GUARDA: ${guardaVermelha.join(',')} — motor/clone-guard quebrou. BLOQUEIA.`);
+    process.exit(1);
   }
-  console.log('[cenario-grupo-recorrencia] BASELINE INESPERADO — o trilho pode não estar medindo o bug. Revisar antes de consertar.');
-  process.exit(2);
+  const progressoVermelho = vermelhos.filter((n) => !guardas.includes(n));
+  console.log(progressoVermelho.length
+    ? `[cenario-grupo-recorrencia] progresso pendente (esperado enquanto as fatias não landam): ${progressoVermelho.join(',')}`
+    : '[cenario-grupo-recorrencia] TODOS os cenários determinísticos VERDES.');
+  process.exit(0);
 })().catch((e) => { console.error('erro fatal:', e); process.exit(1); });
