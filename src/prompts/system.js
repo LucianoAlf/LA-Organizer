@@ -1401,9 +1401,17 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   const listsActionRe = /\b(adicion[ao]|p[oó]e|coloca|inclui|tira|remove|riscar?|marca|cria(?:r)?\s+(?:uma\s+)?lista|lista\s+(?:de|do|da|pra))\b/i;
   const listsExplicitRe = /\b(?:minha\s+)?lista\s+(?:de|do|da|pra)\s+(?:mercado|supermercado|farm[aá]cia|rem[eé]dios?|viagem|compras?|presentes?)/i;
   const listsMarkDoneRe = /\b(?:j[aá]\s+)?(?:comprei|tomei|peguei)\s+(?:o|a|os|as)?\s*\w/i;
+  // LISTA-TRABALHO-ROUTING (Rafinha 17/08): adição EXPLÍCITA a lista/checklist — verbo de acréscimo
+  // + direcional + o substantivo "lista/checklist/listagem". Pega listas de TRABALHO ("telão de
+  // LED", manutenção, contrabaixo) que o listsTopicRe (só vida pessoal: mercado/viagem/remédios)
+  // deixava passar → a skill listas-pessoais não carregava → o LLM improvisava → chokepoint "não
+  // consegui". NÃO casa "manda/reenvia a lista" (verbo de ENVIO = consulta de agenda, não adição).
+  // Medido em produção (2,5 meses): 8 rotas net-new, todas adição real; nenhuma perde skill.
+  const listsAddToRe = /\b(coloca|acrescent[ao]|adicion[ao]|p[oõ]e|bota|inclui|escreve|anota)\b[^.!?]{0,30}?\b(?:n[oa]|em|pra|para)\s+(?:essa\s+|nessa\s+|minha\s+|meu\s+|a\s+|o\s+|uma\s+)?(?:check\s?list|lista(?:gem)?)\b/i;
   if (
     listsExplicitRe.test(lmLists) ||
     (listsActionRe.test(lmLists) && listsTopicRe.test(lmLists)) ||
+    listsAddToRe.test(lmLists) ||
     (listsMarkDoneRe.test(lmLists) && (recentText.includes('mercado') || recentText.includes('viagem') || recentText.includes('rem[eé]di')))
   ) {
     return { name: 'listas-pessoais', body: loadSkill('listas-pessoais') };
