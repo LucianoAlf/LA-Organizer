@@ -142,5 +142,8 @@ test('addSubtasksToGroup mensal: insere filha no template e na instância', asyn
   const instKid = captured.find((t) => t.parent_task_id === 'inst-1');
   assert.ok(tplKid && instKid);
   assert.strictEqual(instKid.recurrence_parent_id, tplKid.id);
+  // Verdade única: a filha-blueprint do merge nasce marcada; a filha-instância, não.
+  assert.strictEqual(tplKid.is_recurrence_template, true, 'filha-blueprint do merge é template');
+  assert.notStrictEqual(instKid.is_recurrence_template, true, 'filha-instância do merge NÃO é template');
   assert.strictEqual(res.added.length, 1);
 });

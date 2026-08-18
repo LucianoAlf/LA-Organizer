@@ -162,7 +162,10 @@ async function addSubtasksToGroup({ supabase: sb, groupId, subtasks }) {
       continue;
     }
     const tplChildDue = dayOfMonthToYmd(c.day || 1, tplDue);
-    const tplChildId = await _insert(sb, { ...base, title, parent_task_id: tplId, due_date: tplChildDue });
+    // VERDADE ÚNICA (refat 2026-08-17): a filha-blueprint adicionada no merge também é template.
+    // Sem o flag aqui, cada subtarefa acrescentada depois renascia com dupla verdade (o mesmo
+    // bug do createTaskGroup, por outra porta). A filha-instância abaixo fica false (default).
+    const tplChildId = await _insert(sb, { ...base, title, parent_task_id: tplId, due_date: tplChildDue, is_recurrence_template: true });
     const instChildId = await _insert(sb, {
       ...base, title, parent_task_id: groupId, due_date: childDueDateForCycle(tplChildDue, mother.due_date),
       remind_at: c.remindAt || null, recurrence_parent_id: tplChildId,

@@ -420,6 +420,14 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
               console.warn(`[GroupChat] apelido "${String(title).slice(0, 40)}" casou com ${_cands.length} moldes — falha honesta em vez de chute`);
             }
           }
+          // O _tpl do caminho primário vem de `_open` (colunas PARCIAIS — sem assigned_group_id/
+          // created_by), então clonar dele geraria ocorrência órfã (fora do grupo) ou insert que
+          // falha. Re-busca a linha COMPLETA antes de materializar (o caminho por apelido já traz
+          // mais colunas, mas uniformizar aqui fecha o buraco pros dois).
+          if (_tpl && _tpl.id) {
+            const { data: _full } = await supabase.from('tasks').select('*').eq('id', _tpl.id).maybeSingle();
+            if (_full) _tpl = _full;
+          }
           if (_tpl && _tpl.due_date) {
             try {
               const { _cloneTemplate } = require('./recurrence-engine');

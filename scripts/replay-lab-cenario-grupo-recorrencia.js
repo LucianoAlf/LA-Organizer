@@ -26,7 +26,7 @@
 'use strict';
 
 const supabase = require('../src/supabase/client');
-const { createTaskGroup } = require('../src/services/task-groups');
+const { createTaskGroup, addSubtasksToGroup } = require('../src/services/task-groups');
 const groupTasks = require('../src/services/group-chat-tasks');
 const { materializeSeries } = require('../src/services/recurrence-engine');
 const inv = require('../src/services/group-recurrence-invariants');
@@ -128,7 +128,7 @@ const linha = (n, nome, ok, got, exp, extra) =>
   const groupId = await grupoQA(collab.id);
   const { ini, fim } = mesCorrenteBrt();
   console.log(`[cenario-grupo-recorrencia] perfil=${collab.full_name} grupo=${groupId} mês=[${ini}..${fim}]`);
-  console.log('[cenario-grupo-recorrencia] guards sempre-verdes: 6 (motor) + 1b (clone). Progresso: 1(F1) 2(F3) 5(F4).\n');
+  console.log('[cenario-grupo-recorrencia] 8 cenários determinísticos, TODOS guard (1,1b,2,3,4,5,6,7,8) — regressão bloqueia.\n');
 
   const resultados = [];
 
@@ -259,8 +259,60 @@ const linha = (n, nome, ok, got, exp, extra) =>
     resultados.push({ n: 4, ok });
   } catch (e) { linha(4, 'remarca-cascata', false, `ERRO ${e.message}`, 'blueprint intacto'); resultados.push({ n: 4, ok: false }); }
 
-  console.log('CENARIO 7 [template-only]: PENDENTE — Fatia 2 (concluir ciclo sem instância; lógica intocada)');
-  console.log('CENARIO 8 [re-emitir-create]: PENDENTE — Fatia 3/5 (idempotência de re-criação)');
+  // ── Cenário 7: template-only — molde SEM instância; concluir materializa a ocorrência done ─
+  try {
+    await limpar(groupId);
+    const hojeYmd = hojeBrt();
+    const dia = Number(hojeYmd.slice(8, 10));
+    const { data: molde } = await supabase.from('tasks').insert({
+      assigned_group_id: groupId, created_by: collab.id, status: 'pending', context: 'work',
+      title: 'Relatório mensal financeiro (QA)', due_date: hojeYmd,
+      recurrence_rule: `FREQ=MONTHLY;BYMONTHDAY=${dia}`, is_recurrence_template: true,
+      data_classification: 'test',
+    }).select('id').single();
+    await groupTasks.applyGroupChatTaskActions({
+      supabase, groupId, senderCollabId: collab.id, actions: [{ action: 'complete', title: 'Relatório mensal financeiro (QA)' }],
+    });
+    const { data: moldeDepois } = await supabase.from('tasks').select('status, recurrence_rule').eq('id', molde.id).maybeSingle();
+    const { data: doneInst } = await supabase.from('tasks').select('id, is_recurrence_template')
+      .eq('assigned_group_id', groupId).eq('status', 'done').eq('recurrence_parent_id', molde.id);
+    const { data: moldes } = await supabase.from('tasks').select('id')
+      .eq('assigned_group_id', groupId).not('recurrence_rule', 'is', null);
+    const instOk = (doneInst || []).length === 1 && doneInst[0].is_recurrence_template !== true;
+    const ok = moldeDepois && moldeDepois.status === 'pending' && moldeDepois.recurrence_rule != null
+      && instOk && (moldes || []).length === 1;
+    linha(7, 'template-only', ok, `molde=${moldeDepois && moldeDepois.status} inst_done=${(doneInst || []).length} moldes=${(moldes || []).length}`,
+      'molde=pending inst_done=1 moldes=1', 'concluir molde-sem-instância materializa ocorrência done, molde intacto');
+    resultados.push({ n: 7, ok });
+  } catch (e) { linha(7, 'template-only', false, `ERRO ${e.message}`, 'materializa done'); resultados.push({ n: 7, ok: false }); }
+
+  // ── Cenário 8: re-emitir create do mesmo pacote → mergeia (1 molde), item novo SEM dupla verdade ─
+  try {
+    const pacote = await montarPacote(groupId, collab.id);
+    const TITULO_PKG = 'Conferência mensal (QA recorrência)';
+    const NOVA = 'Dia 10 — item novo QA';
+    // Replica o dedup do engine (group-chat-engine.js:353-364): pacote já existe → mergeia só o novo.
+    const { data: mothers } = await supabase.from('tasks')
+      .select('id, title, recurrence_rule, recurrence_parent_id, due_date')
+      .eq('assigned_group_id', groupId).eq('is_group', true).not('status', 'in', '("done","cancelled")');
+    const dup = groupTasks.findDuplicatePackage(mothers, TITULO_PKG);
+    let novoAdd = 0;
+    if (dup) {
+      const instance = groupTasks.resolveVisibleInstance(mothers, dup);
+      const { data: kids } = await supabase.from('tasks').select('title').eq('parent_task_id', instance.id).neq('status', 'cancelled');
+      const novos = groupTasks.filterNewSubtasks((kids || []).map((k) => k.title), [{ title: NOVA, day: 10 }]);
+      if (novos.length) { const r = await addSubtasksToGroup({ supabase, groupId: instance.id, subtasks: novos }); novoAdd = r.added.length; }
+      await supabase.from('tasks').update({ data_classification: 'test' }).eq('assigned_group_id', groupId).eq('data_classification', 'real');
+    }
+    const { data: moldes } = await supabase.from('tasks').select('id').eq('assigned_group_id', groupId).eq('is_group', true).not('recurrence_rule', 'is', null);
+    // O item novo NÃO pode nascer com dupla verdade (blueprint sem flag + instância).
+    const { data: candNova } = await supabase.from('tasks').select('*').eq('assigned_group_id', groupId).ilike('title', NOVA);
+    const vivasNova = inv.contarVivasPorCicloTitulo(candNova, { titulo: NOVA, ymdIni: ini, ymdFim: fim });
+    const ok = dup && novoAdd === 1 && (moldes || []).length === 1 && vivasNova === 1;
+    linha(8, 're-emitir-create', ok, `dedup=${!!dup} +${novoAdd} moldes=${(moldes || []).length} vivas_novo=${vivasNova}`,
+      'dedup=sim +1 moldes=1 vivas_novo=1', 're-emissão mergeia; item novo com UMA verdade');
+    resultados.push({ n: 8, ok });
+  } catch (e) { linha(8, 're-emitir-create', false, `ERRO ${e.message}`, 'mergeia, 1 verdade'); resultados.push({ n: 8, ok: false }); }
 
   await limpar(groupId);
 
@@ -271,9 +323,10 @@ const linha = (n, nome, ok, got, exp, extra) =>
 
   // GUARDS SEMPRE-VERDES gateiam o exit code = cenários cuja fatia JÁ LANDOU (regressão bloqueia):
   //   6  = motor de recorrência intocado (idempotente) · 1b = clone-guard
-  //   1 double-truth (F1) · 3 conclui instância · 4 remarca sem mover blueprint (F2) · 2 derecur (F3)
-  //   · 5 endSeries limpa órfã (F4). Só 7/8 (comportamento LLM/re-emissão) ficam PENDENTE fora do gate.
-  const guardas = [1, '1b', 2, 3, 4, 5, 6];
+  //   Todos os 8 cenários determinísticos landaram (F1 double-truth · F2 handlers · F3 derecur ·
+  //   F4 endSeries órfã · 7 template-only · 8 re-emissão): TODOS são guard — regressão em qualquer
+  //   um bloqueia (exit 1). Não há mais cenário de progresso.
+  const guardas = [1, '1b', 2, 3, 4, 5, 6, 7, 8];
   const guardaVermelha = guardas.filter((g) => vermelhos.includes(g));
   if (guardaVermelha.length) {
     console.log(`[cenario-grupo-recorrencia] REGRESSÃO DE GUARDA: ${guardaVermelha.join(',')} — motor/clone-guard quebrou. BLOQUEIA.`);
