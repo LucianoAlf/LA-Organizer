@@ -11,7 +11,7 @@ import { RemindersField } from './RemindersField';
 import { shiftLocalReminderTimes } from '../lib/reminderShift';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
-import { notifyEventInvites } from '../lib/tomEngine';
+import { notifyEventInvites, notifyEventRescheduled } from '../lib/tomEngine';
 import { EventChecklistSection } from './EventChecklistSection';
 import type { CalendarEvent } from '../types';
 
@@ -251,6 +251,17 @@ export function EditEventSheet({ open, event, onClose }: Props) {
               console.warn('[EditEventSheet] participants diff err:', e instanceof Error ? e.message : e);
             }
           })();
+
+          // EVENT-APP-RESCHEDULE-NO-RENOTIFY (audit John 17/08): se o HORÁRIO mudou e há
+          // participantes, avisa os existentes do novo horário (paridade com o caminho TOM;
+          // o backend exclui quem editou). Independente do diff de participantes acima.
+          {
+            const timeChanged = startAt !== isoToLocalInput(event.start_at)
+              || endAt !== isoToLocalInput(event.end_at);
+            if (timeChanged && originalParticipantIds.length > 0) {
+              void notifyEventRescheduled(event.id, collaborator.id);
+            }
+          }
 
           // Sprint 22.50b — diff de lembretes. Insert pra times novos, delete pra removidos.
           (async () => {

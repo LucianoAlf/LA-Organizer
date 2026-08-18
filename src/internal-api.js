@@ -1167,6 +1167,25 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
   return res.json({ status: 'ok', sent: recipients.length, key: dedupeKey });
 });
 
+// EVENT-APP-RESCHEDULE-NO-RENOTIFY (audit John 17/08): reagendar evento NO APP (PWA) não avisava
+// os participantes existentes — só o caminho TOM (EVENT_UPDATE) fazia o fan-out "remarcada". Este
+// endpoint dá paridade: o app chama após persistir a nova data e reusamos a MESMA lógica/fila do
+// engine (src/services/event-reschedule-notify.js). O app só chama quando start_at/end_at muda.
+router.post('/internal/event-rescheduled', requireInternalSecret, async (req, res) => {
+  const eventId = String(req.body?.event_id || '').trim();
+  const actorId = req.body?.actor_id ? String(req.body.actor_id).trim() : null;
+  if (!eventId) return res.status(400).json({ error: 'missing_event_id' });
+
+  const { data: event } = await supabase
+    .from('events').select('id, title, start_at').eq('id', eventId).single();
+  if (!event) return res.status(404).json({ error: 'event_not_found' });
+
+  const { notifyEventReschedule } = require('./services/event-reschedule-notify');
+  const { enqueued } = await notifyEventReschedule(supabase, { event, actorId, newStartIso: event.start_at });
+  console.log(`[InternalAPI] event-rescheduled ${eventId} → ${enqueued} avisos enfileirados`);
+  return res.json({ status: 'ok', enqueued });
+});
+
 // Sprint 10: telemetria operacional do TOM. Auth via x-internal-secret (mesma
 // porta /internal/, sem novo secret). Sem dashboard nesta sprint — só JSON.
 router.get('/internal/metrics', requireInternalSecret, async (req, res) => {

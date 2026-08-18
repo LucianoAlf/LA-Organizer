@@ -274,6 +274,26 @@ export async function notifyEventInvites(eventId: string): Promise<NotifyResult>
   }
 }
 
+// Notifica TOM quando um evento é REAGENDADO via PWA — avisa os participantes existentes do novo
+// horário (paridade com o caminho TOM; audit John 17/08). Passe actorId (quem editou) pra excluí-lo.
+export async function notifyEventRescheduled(eventId: string, actorId?: string | null): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/event-rescheduled`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ event_id: eventId, actor_id: actorId ?? null }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    const json = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, sent: typeof json.enqueued === 'number' ? json.enqueued : undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] event-rescheduled notify falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
+
 // Notifica TOM quando projeto é aprovado via PWA — dispara WhatsApp pro criador.
 export async function notifyProjectApproved(projectId: string): Promise<NotifyResult> {
   if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };

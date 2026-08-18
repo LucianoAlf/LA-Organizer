@@ -3520,33 +3520,10 @@ async function applyEventUpdates(collaborator, actions) {
       // declined e o próprio organizador). Via fila durável (anti-ban). Só o dono reagenda,
       // então isto só dispara quando ev tem participantes de verdade.
       if (a.action === 'reschedule') {
-        try {
-          const { enqueueOutbound } = require('./lib/outbound-queue');
-          const { data: parts } = await supabase
-            .from('event_participants')
-            .select('collaborator_id, status')
-            .eq('event_id', ev.id)
-            .in('status', ['invited', 'confirmed', 'tentative']);
-          const partIds = (parts || []).map((p) => p.collaborator_id).filter((id) => id && id !== collaborator.id);
-          if (partIds.length) {
-            const { data: cols } = await supabase
-              .from('collaborators')
-              .select('id, phone, is_active')
-              .in('id', partIds);
-            const senderName = (collaborator.preferred_name || collaborator.full_name || '').split(' ')[0];
-            const whenStr = (() => { try { const d = safeDate(a.new_start_at); return d ? d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : a.new_start_at; } catch { return a.new_start_at; } })();
-            const rows = [];
-            for (const c of (cols || [])) {
-              if (!c.phone || c.is_active === false) continue;
-              const body = `📅 A reunião *${ev.title}* foi remarcada por *${senderName}*: agora *${whenStr}*.`;
-              rows.push({ phone: c.phone, body, meta: { collaborator_id: c.id, kind: 'event_reschedule', event_id: ev.id, sender_name: senderName } });
-            }
-            if (rows.length) {
-              await enqueueOutbound(supabase, rows, {});
-              console.log(`[Event] reschedule fan-out: ${rows.length} avisos enfileirados p/ ${String(ev.id).slice(0, 8)}`);
-            }
-          }
-        } catch (e) { console.warn('[Event] reschedule fan-out falhou (não-fatal):', e.message); }
+        // Fonte única com o caminho APP (endpoint /internal/event-rescheduled) — ver
+        // src/services/event-reschedule-notify.js (audit John 17/08: reagendar no app não avisava).
+        const { notifyEventReschedule } = require('./services/event-reschedule-notify');
+        await notifyEventReschedule(supabase, { event: ev, actorId: collaborator.id, newStartIso: a.new_start_at });
       }
       // Sprint 31.x — edição de lembrete: substitui os event_reminders NÃO-ENVIADOS pelo
       // novo conjunto computado de reminders_minutes_before (relativo ao start_at atual).
