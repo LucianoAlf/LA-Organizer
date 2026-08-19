@@ -432,7 +432,7 @@ async function checkFinanceBillReminders(now) {
       for (const b of bills) {
         const dias = b.due_day - dom;
         const mode = dias > 0 ? 'previo' : (dias === 0 ? 'dia' : 'atrasada');
-        await whatsapp.sendMessage(c.phone, buildBillReminder({ nome, bill: b, mode, dias }));
+        await proactiveLink.sendAndLink(supabase, { phone: c.phone, content: buildBillReminder({ nome, bill: b, mode, dias }), collaboratorId: c.id });
       }
     } catch (err) {
       console.error('[checkFinanceBillReminders]', c.full_name, err.message);
@@ -488,7 +488,7 @@ async function checkFinanceProactive(now) {
     if (!claim.won) { if (!claim.duplicate) await logRitualEvent(c.id, 'financeiro_proativo', 'error', `claim_err:${claim.code || ''}`, ymd); continue; }
     try {
       const nome = String(c.full_name || '').split(' ')[0];
-      await whatsapp.sendMessage(c.phone, `👋 Bom dia, ${nome}! Fica de olho 👀\n\n${lines.join('\n')}`);
+      await proactiveLink.sendAndLink(supabase, { phone: c.phone, content: `👋 Bom dia, ${nome}! Fica de olho 👀\n\n${lines.join('\n')}`, collaboratorId: c.id });
       // Só grava o ledger DEPOIS do envio confirmado; erro aqui não desfaz o envio nem reenvia.
       if (recurringKeys.length) {
         try { await financeService.recordRecurringAlerts(c.id, recurringKeys); }
@@ -558,7 +558,7 @@ async function checkPluggyReconcile(now) {
     const claim = await claimRitualSend(supabase, c.id, ritualType, ymd);
     if (!claim.won) { if (!claim.duplicate) await logRitualEvent(c.id, ritualType, 'error', `claim_err:${claim.code || ''}`, ymd); continue; }
     try {
-      await whatsapp.sendMessage(c.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: c.phone, content: msg, collaboratorId: c.id });
     } catch (err) {
       console.error('[checkPluggyReconcile]', c.full_name, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
@@ -590,7 +590,7 @@ async function checkFinanceMonthly(now) {
       const credit = await financeService.creditUtilization(c.id);
       const health = computeHealthScore({ receitas: rep.receitas, despesas: rep.despesas, credit, goals });
       const nome = String(c.full_name || '').split(' ')[0];
-      await whatsapp.sendMessage(c.phone, buildMonthlyFinance({ nome, receitas: rep.receitas, despesas: rep.despesas, goals, bills, health }));
+      await proactiveLink.sendAndLink(supabase, { phone: c.phone, content: buildMonthlyFinance({ nome, receitas: rep.receitas, despesas: rep.despesas, goals, bills, health }), collaboratorId: c.id });
     } catch (err) {
       console.error('[checkFinanceMonthly]', c.full_name, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
@@ -622,7 +622,7 @@ async function checkFinanceReport(now) {
     try {
       const goals = await financeService.listGoals(c.id);
       const nome = String(c.full_name || '').split(' ')[0];
-      await whatsapp.sendMessage(c.phone, buildMonthlyReport({ nome, mes: mesNome, receitas: rep.receitas, despesas: rep.despesas, top: rep.top, goals }));
+      await proactiveLink.sendAndLink(supabase, { phone: c.phone, content: buildMonthlyReport({ nome, mes: mesNome, receitas: rep.receitas, despesas: rep.despesas, top: rep.top, goals }), collaboratorId: c.id });
     } catch (err) {
       console.error('[checkFinanceReport]', c.full_name, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
@@ -643,7 +643,7 @@ async function checkCardLimitAlerts(now) {
       const q = await isQuietNow(card.collaborator_id, now, 'personal');
       if (q.quiet) continue;
       const al = await financeService.checkAndMarkLimitAlert(card.collaborator_id, card);
-      if (al) await whatsapp.sendMessage(card.collab.phone, fmt.limitAlert(card, al.band, al.usage));
+      if (al) await proactiveLink.sendAndLink(supabase, { phone: card.collab.phone, content: fmt.limitAlert(card, al.band, al.usage), collaboratorId: card.collaborator_id });
     } catch (err) {
       console.error('[checkCardLimitAlerts]', card.name, err.message);
     }
@@ -672,7 +672,7 @@ async function checkCardDueReminders(now) {
       if (inv.isPaid || inv.total <= 0) continue;
       const q = await isQuietNow(card.collaborator_id, now, 'personal');
       if (q.quiet) { await logRitualEvent(card.collaborator_id, rtype, 'skipped', `quiet:${q.reason}`, ymd); continue; }
-      await whatsapp.sendMessage(card.collab.phone, fmt.dueReminder(card, inv, card.due_day - dom));
+      await proactiveLink.sendAndLink(supabase, { phone: card.collab.phone, content: fmt.dueReminder(card, inv, card.due_day - dom), collaboratorId: card.collaborator_id });
       await logRitualEvent(card.collaborator_id, rtype, 'sent', `vence dia ${card.due_day}`, ymd);
     } catch (err) {
       console.error('[checkCardDueReminders]', card.name, err.message);
@@ -699,7 +699,7 @@ async function sendFinanceDigest(collab, now) {
     const claim = await claimRitualSend(supabase, collab.id, 'financeiro_digest', ymd);
     if (!claim.won) { if (!claim.duplicate) await logRitualEvent(collab.id, 'financeiro_digest', 'error', `claim_err:${claim.code || ''}`, ymd); return; }
     const nome = String(collab.full_name || '').split(' ')[0];
-    await whatsapp.sendMessage(collab.phone, buildFinanceDigest({ nome, ...items }));
+    await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: buildFinanceDigest({ nome, ...items }), collaboratorId: collab.id });
   } catch (err) {
     console.error('[sendFinanceDigest]', collab.full_name, err.message);
     await logRitualEvent(collab.id, 'financeiro_digest', 'error', err.message, ymd);
@@ -1037,7 +1037,7 @@ async function notifyCoordinators() {
 
     // quiet-exempt: transacional — resultado da aprovação/rejeição do comunicado do próprio autor (não é cobrança proativa).
     try {
-      await whatsapp.sendMessage(author.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: author.phone, content: msg, collaboratorId: author.id });
       await supabase
         .from('announcements')
         .update({ coordinator_notified_at: new Date().toISOString() })
@@ -1078,7 +1078,9 @@ async function handleCancellations(whatsapp) {
     for (const job of (sentJobs || [])) {
       // quiet-exempt: transacional — retratação de comunicado já entregue (correção, não cobrança proativa).
       try {
-        await whatsapp.sendMessage(job.phone, '[LA Music] — O comunicado anterior foi cancelado. Por favor, desconsidere.');
+        const _retr = '[LA Music] - O comunicado anterior foi cancelado. Por favor, desconsidere.';
+        if (job.recipient_id) await proactiveLink.sendAndLink(supabase, { phone: job.phone, content: _retr, collaboratorId: job.recipient_id });
+        else await whatsapp.sendMessage(job.phone, _retr); // audiencia sem cadastro - envia sem vinculo
       } catch (err) {
         console.error('[dispatchAnnouncements] retraction send err:', err.message);
       }
@@ -1517,7 +1519,7 @@ async function checkChecklistEscalations(now = new Date()) {
       // reminded_at → retenta no próximo tick fora do quiet. Candidato à cobrança domingo 13h.
       if ((await isQuietNow(c.collaborator.id, nowSaoPaulo(), 'work')).quiet) continue;
       try {
-        await whatsapp.sendMessage(c.collaborator.phone, body);
+        await proactiveLink.sendAndLink(supabase, { phone: c.collaborator.phone, content: body, collaboratorId: c.collaborator.id });
         await supabase.from('op_checklist_completions')
           .update({ reminded_at: now.toISOString() })
           .eq('id', c.id);
@@ -1588,7 +1590,7 @@ async function checkChecklistEscalations(now = new Date()) {
     // Silêncio (trabalho) do gerente/líder. Defere: NÃO marca escalated_at → retenta fora do quiet.
     if ((await isQuietNow(escalationTarget.id, nowSaoPaulo(), 'work')).quiet) continue;
     try {
-      await whatsapp.sendMessage(escalationTarget.phone, body);
+      await proactiveLink.sendAndLink(supabase, { phone: escalationTarget.phone, content: body, collaboratorId: escalationTarget.id });
       await supabase.from('op_checklist_completions')
         .update({ escalated_at: now.toISOString() })
         .eq('id', c.id);
@@ -1702,7 +1704,7 @@ async function checkDepartmentOperational(now = new Date()) {
     }
 
     try {
-      await whatsapp.sendMessage(resp.phone, body);
+      await proactiveLink.sendAndLink(supabase, { phone: resp.phone, content: body, collaboratorId: resp.id });
       const detail = JSON.stringify({
         department_slug: dept.slug,
         queue_count: queue.length,
@@ -1808,7 +1810,7 @@ async function checkCoordinationTimeouts(now = new Date()) {
       const preview = req.message_body.slice(0, 80) + (req.message_body.length > 80 ? '...' : '');
       const msg = `⏳ Heads up: pedi pro ${recipientName} responder ao seu recado, mas até agora não respondeu.\nMensagem: "${preview}"\nQuer que eu insista ou prefere falar direto?`;
       try {
-        await whatsapp.sendMessage(requester.phone, msg);
+        await proactiveLink.sendAndLink(supabase, { phone: requester.phone, content: msg, collaboratorId: requester.id });
         console.log(`[checkCoordinationTimeouts] timeout notified req=${req.id.slice(0, 8)} → requester=${requester.phone.slice(-4)}`);
       } catch (sendErr) {
         console.error(`[checkCoordinationTimeouts] notify err req=${req.id.slice(0, 8)}:`, sendErr.message);
@@ -1888,7 +1890,8 @@ async function dispatchAnnouncements(now = new Date()) {
             mimetype: ann.attachment_mime || '',
           });
         } else {
-          await whatsapp.sendMessage(job.phone, finalBody);
+          if (job.recipient_id) await proactiveLink.sendAndLink(supabase, { phone: job.phone, content: finalBody, collaboratorId: job.recipient_id });
+          else await whatsapp.sendMessage(job.phone, finalBody); // audiencia sem cadastro - envia sem vinculo
         }
         const sentAt = new Date().toISOString();
         await supabase.from('announcement_jobs')
@@ -1974,7 +1977,15 @@ async function drainOutboundQueue(now = new Date()) {
       } catch (qe) { console.warn('[OutboundQueue] quiet check err (segue enviando):', qe.message); }
     }
     try {
-      await whatsapp.sendMessage(row.phone, row.body);
+      // DISPATCHER-ENVIO-INVISIVEL (19/08): convite/aviso da fila agora entra no historico do
+      // destinatario (cid = meta.collaborator_id) com ref pro evento - sem isso, quem respondia
+      // a um 'foi remarcada...' falava com um TOM que nao lembrava de ter avisado.
+      if (cid) {
+        const _refId = (row.meta && row.meta.event_id) || null;
+        await proactiveLink.sendAndLink(supabase, { phone: row.phone, content: row.body, collaboratorId: cid, refType: _refId ? 'event' : null, refId: _refId });
+      } else {
+        await whatsapp.sendMessage(row.phone, row.body); // fila sem collaborator_id no meta - envia sem vinculo
+      }
       await supabase.from('outbound_queue')
         .update({ status: 'sent', sent_at: new Date().toISOString() })
         .eq('id', row.id);
@@ -2035,7 +2046,8 @@ async function remindUnconfirmedAnnouncements(now = new Date()) {
     const preview = annBody.slice(0, 80) + (annBody.length > 80 ? '…' : '');
     const msg = `⏰ Lembrete: você recebeu um comunicado e ainda não confirmou.\n\n"${preview}"\n\n_Responde "ok" pra confirmar que recebeu._`;
     try {
-      await whatsapp.sendMessage(j.phone, msg);
+      if (j.recipient_id) await proactiveLink.sendAndLink(supabase, { phone: j.phone, content: msg, collaboratorId: j.recipient_id });
+      else await whatsapp.sendMessage(j.phone, msg); // job antigo sem recipient_id - envia sem vinculo
       await supabase.from('announcement_jobs')
         .update({ reminder_sent_at: nowIso })
         .eq('id', j.id);
@@ -2101,7 +2113,7 @@ async function detectStaleTasks(now = new Date()) {
     const msg = `👻 *Higiene de tarefas*\n\nEncontrei *${count}* tarefa${count > 1 ? 's' : ''} aberta${count > 1 ? 's' : ''} há mais de ${STALE_DAYS} dias sem atualização:\n${listText}${count > 3 ? `\n_...e mais ${count - 3}_` : ''}\n\nQuer revisar agora? Só dizer "abre minhas tarefas paradas".`;
 
     try {
-      await whatsapp.sendMessage(collab.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: msg, collaboratorId: collab.id });
       await logRitualEvent(collab.id, 'hygiene_stale_tasks', 'sent', `count=${count}`, ymdRef);
     } catch (err) {
       console.error(`[detectStaleTasks] send err ${String(collab.phone).slice(-4)}:`, err.message);
@@ -2170,7 +2182,7 @@ async function detectUnclosedPastEvents(now = new Date()) {
     const msg = `📌 *Compromissos sem fechamento*\n\nTinha *${count}* compromisso${count > 1 ? 's' : ''} que já aconteceu${count > 1 ? 'ram' : ''} e ainda está${count > 1 ? 'o' : ''} em aberto:\n${listText}\n\nQuer fechar agora? Só responder "fecha" ou me dizer o que aconteceu.\n\n_Sem resposta em 6h marco como concluído automaticamente._`;
 
     try {
-      await whatsapp.sendMessage(collab.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: msg, collaboratorId: collab.id });
       // Sprint 23.10: marca followup_sent_at pra ativar auto-close 6h depois
       await supabase
         .from('events')
@@ -2255,7 +2267,7 @@ async function askEndOfDayEventFollowup(now = new Date()) {
     }
 
     try {
-      await whatsapp.sendMessage(collab.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: msg, collaboratorId: collab.id });
       await supabase
         .from('events')
         .update({ followup_sent_at: nowIso })
@@ -2634,7 +2646,7 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
       continue;
     }
     try {
-      await whatsapp.sendMessage(ceo.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: ceo.phone, content: msg, collaboratorId: ceo.id });
       // Marca staleness SÓ após envio confirmado (bug fix — era antes do envio).
       if (toStaleCheck.length > 0) {
         const { error: staleEvErr } = await supabase.from('events')
@@ -2893,7 +2905,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       continue;
     }
     try {
-      await whatsapp.sendMessage(ceo.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: ceo.phone, content: msg, collaboratorId: ceo.id });
       // Marca staleness SÓ após envio confirmado (bug fix).
       if (toStaleCheck.length > 0) {
         const { error: staleTaskErr } = await supabase.from('tasks')
@@ -2995,7 +3007,7 @@ async function perLeaderUnclosedTasksReport(now = new Date(), opts = {}) {
       continue;
     }
     try {
-      await whatsapp.sendMessage(p.phone, p.msg);
+      await proactiveLink.sendAndLink(supabase, { phone: p.phone, content: p.msg, collaboratorId: p.leaderId });
       console.log(`[LeaderTasksReport] ${p.leaderName}: ${p.count} → ${String(p.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[LeaderTasksReport] ${p.leaderName} err:`, err.message);
@@ -3141,7 +3153,7 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
     const claim = await claimRitualSend(supabase, ceo.id, 'governance_digest', ymdRef);
     if (!claim.won) { if (!claim.duplicate) console.error(`[GovDigest] claim_err(${claim.code})`); continue; }
     try {
-      for (const m of messages) await whatsapp.sendMessage(ceo.phone, m);
+      for (const m of messages) await proactiveLink.sendAndLink(supabase, { phone: ceo.phone, content: m, collaboratorId: ceo.id });
       // Fase 7 — staleness DEPOIS do envio confirmado (mesmo padrão de sempre). tasksR
       // agora carrega os dois lados (tarefas + compromissos — ver eventStaleIds em
       // ceoTeamUnclosedTasksReport): sem isto o autoArchiveStale (22h) parava de arquivar
@@ -3250,7 +3262,7 @@ async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
     const claim = await claimRitualSend(supabase, leaderId, 'governance_digest_leader', ymdRef);
     if (!claim.won) { if (!claim.duplicate) console.error(`[GovDigestLeader] claim_err(${claim.code}) ${firstName}`); continue; }
     try {
-      for (const m of messages) await whatsapp.sendMessage(leader.phone, m);
+      for (const m of messages) await proactiveLink.sendAndLink(supabase, { phone: leader.phone, content: m, collaboratorId: leaderId });
       const evStale = (eventsR && eventsR.staleIds) || [];
       const tkStale = (tasksR && tasksR.staleIds) || [];
       if (evStale.length) await supabase.from('events').update({ staleness_check_sent_at: now.toISOString() }).in('id', evStale);
@@ -3393,7 +3405,7 @@ async function weeklyLeaderEngagementReport(now = new Date()) {
       continue;
     }
     try {
-      await whatsapp.sendMessage(ceo.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: ceo.phone, content: msg, collaboratorId: ceo.id });
       console.log(`[LeaderEngagement] sent ${blocks.length} leader blocks → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[LeaderEngagement] send err ${String(ceo.phone).slice(-4)}:`, err.message);
@@ -3503,7 +3515,7 @@ async function remindPendingProjectApprovals(opts = {}) {
     lines.push(`Você também pode aprovar pelo app.`);
     const msg = lines.join('\n');
     try {
-      await whatsapp.sendMessage(sup.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: sup.phone, content: msg, collaboratorId: sup.id });
       console.log(`[PendingApproval] cobrança enviada a ${sup.full_name} (${projects.length} projetos)`);
       // F1 (APROVACAO-SEM-FUNIL): a cobrança é uma re-pergunta — (re)abre a intent de
       // aprovação de cada projeto no nome do aprovador (supersede same-ref + insert =
@@ -5644,7 +5656,12 @@ async function checkEventReminders() {
     const meta = metaParts.length ? `\n${metaParts.join(' · ')}` : '';
     // Sprint 23.6 — URL em linha própria pra WhatsApp linkar (não dentro do "·").
     const linkLine = ev.meeting_url ? `\n${ev.meeting_url}` : '';
-    const labelPrefix = r.label ? `(${r.label}) ` : '';
+    // EVENT-REMINDER-DUPLO-SEM-ETIQUETA (Alf 19/08): dois lembretes propositais (2h + 1h antes)
+    // saíam byte-idênticos com label null — parecia duplicata bugada. Sem label explícito, a
+    // etiqueta de antecedência é computada do próprio par (remind_at, start_at).
+    const { leadLabel } = require('../lib/reminder-lead-label');
+    const _etiqueta = r.label || leadLabel(r.remind_at, ev.start_at);
+    const labelPrefix = _etiqueta ? `(${_etiqueta}) ` : '';
     const text = `📅 *Lembrete:* ${labelPrefix}${ev.title}${meta}${linkLine}`;
     try {
       await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'event', refId: ev.id });
@@ -5764,7 +5781,7 @@ async function checkTaskCheckins(now) {
     msg += `\n\nMe avisa o que você concluiu! 💪`;
 
     try {
-      await whatsapp.sendMessage(c.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: c.phone, content: msg, collaboratorId: c.id });
       await logRitualEvent(c.id, ritualType, 'sent', null, ymd);
       console.log(`[TaskCheckin] ${c.full_name} ${timeKey} enviado (${tasks.length} tarefas)`);
     } catch (e) {
@@ -6160,7 +6177,7 @@ async function sendHealthReport(refYmd = null, force = false) {
     }
     try {
       // quiet-exempt: relatório admin de saúde do sistema pros donos do TOM.
-      await whatsapp.sendMessage(director.phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone: director.phone, content: msg, collaboratorId: director.id });
       console.log(`[health-report] enviado pra ${director.full_name} (${String(director.phone).slice(-4)})`);
       await logRitualEvent(director.id, 'health_report', 'sent', `summary=${JSON.stringify(run.summary)}`, ymd);
     } catch (e) {

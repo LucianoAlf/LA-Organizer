@@ -3331,6 +3331,21 @@ async function applyEventUpdates(collaborator, actions) {
       // BUG-1: participante só pode completar; cancel/reschedule/update são do dono
       if (ev.fromParticipant && a.action !== 'complete') {
         console.warn(`[Event] ${a.action} REJECTED — participante só pode completar, não ${a.action} id=${a.id}`);
+        // EVENT-PARTICIPANT-GATE-MUDO (Alf 19/08): este gate rejeitava SEM failMessage e o
+        // usuário recebia o genérico "_não consegui atualizar_" — soa como defeito técnico
+        // quando a verdade é permissão. A mensagem nomeia o dono e oferece o recado (a
+        // coordenação já existe; o "sim" segue o fluxo normal de COORDINATION_REQUEST).
+        try {
+          const { buildOwnerGateMessage } = require('./lib/event-owner-gate');
+          let _ownerName = null;
+          try {
+            const { data: _own } = await supabase.from('collaborators')
+              .select('preferred_name, full_name').eq('id', ev.collaborator_id).maybeSingle();
+            _ownerName = (_own && (_own.preferred_name || _own.full_name)) || null;
+          } catch (_) {}
+          failMessages.push(buildOwnerGateMessage(a.action, ev.title, _ownerName));
+          awaitingConfirm = true; // o turno vira pergunta (oferta de recado) → não é ACTIONABLE_NO_MARKER
+        } catch (_) {}
         failCount++;
         continue;
       }
