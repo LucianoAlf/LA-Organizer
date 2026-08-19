@@ -377,3 +377,82 @@ A intent de RE-PERGUNTA — criada justamente porque o fechamento em lote falhou
 desligado exatamente no turno em que o usuário responde a um "confirma que já foi feito?". Todo o
 vocabulário de conclusão ("todas feitas", "já fiz", "feito") fica cego na re-pergunta, que é o
 segundo tempo de um fluxo que já falhou uma vez.
+
+### ETAPA 3 — `occurred_at` aponta o turno ERRADO, e o erro empurra para "não reproduzi"
+
+**Ocorrências:** 1 rodada (19/08), mas 4 achados de 6 investigados. **Contradiz a medição de 18/08.**
+
+Em 18/08 ficou registrado que `occurred_at` é confiável (desalinhamento com mediana 0 min, p90 2 min).
+Isso vale para o subconjunto que aquela medição olhou — achados cuja evidência tem rótulo `USUÁRIO:`.
+Hoje investiguei achados cuja evidência é rotulada `TOM:`, e o quadro é outro:
+
+| achado | `occurred_at` | turno real | desvio |
+|---|---|---|---|
+| `7701ee2f` | 11/07 11:09 | 11/07 09:37 | −1h32 |
+| `bffe4be4` | 18/06 20:30 | 18/06 14:02 | −6h28 |
+| `1e85605f` | 25/06 21:01 | 25/06 19:31 | −1h30 |
+| `766df0bd` | 19/06 00:18 | 19/06 00:18 | 0 |
+
+O caso caro é o `7701ee2f`. O `occurred_at` não caiu num turno vazio: caiu num turno em que **o mesmo
+fluxo, com a mesma pessoa, no mesmo dia, FUNCIONOU** — 11:08:51 "Aviso o Luciano? Confirma?" →
+"Confirma" → "📨 Recado enviado!". Quem confere pelo `occurred_at` mede o sucesso, conclui "não
+reproduz" e fecha como falso positivo. O incidente real estava 1h32 antes: três afirmativas
+seguidas ("Confirma", "Confirmo", "Sim, avisa") e a mesma pergunta de volta nas três.
+
+Isto é pior que o buraco de 16/08. Lá o literal sumia e o achado ficava irrefutável — falha visível.
+Aqui a evidência errada **produz um veredito confiante e invertido**: o filtro empurra para o lado de
+"já está bom", que é justamente o lado onde o erro enterra bug vivo e ainda declara progresso.
+
+Regra: **não use `occurred_at` para localizar o turno. Use o literal da evidência como agulha**
+(`conversation_history`, `ilike`, `direction` conforme o rótulo) e trate o `occurred_at` só como
+desempate quando a agulha casar em mais de um ponto. Quando o turno encontrado pelo `occurred_at`
+mostrar o comportamento CERTO, isso não é refutação — é sinal de que a agulha ainda não foi lançada.
+
+Proposta de virar código: é o `literalDoAchado(finding)` já proposto em 18/08, com uma correção de
+desenho — ele deve buscar **pela agulha primeiro** e só depois usar a janela temporal, e deve devolver
+`{literal, quando, distanciaMin, viaAgulha:true|false}`. Enquanto a busca for ancorada em tempo, este
+erro volta, e volta silencioso.
+
+### ETAPA 2 (varredura) — o CHOKEPOINT apaga a própria evidência
+
+**Ocorrências:** 1 (19/08), medida sobre o maior cluster do acervo.
+
+A família "não consegui registrar" é **23 dos 153 abertos não-altos** — o maior alvo isolado, e o
+alvo natural do fix desta rodada. Cruzei os 23 contra `marker_logs` para rodar o literal pelo gate.
+Não dá, e a razão é estrutural: o `raw_excerpt` da linha `CHOKEPOINT/redirected` guarda **a nota já
+rebaixada**, não a resposta original. A entrada que o gate precisa receber é exatamente a que o
+guard destruiu ao disparar.
+
+Só 3 dos 23 tinham alguma linha `ACTIONABLE_NO_MARKER` (que preserva o texto pré-rebaixamento), e
+nenhuma alinhava com o turno do incidente. No caso Dudu 18/08 — a correção desta rodada — a resposta
+original sobreviveu **por acaso**, porque havia uma linha `ACTIONABLE_NO_MARKER` separada, não por
+desenho.
+
+Consequência prática: o fix de hoje é gated em `restatesRecentWrite`, que precisa da resposta
+original E de um título persistido em até 180s. **Nenhum dos 23 pode ser fechado por ele** — fechar
+seria a terceira reincidência do erro "mesma família = conclusão" (13/08, 14/08, 17/08).
+
+Proposta de virar código: gravar a resposta ORIGINAL no `raw_excerpt` (ou num campo irmão) quando o
+chokepoint rebaixa. Sem isso, o maior cluster do acervo é permanentemente improvável — e é o cluster
+que mais gera achado novo.
+
+### ETAPA 2 (varredura) — resultado da rodada: refutação NÃO drena acervo antigo
+
+**Ocorrências:** 2 (16/08, 19/08). Reincidiu, e a expectativa do protocolo continua errada.
+
+O protocolo diz que na varredura "quase todos são anteriores a dezenas de correções e devem cair como
+'já corrigido'". Segunda rodada seguida em que isso **não se confirma**: de 6 achados antigos
+investigados a fundo hoje, **zero** caíram por "já corrigido". Caíram 2, e por outros motivos —
+1 falso positivo do auditor (`766df0bd`) e 1 que não era bug (`94cbe50e`, feature). Os outros 4 se
+confirmaram bugs VIVOS, com raiz localizada no código de hoje (`bffe4be4`, `1e85605f`, `e84dd423`,
+`7701ee2f`).
+
+O acervo antigo não é um estoque de coisas já resolvidas esperando baixa: é uma fila de bugs reais
+que ninguém corrigiu, porque o teto de 1 correção/rodada é muito menor que a taxa de entrada. A
+varredura, feita com rigor, **produz diagnóstico — não produz baixa**. Isso é útil (os 4 saem da
+rodada com raiz escrita e arquivo:linha), mas quem lê "varredura sem teto" esperando o acervo
+encolher vai continuar decepcionado.
+
+Proposta: o valor real da varredura é o `verified_note` com raiz provada, que transforma um achado
+de 2 meses em algo corrigível em minutos na próxima rodada. Vale medir isso explicitamente — quantos
+achados anotados viraram correção depois — em vez de medir quantos fecharam.
