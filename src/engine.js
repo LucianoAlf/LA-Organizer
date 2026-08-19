@@ -51,7 +51,7 @@ const { resolveTaskTarget, serieDe } = require('./lib/task-target');
 const { resolverConclusaoDeLembrete } = require('./lib/completion-from-reminder');
 const { buildReminderRefsQuery, mapRefRows } = require('./lib/reminder-refs-query');
 const { isFutureCompletion } = require('./utils/complete-guards');
-const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply } = require('./lib/optimistic-confirm');
+const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply, restatesRecentWrite } = require('./lib/optimistic-confirm');
 const { isActionConfirmQuestion } = require('./lib/confirm-question');
 const { buildIntegrityReply } = require('./lib/integrity-reply');
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
@@ -13636,6 +13636,24 @@ Output AGORA, apenas o marker:`;
       _pendingActionRecent = isActionConfirmQuestion(_lt && _lt.content);
     }
   } catch (_) {}
+  // CHOKEPOINT-NEGA-ESCRITA-RECENTE (Dudu 18/08 21:07) — o chokepoint só enxerga a janela do
+  // turno, então negava a afirmação VERDADEIRA sobre o que o próprio TOM gravou 22s antes
+  // ("✅ Tá registrado" → "não consegui registrar", e no turno seguinte "tá registrado sim":
+  // a contradição virou achado). Lê os títulos escritos na janela curta e deixa o módulo puro
+  // decidir se a fala REAFIRMA um deles. Só paga o I/O quando há claim sem persistência e
+  // NENHUM marker foi tentado (tentado-e-rejeitado é falha real — ali o guard tem que valer).
+  let _restatesRecentWrite = false;
+  try {
+    const _npW = !_metrics.marker_emitted && !_metrics.auto_retry_succeeded && !_metrics.deterministic_complete_ok;
+    if (_npW && !_metrics.marker_attempted && (hasCompletionClaim(reply) || hasWeakCompletionClaim(reply))) {
+      const _sinceIso = new Date(_t0 - 180_000).toISOString();
+      const { data: _rw } = await supabase.from('tasks')
+        .select('title').eq('assigned_to', collab.id)
+        .gte('updated_at', _sinceIso)
+        .order('updated_at', { ascending: false }).limit(5);
+      _restatesRecentWrite = restatesRecentWrite(reply, (_rw || []).map((r) => r.title));
+    }
+  } catch (_) {}
   try {
     const _hon = enforceNoMarkerHonesty(reply, {
       // deterministic_complete_ok: a Fatia 1 concluiu por id exato ANTES do LLM (ou idempotência
@@ -13657,6 +13675,7 @@ Output AGORA, apenas o marker:`;
       // a resposta vem com a citação da própria cobrança ("Resolve hoje ou reagenda?") embutida,
       // e sem limpar o regex leria o texto do TOM em vez da fala da pessoa.
       userProgressStatus: isProgressStatusReply(stripReplyScaffold(String(text || '')).userText),
+      restatesRecentWrite: _restatesRecentWrite,
     }, { meta: true });
     reply = _hon.reply;
     if (_hon.fired) {

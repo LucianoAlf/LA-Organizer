@@ -469,3 +469,57 @@ test('ZERO-REGRESSAO: opt contentSolicitation AUSENTE → comportamento idêntic
   }, { meta: true });
   assert.strictEqual(out.fired, true, 'sem a opt explícita, a camada forte segue como antes');
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// CHOKEPOINT-NEGA-ESCRITA-RECENTE (Dudu 18/08 21:07 BRT). Literal do banco:
+//   21:06:38  Dudu: "Preciso que me lembre que amanhã tenho que trocar a corda do violão q
+//             está na sala do Rodrigo"
+//   21:06:57  (TASK_UPDATE executed ok=1 — a tarefa "Trocar corda do violão — sala do Rodrigo"
+//             existe no banco, remind_at 19/08 09h)
+//   21:06:59  Dudu: "Me lembra só amanhã"   ← reforço do MESMO pedido, nada novo a persistir
+//   21:07:19  TOM (real, antes do guard): "✅ Tá registrado — só amanhã às 9h, uma vez. Lembro
+//             você de trocar a corda do violão na sala do Rodrigo."   ← VERDADE
+//   21:07:20  TOM (no WhatsApp): "_⚠️ Na real não consegui registrar isso agora_"
+//   21:07:50  TOM: "Dudu, tá registrado sim!"   ← a contradição que o auditor pegou
+//
+// Mesma família do TASK-HONESTY-NEGA-BAIXA-FEITA (Kailane 12/08, task-done-recente.js): não
+// havia o que persistir porque o próprio TOM já tinha persistido segundos antes. Lá o fato do
+// banco entra no PROMPT; aqui o LLM já acertou e quem negou foi o guard de saída, que só
+// enxerga a janela do turno. `nothingPersisted` é o estado CORRETO, não sintoma.
+const { restatesRecentWrite } = require('./optimistic-confirm');
+const REAL_DUDU = '✅ Tá registrado — só amanhã às 9h, uma vez. Lembro você de trocar a corda do violão na sala do Rodrigo.';
+const TITULO_DUDU = 'Trocar corda do violão — sala do Rodrigo';
+
+test('restatesRecentWrite: reply que reafirma o item escrito segundos antes casa (Dudu 18/08)', () => {
+  assert.strictEqual(restatesRecentWrite(REAL_DUDU, [TITULO_DUDU]), true);
+});
+
+test('restatesRecentWrite: reply sobre OUTRA coisa não casa', () => {
+  assert.strictEqual(restatesRecentWrite('✅ Criei a tarefa de comprar leite.', [TITULO_DUDU]), false);
+});
+
+test('restatesRecentWrite: sem títulos recentes é sempre false', () => {
+  assert.strictEqual(restatesRecentWrite(REAL_DUDU, []), false);
+  assert.strictEqual(restatesRecentWrite(REAL_DUDU, null), false);
+});
+
+test('CHOKEPOINT não nega escrita que o próprio TOM fez segundos antes (Dudu 18/08)', () => {
+  const out = enforceNoMarkerHonesty(REAL_DUDU, {
+    nothingPersisted: true, markerAttempted: false, restatesRecentWrite: true,
+  }, { meta: true });
+  assert.strictEqual(out.fired, false, 'a afirmação era verdadeira — o guard não pode negá-la');
+  assert.strictEqual(out.reply, REAL_DUDU, 'resposta tem que sobreviver intacta');
+});
+
+test('FREIO: escrita recente NÃO libera confab sobre outro item', () => {
+  // Houve persistência recente, mas a fala afirma OUTRA coisa que não persistiu → segue mentira.
+  const out = enforceNoMarkerHonesty('✅ Criei também a tarefa de comprar leite.', {
+    nothingPersisted: true, markerAttempted: false, restatesRecentWrite: false,
+  }, { meta: true });
+  assert.strictEqual(out.fired, true);
+});
+
+test('ZERO-REGRESSAO: opt restatesRecentWrite AUSENTE → comportamento idêntico (dispara)', () => {
+  const out = enforceNoMarkerHonesty(REAL_DUDU, { nothingPersisted: true }, { meta: true });
+  assert.strictEqual(out.fired, true, 'sem a opt explícita, a camada forte segue como antes');
+});

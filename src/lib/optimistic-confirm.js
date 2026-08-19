@@ -284,6 +284,37 @@ function isProgressStatusReply(text) {
   return PROGRESS_STATUS_RE.test(t);
 }
 
+// CHOKEPOINT-NEGA-ESCRITA-RECENTE (Dudu 18/08 21:07 BRT) — o guard só enxerga a janela do
+// turno, então nega afirmação VERDADEIRA sobre o que o próprio TOM persistiu segundos antes.
+// Caso: tarefa criada 21:06:57 (TASK_UPDATE executed); às 21:06:59 o Dudu reforça o mesmo
+// pedido ("Me lembra só amanhã"), nada novo há pra persistir, e o "✅ Tá registrado" — que era
+// verdade — virou "não consegui registrar". Irmão do TASK-HONESTY-NEGA-BAIXA-FEITA (Kailane
+// 12/08, task-done-recente.js), na superfície de saída em vez do prompt.
+// PURA: recebe os títulos já lidos do banco. Casa só quando a fala REAFIRMA aquele item —
+// overlap de tokens fortes —, nunca por "houve escrita recente" (isso liberaria confab sobre
+// outro item no mesmo turno).
+const _RESTATE_STOPWORDS = new Set(['para', 'pelo', 'pela', 'esse', 'essa', 'isso', 'este', 'esta', 'como', 'sobre', 'ontem', 'hoje', 'amanha', 'tarefa', 'lembrete']);
+function _restateTokens(s) {
+  return String(s == null ? '' : s)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 4 && !_RESTATE_STOPWORDS.has(t));
+}
+function restatesRecentWrite(reply, titulos) {
+  const lista = Array.isArray(titulos) ? titulos : [];
+  if (!reply || !lista.length) return false;
+  const hay = new Set(_restateTokens(reply));
+  if (!hay.size) return false;
+  return lista.some((t) => {
+    const toks = _restateTokens(t);
+    if (toks.length < 2) return false;
+    const hits = toks.filter((tk) => hay.has(tk)).length;
+    return hits >= 2 && hits / toks.length >= 0.6;
+  });
+}
+
 const NO_MARKER_HONEST_NOTE = '_⚠️ Na real não consegui registrar isso agora — me manda de novo, por favor._';
 function enforceNoMarkerHonesty(reply, opts, opts2) {
   const o = opts || {};
@@ -310,12 +341,15 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   // Opt ausente ⇒ veto inerte ⇒ zero-regressão para chamadores antigos. Ver reply-classify.js
   // (isContentSolicitationReply) e project_naoregistrei_balde_sintoma_fatias (Fatia 2).
   if (strong && o.contentSolicitation && !o.markerAttempted) strong = false;
+  // Reafirmar o que o próprio TOM acabou de gravar não é confab (Dudu 18/08). markerAttempted
+  // mantém o freio: marker tentado-e-rejeitado neste turno é ação na mesa que FALHOU.
+  if (strong && o.restatesRecentWrite && !o.markerAttempted) strong = false;
   const weak = !strong && !o.infoGathering && !!o.pendingActionRecent
-    && !o.userProgressStatus && hasWeakCompletionClaim(reply);
+    && !o.userProgressStatus && !o.restatesRecentWrite && hasWeakCompletionClaim(reply);
   if (!strong && !weak) return wrap(reply, false);
   const cleaned = sanitizeOptimisticConfirm(reply, 'failed', { includeWeak: weak });
   const out = cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;
   return wrap(out, true);
 }
 
-module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply };
+module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply, restatesRecentWrite };
