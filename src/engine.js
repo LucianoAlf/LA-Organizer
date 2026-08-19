@@ -12661,9 +12661,16 @@ async function processMessage(phone, text, raw = {}) {
       } catch (e) { console.warn('[SendHonesty] recent-send check err:', e.message); }
       const _sh = enforceSendHonesty(reply, { isQuestion: hasTrailingQuestion(reply) || isInfoGatheringReply(reply), recentlySent: _recentlySent });
       if (_sh.fired) {
+        // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08): o raw_excerpt guardava `reply` DEPOIS
+        // do rebaixamento — ou seja, a nota honesta, não a afirmação falsa que o guard pegou.
+        // Sem o original, o maior cluster do acervo (23 achados de "não consegui registrar")
+        // é irrefutável por construção: nem o marker_logs nem o conversation_history (que só
+        // guarda o entregue) preservam o que foi interceptado. Loga o ORIGINAL; os dois juntos
+        // dão a prova inteira — aqui o que ele IA dizer, lá o que ele DISSE.
+        const _origSh = String(reply).slice(0, 200);
         reply = _sh.reply;
         console.log(`[SendHonesty] SEND-CLAIM-NOMARKER phone=${_phoneTail} → rebaixado (afirmou envio sem coord marker)`);
-        try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:coordination:nosend', String(reply).slice(0, 120)); } catch (_) {}
+        try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:coordination:nosend', _origSh); } catch (_) {}
       }
     }
   }
@@ -13477,9 +13484,12 @@ Output AGORA, apenas o marker:`;
           if (!_metrics.auto_retry_succeeded) {
             const _pd = downgradeEmptyPromise(reply);
             if (_pd.fired) {
+              // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08): guarda a PROMESSA original —
+              // é ela que prova o achado. O texto entregue já vive no conversation_history.
+              const _origPd = String(reply).slice(0, 200);
               reply = _pd.reply;
               console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → rebaixado (promessa sem persistência)`);
-              try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:promise_nomarker', String(reply).slice(0, 120)); } catch (_) {}
+              try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:promise_nomarker', _origPd); } catch (_) {}
             }
           }
         }
@@ -13692,9 +13702,16 @@ Output AGORA, apenas o marker:`;
       userProgressStatus: isProgressStatusReply(stripReplyScaffold(String(text || '')).userText),
       restatesRecentWrite: _restatesRecentWrite,
     }, { meta: true });
+    // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08) — este é O ponto que cega o maior cluster do
+    // acervo. O raw_excerpt guardava o texto JÁ rebaixado ("_não consegui registrar isso agora_"),
+    // que é sempre a MESMA string: o log provava que o guard disparou, nunca POR QUÊ. Guardar a
+    // afirmação original é o que torna os 23 achados de "não consegui registrar" auditáveis —
+    // dá pra separar guard certo (o TOM ia mentir) de guard errado (falso-positivo do próprio
+    // guard, como foi o CHOKEPOINT-NEGA-ESCRITA-RECENTE do Dudu).
+    const _origHon = String(reply).slice(0, 300);
     reply = _hon.reply;
     if (_hon.fired) {
-      try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', `confab:${_domainOf(_metrics)}`, String(reply).slice(0, 200)); } catch (_) {}
+      try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', `confab:${_domainOf(_metrics)}`, _origHon); } catch (_) {}
     }
   } catch (e) {
     // Liveness (Fatia 0): NUNCA engolir. Trava quebrada (ex.: ReferenceError) vira métrica

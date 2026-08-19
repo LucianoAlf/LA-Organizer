@@ -42,6 +42,19 @@ function formatHM(iso: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/** HH:MM do lembrete pendente mais cedo. Multi (event_reminders) vence o legado remind_at. */
+function earliestReminderHM(event: {
+  remind_at?: string | null;
+  event_reminders?: Array<{ remind_at: string; sent_at: string | null }> | null;
+}): string | null {
+  const pendentes = (event.event_reminders ?? [])
+    .filter((r) => !r.sent_at)
+    .map((r) => r.remind_at)
+    .sort();
+  const alvo = pendentes[0] ?? event.remind_at;
+  return alvo ? formatHM(alvo) : null;
+}
+
 export function CompactEventRow({ event, onClick, onToggleDone }: Props) {
   const isDone = event.status === 'done';
   const isCancelled = event.status === 'cancelled';
@@ -51,7 +64,11 @@ export function CompactEventRow({ event, onClick, onToggleDone }: Props) {
   const ModalityIcon = event.modality === 'online' ? Video : event.modality === 'hibrido' ? Building2 : MapPin;
   const q = event.eisenhower_quadrant != null ? String(event.eisenhower_quadrant) : null;
   const dot = q && QUADRANT_DOT[q];
-  const remindHM = event.remind_at ? formatHM(event.remind_at) : null;
+  // EVENT-REMIND-AT-STALE-NO-RESCHEDULE (19/08): `events.remind_at` e a coluna LEGADA single
+  // e ninguem a atualiza no reagendamento (o app move `event_reminders`, a fonte real). Quem
+  // remarcava via app via aqui o sino da data ANTIGA. Mesmo padrao que Semana.tsx ja usa pra
+  // tarefas: prefere a tabela multi (pendentes), cai no legado so quando nao ha nenhuma.
+  const remindHM = earliestReminderHM(event);
 
   return (
     <div className="group flex items-center gap-2 px-2 py-1 rounded hover:bg-bg-elevated min-w-0">

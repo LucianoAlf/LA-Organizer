@@ -22,12 +22,14 @@ export interface EventForGrid {
   source: 'manual' | 'tom' | 'imported';
   eisenhower_quadrant?: number | null;
   remind_at?: string | null;
+  event_reminders?: Array<{ remind_at: string; sent_at: string | null }> | null;
 }
 
 const EVENT_SELECT = `
   id, collaborator_id, title, description, start_at, end_at, context, category, modality,
   location_text, meeting_url, status, project_id, source,
   eisenhower_quadrant, remind_at,
+  event_reminders ( remind_at, sent_at ),
   event_categories!category_id ( slug, label, color )
 ` as const;
 
@@ -112,6 +114,7 @@ export function useAgendaEvents(params: { from: Date; to: Date; filters: AgendaF
           source: e.source,
           eisenhower_quadrant: e.eisenhower_quadrant ?? null,
           remind_at: e.remind_at ?? null,
+          event_reminders: e.event_reminders ?? null,
         };
       });
   }, [data, params.filters]);

@@ -15,11 +15,33 @@ const { ACAO_SOBRE_EXISTENTE } = require('../utils/confirm-create-gate');
 const PROPOE_RECADO = new RegExp([
   '\\bavis(?:o|ar)\\s+(?:o|a|os|as|\\d|pra|pro|para)\\b',
   '\\baviso\\s+\\d+\\s+pessoa',
-  '\\bmand(?:o|ar)\\s+(?:um[a]?\\s+)?(?:recado|mensagem|aviso|agradecimento)',
-  '\\bmand(?:o|ar)\\s+(?:pra|pro|para)\\b',
+  // "mande" (subjuntivo) entrou em 19/08: o gate determinístico propõe "Quer que eu MANDE um
+  // recado…" e a forma não casava — o "sim" não pré-confirmava e o recado era re-estagiado.
+  '\\bmand(?:o|ar|e)\\s+(?:um[a]?\\s+)?(?:recado|mensagem|aviso|agradecimento)',
+  '\\bmand(?:o|ar|e)\\s+(?:pra|pro|para)\\b',
   '\\bpasso?\\s+o\\s+recado', '\\brepass(?:o|ar)\\s+(?:o\\s+)?(?:recado|agradecimento|mensagem)',
   '\\bfal(?:o|ar)\\s+com\\b', '\\bagrade[çc](?:o|er)\\b',
 ].join('|'), 'iu');
+
+// COORD-GATE-VETADO-PELO-PREAMBULO (Alf 19/08 13:10). O veto rodava no TEXTO INTEIRO da
+// pergunta. Quando o TOM passou a EXPLICAR a regra antes de propor ("…quem pode *remarcar* é o
+// dono, Yuri — convidado não altera a agenda dos outros. Quer que eu mande um recado?"), o
+// "remarcar" do preâmbulo vetava a proposta que vinha depois: o "Sim" não pré-confirmava e o
+// recado era re-estagiado ("Aviso o Yuri? Confirma?"), pedindo o MESMO consentimento duas vezes.
+//
+// O "sim" responde a PERGUNTA, não o preâmbulo — então é na pergunta que se decide. Veto e
+// proposta são avaliados na MESMA frase (a última interrogativa): proposta limpa numa frase com
+// ação destrutiva em OUTRA continua vetada, e o fail-closed segue fechado.
+// Sem "?" no texto, avalia tudo (comportamento antigo).
+function ultimaPergunta(texto) {
+  // Corta em fim de FRASE (. ! ?), não só em "?": o preâmbulo do gate termina em ponto, e sem
+  // isso o texto inteiro contaria como "a pergunta" — que era justamente o bug.
+  const frases = String(texto).split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  for (let i = frases.length - 1; i >= 0; i--) {
+    if (frases[i].endsWith('?')) return frases[i];
+  }
+  return String(texto);
+}
 
 /**
  * A pergunta de confirmação pode liberar despacho de RECADO (COORDINATION_REQUEST)?
@@ -30,8 +52,9 @@ function podeLiberarRecado(perguntaDoTom) {
   if (typeof perguntaDoTom !== 'string') return false;
   const t = perguntaDoTom.trim();
   if (!t) return false;
-  if (ACAO_SOBRE_EXISTENTE.test(t)) return false;  // veta primeiro (fail-closed)
-  return PROPOE_RECADO.test(t);
+  const alvo = ultimaPergunta(t);
+  if (ACAO_SOBRE_EXISTENTE.test(alvo)) return false;  // veta primeiro (fail-closed)
+  return PROPOE_RECADO.test(alvo);
 }
 
-module.exports = { podeLiberarRecado, PROPOE_RECADO };
+module.exports = { podeLiberarRecado, PROPOE_RECADO, ultimaPergunta };
