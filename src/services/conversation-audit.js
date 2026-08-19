@@ -29,11 +29,57 @@ function normalizeSummary(s) {
     .slice(0, 60);
 }
 
-/** Assinatura de dedupe: categoria + colaborador + resumo normalizado. */
-function signatureFor(category, collaboratorId, summary) {
+/** Assinatura de dedupe: categoria + colaborador + CHAVE do achado.
+ * `chave` ausente = comportamento LEGADO (resumo normalizado) — é o que permite continuar
+ * achando as linhas gravadas antes de 19/08. Ver chaveDoAchado. */
+function signatureFor(category, collaboratorId, summary, chave = null) {
+  const base = chave != null ? chave : normalizeSummary(summary);
   return crypto.createHash('sha1')
-    .update(`${category}:${collaboratorId}:${normalizeSummary(summary)}`)
+    .update(`${category}:${collaboratorId}:${base}`)
     .digest('hex');
+}
+
+// AUDIT-SIGNATURE-INSTAVEL (medido 19/08). A assinatura era sha1 do RESUMO — texto LIVRE
+// escrito pelo LLM. Bastava ele reescrever a frase ("TOM nao registrou o gasto" vs "O TOM nao
+// registrou o gasto") pro achado virar linha NOVA: medido 398 de 399 achados com occurrences=1,
+// e falso positivo triado ontem voltando hoje como 🆕. O trabalho de triagem não acumulava —
+// esta é a maior fonte isolada do ruído que o dono sente.
+//
+// A chave passa a ser o INCIDENTE, não a redação:
+//   • âncora confiável (incident_confidence 'high') → o created_at exato da mensagem. Duas
+//     redações do mesmo incidente colapsam. Normalizado por toISOString porque o Postgres
+//     devolve "+00:00" e o JS escreve ".000Z" — comparar string crua não bate.
+//   • sem âncora → CONJUNTO DE TOKENS do resumo (ordenado, sem artigo/preposição/dígito),
+//     imune a ordem e a reformulação leve. Degrada, não quebra.
+const _STOP_CHAVE = new Set(['o', 'a', 'os', 'as', 'um', 'uma', 'uns', 'umas', 'de', 'do', 'da', 'dos', 'das',
+  'e', 'que', 'em', 'no', 'na', 'nos', 'nas', 'ao', 'aos', 'pra', 'para', 'com', 'por', 'pelo', 'pela',
+  'se', 'ele', 'ela', 'seu', 'sua', 'mas', 'foi', 'ser']);
+
+function _normalizarPleno(s) {
+  return String(s == null ? '' : s)
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\d+/g, '')
+    .replace(/[^a-z\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Conjunto ordenado de tokens fortes do resumo. "nao" fica (3 chars): negação é o sentido. */
+function _resumoTokenSet(s) {
+  const toks = _normalizarPleno(s).split(' ').filter((t) => t.length >= 3 && !_STOP_CHAVE.has(t));
+  return [...new Set(toks)].sort().join(' ');
+}
+
+/** Chave estável do achado — o INCIDENTE quando dá, o sentido do resumo quando não dá. */
+function chaveDoAchado(finding) {
+  const f = finding || {};
+  if (f.incident_confidence === 'high' && f.incident_at) {
+    let iso = f.incident_at;
+    try { iso = new Date(f.incident_at).toISOString(); } catch (_) {}
+    return `at:${iso}`;
+  }
+  return `rs:${_resumoTokenSet(f.summary)}`;
 }
 
 /** Extrai o bloco {...} da saída do LLM e valida cada finding. Nunca lança.
@@ -61,19 +107,93 @@ function parseFindings(raw, fallbackOccurredAt = null) {
   }));
 }
 
+// AUDIT-OUTBOUND-TUDO-VIRA-FALA-DO-TOM (medido 19/08). Todo outbound era rotulado "TOM:", mas
+// boa parte do outbound NÃO é fala conversacional do TOM: é AVISO AUTOMÁTICO montado por
+// template do engine — lembrete, cobrança de ritual, RSVP de terceiro, devolutiva de delegação,
+// repasse de recado. O auditor lia "✅ Ana, o Mayra concluiu a tarefa que você pediu" como o TOM
+// afirmando ter feito algo, e fabricava confabulação. É a irmã 1:1 do
+// AUDIT-GROUP-OUTRO-AGENTE-VIRA-TOM: lá era outro AGENTE, aqui é outra ORIGEM.
+//
+// Casar por template é EXATO, não heurístico: estas strings nascem no código (dispatcher e
+// internal-api), não da prosa do LLM. Ancoradas em `^` pra não pegar o TOM citando o texto.
+// `ref_type` (task/event) cobre os lembretes direto pelo banco.
+const AVISO_AUTOMATICO_RE = [
+  /^⏰\s*\*?Lembrete/i,                                   // lembrete de tarefa / do grupo
+  /^📅\s*\*?Lembrete/i,                                   // lembrete de evento
+  /^💰\s*\*?Lembrete/i,                                   // lembrete financeiro
+  /^✅\s*\*?[^\n]{1,60}?\*?\s+confirmou presen[çc]a/i,     // RSVP de terceiro
+  /^✅\s*[^\n]{1,40}?,\s*[oa]\s+[^\n]{1,40}?\s+concluiu a tarefa que voc[êe] pediu/i, // devolutiva
+  /^Boa!\s+[OA]\s+[^\n]{1,40}?\s+respondeu:/i,            // resposta de recado repassada
+  /^Oi,\s+[^\n]{1,40}?\s*👋\s*[OA]\s+[^\n]{1,40}?\s+me pediu pra te avisar/i, // recado de terceiro
+  /^🔴\s*\*/,                                             // cobrança de atrasada (ritual)
+  /^🟠\s*\*/,                                             // cobrança de parada (ritual)
+];
+
+/** Quem falou nesta linha: USUÁRIO, TOM (fala dele) ou AVISO AUTOMÁTICO (template do engine). */
+function rotuloDaLinha(row) {
+  const m = row || {};
+  if (m.direction === 'inbound') return 'USUÁRIO';
+  if (m.ref_type === 'task' || m.ref_type === 'event') return 'AVISO AUTOMÁTICO';
+  const txt = String(m.content || '').trim();
+  return AVISO_AUTOMATICO_RE.some((re) => re.test(txt)) ? 'AVISO AUTOMÁTICO' : 'TOM';
+}
+
+// AUDIT-ACUSA-SEM-OLHAR-O-BANCO (medido 19/08). O auditor decidia "confabulou" / "largou o
+// pedido" SÓ pelo texto do chat, sem nunca perguntar ao banco se a ação existiu. Foi assim que
+// nasceu o achado do Anne (18/08): ele afirmou "TOM não resolveu nem encaminhou" enquanto a
+// tarefa estava cancelada 53s depois e o recado tinha sido entregue. O veredito já existe e é
+// gratuito — `marker_logs` grava, por turno, o que o engine executou ou rejeitou.
+//
+// A trilha entra INTERCALADA na transcrição, como um terceiro falante. Assim a prova aparece
+// exatamente onde o julgamento acontece: logo abaixo do "✅ Cancelei" vem "SISTEMA: TASK_UPDATE
+// executed". Bloco separado no fim seria fácil de ignorar; intercalado, não.
+// META (LEAK_BLOCKED, PROVIDER, ACTIONABLE_NO_MARKER, CHOKEPOINT) fica de fora: é telemetria
+// do guard, não ação de domínio, e só faria barulho.
+const _MARKER_META = new Set(['LEAK_BLOCKED', 'UNKNOWN_MARKER_STRIPPED', 'TOOL_CALL_STRIPPED', 'PROVIDER', 'ACTIONABLE_NO_MARKER', 'CHOKEPOINT']);
+
+/** Linhas SISTEMA a partir de marker_logs. Pura. */
+function linhasDeMarkers(markerRows, stamp) {
+  return (Array.isArray(markerRows) ? markerRows : [])
+    .filter((m) => m && m.marker_type && !_MARKER_META.has(m.marker_type)
+      && (m.result === 'executed' || m.result === 'rejected'))
+    .map((m) => ({
+      created_at: m.created_at,
+      linha: `[${stamp(m.created_at)}] SISTEMA: ${m.marker_type} ${m.result}${m.reason ? ` (${String(m.reason).slice(0, 80)})` : ''}`,
+    }));
+}
+
+/** Lê a trilha de execução do turno. Falha NUNCA derruba a auditoria — devolve []. */
+async function loadMarkerTrail(sb, collaboratorId, sinceIso) {
+  try {
+    const { data } = await sb.from('marker_logs')
+      .select('marker_type, result, reason, created_at')
+      .eq('collaborator_id', collaboratorId)
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: false })
+      .limit(120);
+    return data || [];
+  } catch (_) { return []; }
+}
+
 /** Carrega a conversa (AMBAS direções) das últimas `hours`h e formata em texto. */
 async function loadConversation(sb, collaboratorId, hours = 24) {
   const sinceIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+  // AUDIT-JANELA-CORTA-O-FIM (19/08): era order ASC + limit(300), ou seja as 300 mensagens
+  // MAIS ANTIGAS. Num dia cheio o FIM da conversa sumia — e é lá que mora a RESOLUÇÃO. O
+  // auditor via o pedido e não via a resposta, e fabricava dropped_request; de quebra, lastAt
+  // virava a 300ª msg e envenenava o occurred_at. Pede DESC ao banco (as mais recentes) e
+  // reordena em memória, então o corte passa a cair no começo, que é onde ele é inofensivo.
   const { data } = await sb.from('conversation_history')
-    .select('content, media_extracted_text, direction, created_at')
+    .select('content, media_extracted_text, direction, created_at, ref_type')
     .eq('collaborator_id', collaboratorId)
     .gte('created_at', sinceIso)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(300);
   // Slice por mensagem subiu 600→1600: o corte em 600 cortava áudios longos no meio
   // e o auditor lia o corte como "áudio do usuário foi cortado" → FALSO POSITIVO de
   // confabulação (caso Fabi 08/06). Inclui transcrição de mídia como fallback.
-  const rows = data || [];
+  // Volta pra ordem cronológica: o banco entregou do mais novo pro mais velho.
+  const rows = (data || []).slice().reverse();
   // lastAt: created_at da última msg da janela — vira fallback de occurred_at dos findings.
   const lastAt = rows.length ? rows[rows.length - 1].created_at : null;
   // AUDIT-RELATIVE-DATE-BLIND (02/08, caso Rafinha): o transcript ia SEM nenhuma marca de
@@ -92,10 +212,27 @@ async function loadConversation(sb, collaboratorId, hours = 24) {
       return `${g('day')}/${g('month')} (${g('weekday').replace('.', '')}) ${g('hour')}:${g('minute')}`;
     } catch (_) { return ''; }
   };
-  const text = rows
-    .map(m => `[${_stamp(m.created_at)}] ${m.direction === 'inbound' ? 'USUÁRIO' : 'TOM'}: ${String(m.content || m.media_extracted_text || '').slice(0, 1600)}`)
-    .join('\n')
-    .slice(0, 24000);
+  // Conversa + trilha de execução, ordenadas juntas pelo tempo (ver AUDIT-ACUSA-SEM-OLHAR-O-BANCO).
+  const _trilha = linhasDeMarkers(await loadMarkerTrail(sb, collaboratorId, sinceIso), _stamp);
+  const linhas = rows
+    .map(m => ({
+      created_at: m.created_at,
+      linha: `[${_stamp(m.created_at)}] ${rotuloDaLinha(m)}: ${String(m.content || m.media_extracted_text || '').slice(0, 1600)}`,
+    }))
+    .concat(_trilha)
+    // Ordena por INSTANTE, não por string: o Postgres devolve "+00:00" e outras fontes ".000Z",
+    // e comparar o texto cru embaralharia a intercalação (TIMESTAMP-POSTGRES-STRING-COMPARE).
+    .sort((a, b) => (Date.parse(a.created_at) || 0) - (Date.parse(b.created_at) || 0))
+    .map((x) => x.linha);
+  // O corte de 24000 chars também cortava a CAUDA (mesmo defeito do limit ASC). Agora descarta
+  // do COMEÇO, linha inteira por linha inteira, preservando o fim da conversa.
+  let text = linhas.join('\n');
+  if (text.length > 24000) {
+    let i = 0;
+    let tam = text.length;
+    while (i < linhas.length - 1 && tam > 24000) { tam -= linhas[i].length + 1; i++; }
+    text = linhas.slice(i).join('\n').slice(-24000);
+  }
   return { text, lastAt, sinceIso };
 }
 
@@ -263,26 +400,41 @@ async function upsertFinding(sb, collaborator, finding, opts = {}) {
     if (!qaIsolation.contaNasMetricas(collaborator)) {
       return 'ignorado_qa';
     }
-    const sig = signatureFor(finding.category, collaborator.id, finding.summary);
+    // LEITURA DUPLA (migração da assinatura, 19/08): procura pela chave NOVA e pela LEGADA.
+    // Sem isso a troca ressuscitaria de uma vez todo falso positivo já triado — exatamente a
+    // doença que o fix cura. A linha encontrada pela legada é CONVERGIDA para a nova, senão
+    // ela nunca passaria a ser encontrada pelo incidente e a migração não terminaria.
+    const sig = signatureFor(finding.category, collaborator.id, finding.summary, chaveDoAchado(finding));
+    const sigLegado = signatureFor(finding.category, collaborator.id, finding.summary);
+    const sigs = sig === sigLegado ? [sig] : [sig, sigLegado];
     const { data: rows } = await sb.from('tom_audit_findings')
-      .select('id, occurrences, status')
-      .eq('signature', sig);
+      .select('id, occurrences, status, signature')
+      .in('signature', sigs);
     const all = rows || [];
+    // Convergir a assinatura pode esbarrar no índice único parcial (só cobre novo/confirmado)
+    // quando duas linhas antigas colapsam na mesma chave. Falhar aí é inofensivo — a linha
+    // segue com a assinatura velha e continua sendo achada pela leitura dupla —, então o erro
+    // não pode derrubar o upsert nem virar insert de duplicata.
+    const _converge = (r) => (r && r.signature && r.signature !== sig ? { signature: sig } : {});
     // Já triado como fechado (resolvido/falso_positivo/...) → NÃO re-surge: só
     // registra a reincidência no last_seen e mantém o status fechado.
     const closed = all.find(r => CLOSED_STATUSES.has(r.status));
     if (closed) {
-      await sb.from('tom_audit_findings')
-        .update({ last_seen: new Date().toISOString() })
-        .eq('id', closed.id);
+      try {
+        await sb.from('tom_audit_findings')
+          .update({ last_seen: new Date().toISOString(), ..._converge(closed) })
+          .eq('id', closed.id);
+      } catch (_) {}
       return 'suppressed_closed';
     }
     // Já aberto (novo/confirmado) → incrementa ocorrências.
     const open = all.find(r => r.status === 'novo' || r.status === 'confirmado');
     if (open) {
-      await sb.from('tom_audit_findings')
-        .update({ occurrences: (open.occurrences || 1) + 1, last_seen: new Date().toISOString() })
-        .eq('id', open.id);
+      try {
+        await sb.from('tom_audit_findings')
+          .update({ occurrences: (open.occurrences || 1) + 1, last_seen: new Date().toISOString(), ..._converge(open) })
+          .eq('id', open.id);
+      } catch (_) {}
       return 'incremented';
     }
     await sb.from('tom_audit_findings').insert({
@@ -348,8 +500,8 @@ async function resolveIncidentAt(sb, collaboratorId, evidence, occurredAt, since
 }
 
 module.exports = {
-  normalizeSummary, signatureFor, parseFindings, rankFindings,
-  loadConversation, auditConversation, upsertFinding, resolveIncidentAt, pickProbe,
+  normalizeSummary, signatureFor, chaveDoAchado, parseFindings, rankFindings,
+  loadConversation, rotuloDaLinha, linhasDeMarkers, loadMarkerTrail, auditConversation, upsertFinding, resolveIncidentAt, pickProbe,
   formatGroupTranscript, loadGroupConversation, auditGroupConversation,
   CLOSED_STATUSES, SEV_RANK,
 };

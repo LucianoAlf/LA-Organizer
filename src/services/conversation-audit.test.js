@@ -5,8 +5,27 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   normalizeSummary, signatureFor, parseFindings, rankFindings, upsertFinding, formatGroupTranscript,
-  loadGroupConversation,
+  loadGroupConversation, chaveDoAchado, rotuloDaLinha, loadConversation, linhasDeMarkers,
 } = require('./conversation-audit');
+
+// Fake que distingue conversation_history de marker_logs (a trilha do banco).
+function fakeDuasTabelas(convRows, markerRows) {
+  const mk = (rows) => ({
+    select() { return this; }, eq() { return this; }, gte() { return this; },
+    order() { return this; }, limit() { return Promise.resolve({ data: rows, error: null }); },
+  });
+  return { from(t) { return mk(t === 'marker_logs' ? markerRows : convRows); } };
+}
+
+// Fake p/ loadConversation: registra o sentido do order e devolve as linhas.
+function fakeConvWindow(rows, sink = {}) {
+  return {
+    from() { return this; }, select() { return this; }, eq() { return this; },
+    gte() { return this; },
+    order(col, opts) { sink.orderCol = col; sink.ascending = !!(opts && opts.ascending); return this; },
+    limit(n) { sink.limit = n; return Promise.resolve({ data: rows, error: null }); },
+  };
+}
 
 // Supabase fake p/ upsertFinding: from→select→eq resolve {data}; update/insert registram.
 function fakeSb(rows, calls) {
@@ -17,6 +36,7 @@ function fakeSb(rows, calls) {
     update(p) { this._mode = 'update'; calls.updates.push(p); return this; },
     insert(p) { calls.inserts.push(p); return Promise.resolve({ data: null, error: null }); },
     eq() { return this; },
+    in() { return this; },
     then(resolve) {
       const val = this._mode === 'select' ? { data: rows, error: null } : { data: null, error: null };
       this._mode = null;
@@ -109,6 +129,11 @@ test('SYSTEM prompt: fios paralelos — resposta no fio errado não é "pedido l
   assert.match(SYSTEM, /RESPONDENDO a esta mensagem anterior/);
   assert.match(SYSTEM, /fio errado/);
 });
+test('SYSTEM prompt: ensina que AVISO AUTOMÁTICO não é fala do TOM', () => {
+  const { SYSTEM } = require('../prompts/conversation-audit-prompt');
+  assert.match(SYSTEM, /AVISO AUT[ÔO]MATICO|AVISO AUTOM[ÁA]TICO/);
+  assert.match(SYSTEM, /N[ÃA]O [ÉE] FALA DO TOM/);
+});
 test('SYSTEM prompt: guarda anti-falso-positivo de confabulation (ritual posterior + nomes parecidos)', () => {
   const { SYSTEM } = require('../prompts/conversation-audit-prompt');
   assert.match(SYSTEM, /MESMA troca reativa/);
@@ -184,6 +209,144 @@ test('resolveIncidentAt: sem casar e sem occurredAt → none', async () => {
   const out = await resolveIncidentAt(sb, 'c1', 'qualquer', null, '2026-06-08T00:00:00Z');
   assert.strictEqual(out.incident_confidence, 'none');
   assert.strictEqual(out.incident_at, null);
+});
+
+// AUDIT-OUTBOUND-TUDO-VIRA-FALA-DO-TOM (medido 19/08) — loadConversation rotulava TODO
+// outbound como "TOM:", mas boa parte do outbound é AVISO AUTOMÁTICO gerado por template do
+// engine: lembrete, cobrança de ritual, RSVP de terceiro, devolutiva de delegação, repasse de
+// recado. O auditor lia "✅ Ana, o Mayra concluiu a tarefa que você pediu" como o TOM afirmando
+// ter feito algo → confabulação fabricada. É a irmã 1:1 do AUDIT-GROUP-OUTRO-AGENTE-VIRA-TOM.
+// São strings determinísticas do engine (não prosa de LLM), então casar por template é exato.
+test('rótulo: inbound é USUÁRIO', () => {
+  assert.strictEqual(rotuloDaLinha({ direction: 'inbound', content: 'oi tom' }), 'USUÁRIO');
+});
+test('rótulo: resposta conversacional do TOM continua TOM', () => {
+  assert.strictEqual(rotuloDaLinha({ direction: 'outbound', content: 'Fechou, Rose! Marquei pra amanhã 14h.' }), 'TOM');
+});
+test('rótulo: lembrete por ref_type vira AVISO AUTOMÁTICO', () => {
+  assert.strictEqual(rotuloDaLinha({ direction: 'outbound', ref_type: 'task', content: '⏰ Lembrete: *Renovação* — hoje 08:00' }), 'AVISO AUTOMÁTICO');
+  assert.strictEqual(rotuloDaLinha({ direction: 'outbound', ref_type: 'event', content: '📅 *Lembrete:* Reunião MKT' }), 'AVISO AUTOMÁTICO');
+});
+test('rótulo: repasse/devolutiva/RSVP de TERCEIRO vira AVISO AUTOMÁTICO', () => {
+  const casos = [
+    '✅ Ana, o Mayra concluiu a tarefa que você pediu: _"Presenças"_',
+    '✅ *John* confirmou presença em _"Reunião MKT - NBG!"_ (2/2 confirmaram)',
+    'Boa! O Fefê respondeu: "Ok tom"',
+    'Oi, Anne 👋 O Fefê me pediu pra te avisar: tem cheques de dois alunos',
+    '🔴 *Trocar spot quadrado branco quente* atrasou 1 dia. Resolve hoje ou reagenda?',
+    '🟠 *Comprar ingresso pro Congresso Bryan* tá parada há 3 dias.',
+  ];
+  for (const c of casos) {
+    assert.strictEqual(rotuloDaLinha({ direction: 'outbound', content: c }), 'AVISO AUTOMÁTICO', c);
+  }
+});
+test('rótulo: "📨 Recado enviado!" É fala do TOM (confirmação da ação dele)', () => {
+  assert.strictEqual(rotuloDaLinha({ direction: 'outbound', content: '📨 Recado enviado!' }), 'TOM');
+});
+
+// AUDIT-JANELA-CORTA-O-FIM (medido 19/08) — limit(300) com order ASC devolve as 300 mensagens
+// MAIS ANTIGAS: num dia cheio o FIM da conversa some, e é lá que mora a resolução. O auditor
+// via o pedido e não via a resposta → dropped_request fabricado. Além disso lastAt virava a
+// 300ª msg, envenenando o occurred_at. A janela agora é ancorada no FIM.
+test('janela: pega as mensagens mais RECENTES (DESC no banco) e devolve em ordem cronológica', async () => {
+  const sink = {};
+  const sb = fakeConvWindow([
+    { created_at: '2026-08-18T20:00:00Z', direction: 'outbound', content: 'ultima' },
+    { created_at: '2026-08-18T10:00:00Z', direction: 'inbound', content: 'primeira' },
+  ], sink);
+  const { text, lastAt } = await loadConversation(sb, 'c1', 24);
+  assert.strictEqual(sink.ascending, false, 'tem que pedir DESC pro banco');
+  assert.ok(text.indexOf('primeira') < text.indexOf('ultima'), 'texto sai em ordem cronologica');
+  assert.strictEqual(lastAt, '2026-08-18T20:00:00Z', 'lastAt e a msg mais recente');
+});
+
+// AUDIT-ACUSA-SEM-OLHAR-O-BANCO (medido 19/08) — o auditor julgava só pelo texto. O veredito
+// de execução já existe em marker_logs e era ignorado: foi assim que o achado do Anne afirmou
+// "TOM não resolveu nem encaminhou" com a tarefa cancelada 53s depois. A trilha entra
+// INTERCALADA, onde o julgamento acontece.
+test('trilha: só ação de domínio executed/rejected vira linha SISTEMA', () => {
+  const st = () => '18/08 13:23';
+  const out = linhasDeMarkers([
+    { marker_type: 'TASK_UPDATE', result: 'executed', reason: 'ok=1 fail=0', created_at: 'x' },
+    { marker_type: 'CHOKEPOINT', result: 'redirected', reason: 'confab', created_at: 'x' },
+    { marker_type: 'COORDINATION_REQUEST', result: 'skipped', reason: 'staged_coord:1', created_at: 'x' },
+    { marker_type: 'EVENT_CREATE', result: 'rejected', reason: 'schema_invalid', created_at: 'x' },
+  ], st);
+  assert.strictEqual(out.length, 2, 'META e skipped ficam de fora');
+  assert.match(out[0].linha, /SISTEMA: TASK_UPDATE executed \(ok=1 fail=0\)/);
+  assert.match(out[1].linha, /SISTEMA: EVENT_CREATE rejected/);
+});
+test('trilha: entrada inválida não quebra', () => {
+  assert.deepStrictEqual(linhasDeMarkers(null, () => ''), []);
+  assert.deepStrictEqual(linhasDeMarkers([null, {}], () => ''), []);
+});
+test('trilha: SISTEMA aparece INTERCALADO na transcrição, na ordem do tempo', async () => {
+  const sb = fakeDuasTabelas(
+    [{ created_at: '2026-08-18T16:22:16Z', direction: 'inbound', content: 'Cancela os ingressos' },
+      { created_at: '2026-08-18T16:23:11Z', direction: 'outbound', content: 'Aviso o Fefê? Confirma?' }],
+    [{ created_at: '2026-08-18T16:23:09Z', marker_type: 'TASK_UPDATE', result: 'executed', reason: 'ok=1 fail=0' }],
+  );
+  const { text } = await loadConversation(sb, 'c1', 24);
+  const l = text.split('\n');
+  assert.match(l[0], /USUÁRIO: Cancela os ingressos/);
+  assert.match(l[1], /SISTEMA: TASK_UPDATE executed/, 'a prova entra ANTES da resposta visivel');
+  assert.match(l[2], /TOM: Aviso o Fefê\? Confirma\?/);
+});
+test('SYSTEM prompt: ensina que SISTEMA é o veredito do banco e não serve de evidence', () => {
+  const { SYSTEM } = require('../prompts/conversation-audit-prompt');
+  assert.match(SYSTEM, /SISTEMA:/);
+  assert.match(SYSTEM, /VEREDITO DO BANCO/);
+  assert.match(SYSTEM, /Nunca cite a linha SISTEMA como "evidence"/);
+});
+
+// AUDIT-SIGNATURE-INSTAVEL (medido 19/08) — a assinatura era sha1 do RESUMO em texto livre do
+// LLM. Bastava ele reescrever a frase pro achado virar linha nova: medido 398 de 399 achados
+// com occurrences=1, e falso positivo fechado ontem voltando hoje como 🆕. A triagem não
+// acumulava. Agora a chave é o INCIDENTE (incident_at, quando a âncora é confiável) e o
+// fallback é um CONJUNTO DE TOKENS do resumo — imune a ordem, artigo e reformulação.
+test('chave: âncora confiável usa o incident_at, não o resumo', () => {
+  const a = chaveDoAchado({ summary: 'TOM não registrou o gasto', incident_at: '2026-08-18T16:06:06Z', incident_confidence: 'high' });
+  const b = chaveDoAchado({ summary: 'O TOM deixou de registrar a despesa!', incident_at: '2026-08-18T16:06:06Z', incident_confidence: 'high' });
+  assert.strictEqual(a, b);
+  assert.match(a, /^at:/);
+});
+test('chave: incidentes DIFERENTES não colidem', () => {
+  const a = chaveDoAchado({ summary: 'x', incident_at: '2026-08-18T16:06:06Z', incident_confidence: 'high' });
+  const b = chaveDoAchado({ summary: 'x', incident_at: '2026-08-18T17:00:00Z', incident_confidence: 'high' });
+  assert.notStrictEqual(a, b);
+});
+test('chave: sem âncora, resumo reformulado dá a MESMA chave (token-set)', () => {
+  const a = chaveDoAchado({ summary: 'TOM nao registrou o gasto', incident_confidence: 'none' });
+  const b = chaveDoAchado({ summary: 'O TOM nao registrou o gasto.', incident_confidence: 'none' });
+  const c = chaveDoAchado({ summary: 'Nao registrou o gasto, o TOM', incident_confidence: 'low' });
+  assert.strictEqual(a, b);
+  assert.strictEqual(a, c);
+  assert.match(a, /^rs:/);
+});
+test('chave: resumos de assunto diferente seguem diferentes', () => {
+  const a = chaveDoAchado({ summary: 'TOM nao registrou o gasto', incident_confidence: 'none' });
+  const b = chaveDoAchado({ summary: 'TOM nao criou o evento da reuniao', incident_confidence: 'none' });
+  assert.notStrictEqual(a, b);
+});
+test('assinatura: mesma chave + categorias diferentes → assinaturas diferentes', () => {
+  const f = { summary: 's', incident_at: '2026-08-18T16:06:06Z', incident_confidence: 'high' };
+  assert.notStrictEqual(
+    signatureFor('confabulation', 'c1', f.summary, chaveDoAchado(f)),
+    signatureFor('frustration', 'c1', f.summary, chaveDoAchado(f)));
+});
+// Migração: a assinatura mudou, então o achado JÁ fechado precisa continuar sendo encontrado
+// pela chave ANTIGA — senão a troca ressuscitaria de uma vez todo falso positivo já triado,
+// que é exatamente a doença que este fix cura.
+test('upsertFinding acha pela assinatura LEGADA e não ressuscita o fechado', async () => {
+  const calls = { inserts: [], updates: [] };
+  const legado = signatureFor('confabulation', 'c1', 'TOM nao registrou o gasto');
+  const sb = fakeSb([{ id: 'f1', occurrences: 2, status: 'falso_positivo', signature: legado }], calls);
+  const r = await upsertFinding(sb, { id: 'c1' }, {
+    category: 'confabulation', severity: 'medio', summary: 'O TOM nao registrou o gasto!',
+    evidence: 'e', incident_at: '2026-08-18T16:06:06Z', incident_confidence: 'high',
+  });
+  assert.strictEqual(r, 'suppressed_closed');
+  assert.strictEqual(calls.inserts.length, 0, 'não pode inserir linha nova');
 });
 
 // AUDIT-PROBE-CARIMBO-CEGA-ANCORA (medido 19/08) — o transcript passou a ser
