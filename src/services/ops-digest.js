@@ -162,7 +162,12 @@ async function carregarDigest(sb, { horas = JANELA_HORAS } = {}) {
       // "null" no lugar da pessoa.
       pessoa: (f.collaborators || {}).preferred_name
         || ((f.collaborators || {}).full_name || '').split(' ')[0] || null,
-      quando: horaBrt(f.incident_at || f.last_seen),
+      // DIGEST-HORA-DA-AUDITORIA-VIRA-HORA-DO-INCIDENTE (19/08): sem incident_at o fallback
+      // caía em last_seen — que num achado recém-criado é a hora em que o AUDITOR rodou (03:1x),
+      // não a do incidente. O achado do comprovante ZOHO apareceu como "19/08 03:17" quando o
+      // caso foi 18/08 12:12. Quem confere pela hora fecha bug vivo como falso positivo, então
+      // hora desconhecida se declara desconhecida — nunca se chuta.
+      quando: f.incident_at ? horaBrt(f.incident_at) : 'hora não identificada',
       literal: fala.texto,
       falaDe: fala.quem,
       // fonte única (regressao-reconcilia): promovido a código diferente = raiz nova, não

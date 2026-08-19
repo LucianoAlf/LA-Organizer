@@ -15,6 +15,18 @@
 // é tipo de DETECÇÃO, não autoria; não separa agente de humano). É TEMPO DE CICLO: o agente
 // marca as correções dele DURANTE a rodada; as inserções manuais do humano acontecem fora
 // dela. Ancorar `corrigidos` no início do ciclo conta só o que o agente fez naquela execução.
+//
+// GOVAGENT-CONFERE-CORRIGIDOS-EIXO-ESCRITO-PELO-LLM (19/08): o fix de 16/08 usou TEMPO como
+// PROXY DE AUTORIA — e `corrigido_em` é campo preenchido À MÃO PELO LLM. Naquele dia ele
+// escreveu a data pura "2026-08-19"; o Postgres castou pra 00:00, o gte contra o início do
+// ciclo (11:0x) deu 0, e a trava publicou "corrigidos: o texto diz 1, a fonte tem 0". Em 18/08
+// o mesmo agente escreveu timestamp cheio e bateu — ou seja, a precisão era sorteada por
+// rodada. Agora os dois eixos são do BANCO, não do LLM:
+//   • AUTORIA  → a marca `[gov-agent…]` em fix_resumo (temMarcaDoAgente, a regra canônica do
+//     protocolo que o placar já usa) — resolve de vez a inflação pelas inserções do humano;
+//   • TEMPO    → `created_at` (DEFAULT do banco, o agente não escreve). `corrigido_em` fica no
+//     OR só pra alcançar re-conserto de KI antigo, e agora sem poder inflar: a marca filtra.
+const { temMarcaDoAgente } = require('./placar-governanca');
 
 /**
  * Conta KIs marcados como corrigidos a partir de `desdeIso`. O chamador passa o INÍCIO DO
@@ -26,9 +38,11 @@
 async function contarCorrigidosDesde(supabase, desdeIso) {
   if (!desdeIso) return null;
   try {
-    const { count } = await supabase.from('tom_known_issues')
-      .select('id', { count: 'exact', head: true }).gte('corrigido_em', desdeIso);
-    return Number.isFinite(count) ? count : null;
+    const { data, error } = await supabase.from('tom_known_issues')
+      .select('fix_resumo')
+      .or(`created_at.gte.${desdeIso},corrigido_em.gte.${desdeIso}`);
+    if (error || !Array.isArray(data)) return null;
+    return data.filter((ki) => temMarcaDoAgente(ki && ki.fix_resumo)).length;
   } catch (_) { return null; }
 }
 

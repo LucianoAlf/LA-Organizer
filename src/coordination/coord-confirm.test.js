@@ -61,6 +61,28 @@ test('cleanText vazio/null/branco → pergunta determinística', () => {
   assert.strictEqual(resolveStageConfirmPrompt(null, ST_ITEMS), 'Aviso o Luciano? Confirma?');
   assert.strictEqual(resolveStageConfirmPrompt('   ', ST_ITEMS), 'Aviso o Luciano? Confirma?');
 });
+
+// COORD-STAGE-ENGOLE-ACAO-DO-TURNO (Anne 18/08 13:23 BRT) — a pessoa respondeu a UMA cobrança
+// com "Cancela os ingressos" enquanto um recado pro Fefê estava aberto no OUTRO fio. O engine
+// CANCELOU a tarefa de verdade (TASK_UPDATE executed ok=1, 13:23:09) e logo depois estagiou o
+// recado; como isSafeConfirmPrompt veta o texto INTEIRO ao ver "✅", a resposta virou só
+// "Aviso o Fefê? Confirma?" — a Anne nunca soube que o cancelamento aconteceu. O veto é
+// line-level, não text-level: as linhas de falso-envio saem, o resto da fala do TOM fica.
+test('preserva o aviso de OUTRA ação do turno e só então pergunta (caso Anne)', () => {
+  const out = resolveStageConfirmPrompt('✅ Cancelei os ingressos do Congresso Bryan.', ST_ITEMS);
+  assert.match(out, /Cancelei os ingressos do Congresso Bryan/);
+  assert.match(out, /Aviso o Luciano\? Confirma\?$/);
+});
+test('tira a linha de falso-envio mas mantém a da ação real', () => {
+  const out = resolveStageConfirmPrompt('✅ Cancelei os ingressos.\nJá avisei o Luciano.', ST_ITEMS);
+  assert.match(out, /Cancelei os ingressos/);
+  assert.doesNotMatch(out, /avisei/i); // o falso-envio continua proibido
+  assert.match(out, /Aviso o Luciano\? Confirma\?$/);
+});
+test('ZERO-REGRESSÃO: texto que é SÓ falso-envio segue virando a pergunta seca', () => {
+  assert.strictEqual(resolveStageConfirmPrompt('Mandando agora pro Luciano.', ST_ITEMS), 'Aviso o Luciano? Confirma?');
+  assert.strictEqual(resolveStageConfirmPrompt('Mandando agora, Fabi. ✅', ST_ITEMS), 'Aviso o Luciano? Confirma?');
+});
 test('prosa dúbia sem "?" nem "confirma" → fail-safe pra pergunta determinística', () => {
   assert.strictEqual(resolveStageConfirmPrompt('Beleza então', ST_ITEMS), 'Aviso o Luciano? Confirma?');
 });

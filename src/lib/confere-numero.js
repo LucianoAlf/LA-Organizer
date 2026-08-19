@@ -48,10 +48,43 @@ function _ehRecorte(resto) {
   return !!m && !TOTALIDADE.test(m[1]);
 }
 
-/** Extrai as contagens afirmadas no texto. Pura. @returns {{chave:string,n:number}[]} */
-function extrairAfirmacoes(texto) {
+// GOVAGENT-CONFERE-ESCOPO-ABERTO (19/08). A lista de preposições acima é NEGATIVA e FECHADA:
+// o default era conferir, e só as formas listadas abstinham. Mas o relatório escopa por
+// qualquer recurso da prosa — adjetivo ("6 achados ANTIGOS investigados"), parêntese
+// ("(23 achados)"), cluster —, enquanto a fonte de `achados` é sempre o acervo GLOBAL. Escopo
+// é semântico e aberto; exceção sintática é fechada. Toda forma nova virava alarme falso:
+// 15/08 fechou a porta da preposição, 19/08 entrou por outras duas ao mesmo tempo.
+//
+// Invertido para WHITELIST: `achados` só confere quando o número está ANCORADO em totalidade
+// — a única coisa que a fonte sabe medir. Sem âncora, abstém (e a abstenção é devolvida, pra
+// não repetir o pecado de 14/08 de a trava emudecer sem ninguém ver).
+// `corrigidos` NÃO entra aqui: a fonte dele já é escopada no ciclo, então o default correto
+// lá continua sendo conferir, com a blacklist antiga de recorte.
+// A âncora pode vir DEPOIS ("10 achados no acervo", "10 achados abertos") ou ANTES, como
+// rótulo colado ("Total: 10 achados", "Acervo: 157 achados"). Só o rótulo colado conta: exigir
+// que a palavra de totalidade encoste no número é o que separa "Total: 10 achados" de "o maior
+// grupo DO ACERVO (23 achados)", onde "acervo" rege outro substantivo e o número é do recorte.
+const ANCORA_DEPOIS = /^\s*(?:(?:de|da|do|das|dos|com|sem|em|na|no|nas|nos)\s+)?(\p{L}+)/iu;
+const ANCORA_ANTES = /(\p{L}+)\s*:\s*$/iu;
+
+function _temAncoraDeTotalidade(antes, depois) {
+  const d = ANCORA_DEPOIS.exec(depois);
+  if (d && TOTALIDADE.test(d[1])) return true;
+  const a = ANCORA_ANTES.exec(antes);
+  return !!a && TOTALIDADE.test(a[1]);
+}
+
+/** Decide se a afirmação tem fonte comparável. `achados` exige âncora; `corrigidos` só evita recorte. */
+function _confereEsta(chave, antes, depois) {
+  if (chave === 'achados') return _temAncoraDeTotalidade(antes, depois);
+  return !_ehRecorte(depois);
+}
+
+/** Separa as contagens afirmadas em conferíveis e abstidas (sem fonte comparável). Pura. */
+function _separarAfirmacoes(texto) {
   const t = typeof texto === 'string' ? texto.replace(RUIDO, ' ') : '';
   const out = [];
+  const abstidas = [];
   // Dedup por (chave, n): a mesma afirmação casa em mais de uma forma — "corrigi 2 known
   // issues" bate em `corrigi N` E em `N known issues`. Sem isto, uma divergência sairia
   // repetida no relatório, e aviso repetido ensina a ignorar o aviso.
@@ -62,14 +95,23 @@ function extrairAfirmacoes(texto) {
     while ((m = f.re.exec(t)) !== null) {
       const n = Number(m[1]);
       if (!Number.isFinite(n)) continue;
-      if (_ehRecorte(t.slice(m.index + m[0].length))) continue; // subconjunto: sem fonte pra ele
       const k = `${f.chave}:${n}`;
       if (vistos.has(k)) continue;
       vistos.add(k);
+      // Subconjunto/recorte: a fonte não sabe medir esse universo — abstém em vez de acusar.
+      if (!_confereEsta(f.chave, t.slice(0, m.index), t.slice(m.index + m[0].length))) {
+        abstidas.push({ chave: f.chave, n });
+        continue;
+      }
       out.push({ chave: f.chave, n });
     }
   }
-  return out;
+  return { afirmacoes: out, abstidas };
+}
+
+/** Extrai as contagens afirmadas CONFERÍVEIS. Pura. @returns {{chave:string,n:number}[]} */
+function extrairAfirmacoes(texto) {
+  return _separarAfirmacoes(texto).afirmacoes;
 }
 
 /**
@@ -81,9 +123,9 @@ function extrairAfirmacoes(texto) {
  */
 function conferirNumerosAfirmados(texto, fontes = {}) {
   if (typeof texto !== 'string' || !texto) {
-    return { texto: typeof texto === 'string' ? texto : '', divergiu: false, conferido: false, conflitos: [] };
+    return { texto: typeof texto === 'string' ? texto : '', divergiu: false, conferido: false, conflitos: [], abstidas: [] };
   }
-  const afirmacoes = extrairAfirmacoes(texto);
+  const { afirmacoes, abstidas } = _separarAfirmacoes(texto);
   const conflitos = [];
   let conferido = false;
 
@@ -96,7 +138,7 @@ function conferirNumerosAfirmados(texto, fontes = {}) {
     if (real !== a.n) conflitos.push({ chave: a.chave, afirmado: a.n, real });
   }
 
-  if (!conflitos.length) return { texto, divergiu: false, conferido, conflitos: [] };
+  if (!conflitos.length) return { texto, divergiu: false, conferido, conflitos: [], abstidas };
 
   const linhas = conflitos
     .map((c) => `• *${c.chave}*: o texto diz ${c.afirmado}, a fonte tem ${c.real}`)
@@ -106,6 +148,7 @@ function conferirNumerosAfirmados(texto, fontes = {}) {
     divergiu: true,
     conferido: true,
     conflitos,
+    abstidas,
   };
 }
 

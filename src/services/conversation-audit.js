@@ -306,11 +306,21 @@ async function upsertFinding(sb, collaborator, finding, opts = {}) {
 }
 
 /** Pega o trecho mais distintivo do evidence p/ ancorar na conversa.
- * Remove rótulos USUÁRIO:/TOM:, escolhe a linha mais longa, colapsa espaço, 100 chars. */
+ * Remove o carimbo e os rótulos USUÁRIO:/TOM:, escolhe a linha mais longa, colapsa espaço, 100 chars.
+ *
+ * AUDIT-PROBE-CARIMBO-CEGA-ANCORA (19/08): o carimbo "[18/08 (ter) 13:06] " passou a preceder o
+ * rótulo no fix AUDIT-RELATIVE-DATE-BLIND (02/08), mas este replace continuou ancorado em `^`.
+ * Resultado: o rótulo nunca saía, o probe carregava o carimbo, e o includes() contra
+ * conversation_history.content — que NÃO tem carimbo — falhava SEMPRE. Todo achado caía em
+ * low/none e o finding-triage passava a carimbar "regressão" falsa. O carimbo sai PRIMEIRO,
+ * como o extrairFala do ops-digest já fazia. Só `^` — colchete no meio do texto é conteúdo. */
 function pickProbe(evidence) {
   const lines = String(evidence == null ? '' : evidence)
     .split(/\n+/)
-    .map(l => l.replace(/^\s*(USU[ÁA]RIO|TOM)\s*:\s*/i, '').replace(/\s+/g, ' ').trim())
+    .map(l => l
+      .replace(/^\s*\[[^\]]*\]\s*/, '')
+      .replace(/^\s*(USU[ÁA]RIO|TOM)\s*:\s*/i, '')
+      .replace(/\s+/g, ' ').trim())
     .filter(l => l.length >= 12);
   if (!lines.length) return '';
   return lines.sort((a, b) => b.length - a.length)[0].slice(0, 100).toLowerCase();
@@ -339,7 +349,7 @@ async function resolveIncidentAt(sb, collaboratorId, evidence, occurredAt, since
 
 module.exports = {
   normalizeSummary, signatureFor, parseFindings, rankFindings,
-  loadConversation, auditConversation, upsertFinding, resolveIncidentAt,
+  loadConversation, auditConversation, upsertFinding, resolveIncidentAt, pickProbe,
   formatGroupTranscript, loadGroupConversation, auditGroupConversation,
   CLOSED_STATUSES, SEV_RANK,
 };

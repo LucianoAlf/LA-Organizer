@@ -182,6 +182,13 @@ async function main() {
     if (c.divergiu) {
       console.log(`[GovRunner] CONFERE NÃO BATEU: ${c.conflitos.map((x) => `${x.chave} ${x.afirmado}≠${x.real}`).join(' · ')}`);
     }
+    // A whitelist de escopo (19/08) faz a trava ABSTER quando o número afirmado é um recorte
+    // sem fonte comparável. Abstenção silenciosa é como a trava morre sem ninguém notar — o
+    // pecado de 14/08 —, então ela sai no log. Fica no log e NÃO no relatório de propósito:
+    // no grupo isso seria o mesmo ruído que estamos tirando de lá.
+    if (c.abstidas && c.abstidas.length) {
+      console.log(`[GovRunner] confere ABSTEVE (recorte sem fonte): ${c.abstidas.map((x) => `${x.chave}=${x.n}`).join(' · ')}`);
+    }
     return postOpsResult(supabase, grupo, c.texto);
   };
   instalarAvisoDeInterrupcao(postar);

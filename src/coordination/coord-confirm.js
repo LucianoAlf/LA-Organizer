@@ -42,9 +42,37 @@ function isSafeConfirmPrompt(t) {
   // E tem que SOAR como pergunta de confirmação.
   return /confirma/.test(low) || /\?\s*$/.test(t);
 }
+// COORD-STAGE-ENGOLE-ACAO-DO-TURNO (Anne 18/08 13:23 BRT). isSafeConfirmPrompt veta o texto
+// INTEIRO ao ver sinal de envio ("✅", "avisei"…). Mas um turno carrega mais de uma ação: a
+// Anne respondeu "Cancela os ingressos" numa cobrança enquanto um recado pro Fefê estava aberto
+// no OUTRO fio. O engine CANCELOU a tarefa de verdade (TASK_UPDATE executed ok=1, 13:23:09) e
+// estagiou o recado logo em seguida; o "✅" do cancelamento fez o veto derrubar a resposta
+// inteira, que virou só "Aviso o Fefê? Confirma?". A ação aconteceu e a pessoa nunca soube.
+//
+// O problema é de GRANULARIDADE: falso-envio é defeito de LINHA, o veto era de TEXTO.
+//
+// A regra do resgate é ESTREITA de propósito — preserva só o que seria perda de informação
+// REAL: linha que AFIRMA CONCLUSÃO (hasCompletionClaim: "✅ Cancelei…") e que NÃO afirma envio
+// de recado. Prosa dúbia ("Beleza então") continua caindo, e a mensagem de estágio segue limpa.
+// Reusar o stripOptimisticSendLines aqui NÃO serve: ele é conservador de propósito pra não
+// falso-firar no financeiro ("Mandando agora pro Luciano" escapa dele), e deixaria passar
+// justamente o falso-envio que este veto existe pra barrar.
+//
+// Seguro nos dois sentidos: se a ação REALMENTE executou, o turno tem marker 'executed' e o
+// chokepoint não rebaixa (é verdade); se NÃO executou, marker_emitted fica vazio e o chokepoint
+// dispara sobre a linha preservada. O veto de coordenação vinha atuando como supressor cego de
+// tudo — cada guard volta a cuidar do que é dele.
+const { hasCompletionClaim } = require('../lib/optimistic-confirm');
+const ENVIO_RE = /mandando|enviando|enviei|mandei|avisei|avisad|avisando|encaminh|repass/i;
+
 function resolveStageConfirmPrompt(cleanText, items) {
   const t = (typeof cleanText === 'string' ? cleanText : '').trim();
-  return (t && isSafeConfirmPrompt(t)) ? t : buildCoordinationConfirmPreview(items);
+  if (t && isSafeConfirmPrompt(t)) return t;
+  const pergunta = buildCoordinationConfirmPreview(items);
+  const resgatadas = t
+    .split('\n')
+    .filter((l) => l.trim() && !ENVIO_RE.test(l) && hasCompletionClaim(l));
+  return resgatadas.length ? `${resgatadas.join('\n').trim()}\n\n${pergunta}` : pergunta;
 }
 
 module.exports = { shouldStageCoordination, buildCoordinationConfirmPreview, resolveStageConfirmPrompt };

@@ -89,6 +89,26 @@ test('SYSTEM prompt: cobre proactive_overreach com exceção do "desculpa"', () 
   assert.match(SYSTEM, /proactive_overreach/);
   assert.match(SYSTEM, /desculp/i); // exceção: emite mesmo se o TOM se desculpar
 });
+// AUDIT-GROUP-OUTRO-AGENTE-VIRA-TOM: o wa_sender_name entrou no SELECT em 15/08 (o DADO),
+// mas o prompt seguia declarando que a conversa só tem "USUÁRIO:"/"TOM:" — o JULGAMENTO
+// continuou cego e a Maria virou TOM de novo em 16, 18 e 19/08. O contrato do formato e a
+// regra de atribuição são a trava.
+test('SYSTEM prompt: declara o formato REAL do grupo (nome de quem falou) e só julga o TOM', () => {
+  const { SYSTEM } = require('../prompts/conversation-audit-prompt');
+  assert.match(SYSTEM, /Maria - Financeiro/);
+  assert.match(SYSTEM, /S[ÓO] O TOM [ÉE] JULGADO/);
+  assert.match(SYSTEM, /N[ÃA]O come[çc]a com "TOM:"/);
+});
+test('SYSTEM prompt: media_fail exige mídia realmente falha (áudio transcrito = funcionou)', () => {
+  const { SYSTEM } = require('../prompts/conversation-audit-prompt');
+  assert.match(SYSTEM, /\[[áa]udio transcrito\]/);
+  assert.match(SYSTEM, /NUNCA "media_fail"/);
+});
+test('SYSTEM prompt: fios paralelos — resposta no fio errado não é "pedido largado"', () => {
+  const { SYSTEM } = require('../prompts/conversation-audit-prompt');
+  assert.match(SYSTEM, /RESPONDENDO a esta mensagem anterior/);
+  assert.match(SYSTEM, /fio errado/);
+});
 test('SYSTEM prompt: guarda anti-falso-positivo de confabulation (ritual posterior + nomes parecidos)', () => {
   const { SYSTEM } = require('../prompts/conversation-audit-prompt');
   assert.match(SYSTEM, /MESMA troca reativa/);
@@ -133,7 +153,7 @@ test('upsertFinding: assinatura inédita → insere novo', async () => {
 });
 
 // ── resolveIncidentAt (evidence-anchored) ───────────────────────────
-const { resolveIncidentAt } = require('./conversation-audit');
+const { resolveIncidentAt, pickProbe } = require('./conversation-audit');
 
 // fakeSb p/ conversation_history: select→eq→gte→order→limit resolve {data}.
 function fakeConvSb(rows) {
@@ -164,6 +184,37 @@ test('resolveIncidentAt: sem casar e sem occurredAt → none', async () => {
   const out = await resolveIncidentAt(sb, 'c1', 'qualquer', null, '2026-06-08T00:00:00Z');
   assert.strictEqual(out.incident_confidence, 'none');
   assert.strictEqual(out.incident_at, null);
+});
+
+// AUDIT-PROBE-CARIMBO-CEGA-ANCORA (medido 19/08) — o transcript passou a ser
+// "[18/08 (ter) 13:06] USUÁRIO: texto" (fix AUDIT-RELATIVE-DATE-BLIND, 02/08), mas o pickProbe
+// só tirava o rótulo ancorado em `^`. Com o carimbo na frente o rótulo nunca saía, o probe
+// carregava "[18/08 (ter) 13:06] usuário: ..." e o includes() contra conversation_history.content
+// (que NÃO tem carimbo) falhava sempre → tudo caía em low/none → finding-triage carimbava
+// "regressão" falsa. Os testes antigos passavam evidência SEM carimbo: por isso ficou verde 17 dias.
+test('pickProbe: tira o carimbo do transcript antes do rótulo (formato REAL)', () => {
+  const probe = pickProbe('[18/08 (ter) 13:06] USUÁRIO: já chegou do mercado livre essas encomendas');
+  assert.strictEqual(probe, 'já chegou do mercado livre essas encomendas');
+});
+test('pickProbe: carimbo sem rótulo também sai', () => {
+  assert.strictEqual(pickProbe('[05/08 (qua) 13:15] fechou o mês com tudo pago'), 'fechou o mês com tudo pago');
+});
+test('pickProbe: linha sem carimbo segue funcionando (zero-regressão)', () => {
+  assert.strictEqual(pickProbe('TOM: não consigo salvar o gasto agora'), 'não consigo salvar o gasto agora');
+});
+test('pickProbe: colchete no MEIO do texto não é tocado', () => {
+  assert.strictEqual(pickProbe('USUÁRIO: manda [urgente] o relatório pra Rose'), 'manda [urgente] o relatório pra rose');
+});
+test('resolveIncidentAt: evidence no formato REAL (com carimbo) ancora → high', async () => {
+  const sb = fakeConvSb([
+    { created_at: '2026-08-18T16:00:24Z', content: 'Trocar spot quadrado branco quente atrasou 1 dia', media_extracted_text: null },
+    { created_at: '2026-08-18T16:06:06Z', content: '[áudio transcrito] já chegou do mercado livre essas encomendas', media_extracted_text: null },
+  ]);
+  const out = await resolveIncidentAt(
+    sb, 'c1', '[18/08 (ter) 13:06] USUÁRIO: já chegou do mercado livre essas encomendas',
+    '2026-08-18T23:00:00Z', '2026-08-17T00:00:00Z');
+  assert.strictEqual(out.incident_confidence, 'high');
+  assert.strictEqual(out.incident_at, '2026-08-18T16:06:06Z');
 });
 
 test('upsertFinding: inserção grava incident_at e incident_confidence', async () => {

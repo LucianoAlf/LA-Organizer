@@ -3,6 +3,37 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { conferirNumerosAfirmados, extrairAfirmacoes } = require('./confere-numero');
 
+// GOVAGENT-CONFERE-ESCOPO-ABERTO (medido 19/08) — a fonte de `achados` é o acervo GLOBAL
+// (status novo+confirmado). O relatório, porém, escopa de todo jeito que a prosa permite:
+// por adjetivo ("6 achados ANTIGOS investigados"), por parêntese ("(23 achados)"), por cluster.
+// A lista NEGATIVA de preposições era fechada e o default era conferir — cada forma nova de
+// escopar virava alarme falso (15/08 "65≠159", 19/08 dois de uma vez). Invertido: `achados`
+// só confere ANCORADO em totalidade; no resto abstém, e a abstenção é registrada (trava que
+// emudece sem avisar é o outro jeito de perdê-la).
+test('ESCOPO: "6 achados antigos investigados" abstém — recorte por adjetivo (19/08)', () => {
+  const r = conferirNumerosAfirmados('Varredura: 6 achados antigos investigados.', { achados: 157 });
+  assert.strictEqual(r.divergiu, false);
+  assert.deepStrictEqual(r.abstidas, [{ chave: 'achados', n: 6 }]);
+});
+test('ESCOPO: "(23 achados)" abstém — recorte por parêntese (19/08)', () => {
+  const r = conferirNumerosAfirmados('o maior grupo do acervo (23 achados) não dá pra provar', { achados: 157 });
+  assert.strictEqual(r.divergiu, false);
+});
+test('ESCOPO: "10 achados no acervo" CONFERE — incidente de 10/08 segue coberto', () => {
+  const r = conferirNumerosAfirmados('Fechei 10 achados no acervo.', { achados: 11 });
+  assert.strictEqual(r.divergiu, true);
+  assert.deepStrictEqual(r.conflitos, [{ chave: 'achados', afirmado: 10, real: 11 }]);
+});
+test('ESCOPO: "10 achados abertos" CONFERE — adjetivo de totalidade', () => {
+  const r = conferirNumerosAfirmados('São 10 achados abertos.', { achados: 11 });
+  assert.strictEqual(r.divergiu, true);
+});
+test('ESCOPO: corrigidos segue conferindo sem âncora — a fonte dele já é o ciclo', () => {
+  const r = conferirNumerosAfirmados('*Correção (1, dentro do teto):* CHOKEPOINT...', { corrigidos: 0 });
+  assert.strictEqual(r.divergiu, true);
+  assert.deepStrictEqual(r.conflitos, [{ chave: 'corrigidos', afirmado: 1, real: 0 }]);
+});
+
 // O incidente: relatório de 10/08 somou "1 + 9" e escreveu 10; eram 11. Ninguém confere o
 // número que o agente afirma — a trava textual não pega, porque ele não declara cegueira,
 // simplesmente afirma errado com confiança.
@@ -29,13 +60,17 @@ test('fonte indisponível NÃO vira conferido', () => {
 });
 
 // Ignorar data, dinheiro, percentual e hora — senão compara o dia do mês com uma contagem.
+// Nota (19/08): estes dois testes usavam "N achados" SOLTO. Desde a whitelist de escopo,
+// `achados` sem âncora de totalidade abstém de propósito — um número solto pode ser o acervo
+// ou um recorte, e a fonte só sabe medir o acervo. As frases ganharam a âncora para seguirem
+// testando o que sempre testaram (filtro de ruído e cobertura das formas), não o escopo.
 test('não confunde data, dinheiro, percentual e hora com contagem', () => {
-  const achados = extrairAfirmacoes('Em 13/08 gastei R$ 250,00 (12% do teto) às 14h. 3 achados.');
+  const achados = extrairAfirmacoes('Em 13/08 gastei R$ 250,00 (12% do teto) às 14h. Total: 3 achados.');
   assert.deepStrictEqual(achados.map((a) => a.n), [3]);
 });
 
 test('pega as formas comuns: "N achados", "corrigi N", "N corrigidos"', () => {
-  assert.strictEqual(extrairAfirmacoes('7 achados').length, 1);
+  assert.strictEqual(extrairAfirmacoes('7 achados no acervo').length, 1);
   assert.strictEqual(extrairAfirmacoes('corrigi 2 known issues')[0].n, 2);
   assert.strictEqual(extrairAfirmacoes('2 corrigidos hoje')[0].n, 2);
 });

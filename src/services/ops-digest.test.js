@@ -7,7 +7,35 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { formatarDigest, extrairLiteral, extrairFala, traduzCategoria } = require('./ops-digest');
+const { formatarDigest, extrairLiteral, extrairFala, traduzCategoria, carregarDigest } = require('./ops-digest');
+
+// Fake do supabase p/ carregarDigest: from→select→in→gte→order resolve {data}.
+function fakeDigestSb(rows) {
+  const b = {
+    from() { return this; }, select() { return this; }, in() { return this; },
+    gte() { return this; }, order() { return Promise.resolve({ data: rows, error: null }); },
+  };
+  return b;
+}
+
+// DIGEST-HORA-DA-AUDITORIA-VIRA-HORA-DO-INCIDENTE (19/08): sem incident_at o fallback caía em
+// last_seen, que num achado recém-criado é a hora em que o AUDITOR rodou. O comprovante ZOHO
+// saiu como "19/08 03:17" (auditoria) sendo que o caso foi 18/08 12:12. Hora desconhecida tem
+// que se declarar desconhecida — quem confere pela hora fecha bug vivo como falso positivo.
+test('sem incident_at o digest declara a hora desconhecida, não chuta a da auditoria', async () => {
+  const { achados } = await carregarDigest(fakeDigestSb([
+    { category: 'media_fail', severity: 'medio', summary: 's', evidence: 'e',
+      incident_at: null, last_seen: '2026-08-19T06:17:23Z', auto_triage: null, collaborators: null },
+  ]));
+  assert.strictEqual(achados[0].quando, 'hora não identificada');
+});
+test('com incident_at o digest usa a hora do INCIDENTE', async () => {
+  const { achados } = await carregarDigest(fakeDigestSb([
+    { category: 'media_fail', severity: 'medio', summary: 's', evidence: 'e',
+      incident_at: '2026-08-18T16:06:06Z', last_seen: '2026-08-19T06:17:23Z', auto_triage: null, collaborators: null },
+  ]));
+  assert.strictEqual(achados[0].quando, '18/08 13:06');
+});
 
 const achado = (over = {}) => ({
   categoria: 'confabulation', severidade: 'medio', pessoa: 'Rose',
