@@ -10966,6 +10966,15 @@ async function processMessage(phone, text, raw = {}) {
     const errs = err.errors ? JSON.stringify(err.errors).slice(0, 280) : err.message?.slice(0, 280);
     console.error(`[AI] FATAL all-providers-failed for ${_phoneTail}: ${errs}`);
     await logMarker(collab.id, 'PROVIDER', 'rejected', `all_failed: ${errs}`, null);
+    // PROVIDER-ALL-FAILED-SILENCIO (Ana Paula 19/08): este era o UNICO beco do engine que
+    // deixava o usuario no silencio — os dois provedores cairam e a gente so re-lancava.
+    // Manda o aviso honesto de infra (fonte unica em lib/provider-fail-reply) ANTES do throw,
+    // blindado no proprio try/catch pra que uma falha de envio (UAZAPI fora) nao mascare o
+    // erro original. sendMessage ja barra a faixa QA e grava no ledger (fonte unica).
+    try {
+      const { PROVIDER_FAIL_REPLY } = require('./lib/provider-fail-reply');
+      await whatsapp.sendMessage(phone, PROVIDER_FAIL_REPLY);
+    } catch (_sendErr) { console.error('[AI] fallback de silencio tambem falhou:', _sendErr.message); }
     _metrics.error_kind = `all_providers_failed:${kind}`;
     _metrics.latency_ms = Date.now() - _t0;
     metricsService.recordMessage(_metrics).catch(() => {});
