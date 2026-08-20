@@ -4439,6 +4439,40 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           if (tt && tt.title) titles.push(tt.title);
         }
         if (batchCompleteNeedsConfirm({ completedTitles: titles, inboundText: opts.inboundText })) {
+          // ALVO-REFUTADO-VOLTA-IGUAL (Rafinha 19/08 12:49) — a A2 segurou a escrita errada,
+          // mas a PERGUNTA voltava idêntica pra quem tinha acabado de dizer "Não, o Carlinhos
+          // está em Campo Grande". Se a pessoa abre negando e a proposta nova mira o MESMO
+          // conjunto que ela recusou, esse alvo está queimado: insistir nele é beco. Aqui o TOM
+          // devolve a escolha em vez de repetir, e a intent recusada morre como `denied` (e não
+          // `superseded`) pra não deixar alvo velho rondando o turno seguinte.
+          let _refutado = false;
+          try {
+            const { alvoFoiRefutado, mensagemAlvoRefutado } = require('./lib/alvo-refutado');
+            const _idsNovos = completes.map((c) => c.id).filter(Boolean);
+            // Gate de RECÊNCIA (lição do coord_response_wrong_bind): a refutação responde à
+            // ÚLTIMA pergunta. Intent aberta de horas atrás com os mesmos ids por coincidência
+            // não pode capturar um "não" de agora — a janela é a mesma do wasAnchorAskedRecently.
+            const _janelaMs = 20 * 60 * 1000;
+            const _agora = Date.now();
+            const _abertas = await pendingIntents.listOpenIntents(collaborator.id, { limit: 5 });
+            const _recusada = (_abertas || []).find((i) => i && i.kind === 'confirmation'
+              && i.asked_at && (_agora - Date.parse(i.asked_at)) <= _janelaMs
+              && Array.isArray(i.payload && i.payload.batch_complete)
+              && alvoFoiRefutado({
+                inboundText: opts.inboundText,
+                idsPropostos: _idsNovos,
+                idsRecusados: i.payload.batch_complete,
+              }));
+            if (_recusada) {
+              _refutado = true;
+              failMessages.push(mensagemAlvoRefutado());
+              try { await pendingIntents.resolveIntent(_recusada.id, 'denied', 'alvo refutado pelo usuario'); } catch (_) {}
+              actions = actions.filter((a) => !(a && a.action === 'complete'));
+              failCount += completes.length;
+              console.warn(`[Task] A2 ALVO_REFUTADO (${_idsNovos.length}) -> nao repete a pergunta, devolve a escolha`);
+            }
+          } catch (e) { console.warn('[Task] alvo-refutado err:', e.message); }
+          if (!_refutado) {   // refutado nao reabre a MESMA pergunta
           // Agrupa títulos repetidos ("X (3×)") — instâncias de recorrência têm o mesmo nome
           // e a lista virava "X, Y, Z, Y, X, Y" (BATCH-CONFIRM-DUP-TITLES, caso Arthur 01/08).
           const lista = formatBatchTitles(titles);
@@ -4454,6 +4488,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           actions = actions.filter((a) => !(a && a.action === 'complete'));
           failCount += completes.length;
           console.warn(`[Task] A2 batch-complete nao-ancorado (${titles.length}) -> pediu confirmacao, removido do lote`);
+          }
         }
       }
     } catch (e) { console.warn('[Task] A2 guard err:', e.message); }
