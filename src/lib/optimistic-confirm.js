@@ -352,4 +352,7 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   return wrap(out, true);
 }
 
-module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply, restatesRecentWrite };
+// NO_MARKER_HONEST_NOTE sai exportado (20/08): o guard de reação-sozinha (lib/reacao-muda)
+// precisa da MESMA frase. Duplicar a string criaria um segundo espelho da voz do TOM pra
+// apodrecer — a voz tem uma fonte só.
+module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply, restatesRecentWrite, NO_MARKER_HONEST_NOTE };

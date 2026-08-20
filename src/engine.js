@@ -13818,6 +13818,30 @@ Output AGORA, apenas o marker:`;
     }
   }
 
+  // REACAO-SOZINHA-CONFIRMA-O-QUE-NAO-GRAVOU (Bianca 20/08) — o turno saiu SÓ com
+  // <<REACT>>✅<<END>> e reply vazio, depois do HABIT_ACTION ser dropado pelo schema. Ela
+  // recebeu um ✅ (= "registrei") e nada foi gravado. O chokepoint acima não pega porque
+  // ele julga AFIRMAÇÃO DE TEXTO — com reply vazio ele nem dispara. Reação é afirmação SEM
+  // texto: eixo que o guard não enxerga. Discriminante é marker de DOMÍNIO tentado — um 👍
+  // em cima de "obrigado" não tem marker e segue mudo, como deve ser.
+  try {
+    const { reacaoSozinhaMente } = require('./lib/reacao-muda');
+    const { NO_MARKER_HONEST_NOTE } = require('./lib/optimistic-confirm');
+    if (reacaoSozinhaMente({
+      reply,
+      temReacao: !!(_reactionsToSend && _reactionsToSend.length),
+      markerAttempted: !!_metrics.marker_attempted,
+      nothingPersisted: !_metrics.marker_emitted && !_metrics.auto_retry_succeeded && !_metrics.deterministic_complete_ok,
+    })) {
+      console.warn('[Engine] REACAO_MUDA — reação sozinha confirmando o que não gravou; manda a nota honesta');
+      const _origReact = (_reactionsToSend && _reactionsToSend[0]) || '';
+      reply = NO_MARKER_HONEST_NOTE;
+      try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'reacao_sozinha', _origReact); } catch (_) {}
+    }
+  } catch (e) {
+    console.error('[ReacaoMuda] FALHOU (trava pode estar morta):', e.message);
+  }
+
   if (reply && reply.trim() && !_voiceSent) {
     const _sent = await whatsapp.sendMessage(phone, reply);
 

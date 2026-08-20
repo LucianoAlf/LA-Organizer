@@ -73,3 +73,68 @@ test('defensivo: null/não-objeto/valores não-string não quebram', () => {
   normalizeHabitAliases(a);
   assert.strictEqual(a.habit_name, undefined);
 });
+
+// ── HABIT-ACTION-SO-ACEITA-ID-REJEITA-TITULO (Bianca 20/08) ────────────────────
+// O LLM emitiu <<HABIT_ACTION>>{"action":"log","habit_title":"Tomar remédios"}<<END>>
+// → validateHabitAction devolveu `bad_habit_id` → o bloco INTEIRO foi dropado e o
+// hábito nunca foi registrado; ela só viu a reação ✅ (que não é afirmação de texto,
+// então o chokepoint de honestidade não dispara). Terceira vez na MESMA família
+// (habit_slug/title 22/06 · habit 08/07 · habit_title agora): o defeito não é
+// "falta o alias X", é a LISTA — o LLM prefixa um sufixo já aceito com `habit_` e
+// a enumeração não cobre o produto cartesiano. A regra passa a GERAR os candidatos.
+test('caso Bianca REAL: log com `habit_title` → habit_name', () => {
+  const a = { action: 'log', habit_title: 'Tomar remédios' };
+  normalizeHabitAliases(a);
+  assert.strictEqual(a.habit_name, 'Tomar remédios');
+});
+
+test('produto cartesiano: qualquer sufixo aceito vale com e sem o prefixo `habit_`', () => {
+  const casos = [
+    ['habit_title', 'Tomar remédios'], ['title', 'Tomar remédios'],
+    ['habit_titulo', 'Tomar remédios'], ['titulo', 'Tomar remédios'],
+    ['habit_nome', 'Tomar remédios'], ['nome', 'Tomar remédios'],
+    ['name', 'Tomar remédios'],
+  ];
+  for (const [chave, valor] of casos) {
+    const a = { action: 'log', [chave]: valor };
+    normalizeHabitAliases(a);
+    assert.strictEqual(a.habit_name, valor, `alias ${chave} não resolveu`);
+  }
+});
+
+test('slug desidrata hífen/underline com OU sem prefixo; os outros sufixos vêm crus', () => {
+  const comPrefixo = { action: 'log', habit_slug: 'tomar-remedios' };
+  normalizeHabitAliases(comPrefixo);
+  assert.strictEqual(comPrefixo.habit_name, 'tomar remedios');
+
+  const semPrefixo = { action: 'log', slug: 'tomar_remedios' };
+  normalizeHabitAliases(semPrefixo);
+  assert.strictEqual(semPrefixo.habit_name, 'tomar remedios');
+
+  // título com hífen legítimo não pode ser mutilado
+  const titulo = { action: 'log', habit_title: 'Auto-exame mensal' };
+  normalizeHabitAliases(titulo);
+  assert.strictEqual(titulo.habit_name, 'Auto-exame mensal');
+});
+
+test('create: o prefixo `habit_` também vale pro nome (mesma raiz da Bianca)', () => {
+  const a = { action: 'create', habit_title: 'Tomar remédios' };
+  normalizeHabitAliases(a);
+  assert.strictEqual(a.name, 'Tomar remédios');
+});
+
+test('precedência estável mesmo com prefixo misturado', () => {
+  const a = { action: 'log', habit_title: 'do title', habit_slug: 'do-slug', habit: 'do habit' };
+  normalizeHabitAliases(a);
+  assert.strictEqual(a.habit_name, 'do slug');
+
+  const b = { action: 'log', habit_title: 'do title', habit: 'do habit' };
+  normalizeHabitAliases(b);
+  assert.strictEqual(b.habit_name, 'do habit');
+});
+
+test('`habit_name` oficial nunca é tratado como alias de si mesmo', () => {
+  const a = { action: 'log', habit_name: '   ' };
+  normalizeHabitAliases(a);
+  assert.strictEqual(a.habit_name, '   ', 'não deve reescrever o campo oficial');
+});
