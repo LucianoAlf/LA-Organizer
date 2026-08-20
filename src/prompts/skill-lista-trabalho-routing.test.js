@@ -44,3 +44,28 @@ test('retrieve "me reenvia como ficou a lista" NÃO vira listas-pessoais', async
   const skill = await pickSkill(RAFINHA, 'me reenvia como ficou a lista, não esquece dos emojis', []);
   assert.notStrictEqual(skill && skill.name, 'listas-pessoais');
 });
+
+// LISTA-TRABALHO-ROUTING-AUDIO (re-audit 20/08). O fix de 18/08 passava com a frase LIMPA,
+// mas a mensagem REAL chega com "[áudio transcrito]" e o short-circuit tratamento-audio
+// (pickSkill priority 1.4) roubava o turno ANTES do roteador de listas (4.9). Estes casos
+// rodam pickSkill de ponta a ponta com o prefixo real — a prova que faltava em 18/08.
+test('AUDIO REAL: "[áudio transcrito] coloca no checklist telão de LED" → listas-pessoais', async () => {
+  const real = '[áudio transcrito] Então, coloca no checklist aí, telão de LED finalizado, ok? Tudo certo pra sexta-feira.';
+  const skill = await pickSkill(RAFINHA, real, []);
+  assert.strictEqual(skill && skill.name, 'listas-pessoais');
+});
+
+test('AUDIO: "[áudio transcrito] coloca na minha lista consertar contrabaixo" → listas-pessoais', async () => {
+  const skill = await pickSkill(RAFINHA, '[áudio transcrito] coloca na minha lista aí, consertar a caixa de contrabaixo do estúdio', []);
+  assert.strictEqual(skill && skill.name, 'listas-pessoais');
+});
+
+test('AUDIO anti-overfit: "[áudio transcrito] me reenvia a lista" NÃO vira listas-pessoais (retrieve)', async () => {
+  const skill = await pickSkill(RAFINHA, '[áudio transcrito] me reenvia como ficou a lista, não esquece dos emojis', []);
+  assert.notStrictEqual(skill && skill.name, 'listas-pessoais');
+});
+
+test('AUDIO sem adição de lista continua indo pro tratamento-audio', async () => {
+  const skill = await pickSkill(RAFINHA, '[áudio transcrito] terminei a manutenção do palco, tudo certo', []);
+  assert.strictEqual(skill && skill.name, 'tratamento-audio');
+});

@@ -1170,6 +1170,16 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // confirmation flow before any action marker is emitted.
   // ATENÇÃO: vem DEPOIS de inProjectFlow pra não sequestrar turno em mid-flow.
   if (/^\[áudio transcrito\]/i.test(lastUserMessage || '')) {
+    // LISTA-TRABALHO-ROUTING-AUDIO (Rafinha 17/08, re-audit 20/08): adição EXPLÍCITA a
+    // lista/checklist é alto valor e o tratamento-audio a roubava — o roteador de listas
+    // (4.9) nunca era alcançado por áudio, então TODO pedido de lista por voz caía no beco
+    // "não consegui registrar". Mesmo precedente do inProjectFlow logo acima: roteia direto
+    // pra listas-pessoais (pula o gauntlet de routers entre 1.4 e 4.9). Sinal isolado em
+    // lista-add-signal.js, robusto ao prefixo — a MESMA regra que o 4.9 usa (sem divergir).
+    const { isExplicitListAdd } = require('./lista-add-signal');
+    if (isExplicitListAdd(lastUserMessage)) {
+      return { name: 'listas-pessoais', body: loadSkill('listas-pessoais') };
+    }
     return { name: 'tratamento-audio', body: loadSkill('tratamento-audio') };
   }
 
@@ -1418,15 +1428,10 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   const lmLists = (lastUserMessage || '').toLowerCase();
   const listsTopicRe = /\b(mercado|supermercado|farm[aá]cia|rem[eé]dios?|viagem|compras?(?:\s+do\s+m[eê]s)?|presentes?|sup(?:er)?(?:mercado)?)\b/i;
   const listsActionRe = /\b(adicion[ao]|p[oó]e|coloca|inclui|tira|remove|riscar?|marca|cria(?:r)?\s+(?:uma\s+)?lista|lista\s+(?:de|do|da|pra))\b/i;
-  const listsExplicitRe = /\b(?:minha\s+)?lista\s+(?:de|do|da|pra)\s+(?:mercado|supermercado|farm[aá]cia|rem[eé]dios?|viagem|compras?|presentes?)/i;
+  // listsExplicitRe / listsAddToRe vêm de lista-add-signal.js (fonte única — o bypass de
+  // áudio da priority 1.4 usa a MESMA regra; duplicar aqui deixaria as duas divergirem).
+  const { LISTS_EXPLICIT_RE: listsExplicitRe, LISTS_ADD_TO_RE: listsAddToRe } = require('./lista-add-signal');
   const listsMarkDoneRe = /\b(?:j[aá]\s+)?(?:comprei|tomei|peguei)\s+(?:o|a|os|as)?\s*\w/i;
-  // LISTA-TRABALHO-ROUTING (Rafinha 17/08): adição EXPLÍCITA a lista/checklist — verbo de acréscimo
-  // + direcional + o substantivo "lista/checklist/listagem". Pega listas de TRABALHO ("telão de
-  // LED", manutenção, contrabaixo) que o listsTopicRe (só vida pessoal: mercado/viagem/remédios)
-  // deixava passar → a skill listas-pessoais não carregava → o LLM improvisava → chokepoint "não
-  // consegui". NÃO casa "manda/reenvia a lista" (verbo de ENVIO = consulta de agenda, não adição).
-  // Medido em produção (2,5 meses): 8 rotas net-new, todas adição real; nenhuma perde skill.
-  const listsAddToRe = /\b(coloca|acrescent[ao]|adicion[ao]|p[oõ]e|bota|inclui|escreve|anota)\b[^.!?]{0,30}?\b(?:n[oa]|em|pra|para)\s+(?:essa\s+|nessa\s+|minha\s+|meu\s+|a\s+|o\s+|uma\s+)?(?:check\s?list|lista(?:gem)?)\b/i;
   if (
     listsExplicitRe.test(lmLists) ||
     (listsActionRe.test(lmLists) && listsTopicRe.test(lmLists)) ||
