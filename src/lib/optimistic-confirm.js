@@ -199,12 +199,23 @@ function sanitizeOptimisticConfirm(text, outcome, opts) {
   const includeWeak = !!(opts && opts.includeWeak);
 
   const out = [];
-  for (const line of String(text).split('\n')) {
+  const lines = String(text).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (!line.trim()) { out.push(line); continue; }
     if (!_isOptimisticLine(line, includeWeak)) { out.push(line); continue; }
 
     if (outcome === 'failed') {
       // Nada persistiu → a confirmação é falsa: remove a linha inteira.
+      // CONFAB-CARD-ORFAO (Rafinha 28/07 20:07, caso Valcílio): remover só a linha deixava
+      // órfão o bloco que ELA anunciava — o card "📅 *Visita Valcílio* / 🗓️ Amanhã (29/07)"
+      // sobreviveu acima do "_não consegui registrar_" e segue lido como comprovante. O ':'
+      // final é o que marca a linha como introdutória; sem ele nada é levado junto. Só vale
+      // em 'failed': em 'partial' o bloco pode listar o que deu certo (PETERSON-INTEGRITY-
+      // HIDES-OKCOUNT).
+      if (line.trim().endsWith(':')) {
+        while (i + 1 < lines.length && lines[i + 1].trim()) i++;
+      }
       continue;
     }
 
