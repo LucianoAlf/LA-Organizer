@@ -456,3 +456,79 @@ encolher vai continuar decepcionado.
 Proposta: o valor real da varredura é o `verified_note` com raiz provada, que transforma um achado
 de 2 meses em algo corrigível em minutos na próxima rodada. Vale medir isso explicitamente — quantos
 achados anotados viraram correção depois — em vez de medir quantos fecharam.
+
+### ETAPA 4 — o TESTE do fix usa a frase limpa; a entrada real traz prefixo e a rota muda
+
+**Ocorrências:** 1 (20/08), mas medida **dentro de um fix escrito por uma rodada anterior**.
+
+O protocolo já manda reproduzir com a entrada real do turno (regra de 08/08, 8 tentativas em branco).
+Até hoje isso valia para a MINHA reprodução. Em 20/08 apareceu o mesmo erro do outro lado: um fix
+**já mergeado, verde na suíte, e morto em produção**.
+
+`aaacef90` (Rafinha, 17/08 12:44 BRT) é o caso citado no cabeçalho de
+`src/prompts/skill-lista-trabalho-routing.test.js` — "coloca no checklist aí, telão de LED
+finalizado". O fix `62b13964` (18/08) abriu o gatilho de adição explícita e o teste passa. Rodei o
+LITERAL do banco pelo `pickSkill`: **`tratamento-audio` ANTES e `tratamento-audio` HOJE — não mudou.**
+
+O isolamento é de uma linha: a mesma frase **sem** o prefixo `[áudio transcrito] ` roteia para
+`listas-pessoais`; **com** o prefixo, `tratamento-audio` a captura antes. O teste do fix usa a frase
+limpa. Os controles confirmam que a chamada estava boa (`"coloca na minha lista aí…"` foi
+`null → listas-pessoais`; o retrieve `"me manda a lista de compras"` ficou igual nas duas). Ou seja:
+o fix funciona para texto digitado e **não alcança nenhum pedido por áudio** — que era exatamente a
+natureza do caso que o motivou.
+
+Regra: **o fixture do teste de um fix não substitui o literal do banco.** Quando for verificar se um
+fix alcança o caso, puxe a entrada de `conversation_history`, não a string do `.test.js` — mesmo (e
+principalmente) quando o cabeçalho do teste cita o caso pelo nome e pela hora.
+
+Proposta de virar código: o `literalDoAchado(finding)` proposto em 18/08 e 19/08 resolve isto de
+graça, e vale estender o uso — todo teste que se declara "prova de reversão de um achado" deveria
+poder puxar a entrada do banco em vez de embutir uma paráfrase. Um passe do `gov-runner` pode
+comparar o fixture de cada teste-de-achado com o literal real e apontar as divergências.
+
+### ETAPA 2 (varredura) — o lever que FINALMENTE drenou: data + nome do colaborador nos comentários
+
+**Ocorrências:** 3 (16/08, 19/08, 20/08) — e em 20/08 o resultado **inverteu**.
+
+Nas duas rodadas anteriores registrei que a varredura não fecha nada por "já corrigido". Em 20/08
+isso deixou de valer, e a diferença foi o gerador de candidatos, não mais rigor.
+
+Os levers que deram **zero**: (a) cruzar todos os 151 abertos não-altos contra o guard do dia
+(`sanitizeOptimisticConfirm` antes/depois) — 91 com agulha, 67 literais recuperados, **1 mudou**, e
+esse 1 era um turno já tratado; (b) procurar o id do achado citado no `src/` — **0 ocorrências em
+151**, ninguém referencia finding por id no código.
+
+O lever que funcionou: **cruzar a data `DD/MM` do incidente com o primeiro nome do colaborador nos
+comentários do `src/`** → **50 candidatos**. Dos que investiguei, 2 fecharam com prova completa
+(`e4a434b2` folga→DND, `df94ce87` checkin-window) e 2 caíram na execução, virando anotação de raiz
+(`aaacef90`, `8dcf1d97`). Precisão em torno de 50% — a mesma dos levers anteriores, mas com
+**recall muito maior**, porque o repositório documenta caso por nome+data com muito mais frequência
+do que por id.
+
+Correção do que escrevi em 19/08: a varredura **pode** drenar; o que não drena é varrer sem um
+gerador de candidatos que case com o modo como o código registra os casos.
+
+Proposta de virar código: o `gov-runner` roda esse cruzamento (data+nome → linhas do `src/`) e
+entrega a lista pronta no início da rodada, em vez de cada rodada redescobrir o lever.
+
+### ETAPA 3 — o gate desligado é o achado: `skill_active` some no turno de INSISTÊNCIA
+
+**Ocorrências:** 2 (18/08, 20/08). A regra do gate pagou de novo, e revelou um padrão.
+
+Em 18/08 aprendi que rodar um fix *gated* com o gate ligado prova só que o fix existe. Em 20/08
+apliquei em `8dcf1d97` (Matheus 24/06): o TOM respondeu "não tenho como editar transações
+financeiras pelo chat. Não existe o comando pra isso aqui" — recusa falsa, `edit_transaction` está
+em `FINANCE_CAN`. O `detectDefeatism` devolve `phrase:"não tenho como"` no literal (e `null` no
+controle de limitação honesta, então a chamada está boa). Mas a interceptação em `engine.js:12979`
+exige `_metrics.skill_active === 'financeiro-pessoal'`.
+
+Li o gate do turno real: o inbound que gerou a recusa (`08:34:27`, _"Então, eu pedi pra você jogar
+lá.. bora, você consegue! Não é a sua primeira vez nao.."_) roteia para **`null`**. O turno anterior
+(`08:32:19`, com a imagem da planilha) roteava `financeiro-pessoal`.
+
+O padrão, que vale além deste achado: **o turno de insistência não carrega vocabulário de domínio** —
+o usuário já disse "lançamento", "cartão", "transação" no turno anterior e agora só diz "bora, você
+consegue". O roteador perde a skill exatamente no turno em que a pessoa está reclamando, e com ela
+caem todas as redes gated por `skill_active`. É a mesma classe do quote-contamination (Quintela
+12/08). Vale medir quantas das redes determinísticas estão gated em `skill_active` — se forem
+muitas, o gate é uma raiz, não um detalhe de cada uma.
