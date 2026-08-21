@@ -5158,7 +5158,14 @@ async function checkOverdueAlerts(ymdToday) {
       continue;
     }
     try {
-      await whatsapp.sendMessage(collab.phone, text);
+      // COBRANCA-INVISIVEL-AO-RESOLVEDOR (Krissya 05/08): a cobranca de atraso gravava em
+      // conversation_history SEM ref_type='task' (sendMessage cru + insert manual). O
+      // resolverConclusaoDeLembrete le refs por ref_type='task' e ficava CEGO as cobrancas:
+      // um "Feito" pelado entre 3 cobrancas nao via ambiguidade e o LLM chutava a tarefa
+      // errada. Linkando (sendAndLink), o freio ">1 distinta = pergunta" passa a disparar
+      // (familia do DISPATCHER-ENVIO-INVISIVEL). O reply-quote a cobranca tambem passa a
+      // bindar por id exato (Lote D). sendAndLink faz o UNICO log — o insert manual sai.
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
       // Sprint 31.1 — rastro pra TASK_UPDATE via id exato
       try {
         const kind = n <= 3 ? 'overdue_check' : 'staleness_check';
@@ -5203,12 +5210,6 @@ async function checkOverdueAlerts(ymdToday) {
           }
         }
       } catch (e) { /* não-fatal */ }
-      await supabase.from('conversation_history').insert({
-        collaborator_id: collab.id,
-        direction: 'outbound',
-        message_type: 'text',
-        content: text,
-      });
       await logRitualEvent(collab.id, 'alerta_atraso', 'sent', `task:${String(t.id).slice(0,8)} late=${n}d`, ymdToday);
       sent++;
       // #em-copia: cobra os observadores junto, com tom escalado pela idade do atraso.

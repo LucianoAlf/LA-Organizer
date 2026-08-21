@@ -60,3 +60,21 @@ test('entrada degenerada não quebra', () => {
   assert.strictEqual(resolverConclusaoDeLembrete({}).modo, 'nenhum');
   assert.strictEqual(resolverConclusaoDeLembrete({ reply: 'feito', refsRecentes: null, agoraMs: AGORA }).modo, 'nenhum');
 });
+
+// CASO KRISSYA 05/08 (COBRANCA-INVISIVEL-AO-RESOLVEDOR): 3 cobranças de atraso lembradas às
+// 13:00; "Feito" pelado às 13:13. O bug era UPSTREAM — as cobranças gravavam sem ref_type='task',
+// então refsRecentes chegava VAZIO aqui e o LLM chutava. Com a cobrança linkada (fix no
+// dispatcher), as 3 refs chegam e o freio dispara: ambiguo, pergunta QUAL, não completa nenhuma.
+test('CASO KRISSYA: 3 cobranças distintas linkadas + "Feito" pelado → ambiguo (não chuta)', () => {
+  const r = resolverConclusaoDeLembrete({
+    reply: 'Feito',
+    refsRecentes: [
+      ref('hugo', 'Ajustar com Hugo sobre tempo de resposta', 0.2),
+      ref('rafa', 'Responder Rafaela da escola de música', 0.2),
+      ref('fones', 'Pegar os fones em CG', 0.2),
+    ],
+    agoraMs: AGORA,
+  });
+  assert.strictEqual(r.modo, 'ambiguo');
+  assert.strictEqual(r.candidatos.length, 3);
+});

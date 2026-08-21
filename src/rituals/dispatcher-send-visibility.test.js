@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const SRC = fs.readFileSync(path.join(__dirname, 'dispatcher.js'), 'utf8');
-const TETO_SENDMESSAGE_CRU = 13;
+const TETO_SENDMESSAGE_CRU = 12;
 
 test('dispatcher: envio cru não cresce — proativo novo usa sendAndLink', () => {
   const n = (SRC.match(/whatsapp\.sendMessage\(/g) || []).length;
@@ -36,4 +36,15 @@ test('dispatcher: o dreno da outbound_queue grava histórico quando há collabor
 
 test('dispatcher: lembrete de evento leva etiqueta de antecedência quando label é null', () => {
   assert.match(SRC, /leadLabel\(r\.remind_at, ev\.start_at\)/);
+});
+
+// COBRANCA-INVISIVEL-AO-RESOLVEDOR (Krissya 05/08): a cobrança de atraso agora grava com
+// ref_type='task' via sendAndLink — sem isso o resolverConclusaoDeLembrete fica cego a ela
+// e um "Feito" pelado entre N cobranças deixa o LLM chutar a tarefa errada.
+test('dispatcher: checkOverdueAlerts linka a cobrança à tarefa (refType task) e não insere histórico à mão', () => {
+  assert.match(SRC, /sendAndLink\(supabase, \{ phone: collab\.phone, content: text, collaboratorId: collab\.id, refType: 'task', refId: t\.id \}\)/,
+    'a cobrança de atraso precisa ir por sendAndLink com refType task');
+  // o insert manual antigo (sem ref) tem que ter saído — senão duplica o histórico
+  assert.ok(!/direction: 'outbound',\s*message_type: 'text',\s*content: text,\s*\}\);\s*await logRitualEvent\(collab\.id, 'alerta_atraso'/.test(SRC),
+    'o insert manual da cobrança ainda existe — vai duplicar o histórico');
 });
