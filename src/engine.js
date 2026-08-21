@@ -4407,6 +4407,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   let okCount = 0;
   let failCount = 0;
   let integrityPayload = null; // Sprint 31 — acumula o 1º soft-dup sem abortar o lote
+  // LOTE-PARCIAL-NAO-DIZ-QUAIS (Yuri/Dai): acoes que FALHARAM neste lote, pra nomear no
+  // parcial. Capturado por try/finally por iteracao (roda ate no continue) — sem tocar nos ~70
+  // sites de failCount++. Uma acao entra aqui quando NAO incrementou okCount E incrementou failCount.
+  const _falharam = [];
   // Sprint 31.6 (E2) — mensagens claras de falha pro user (ex: tarefa de outro dono).
   // Quando preenchido, o caller usa no lugar do genérico "não consegui registrar".
   const failMessages = [];
@@ -4508,6 +4512,8 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   }
 
   for (const a of actions) {
+    const _okB = okCount, _failB = failCount;
+    try {
     if (!a || typeof a.action !== 'string') {
       failCount++;
       continue;
@@ -6191,8 +6197,11 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       console.error('[Task] exception:', err.message);
       failCount++;
     }
+    } finally {
+      if (okCount === _okB && failCount > _failB) _falharam.push(a);
+    }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -11284,7 +11293,7 @@ async function processMessage(phone, text, raw = {}) {
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -11359,7 +11368,13 @@ async function processMessage(phone, text, raw = {}) {
             base = _tc.reply;
             await logMarker(collab.id, 'COUNT_HONESTY', 'redirected', `task claimed=${_tc.claimed} persisted=${okCount}`, null);
           } else {
-            base = (base ? base + '\n\n' : '') + `_⚠️ Registrei ${okCount} de ${okCount + failCount}. Algumas falharam — me chama se algo ficar faltando._`;
+            // LOTE-PARCIAL-NAO-DIZ-QUAIS (Yuri/Dai): nomeia o subconjunto que falhou. Só quando
+            // o captura cobre TODAS as falhas — as removidas ANTES do loop (ex.: A2 batch-complete
+            // virou confirmação) têm mensagem própria e não são "não entraram"; nesse caso cai na
+            // contagem genérica (falharam vazio → falaParcial), sem count enganoso.
+            const { falaParcial } = require('./lib/nomeia-falhas');
+            const _falhasNomeaveis = (Array.isArray(falharam) && falharam.length === failCount) ? falharam : [];
+            base = (base ? base + '\n\n' : '') + falaParcial(okCount, okCount + failCount, _falhasNomeaveis);
           }
         }
         // CONFAB-WRITE-DATE-NO-RELLABEL (Anne 05/08, alta): o prompt pré-computa o
