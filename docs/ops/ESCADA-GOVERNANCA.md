@@ -532,3 +532,54 @@ consegue". O roteador perde a skill exatamente no turno em que a pessoa está re
 caem todas as redes gated por `skill_active`. É a mesma classe do quote-contamination (Quintela
 12/08). Vale medir quantas das redes determinísticas estão gated em `skill_active` — se forem
 muitas, o gate é uma raiz, não um detalhe de cada uma.
+
+### ETAPA 3/4 — `pending_intents` prova bug de BINDING sem reconstruir versão antiga
+
+**Ocorrências:** 1 (21/08), e foi o que sustentou a correção da rodada.
+
+A ETAPA 3 empurra para "rode o literal pela função". Para o achado de hoje (`9263bc28`, alto, Ana
+07/07) isso era caro: o caminho é o `applyTaskActions`, que não roda sem banco. A prova veio pronta
+do próprio banco.
+
+O bug é de **binding**: o menu de duplicidade exibia o PRIMEIRO conflito do lote e o "1/2/3"
+resolvia o ÚLTIMO. `pending_intents` guarda os dois lados do binding — as 3 intents do lote de
+07:04:49 abrem **no mesmo instante ao segundo**, e a `resolution=confirmed` caiu na de
+_"Avisar William sobre treinamentos"_ enquanto o `conversation_history` mostra o menu citando
+_"Liberar a folha para conferência da Direção"_. Duas tabelas, um turno, sintoma provado — sem
+`git rev-list --before`, sem stub, sem reconstruir módulo.
+
+Regra que isto acrescenta: **quando o achado é "o TOM resolveu outra coisa do que perguntou",
+comece por `pending_intents` cruzado com `conversation_history`.** O que o usuário viu está numa
+tabela e o que o sistema resolveu está na outra; a divergência entre as duas É o sintoma, e é
+inspecionável sem executar nada. Rodar a função vira confirmação da raiz, não a prova do sintoma.
+
+Proposta de virar código: o `literalDoAchado(finding)` proposto em 18/08 e 19/08 deveria devolver
+também as `pending_intents` abertas na janela do turno — hoje toda rodada refaz essa query à mão, e
+ela é o que desempata a classe inteira de achados de binding.
+
+### ETAPA 2 (varredura) — "mesma família" reincidiu pela 4ª vez, agora com o fix da PRÓPRIA rodada
+
+**Ocorrências:** 4 (13/08, 14/08, 17/08, 21/08). A regra não está sendo aprendida — está sendo
+redescoberta.
+
+Corrigi hoje o `DUP-BATCH-MENU-MISBIND` (menu de dup mostra a 1ª tarefa, "1/2/3" resolve a última).
+Na varredura apareceu `e9039c5e` (Jéssica 25/07 14:42→14:45 BRT): menu de dup de _"Festa da Mari"_,
+ela responde **por reply-quote** ao próprio menu, e recebe _"Já está na agenda como **Viagem**"_.
+Sintoma idêntico ao que eu tinha acabado de consertar, na mesma semana de acervo.
+
+**Não é o mesmo bug, e o meu fix não encosta nele.** Três diferenças, todas fatais para o
+fechamento: (1) é o caminho de EVENTO (`pendingDupEvents`, `engine.js:193`), não de task;
+(2) os dois menus são de TURNOS diferentes, então o gate `if (!integrityPayload)` do meu fix — que
+é por chamada de `applyTaskActions` — não os veria; (3) a raiz aqui é outra: o `tryDupBypass` lê o
+Map primeiro e só consulta o `pickDupBypassIntentForReply` (que sabe casar por quote) quando
+`!hasEv && !hasTk` (`engine.js:7586`) — **com o Map quente, o quote inequívoco nunca é lido.**
+
+O que isto acrescenta ao registro de 17/08 ("vale principalmente contra o fix que você mesmo acabou
+de escrever"): a tentação é maior ainda quando o fix é da MESMA rodada, porque o sintoma está fresco
+na cabeça e a família parece obviamente coberta. Quatro ocorrências em nove dias é sinal de que isto
+não deve seguir dependendo de disciplina do LLM.
+
+Proposta de virar código, reforçando a de 13/08: o fechamento de achado deveria exigir o campo
+`prova` preenchido com `{funcao, entrada, antes, depois}` **executado**, e o `gov-runner` recusar
+qualquer `status=corrigido` cujo `verified_note` cite um KI sem esse campo. Hoje nada impede o
+fechamento por prosa convincente — só a minha própria checagem, que já falhou quatro vezes.
