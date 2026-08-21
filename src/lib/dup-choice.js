@@ -111,4 +111,33 @@ function registerBatchDupConflict(state, conflict) {
   return { menu: conflict.menu, target: conflict.target };
 }
 
-module.exports = { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, DUP_BYPASS_MAX_AGE_MS };
+// EVENT-DUP-MENU-CLOBBER (Jessica 25/07 14:42->14:45 BRT): o dup de EVENTO vivia num
+// Map chaveado so por collaborator.id, sem pending_intents (diferente do de task). Um
+// segundo menu ("Viagem") sobrescrevia o primeiro ("Festa da Mari") e o primeiro sumia.
+// Ela respondeu POR REPLY-QUOTE citando o menu da Festa da Mari (binding INEQUIVOCO) e
+// ouviu "ja esta na agenda como Viagem". Fix: o Map guarda uma LISTA (nao clobra) e a
+// resolucao escolhe pelo quote — mesma semantica do pickDupBypassIntentForReply das tasks.
+//
+// pickEventDupMenu(menus, {quotedText, nowMs, maxAgeMs}) -> { menu, byQuote } | null
+//   - filtra menus dentro da janela (default 10min, memoria-only);
+//   - com quote que cita o titulo de um menu vivo: casa ESSE (binding por titulo);
+//   - sem quote (ou quote sem titulo casado): o mais RECENTE vivo (comportamento antigo).
+function pickEventDupMenu(menus, opts = {}) {
+  if (!Array.isArray(menus) || menus.length === 0) return null;
+  const nowMs = opts.nowMs != null ? opts.nowMs : Date.now();
+  const maxAgeMs = opts.maxAgeMs != null ? opts.maxAgeMs : DUP_BYPASS_MAX_AGE_MS;
+  const vivos = menus.filter((m) => m && m.event && typeof m.timestamp === 'number'
+    && (nowMs - m.timestamp) < maxAgeMs);
+  if (vivos.length === 0) return null;
+  const quotedText = opts.quotedText ? String(opts.quotedText) : '';
+  if (quotedText) {
+    // varre do mais recente pro mais antigo; titulo citado = binding inequivoco (ignora ordem)
+    for (let i = vivos.length - 1; i >= 0; i--) {
+      const title = vivos[i].event.title;
+      if (title && quotedText.includes(title)) return { menu: vivos[i], byQuote: true };
+    }
+  }
+  return { menu: vivos[vivos.length - 1], byQuote: false }; // mais recente
+}
+
+module.exports = { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, pickEventDupMenu, DUP_BYPASS_MAX_AGE_MS };

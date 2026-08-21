@@ -60,7 +60,7 @@ const { classifyAutoRetry } = require('./lib/auto-retry-outcome');
 const { friendlyInventoryError } = require('./lib/inventory-error-message');
 const { decideTaskDoneFromQuote } = require('./services/taskdone-quote');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
-const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict } = require('./lib/dup-choice');
+const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, pickEventDupMenu } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { normalizeHabitAliases } = require('./utils/habit-field-alias');
 const { normalizeHabitFrequency } = require('./utils/habit-frequency');
@@ -190,7 +190,20 @@ const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
 // Quando engine detecta dup e envia microconfirm 1/2/3, guarda o item aqui.
 // Quando user responde "2", o engine aplica diretamente com bypass
 // sem depender da LLM emitir o campo (que provou ser não-confiável em 11/05/2026).
-const pendingDupEvents = new Map(); // collabId → { event, timestamp }
+const pendingDupEvents = new Map(); // collabId → [{ event, timestamp }] (LISTA: nao clobra)
+// EVENT-DUP-MENU-CLOBBER (Jessica 25/07): guardar UMA entrada por collab fazia o 2o menu
+// apagar o 1o. Agora e lista — append sem clobber (dedupe por titulo, teto 5) e a resolucao
+// escolhe por quote (pickEventDupMenu). Helpers locais mantem os call-sites legiveis.
+function _pushEventDupMenu(collabId, event) {
+  const arr = (pendingDupEvents.get(collabId) || []).filter((m) => m && m.event && m.event.title !== event.title);
+  arr.push({ event: { ...event }, timestamp: Date.now() });
+  pendingDupEvents.set(collabId, arr.slice(-5));
+}
+function _removeEventDupMenu(collabId, picked) {
+  const arr = pendingDupEvents.get(collabId) || [];
+  const next = arr.filter((m) => m !== picked);
+  if (next.length) pendingDupEvents.set(collabId, next); else pendingDupEvents.delete(collabId);
+}
 const pendingDupTasks  = new Map(); // collabId → { task, timestamp }
 // Sprint 22.26 — VALID_EVENT_CATEGORIES era set fixo; agora a validacao acontece
 // em runtime via lookupEventCategoryBySlug (tabela event_categories). Removido.
@@ -2427,7 +2440,7 @@ async function applyEventActions(collaborator, events, opts = {}) {
         const d = dupResult.probable[0];
         console.warn(`[IntegrityCheck] DUP_EVENT score=${d._score.toFixed(2)} "${String(e.title).slice(0,40)}" ~ "${String(d.title).slice(0,40)}"`);
         // Sprint 23.5 — persiste evento pendente para bypass engine-side quando user responder "2"
-        pendingDupEvents.set(collaborator.id, { event: { ...e }, timestamp: Date.now() });
+        _pushEventDupMenu(collaborator.id, e); // EVENT-DUP-MENU-CLOBBER: append, nao sobrescreve
         integrityPayload = {
           severity: 'soft',
           type: 'dup_event',
@@ -7576,7 +7589,10 @@ async function tryDupBypass(collab, text) {
   const choice = classifyDupChoice(lm);
   if (!choice) return null;
   const EXP_MS = 10 * 60 * 1000;
-  const pendingEv = pendingDupEvents.get(collab.id);
+  // EVENT-DUP-MENU-CLOBBER: escolhe o menu de evento pelo QUOTE (binding inequivoco da
+  // reply-quote) em vez do ultimo gravado; sem quote, o mais recente (comportamento antigo).
+  const _evPick = pickEventDupMenu(pendingDupEvents.get(collab.id) || [], { quotedText, nowMs: Date.now() });
+  const pendingEv = _evPick ? _evPick.menu : null;
   let pendingTk = pendingDupTasks.get(collab.id);
   // Só age se houver algo pendente e não expirado
   let hasEv = pendingEv && (Date.now() - pendingEv.timestamp < EXP_MS);
@@ -7616,7 +7632,7 @@ async function tryDupBypass(collab, text) {
   };
 
   if (choice === '3') {
-    if (hasEv) pendingDupEvents.delete(collab.id);
+    if (hasEv) _removeEventDupMenu(collab.id, pendingEv); // so o menu escolhido; outro pendente sobrevive
     if (hasTk) pendingDupTasks.delete(collab.id);
     await closeDupIntent('denied', 'dup_bypass choice=3');
     return { reply: 'Ok, cancelado. Me passa de novo quando quiser criar.' };
@@ -7624,7 +7640,7 @@ async function tryDupBypass(collab, text) {
 
   // Evento pendente tem prioridade (microconfirm de evento vem antes de task)
   if (hasEv) {
-    pendingDupEvents.delete(collab.id);
+    _removeEventDupMenu(collab.id, pendingEv); // EVENT-DUP-MENU-CLOBBER: remove so o resolvido
     const e = pendingEv.event;
     console.log(`[DupBypass] event choice=${choice} "${String(e.title).slice(0,40)}"`);
     if (choice === '1') return { reply: `Certo! Já está na agenda como _${e.title}_. Nada mudou.` };

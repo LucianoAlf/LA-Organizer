@@ -165,3 +165,62 @@ test('registerBatchDupConflict: conflito único segue amarrando normalmente', ()
   assert.strictEqual(st.menu.candidateTitle, 'Liberar a folha para conferência da Direção');
   assert.strictEqual(st.target.title, 'Liberar a folha para conferência da Direção');
 });
+
+// ── pickEventDupMenu (EVENT-DUP-MENU-CLOBBER, Jéssica 25/07) ──────────────────
+const { pickEventDupMenu } = require('./dup-choice');
+
+const _menu = (title, ageMs, now) => ({ event: { title }, timestamp: now - ageMs });
+
+test('CASO JÉSSICA: quote da Festa da Mari casa mesmo com Viagem por cima (não clobra)', () => {
+  const now = 1_000_000_000;
+  const menus = [ _menu('Festa da Mari', 3*60*1000, now), _menu('Viagem para SP', 30*1000, now) ];
+  const got = pickEventDupMenu(menus, { quotedText: 'Achei um parecido: "Festa da Mari". Responde 1/2/3', nowMs: now });
+  assert.strictEqual(got.menu.event.title, 'Festa da Mari');
+  assert.strictEqual(got.byQuote, true);
+});
+
+test('sem quote: pega o MAIS RECENTE vivo (comportamento antigo preservado)', () => {
+  const now = 1_000_000_000;
+  const menus = [ _menu('Festa da Mari', 3*60*1000, now), _menu('Viagem para SP', 30*1000, now) ];
+  const got = pickEventDupMenu(menus, { quotedText: '', nowMs: now });
+  assert.strictEqual(got.menu.event.title, 'Viagem para SP');
+  assert.strictEqual(got.byQuote, false);
+});
+
+test('quote que não cita título vivo → cai no mais recente', () => {
+  const now = 1_000_000_000;
+  const menus = [ _menu('Festa da Mari', 60*1000, now) ];
+  const got = pickEventDupMenu(menus, { quotedText: 'qualquer coisa sem título', nowMs: now });
+  assert.strictEqual(got.menu.event.title, 'Festa da Mari');
+  assert.strictEqual(got.byQuote, false);
+});
+
+test('menu expirado (>10min) não é selecionável', () => {
+  const now = 1_000_000_000;
+  assert.strictEqual(pickEventDupMenu([ _menu('Velha', 11*60*1000, now) ], { nowMs: now }), null);
+  // ...mas o quote não ressuscita menu que já saiu da janela (memória-only, sem DB fallback)
+  assert.strictEqual(pickEventDupMenu([ _menu('Velha', 11*60*1000, now) ], { quotedText: 'Velha', nowMs: now }), null);
+});
+
+test('lista vazia / degenerada → null', () => {
+  for (const v of [null, undefined, [], 42]) assert.strictEqual(pickEventDupMenu(v, {}), null);
+});
+
+test('quote casa o mais ANTIGO quando é ele o citado (varre do recente, mas título manda)', () => {
+  const now = 1_000_000_000;
+  const menus = [ _menu('Reunião A', 5*60*1000, now), _menu('Reunião B', 20*1000, now) ];
+  const got = pickEventDupMenu(menus, { quotedText: 'menu citado: Reunião A', nowMs: now });
+  assert.strictEqual(got.menu.event.title, 'Reunião A');
+});
+
+// Catraca de FONTE: o helper de evento só resolve o clobber se o engine (a) empilhar em vez
+// de sobrescrever e (b) escolher pelo quote na resolução.
+const fs = require('node:fs');
+const path = require('node:path');
+const EVENG = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+test('engine: dup de evento empilha (não clobra) e resolve por pickEventDupMenu/quote', () => {
+  assert.ok(EVENG.includes('_pushEventDupMenu(collaborator.id, e)'), 'set virou append?');
+  assert.ok(!/pendingDupEvents\.set\(collaborator\.id, \{ event/.test(EVENG), 'ainda há set clobber direto');
+  assert.match(EVENG, /pickEventDupMenu\(pendingDupEvents\.get\(collab\.id\)[^)]*\{ quotedText/, 'resolução não usa o quote');
+  assert.ok(!/pendingDupEvents\.delete\(collab\.id\)/.test(EVENG), 'ainda apaga a lista inteira em vez do escolhido');
+});
