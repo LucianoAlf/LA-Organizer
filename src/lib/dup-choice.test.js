@@ -134,3 +134,34 @@ test('pickDupBypassIntentForReply: quote do menu + fresca também recupera', () 
   const fresh = dupIntent({ payload: { _dup_bypass: true, drafts: [{ title: 'Tarefa Z' }] } });
   assert.strictEqual(pickDupBypassIntentForReply([fresh], { quotedText: menuQuote('Tarefa Z') }), fresh);
 });
+
+// ── registerBatchDupConflict (DUP-BATCH-MENU-MISBIND, Ana 07/07 07:04→07:05 BRT) ──
+// Lote de 4 tarefas, 3 caíram no detector de dup. O menu exibido citou a PRIMEIRA
+// ("Liberar a folha para conferência da Direção"); a Ana respondeu "2" e o TOM criou
+// a ÚLTIMA ("Avisar William sobre treinamentos"). Em pending_intents as 3 intents
+// abrem no mesmo instante (07:04:49) e a resolution=confirmed cai na do William.
+const { registerBatchDupConflict } = require('./dup-choice');
+
+const loteAna = [
+  { menu: { type: 'dup_task', candidateTitle: 'Liberar a folha para conferência da Direção' },
+    target: { title: 'Liberar a folha para conferência da Direção' } },
+  { menu: { type: 'dup_task', candidateTitle: 'Iniciar acesso ao novo sistema RH' },
+    target: { title: 'Iniciar acesso ao novo sistema RH' } },
+  { menu: { type: 'dup_task', candidateTitle: 'Avisar William sobre treinamentos' },
+    target: { title: 'Avisar William sobre treinamentos' } },
+];
+
+test('registerBatchDupConflict: lote da Ana — menu e alvo do "1/2/3" saem do MESMO conflito', () => {
+  let st = { menu: null, target: null };
+  for (const c of loteAna) st = registerBatchDupConflict(st, c);
+  assert.strictEqual(st.menu.candidateTitle, 'Liberar a folha para conferência da Direção');
+  assert.strictEqual(st.target.title, st.menu.candidateTitle,
+    'o "2" tem que criar a tarefa que o menu mostrou, não a última do lote');
+  assert.notStrictEqual(st.target.title, 'Avisar William sobre treinamentos');
+});
+
+test('registerBatchDupConflict: conflito único segue amarrando normalmente', () => {
+  const st = registerBatchDupConflict({ menu: null, target: null }, loteAna[0]);
+  assert.strictEqual(st.menu.candidateTitle, 'Liberar a folha para conferência da Direção');
+  assert.strictEqual(st.target.title, 'Liberar a folha para conferência da Direção');
+});

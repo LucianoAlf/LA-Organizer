@@ -60,7 +60,7 @@ const { classifyAutoRetry } = require('./lib/auto-retry-outcome');
 const { friendlyInventoryError } = require('./lib/inventory-error-message');
 const { decideTaskDoneFromQuote } = require('./services/taskdone-quote');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
-const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./lib/dup-choice');
+const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { normalizeHabitAliases } = require('./utils/habit-field-alias');
 const { normalizeHabitFrequency } = require('./utils/habit-frequency');
@@ -5487,17 +5487,6 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             // Sprint 31.4 Bug-B fix: armazena insertRow validado (não action bruto do LLM)
             // garante created_by correto, context sanitizado, todos os campos validados.
             const _pendingTask = { ...insertRow, created_by: collaborator.id };
-            pendingDupTasks.set(collaborator.id, { task: _pendingTask, timestamp: Date.now() });
-            // Sprint 31.4 Bug-A fix: persistir no DB pra sobreviver pm2 restart.
-            // Usa pending_intents (kind=task_creation, _dup_bypass=true no payload).
-            try {
-              await pendingIntents.openIntent(
-                collaborator.id,
-                'task_creation',
-                { drafts: [_pendingTask], _dup_bypass: true },
-                null,
-              );
-            } catch (_pie) { console.warn('[DupBypass] pending_intent persist err (non-fatal):', _pie.message); }
             // A1: retornar suspect-payload. INSERT NÃO ocorre. Skill processa no novo turno.
             _taskIntegrityPayload = {
               severity: 'soft',
@@ -5505,6 +5494,25 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
               conflicts: _taskDupResult.probable.slice(0, 3).map(x => ({ id: x.id, title: x.title, status: x.status, due_date: x.due_date, _score: x._score })),
               candidateTitle: a.title.trim(),
             };
+            // DUP-BATCH-MENU-MISBIND (Ana 07/07): menu e alvo do "1/2/3" saem do MESMO
+            // conflito — só o primeiro do lote amarra. Ver lib/dup-choice.js.
+            const _dupBind = registerBatchDupConflict(
+              { menu: integrityPayload, target: null },
+              { menu: _taskIntegrityPayload, target: _pendingTask },
+            );
+            if (_dupBind.target) {
+              pendingDupTasks.set(collaborator.id, { task: _dupBind.target, timestamp: Date.now() });
+              // Sprint 31.4 Bug-A fix: persistir no DB pra sobreviver pm2 restart.
+              // Usa pending_intents (kind=task_creation, _dup_bypass=true no payload).
+              try {
+                await pendingIntents.openIntent(
+                  collaborator.id,
+                  'task_creation',
+                  { drafts: [_dupBind.target], _dup_bypass: true },
+                  null,
+                );
+              } catch (_pie) { console.warn('[DupBypass] pending_intent persist err (non-fatal):', _pie.message); }
+            }
           }
         } catch (_detErr) {
           console.warn('[IntegrityCheck] task dup detector err (non-fatal):', _detErr.message);

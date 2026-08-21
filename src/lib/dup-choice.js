@@ -98,4 +98,17 @@ function pickDupBypassIntentForReply(intents, opts = {}) {
   return pickFreshDupBypassIntent(intents, opts);
 }
 
-module.exports = { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, DUP_BYPASS_MAX_AGE_MS };
+// DUP-BATCH-MENU-MISBIND (Ana 07/07 07:04→07:05 BRT): num lote com 2+ conflitos de dup,
+// o menu exibido é o do PRIMEIRO conflito (o engine só acumula `if (!integrityPayload)`,
+// Sprint 31/02-06, quando o lote deixou de abortar no 1º), mas o alvo do "1/2/3" era
+// regravado a cada conflito e ficava com o ÚLTIMO. A Ana respondeu "2" ao menu de
+// "Liberar a folha para conferência da Direção" e o TOM criou "Avisar William sobre
+// treinamentos" — as 3 intents do lote abrem no mesmo instante e a resolution=confirmed
+// caiu na última. Menu e alvo passam a sair do MESMO conflito: o primeiro.
+function registerBatchDupConflict(state, conflict) {
+  const st = state || { menu: null, target: null };
+  if (st.menu) return st;
+  return { menu: conflict.menu, target: conflict.target };
+}
+
+module.exports = { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, DUP_BYPASS_MAX_AGE_MS };
