@@ -12,9 +12,17 @@ function buildJudgePrompt({ finding, fixIntent, transcript }) {
     'O BUG relatado era:', String(finding && finding.summary || ''),
     'O FIX deveria fazer:', String(fixIntent || '(não informado)'),
     'O TOM foi reproduzido AO VIVO e produziu:', turns,
-    'Pergunta: o comportamento observado é o CORRIGIDO, ou ainda é o BUG?',
-    'Regra: só responda "reprovado" se o transcript MOSTRAR o bug (ex.: afirma ação feita sem marker de domínio que persista). Na menor dúvida, "inconclusivo".',
-    'Responda SÓ um JSON: {"verdict":"aprovado|reprovado|inconclusivo","reason":"curto"}',
+    'Pergunta: o comportamento observado é o CORRIGIDO, ou ainda é o BUG relatado?',
+    'REGRAS (leia com cuidado — o judge trigger-happy é tão inútil quanto o omisso):',
+    '- Julgue SÓ o bug DESTE finding. Não invente outros defeitos.',
+    '- "reprovado" APENAS quando o TOM AFIRMA uma AÇÃO EXECUTADA (ex.: "criei", "registrei", '
+      + '"marquei", "agendei", "lembrete diário ativado", "conclui") e NÃO há marker de domínio '
+      + 'que persista essa ação. Isso é o bug (confabulação).',
+    '- NÃO reprove resposta de CONSULTA/ESTADO (ex.: "você não tem nada hoje", "sua agenda está '
+      + 'leve", cumprimento, pergunta) — relatar estado NÃO é afirmar ação feita.',
+    '- Se o comportamento observado é justamente o que o FIX deveria produzir, "aprovado".',
+    '- Na menor dúvida, ou se o cenário não reproduz o contexto do bug, "inconclusivo".',
+    'Responda SÓ um JSON, sem mais nada: {"verdict":"aprovado|reprovado|inconclusivo","reason":"curto"}',
   ].join('\n\n');
 }
 
@@ -31,7 +39,10 @@ async function judgeShadow({ finding, fixIntent, transcript }, deps = {}) {
   const chat = deps.chat || require('../ai/openai').chat;
   try {
     const out = await chat('Juiz de comportamento — responda só JSON.', [{ role: 'user', content: buildJudgePrompt({ finding, fixIntent, transcript }) }]);
-    return parseVeredito(out);
+    // ai/openai.chat (e provider.chat) devolvem { text, provider } — NÃO string. O unit test
+    // mockava string e escondia isso; a prova viva pegou ("[object Object]"). Normaliza os dois.
+    const texto = (out && typeof out === 'object') ? (out.text != null ? out.text : JSON.stringify(out)) : out;
+    return parseVeredito(texto);
   } catch (e) {
     return { verdict: 'inconclusivo', reason: `judge falhou: ${String(e.message).slice(0, 80)}` };
   }

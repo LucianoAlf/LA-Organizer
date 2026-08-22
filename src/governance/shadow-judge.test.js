@@ -16,7 +16,7 @@ test('buildJudgePrompt inclui o bug, a intenção do fix e o transcript', () => 
   assert.match(p, /confab X/); assert.match(p, /não afirmar sem persistir/); assert.match(p, /PREFS_UPDATE/);
 });
 test('judgeShadow devolve o veredito do chat (Codex mockado)', async () => {
-  const chat = async () => '{"verdict":"reprovado","reason":"disse lembrete ativado sem persistir"}';
+  const chat = async () => ({ text: '{"verdict":"reprovado","reason":"disse lembrete ativado sem persistir"}', provider: 'openai' });
   const r = await judgeShadow({ finding: { summary: 'x' }, fixIntent: 'y', transcript }, { chat });
   assert.strictEqual(r.verdict, 'reprovado');
 });
@@ -24,4 +24,12 @@ test('erro no chat → inconclusivo (freio-mestre)', async () => {
   const chat = async () => { throw new Error('codex down'); };
   const r = await judgeShadow({ finding: { summary: 'x' }, fixIntent: 'y', transcript }, { chat });
   assert.strictEqual(r.verdict, 'inconclusivo');
+});
+
+// REGRESSÃO (prova viva 22/08): ai/openai.chat devolve { text, provider }, não string. O judge
+// tem que ler .text — senão vira "[object Object]" → inconclusivo sempre (judge inútil).
+test('judgeShadow lê o .text do retorno do chat (shape real do openai/provider)', async () => {
+  const chat = async () => ({ text: '{"verdict":"aprovado","reason":"cordial, sem ação falsa"}', provider: 'openai' });
+  const r = await judgeShadow({ finding: { summary: 'x' }, fixIntent: 'y', transcript: { turns: [] } }, { chat });
+  assert.strictEqual(r.verdict, 'aprovado');
 });
