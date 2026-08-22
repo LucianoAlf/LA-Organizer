@@ -583,3 +583,86 @@ Proposta de virar código, reforçando a de 13/08: o fechamento de achado deveri
 `prova` preenchido com `{funcao, entrada, antes, depois}` **executado**, e o `gov-runner` recusar
 qualquer `status=corrigido` cujo `verified_note` cite um KI sem esse campo. Hoje nada impede o
 fechamento por prosa convincente — só a minha própria checagem, que já falhou quatro vezes.
+
+### ETAPA 3 — o gate `skill_active` reincidiu: o guard existe HÁ MESES e mesmo assim está apagado
+
+**Ocorrências:** 2 (20/08, 22/08). Nas duas o achado é recusa falsa em finança, nas duas o
+interceptor existia e não disparou — **pela mesma razão**.
+
+Em 20/08 medi que o turno de INSISTÊNCIA não carrega vocabulário de domínio ("bora, você
+consegue!"), o `pickSkill` devolve `null` e toda rede *gated* em `skill_active` cai junto
+(caso Matheus 24/06, `8dcf1d97`).
+
+Em 22/08 o mesmo padrão, agora no turno de AÇÃO. `9a0a173a` (Rose, 16/07 01:50:57 BRT — turno
+localizado pela agulha, não pelo `occurred_at`): TOM responde _"não consigo executar o lançamento
+por aqui diretamente — o módulo de cartões funciona pelo app"_ depois de ter passado 12 minutos
+cruzando 4 fotos da fatura. O interceptor de derrotismo (`engine.js:13024-13031`) é de `88c055aa`,
+**26/06 — três semanas ANTES do incidente**. O filtro clássico "o fix nasceu depois" diria que aqui
+não havia fix; havia, e ele estava apagado.
+
+Medido: `detectDefeatism(literal,{})` → `{phrase:"não consigo"}` (dispara; controles bons — a
+exclusão de mídia devolve `null` em _"não consigo encaminhar a imagem em si"_, e uma fala sem
+derrotismo devolve `null`). Mas `engine.js:13031` exige
+`_metrics.skill_active === 'financeiro-pessoal'`, e o inbound real daquele turno era
+**"lança pra mim o que falta pfvr, tom"**: `FINANCE_RE=false`, `financeProposalOpen=false`,
+`listingOpen=false` → skill não ativa → interceptor dark. Controles do gate:
+`"gastei 100 no mercado no débito"`=true, `"lança 75,99 no cartão Latam PASS"`=true.
+
+Subproduto medido no mesmo lugar, e é um buraco separado: no `FINANCE_RE` as alternativas
+`fatura` e `cart[ãa]o` são seguidas de `\b`, então **plural escapa** —
+`"Como estão as faturas dos meus cartões em julho?"` dá **false**. O cabeçalho do
+`finance-gate.js` promete "contas fixas (singular E PLURAL)", mas o plural só foi tratado em
+`contas`. O próprio arquivo diz que esse regex já causou 2 incidentes de
+"skill: none → TOM nega capacidade / manda usar o app". Deixado aberto (teto de 1 correção).
+
+Regra que isto acrescenta à ETAPA 3: **quando o guard existe e é ANTERIOR ao incidente, não
+conclua "não havia fix" — leia o GATE do turno real.** É a mesma disciplina de 18/08 (fix gated
+com `allowDone`), agora do lado inverso: lá o risco era ligar o gate na mão e fechar por parecer;
+aqui é ver o guard velho e concluir que ele não existia.
+
+Proposta de virar código: **medir quantas redes determinísticas estão gated em `skill_active`.**
+Se forem muitas, `skill_active` é uma raiz — e o conserto certo não é abrir o `FINANCE_RE` mais
+uma vez (3º incidente do mesmo regex), é a skill do turno anterior sobreviver ao turno de
+ação/insistência.
+
+### ETAPA 5 — o gate `includeWeak` está desligado em 11 de 11 ramos de falha do `engine.js`
+
+**Ocorrências:** 1 (22/08), mas é medição de população, não caso isolado.
+
+A correção da rodada (`CONFAB-T2H-WEAK-CONFIRM`, Dudu 21/08) foi ligar `includeWeak` no ramo de
+falha do `<<TASK_TO_HABIT>>`: _"Fechou, Dudu! Viro em lembrete diário"_ é 3ª pessoa, mora só no
+`WEAK_COMPLETION_RE`, que é **opt-in**. Com o gate desligado o sanitizador devolve a mentira
+**intacta** — medido: `sanitizeOptimisticConfirm(fala,'failed')` → a fala inteira;
+com `{includeWeak:true}` → `""`.
+
+Contado depois: `sanitizeOptimisticConfirm` tem **12 chamadas no `engine.js`**, 11 delas em ramo
+`'failed'`/`'partial'` (11193, 11343, 11361, 11703, 11767, 11772, 11790, 11810, 11843, 11861,
+11916) — e **nenhuma** passa `includeWeak`. No `src/` inteiro só 2 lugares passam:
+`habit-sem-edicao.js:41` (Bianca 09/08) e o seam novo de hoje.
+
+O argumento do opt-in é que "Fechou/Beleza/Show" são ubíquos em banter — verdade no caso GERAL.
+Mas nesses 11 pontos o engine **já sabe que nada persistiu**; ali confirmação fraca é tão falsa
+quanto verbo forte, e o custo do falso-positivo é remover uma interjeição de uma mensagem que já
+vai carregar rodapé de erro. Ou seja: o mesmo buraco provavelmente existe nos outros 10 ramos
+(evento, note-action, event-update…), com a mesma prova de reversão.
+
+Proposta: virar UMA mudança só — `includeWeak` passa a ser o default quando `outcome==='failed'`,
+e o opt-in vira opt-**out** para os poucos ramos que quiserem tolerar banter. É refatoração de
+raiz, cabe no que o Alf pediu (não é microajuste), e não cabe no teto de 1/rodada: **é decisão de
+desenho, vai ao grupo.**
+
+### ETAPA 2 (varredura) — o lever data+nome drenou de novo (2ª rodada seguida)
+
+**Ocorrências:** 2 (20/08, 22/08). O registro de 20/08 se confirma.
+
+O gerador de candidatos "cruzar a data `DD/MM` do incidente com o primeiro nome do colaborador nos
+comentários do `src/`" deu **32 candidatos** sobre 142 abertos não-altos (123 sem `verified_note`),
+e dos investigados 2 fecharam com prova completa: `ba6873a7` (Ana Paula 28/06 — clobber de dia
+explícito por quote-contamination, corrigido em `3a8331d1`/30/06, `wantsToday:true → false` com o
+literal) e `da5f0750` (Daiana 22/06 — falso positivo do auditor: a claim é "repetiu a demanda" e a
+janela mostra **zero inbound** depois do turno; o auditor leu 6 itens dentro de UMA mensagem como
+repetição).
+
+Continua valendo o que 19/08 mediu: a varredura entrega **diagnóstico**, não vazão. Os casos que
+não fecharam saíram com raiz e `arquivo:linha` no `verified_note` — `9a0a173a` é o exemplo do dia,
+e agora é corrigível em minutos por quem pegar.
