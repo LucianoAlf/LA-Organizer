@@ -201,6 +201,42 @@ async function main() {
     const r = await rodarCicloGovernanca(supabase, { ymd, force, postar });
     console.log(`[GovRunner] ${ymd} ${JSON.stringify(r)}`);
     if (r && r.rodou) await aplicarRestart(headAntes, sujosAntes, postar);
+
+    // ── SHADOW (sonda-viva): verifica AO VIVO o que o ciclo acabou de marcar corrigido ──
+    // Roda DEPOIS do aplicarRestart de propósito: o fix já está no disco (o require do engine
+    // abaixo é o 1º neste processo → pega o código novo). Freio-mestre: best-effort — qualquer
+    // erro aqui NUNCA quebra o ciclo. Só `reprovado` reabre/barra; o resto anota.
+    // Ver docs/superpowers/specs/2026-08-22-shadow-governanca-design.md.
+    try {
+      const { shadowPass } = require('../governance/shadow-pass');
+      const { isReproducible } = require('../governance/shadow-reproducibility');
+      const { runShadow } = require('../governance/shadow-runner');
+      const { judgeShadow } = require('../governance/shadow-judge');
+      const engine = require('../engine');
+      const whatsapp = require('../services/whatsapp');
+      const turnClaim = require('../services/turn-claim');
+      const chat = require('../ai/openai').chat;
+      const qaPhone = (process.env.TOM_QA_PHONES || '5500000000001').split(',')[0].trim();
+
+      const { data: alvos } = await supabase.from('tom_audit_findings')
+        .select('id, summary, evidence, category, group_id, promoted_code, verified_note')
+        .eq('verified_result', 'confirmado').eq('status', 'corrigido')
+        .gte('verified_at', cicloInicio).limit(10);
+
+      if (alvos && alvos.length) {
+        const comIntent = alvos.map((f) => ({ ...f, fix_intent: f.verified_note || f.summary }));
+        const res = await shadowPass(comIntent, {
+          supabase, isReproducible, runShadow, judgeShadow,
+          engine, whatsapp, turnClaim, qaPhone, chat,
+        });
+        const barrados = res.filter((x) => x.barrou);
+        console.log(`[Shadow] ${res.length} verificados, ${barrados.length} reprovados (reabertos)`);
+      } else {
+        console.log('[Shadow] nenhum finding corrigido neste ciclo pra verificar ao vivo');
+      }
+    } catch (e) {
+      console.error('[Shadow] passe falhou (não quebra o ciclo):', e.message);
+    }
   } catch (e) {
     // Falhar calado é o pior desfecho: ninguém olha log, e o grupo assume que rodou.
     console.error('[GovRunner] ciclo quebrou:', e.stack || e.message);
