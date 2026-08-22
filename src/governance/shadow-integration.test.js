@@ -21,3 +21,10 @@ test('a sonda é best-effort (try/catch com etiqueta [Shadow]) e usa a âncora d
   assert.match(SRC, /\[Shadow\][\s\S]{0,400}?catch/);
   assert.match(SRC, /gte\('verified_at', cicloInicio\)/);
 });
+test('gov-runner purga o cache de src/ antes de dar require no engine (senão testa código velho)', () => {
+  assert.match(SRC, /delete require\.cache\[k\][\s\S]{0,200}?require\('\.\.\/engine'\)/);
+});
+test('gov-runner pula a sombra quando TOM_QA_PHONES não está configurado (sem fabricar default)', () => {
+  assert.match(SRC, /TOM_QA_PHONES.*\|\|\s*''/);
+  assert.match(SRC, /pulado: TOM_QA_PHONES não configurado/);
+});

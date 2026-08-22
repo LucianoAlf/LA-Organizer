@@ -208,31 +208,41 @@ async function main() {
     // erro aqui NUNCA quebra o ciclo. Só `reprovado` reabre/barra; o resto anota.
     // Ver docs/superpowers/specs/2026-08-22-shadow-governanca-design.md.
     try {
-      const { shadowPass } = require('../governance/shadow-pass');
-      const { isReproducible } = require('../governance/shadow-reproducibility');
-      const { runShadow } = require('../governance/shadow-runner');
-      const { judgeShadow } = require('../governance/shadow-judge');
-      const engine = require('../engine');
-      const whatsapp = require('../services/whatsapp');
-      const turnClaim = require('../services/turn-claim');
-      const chat = require('../ai/openai').chat;
-      const qaPhone = (process.env.TOM_QA_PHONES || '5500000000001').split(',')[0].trim();
-
-      const { data: alvos } = await supabase.from('tom_audit_findings')
-        .select('id, summary, evidence, category, group_id, promoted_code, verified_note')
-        .eq('verified_result', 'confirmado').eq('status', 'corrigido')
-        .gte('verified_at', cicloInicio).limit(10);
-
-      if (alvos && alvos.length) {
-        const comIntent = alvos.map((f) => ({ ...f, fix_intent: f.verified_note || f.summary }));
-        const res = await shadowPass(comIntent, {
-          supabase, isReproducible, runShadow, judgeShadow,
-          engine, whatsapp, turnClaim, qaPhone, chat,
-        });
-        const barrados = res.filter((x) => x.barrou);
-        console.log(`[Shadow] ${res.length} verificados, ${barrados.length} reprovados (reabertos)`);
+      const qaEnv = (process.env.TOM_QA_PHONES || '').trim();
+      if (!qaEnv) {
+        console.log('[Shadow] pulado: TOM_QA_PHONES não configurado (barreira de replay off)');
       } else {
-        console.log('[Shadow] nenhum finding corrigido neste ciclo pra verificar ao vivo');
+        const { shadowPass } = require('../governance/shadow-pass');
+        const { isReproducible } = require('../governance/shadow-reproducibility');
+        const { runShadow } = require('../governance/shadow-runner');
+        const { judgeShadow } = require('../governance/shadow-judge');
+        // O ciclo já carregou o engine (group-chat post) → require devolveria código PRÉ-fix.
+        // Purga o cache de src/ pra a sombra testar o que acabou de ir pro disco.
+        for (const k of Object.keys(require.cache)) {
+          if (k.includes('/src/') || k.includes('\\src\\')) delete require.cache[k];
+        }
+        const engine = require('../engine');
+        const whatsapp = require('../services/whatsapp');
+        const turnClaim = require('../services/turn-claim');
+        const chat = require('../ai/openai').chat;
+        const qaPhone = qaEnv.split(',')[0].trim();
+
+        const { data: alvos } = await supabase.from('tom_audit_findings')
+          .select('id, summary, evidence, category, group_id, promoted_code, verified_note')
+          .eq('verified_result', 'confirmado').eq('status', 'corrigido')
+          .gte('verified_at', cicloInicio).limit(10);
+
+        if (alvos && alvos.length) {
+          const comIntent = alvos.map((f) => ({ ...f, fix_intent: f.verified_note || f.summary }));
+          const res = await shadowPass(comIntent, {
+            supabase, isReproducible, runShadow, judgeShadow,
+            engine, whatsapp, turnClaim, qaPhone, chat,
+          });
+          const barrados = res.filter((x) => x.barrou);
+          console.log(`[Shadow] ${res.length} verificados, ${barrados.length} reprovados (reabertos)`);
+        } else {
+          console.log('[Shadow] nenhum finding corrigido neste ciclo pra verificar ao vivo');
+        }
       }
     } catch (e) {
       console.error('[Shadow] passe falhou (não quebra o ciclo):', e.message);

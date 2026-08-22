@@ -16,3 +16,10 @@ test('categoria de cron/multi-turno NÃO é reproduzível', () => {
 test('sem evidência aferível → não reproduzível', () => {
   for (const v of [null, undefined, {}, { category: 'confabulation' }]) assert.strictEqual(isReproducible(v).ok, false);
 });
+test('lembrete diário (bug-farol de turno único) É reproduzível — não pode ser excluído como multi-turno', () => {
+  const r = isReproducible({
+    category: 'confabulation',
+    evidence: 'USUÁRIO: me lembra todo dia de X\nTOM: ✅ lembrete diário ativado',
+  });
+  assert.strictEqual(r.ok, true);
+});

@@ -45,3 +45,19 @@ test('erro do runner → inconclusivo (não barra)', async () => {
   assert.strictEqual(out[0].verdict, 'inconclusivo');
   assert.strictEqual(out[0].barrou, false);
 });
+test('finding cujo runShadow rejeita não impede o próximo de ser processado', async () => {
+  let chamada = 0;
+  const d = deps({
+    runShadow: async () => {
+      chamada += 1;
+      if (chamada === 1) throw new Error('estourou');
+      return { transcript: { turns: [{ userText: 'x', reply: 'ok', markers: [], persisted: {} }] }, erro: null };
+    },
+    judgeShadow: async () => ({ verdict: 'aprovado', reason: 'ok' }),
+  });
+  const out = await shadowPass([{ id: 'f1' }, { id: 'f2' }], d);
+  assert.strictEqual(out.length, 2);
+  assert.strictEqual(out[0].verdict, 'inconclusivo');
+  assert.strictEqual(out[0].barrou, false);
+  assert.strictEqual(out[1].verdict, 'aprovado');
+});

@@ -3,7 +3,7 @@
 // finge cobrir cron/grupo/multi-turno — esses caem no gate determinístico via inconclusivo).
 const CATS_OK = new Set(['confabulation', 'dropped_request']);
 // Sinais de cenário caro/irreproduzível no texto do finding.
-const MULTITURNO_RE = /fatura|parte\s*[1-9]|cruzamento|cobran[çc]a|lote|di[áa]ri[ao]|todos os dias|parcial|em lote|menu.*dup|reply-quote/i;
+const MULTITURNO_RE = /fatura|parte\s*[1-9]|cruzamento|cobran[çc]a|lote|todos os dias|parcial|em lote|menu.*dup|reply-quote/i;
 
 function isReproducible(finding) {
   const f = finding || {};
