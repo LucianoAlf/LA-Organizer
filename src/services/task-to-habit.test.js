@@ -266,11 +266,15 @@ test('recorrência sem equivalente (mensal) → unsupported_recurrence, sem efei
   assert.strictEqual(tasks[0].series_ended_at, null);
 });
 
-test('tarefa NÃO recorrente não é convertida (lembrete recorrente exige série)', async () => {
+test('tarefa NÃO recorrente vira OFERTA (oneoff_task), não converte nem cai no beco', async () => {
+  // T2H-ONEOFF-OFFER (Dudu 21/08): antes devolvia not_found (beco "nome exato"). Agora, quando a
+  // tarefa unica existe, oferece criar habito diario. NAO converte (ok:false) — a conversao de
+  // uma unica-em-serie continua exigindo molde recorrente; muda so a fala de saida.
   const tasks = [T({ id: 'tpl', title: 'Ligar pro contador' })];
   const r = await convertTaskToHabit({ supabase: makeDb({ tasks }), collaboratorId: OWNER, taskTitle: 'Ligar pro contador' });
   assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.reason, 'not_found');
+  assert.strictEqual(r.reason, 'oneoff_task');
+  assert.strictEqual(r.task.title, 'Ligar pro contador');
 });
 
 test('série já encerrada não é alvo', async () => {
@@ -669,4 +673,46 @@ test('T2H: failed strippa a fraca por DEFAULT; override false ainda preserva', (
   assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed'), '');
   assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed', { includeWeak: true }), '');
   assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed', { includeWeak: false }), FALA_DUDU);
+});
+
+// T2H-ONEOFF-OFFER (Dudu 21/08): tarefa ÚNICA (não recorrente) não vira not_found-beco — o
+// serviço devolve reason 'oneoff_task' com a tarefa, pro engine OFERECER criar hábito diário.
+test('T2H tarefa única "Pegar ponto no AliExpress" → oneoff_task (não not_found)', async () => {
+  const tasks = [T({ id: 'tk1', title: 'Pegar ponto no AliExpress', due_date: '2026-08-22' })];
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks }), collaboratorId: OWNER, taskTitle: 'Pegar ponto no aliExpress' });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'oneoff_task');
+  assert.strictEqual(r.task.title, 'Pegar ponto no AliExpress');
+});
+
+test('T2H sem tarefa nenhuma segue not_found (não inventa oferta)', async () => {
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks: [] }), collaboratorId: OWNER, taskTitle: 'coisa que não existe' });
+  assert.strictEqual(r.reason, 'not_found');
+});
+
+test('T2H tarefa única concluída não vira oferta', async () => {
+  const tasks = [T({ id: 'tk2', title: 'Pegar ponto', status: 'done', due_date: '2026-08-20' })];
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks }), collaboratorId: OWNER, taskTitle: 'Pegar ponto' });
+  assert.strictEqual(r.reason, 'not_found');
+});
+
+test('renderConversionResult: oneoff_task nomeia a tarefa e oferece hábito diário', () => {
+  const out = renderConversionResult({ ok: false, reason: 'oneoff_task', task: { title: 'Pegar ponto no AliExpress' } });
+  assert.match(out, /tarefa única/i);
+  assert.match(out, /hábito diário/i);
+  assert.match(out, /Pegar ponto no AliExpress/);
+  assert.ok(!/nome exato/i.test(out), 'não pode cair no beco do nome exato');
+});
+
+// Catraca de FONTE: o oneoff_task só resolve o beco do Dudu se o engine (a) abrir a intent de
+// oferta e (b) ter o executor do "sim" que cria o hábito diário.
+const fs = require('node:fs');
+const path = require('node:path');
+const ENGINE = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+test('engine: abre a intent create_habit_daily quando a conversão vira oneoff_task', () => {
+  assert.match(ENGINE, /r\.reason === 'oneoff_task'[\s\S]{0,300}?openIntent\([\s\S]{0,120}?create_habit_daily/);
+});
+test('engine: o "sim" cria o hábito diário via applyHabitActions (executor determinístico)', () => {
+  assert.match(ENGINE, /userConfirm === 'yes' && target\.payload\?\.create_habit_daily\?\.name/);
+  assert.match(ENGINE, /applyHabitActions\(collab, \[\{ action: 'create', name: _hn, frequency: 'daily' \}\]/);
 });

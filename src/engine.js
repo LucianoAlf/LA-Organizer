@@ -10367,6 +10367,23 @@ async function processMessage(phone, text, raw = {}) {
         try { await whatsapp.sendMessage(phone, _outD); await logConversation(collab.id, 'outbound', _outD); } catch (_) { /* já persistiu */ }
         console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (delegate_confirm_${_rd.okCount || 0})`);
         return;
+      } else if (userConfirm === 'yes' && target.payload?.create_habit_daily?.name) {
+        // T2H-ONEOFF-OFFER (Dudu 21/08): "sim" à oferta de virar uma tarefa ÚNICA em hábito diário.
+        // Executa determinístico via applyHabitActions create (capacidade que já existe), sem
+        // depender do LLM re-emitir. Espelha os executores ancorado/batch/coord/delegate.
+        const _hn = target.payload.create_habit_daily.name;
+        let _okH = 0;
+        try {
+          const _rh = await applyHabitActions(collab, [{ action: 'create', name: _hn, frequency: 'daily' }], _confirmText);
+          _okH = (_rh && _rh.okCount) ? _rh.okCount : 0;
+        } catch (e) { console.warn('[T2HOneoffConfirm] exec err:', e.message); }
+        await pendingIntents.resolveIntent(target.id, _okH > 0 ? 'confirmed' : 'denied', `create_habit_daily (engine) ok=${_okH}`);
+        const _outH = _okH > 0
+          ? `✅ Pronto! Criei o hábito diário *${_hn}* — te lembro todo dia. 👊`
+          : '_não consegui criar o hábito agora — tenta de novo em instantes?_';
+        try { await whatsapp.sendMessage(phone, _outH); await logConversation(collab.id, 'outbound', _outH); } catch (_) { /* já persistiu */ }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (create_habit_daily_${_okH})`);
+        return;
       } else if (userConfirm === 'yes') {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
         // Injeta contexto inline pra LLM saber o que confirmar.
@@ -11561,6 +11578,7 @@ async function processMessage(phone, text, raw = {}) {
         const itemsT2H = (Array.isArray(parsedT2H) ? parsedT2H : [parsedT2H]).slice(0, 5);
         const footersT2H = [];
         let okT2H = 0;
+        let _t2hOfferName = null; // T2H-ONEOFF-OFFER: nome da tarefa única ofertada como hábito
         for (const it of itemsT2H) {
           if (!it || typeof it !== 'object') continue;
           let r;
@@ -11585,6 +11603,18 @@ async function processMessage(phone, text, raw = {}) {
           }
           if (r && r.ok) okT2H++;
           footersT2H.push(renderConversionResult(r));
+          // T2H-ONEOFF-OFFER (Dudu 21/08): a conversão falhou porque o alvo é uma tarefa ÚNICA,
+          // não uma rotina. renderConversionResult já ofereceu criar um hábito diário; aqui a
+          // gente abre a intent pra o "sim" executar via HABIT_ACTION create (capacidade que já
+          // existe). Só a 1ª oferta do lote — best-effort, não derruba o turno.
+          if (r && r.reason === 'oneoff_task' && r.task && r.task.title && !_t2hOfferName) {
+            _t2hOfferName = r.task.title;
+            try {
+              await pendingIntents.openIntent(collab.id, 'confirmation',
+                { create_habit_daily: { name: r.task.title } },
+                `Quer que eu crie um hábito diário "${r.task.title}"?`);
+            } catch (_) { /* intent best-effort */ }
+          }
           console.log(`[TaskToHabit] ${r && r.ok ? 'ok' : 'fail:' + (r && r.reason)} "${String(it.task_title || it.task_id || '').slice(0, 40)}" by ${last4T2H}`);
         }
         await logMarker(collab.id, 'TASK_TO_HABIT', okT2H > 0 ? 'executed' : 'rejected',

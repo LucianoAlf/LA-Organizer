@@ -109,7 +109,33 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
     }
     target = pool[0] || null;
   }
-  if (!target) return { ok: false, reason: 'not_found' };
+  if (!target) {
+    // T2H-ONEOFF-OFFER (Dudu 21/08): o universo acima é só MOLDES recorrentes. Quando o que
+    // existe é uma tarefa ÚNICA com esse título, o not_found virava o beco "me diz o nome exato"
+    // — o nome ele já sabe; o obstáculo real é que a tarefa não é rotina. Detecta a tarefa única
+    // pra OFERECER criar um hábito diário (capacidade que já existe), em vez do loop. Só quando
+    // há UMA candidata (ambíguo não chuta, igual ao ramo recorrente).
+    if (wantTitle) {
+      try {
+        const { data: avulsas } = await supabase
+          .from('tasks')
+          .select('id, title, status, recurrence_rule')
+          .eq('assigned_to', collaboratorId)
+          .is('recurrence_rule', null)
+          .limit(50);
+        const pool = (avulsas || [])
+          .filter((t) => t.status !== 'done' && t.status !== 'cancelled')
+          .filter((t) => {
+            const n = normTitle(t.title);
+            return n === wantTitle || n.includes(wantTitle) || wantTitle.includes(n);
+          });
+        if (pool.length === 1) {
+          return { ok: false, reason: 'oneoff_task', task: { id: pool[0].id, title: pool[0].title } };
+        }
+      } catch (_) { /* cai no not_found honesto abaixo */ }
+    }
+    return { ok: false, reason: 'not_found' };
+  }
 
   // 3) Calendário — traduzido da RRULE, nunca do que o LLM achou que era.
   const sched = rruleToHabitSchedule(target.recurrence_rule, { anchorDow: isoDowOfYmd(target.due_date) });
@@ -551,6 +577,11 @@ function renderConversionResult(r) {
   switch (r.reason) {
     case 'not_found':
       return '_não achei essa rotina recorrente no teu nome pra virar lembrete — me diz o nome exato dela?_';
+    // T2H-ONEOFF-OFFER: existe uma tarefa ÚNICA com esse nome (não é rotina). Em vez do beco
+    // "me diz o nome exato", nomeia a verdade e OFERECE criar um hábito diário (o "sim" cria via
+    // HABIT_ACTION — capacidade que já existe; a intent é aberta no engine).
+    case 'oneoff_task':
+      return `_Achei *${r.task.title}*, mas ela é uma tarefa única, não uma rotina. Quer que eu crie um hábito diário *${r.task.title}* — te lembrando todo dia?_`;
     case 'ambiguous': {
       const nomes = (r.candidates || []).map((c) => `*${c.title}*`).join(' / ');
       return `_tenho mais de uma rotina com esse nome (${nomes}) — qual delas?_`;
