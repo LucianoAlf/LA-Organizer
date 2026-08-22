@@ -136,6 +136,13 @@ finding (fixado OU em promoção)
 
 ## Fora de escopo (v1)
 
+- **Segundo portão explícito (pré-promoção a KI).** A decisão #1 previa dois portões
+  (fixados + promoções). A v1 implementa **um** passe pós-ciclo sobre os findings que o
+  ciclo marcou `corrigido`/`confirmado` (a promoção a KI carimba `corrigido`, então cai
+  no mesmo passe). Um checkpoint SEPARADO, rodando antes de a promoção gravar, fica pro
+  passo 2 — o ganho marginal sobre o pós-ciclo é baixo e o custo (um 2º ponto de chamada
+  no fluxo de promoção) não se paga em v1. Ruling registrado na revisão final 22/08.
+
 - Replay integral de multi-turno a partir do histórico (caro/frágil) — fica pro
   passo 2 se os `inconclusivo` incomodarem.
 - Judge no Grok/GPT-novo — passo 2, só se a diversidade do Codex provar insuficiente.
