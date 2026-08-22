@@ -11552,12 +11552,12 @@ async function processMessage(phone, text, raw = {}) {
         await logMarker(collab.id, 'TASK_TO_HABIT', 'rejected', 'invalid_json: ' + err.message, mT2H[1]);
         parsedT2H = null;
       }
+      const { convertTaskToHabit, renderConversionResult, baseDeFalhaT2H } = require('./services/task-to-habit');
       if (!parsedT2H) {
         // Nada persistiu → o texto não pode afirmar que virou lembrete.
-        reply = (sanitizeOptimisticConfirm(cleanT2H, 'failed') || '').trim()
+        reply = baseDeFalhaT2H(cleanT2H)
           || '_não consegui fazer essa conversão agora — me repete qual rotina?_';
       } else {
-        const { convertTaskToHabit, renderConversionResult } = require('./services/task-to-habit');
         const itemsT2H = (Array.isArray(parsedT2H) ? parsedT2H : [parsedT2H]).slice(0, 5);
         const footersT2H = [];
         let okT2H = 0;
@@ -11589,9 +11589,12 @@ async function processMessage(phone, text, raw = {}) {
         }
         await logMarker(collab.id, 'TASK_TO_HABIT', okT2H > 0 ? 'executed' : 'rejected',
           okT2H > 0 ? `ok=${okT2H}/${itemsT2H.length}` : `all_failed:${itemsT2H.length}`, null);
-        const baseT2H = okT2H > 0 ? cleanT2H : (sanitizeOptimisticConfirm(cleanT2H, 'failed') || '');
+        const baseT2H = okT2H > 0 ? cleanT2H : baseDeFalhaT2H(cleanT2H);
         const footT2H = footersT2H.filter(Boolean).join('\n');
-        reply = [String(baseT2H).trim(), footT2H].filter(Boolean).join('\n\n') || reply;
+        // Fallback honesto, não `reply`: `reply` ainda carrega o <<TASK_TO_HABIT>> cru, e a
+        // base agora pode ficar vazia (confirmação fraca removida inteira).
+        reply = [String(baseT2H).trim(), footT2H].filter(Boolean).join('\n\n')
+          || '_não consegui fazer essa conversão agora — me repete qual rotina?_';
       }
     }
   }

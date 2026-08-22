@@ -635,3 +635,35 @@ test('título exato ganha do parcial (não vira ambíguo à toa)', async () => {
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.template.id, 'exato');
 });
+
+// ---------- CONFAB-T2H-WEAK-CONFIRM (Dudu 21/08 18:31 BRT, finding fbb856ef) ----------
+// "Quer que me lembre todos os dias" → o LLM emitiu <<TASK_TO_HABIT>>, a conversão devolveu
+// not_found, e o engine appendou o rodapé honesto EMBAIXO da confirmação otimista. A pessoa
+// leu as duas coisas na mesma mensagem e perguntou "Nome exato do que ?".
+// O ramo de falha já chamava sanitizeOptimisticConfirm(x,'failed') — mas sem includeWeak, e
+// "Fechou" é 3ª pessoa (WEAK_COMPLETION_RE), fora do COMPLETION_CORE. Mesma decisão que o
+// respostaSemEdicaoDeHabito tomou em 10/08 (Bianca): quando o engine JÁ SABE que nada
+// persistiu, confirmação fraca é tão falsa quanto verbo forte.
+const { baseDeFalhaT2H } = require('./task-to-habit');
+
+const FALA_DUDU = 'Fechou, Dudu! Viro em lembrete diário — te chamo todo dia. Não vai precisar ficar me pedindo.';
+
+test('T2H que não persistiu nada não deixa confirmação fraca acima do rodapé honesto (Dudu 21/08)', () => {
+  const out = baseDeFalhaT2H(FALA_DUDU);
+  assert.ok(!/Fechou/i.test(out), `confirmação fraca sobreviveu: ${JSON.stringify(out)}`);
+  assert.ok(!/Viro em lembrete/i.test(out), `promessa de conversão sobreviveu: ${JSON.stringify(out)}`);
+});
+
+test('T2H: fala sem confirmação nenhuma sobrevive inteira', () => {
+  assert.strictEqual(baseDeFalhaT2H('Qual rotina exatamente?'), 'Qual rotina exatamente?');
+  assert.strictEqual(baseDeFalhaT2H(''), '');
+  assert.strictEqual(baseDeFalhaT2H(null), '');
+});
+
+// Caracterização da RAIZ: o sanitizador sem includeWeak devolve a mentira intacta. Fica
+// pinado pra não confundir "o guard não tem o vocabulário" com "o caller não liga o gate".
+test('T2H: a raiz é o gate desligado, não vocabulário ausente', () => {
+  const { sanitizeOptimisticConfirm } = require('../lib/optimistic-confirm');
+  assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed'), FALA_DUDU);
+  assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed', { includeWeak: true }), '');
+});

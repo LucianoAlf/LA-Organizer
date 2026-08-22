@@ -24,6 +24,7 @@
 
 const { rruleToHabitSchedule } = require('../utils/rrule-to-habit');
 const { endSeries1on1 } = require('./recurrence-engine');
+const { sanitizeOptimisticConfirm } = require('../lib/optimistic-confirm');
 
 const DEFAULT_TIME = '09:00';
 
@@ -590,8 +591,22 @@ function renderConversionResult(r) {
   }
 }
 
+/**
+ * Base da resposta quando a conversão NÃO persistiu nada — a fala do LLM sem a confirmação.
+ * CONFAB-T2H-WEAK-CONFIRM (Dudu 21/08 18:31 BRT): o ramo de falha já sanitizava, mas sem
+ * includeWeak, e "Fechou, Dudu! Viro em lembrete diário" é 3ª pessoa — fora do
+ * COMPLETION_CORE. Aqui o engine JÁ SABE que nada persistiu, então confirmação fraca é tão
+ * falsa quanto verbo forte; mesma decisão do respostaSemEdicaoDeHabito (Bianca 09/08).
+ * @param {string} textoLimpo cleanText do marker (a fala do LLM sem o bloco).
+ */
+function baseDeFalhaT2H(textoLimpo) {
+  const t = typeof textoLimpo === 'string' ? textoLimpo : '';
+  if (!t.trim()) return '';
+  return sanitizeOptimisticConfirm(t, 'failed', { includeWeak: true }).trim();
+}
+
 module.exports = {
   convertTaskToHabit, normalizeHabitTime, normTitle, isoDowOfYmd,
-  describeSchedule, renderConversionResult, formatMeasureDelta, isDispatchableFrequency,
-  schedulesEquivalent, DEFAULT_TIME,
+  describeSchedule, renderConversionResult, baseDeFalhaT2H, formatMeasureDelta,
+  isDispatchableFrequency, schedulesEquivalent, DEFAULT_TIME,
 };
