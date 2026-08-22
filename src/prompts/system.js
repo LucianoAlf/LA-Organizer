@@ -1006,7 +1006,14 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // ("não existe marker pra isso") — caso Rafinha 03/06.
   const listingOpen = /vai\s+listando|vou\s+(?:ir\s+)?registrando|listando\s+os\s+gastos|registrando\s+um\s+por\s+um/i.test(recentOutbound);
   const hasNumber = /\d/.test(String(lastUserMessage || ''));
-  if (FINANCE_RE.test(String(lastUserMessage || '')) || (financeProposalOpen && shortReply) || (listingOpen && hasNumber)) {
+  // RECUSA-FALSA-CAI-COM-SKILL (Rose 16/07): continuação de um fluxo de FATURA/lançamento em lote
+  // ("faltam lançar R$ X" no outbound + "lança o que falta" do user) não tem palavra de dinheiro,
+  // então a skill de finança caía — e a rede que intercepta a recusa falsa ("não consigo lançar
+  // por aqui") cai junto, porque é gateada por skill_active==='financeiro-pessoal'. Mantém finança
+  // viva na continuação. Sinal isolado em finance-continuation.js (narrow: exige fatura no outbound).
+  const { financeInvoiceContinuation } = require('./finance-continuation');
+  const invoiceContinuation = financeInvoiceContinuation({ userText: lastUserMessage, recentOutbound });
+  if (FINANCE_RE.test(String(lastUserMessage || '')) || (financeProposalOpen && shortReply) || (listingOpen && hasNumber) || invoiceContinuation) {
     let body = loadSkill('financeiro-pessoal');
     try {
       const [accts, cards] = await Promise.all([

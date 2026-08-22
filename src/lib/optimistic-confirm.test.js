@@ -523,3 +523,27 @@ test('ZERO-REGRESSAO: opt restatesRecentWrite AUSENTE → comportamento idêntic
   const out = enforceNoMarkerHonesty(REAL_DUDU, { nothingPersisted: true }, { meta: true });
   assert.strictEqual(out.fired, true, 'sem a opt explícita, a camada forte segue como antes');
 });
+
+// T2H-WEAK reincidiu em 11/11 ramos de falha (Dudu 21/08): failed/partial passou a stripar a
+// lista FRACA por padrão (a invariante mora na fonte, não em cada call-site). Escape de
+// cordialidade+plano preserva "Beleza, crio separado" (caso Juliana).
+test('DEFAULT failed: afirmação FRACA de conclusão é stripada sem passar includeWeak (Dudu)', () => {
+  const dudu = 'Fechou, Dudu! Viro em lembrete diário — te chamo todo dia.';
+  assert.strictEqual(sanitizeOptimisticConfirm(dudu, 'failed'), '');
+});
+
+test('DEFAULT failed: cordialidade + PLANO futuro sobrevive (Beleza, crio separado — Juliana)', () => {
+  assert.strictEqual(sanitizeOptimisticConfirm('Beleza, crio separado.', 'failed'), 'Beleza, crio separado.');
+  assert.strictEqual(sanitizeOptimisticConfirm('Fechou, vou criar amanhã.', 'failed'), 'Fechou, vou criar amanhã.');
+});
+
+test('DEFAULT partial: fraca também cai no parcial', () => {
+  const r = sanitizeOptimisticConfirm('Show, fechei tudo!', 'partial');
+  assert.ok(!/Show/.test(r) || /a maior/.test(r), 'a afirmação fraca não pode sobreviver intacta no parcial');
+});
+
+test('override explícito includeWeak:false é respeitado (enforceNoMarkerHonesty não muda)', () => {
+  // com a lista fraca desligada explicitamente, "Fechou!" sozinho sobrevive (comportamento do
+  // caminho FORTE-only do enforceNoMarkerHonesty quando o gate de estado não autorizou o fraco)
+  assert.strictEqual(sanitizeOptimisticConfirm('Fechou!', 'failed', { includeWeak: false }), 'Fechou!');
+});

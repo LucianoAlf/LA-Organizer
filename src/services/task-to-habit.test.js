@@ -660,10 +660,13 @@ test('T2H: fala sem confirmação nenhuma sobrevive inteira', () => {
   assert.strictEqual(baseDeFalhaT2H(null), '');
 });
 
-// Caracterização da RAIZ: o sanitizador sem includeWeak devolve a mentira intacta. Fica
-// pinado pra não confundir "o guard não tem o vocabulário" com "o caller não liga o gate".
-test('T2H: a raiz é o gate desligado, não vocabulário ausente', () => {
+// Caracterização da INVARIANTE (atualizada 22/08): a lista fraca passou a ser DEFAULT em
+// failed/partial (mora na fonte, não em cada call-site — Alf aprovou "nos 11"). Então o gate
+// não depende mais do caller lembrar da flag; e o override explícito includeWeak:false ainda
+// preserva a fala (usado pelo enforceNoMarkerHonesty com seus próprios gates de estado).
+test('T2H: failed strippa a fraca por DEFAULT; override false ainda preserva', () => {
   const { sanitizeOptimisticConfirm } = require('../lib/optimistic-confirm');
-  assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed'), FALA_DUDU);
+  assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed'), '');
   assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed', { includeWeak: true }), '');
+  assert.strictEqual(sanitizeOptimisticConfirm(FALA_DUDU, 'failed', { includeWeak: false }), FALA_DUDU);
 });

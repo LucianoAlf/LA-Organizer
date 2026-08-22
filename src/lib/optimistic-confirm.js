@@ -141,6 +141,13 @@ function _claimSemNegacao(texto, re) {
 // no turno-alvo ("Isso"→"Fechou": inputActionable=false E replyHasPromise=false, engine.js:12294)
 // e é circular (depende do mesmo detector que a Rede 1 estende).
 const WEAK_COMPLETION_RE = /\b(fechou|combinad[oa]s?|beleza|show)\b/i;
+// WEAK-FALSE-POSITIVE-CORDIALIDADE (caso Juliana): "Beleza/Fechou" é interjeição cordial, não
+// afirmação de conclusão, quando a linha segue com um PLANO futuro ("Beleza, crio separado" /
+// "Fechou, vou criar amanhã"). O que precisa ser stripado é a conclusão FALSA ("Fechou! Viro em
+// lembrete — te chamo todo dia"), não a cordialidade + promessa. Sem esta escape, ligar a lista
+// fraca nos ramos de falha comeria o "crio separado". Verbo de INTENÇÃO em 1ª pessoa (crio/faço/
+// mando/…) ou advérbio de futuro (depois/amanhã/…) => é plano, não conclusão => não strip.
+const WEAK_FUTURE_ESCAPE = /\b(crio|criarei|fa[çc]o|farei|mando|mandarei|deixo|separo|separarei|organizo|vou\s+\w+|depois|mais\s+tarde|amanh[ãa]|semana\s+que\s+vem|em\s+seguida)\b/i;
 
 function _stripLeadingEmoji(line) {
   return String(line).replace(SUCCESS_EMOJI_GLOBAL, '').replace(LEADING_MARKUP, '').trimStart();
@@ -172,7 +179,7 @@ function _isOptimisticLine(line, includeWeak) {
   // (Rose 06/08). Pergunta fica de fora: "Quer que eu vá fechando as pendências?" é
   // legítima e some se o gate pegar (mesmo cuidado que o MOVE_CLAIM tem com "mova/mover").
   if (!t.endsWith('?') && _claimSemNegacao(t, COMPLETION_GERUND_RE)) return true;
-  if (includeWeak && WEAK_COMPLETION_RE.test(noEmoji)) return true;
+  if (includeWeak && WEAK_COMPLETION_RE.test(noEmoji) && !WEAK_FUTURE_ESCAPE.test(noEmoji)) return true;
   return false;
 }
 
@@ -196,7 +203,15 @@ function hasOptimisticConfirm(text) {
 function sanitizeOptimisticConfirm(text, outcome, opts) {
   if (!text) return '';
   if (outcome !== 'failed' && outcome !== 'partial') return String(text);
-  const includeWeak = !!(opts && opts.includeWeak);
+  // T2H-WEAK reincidiu em 11/11 ramos de falha (Dudu 21/08): quando NADA persistiu, uma
+  // afirmação FRACA ("Fechou/Beleza/Show/Combinado") é tão falsa quanto uma forte. A invariante
+  // mora aqui, na fonte — failed/partial já implica strip da fraca — pra não depender de cada
+  // um dos 11 (nem do 12º) lembrar de passar a flag. O caller ainda pode forçar via includeWeak
+  // explícito: o enforceNoMarkerHonesty passa `weak` calculado com seus próprios gates, e esse
+  // override é respeitado (não mexo no comportamento dele).
+  const includeWeak = (opts && Object.prototype.hasOwnProperty.call(opts, 'includeWeak'))
+    ? !!opts.includeWeak
+    : true;
 
   const out = [];
   const lines = String(text).split('\n');
