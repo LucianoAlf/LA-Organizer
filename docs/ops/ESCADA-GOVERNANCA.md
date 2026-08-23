@@ -666,3 +666,63 @@ repetição).
 Continua valendo o que 19/08 mediu: a varredura entrega **diagnóstico**, não vazão. Os casos que
 não fecharam saíram com raiz e `arquivo:linha` no `verified_note` — `9a0a173a` é o exemplo do dia,
 e agora é corrigível em minutos por quem pegar.
+
+### ETAPA 3 — o auditor FABRICA achado quando o TOM manda sem gravar em `conversation_history`
+
+**Ocorrências:** 2 (09/08 Rose/fatura, 23/08 Alf/convite). **Reincidiu, e é uma classe inteira.**
+
+O auditor lê `conversation_history` e só ela. Toda saída que vai pro usuário por
+`whatsapp.sendMessage` sem `logConversation` é **invisível pra ele** — e o buraco não fica em
+branco: ele é preenchido pela mensagem ANTERIOR que sobrou no histórico, e o achado nasce
+descrevendo um comportamento que nunca existiu.
+
+O caso de hoje (`5e81c4c6`, Alf 17/08). O histórico mostrava só: `08:13:58` briefing terminando
+_"quer encaixar alguma pendência hoje?"_ → `08:30:02` **"Sim"** → `08:30:04` _"✅ Presença
+confirmada em Reunião MKT - NBG!"_. Lido assim é `dropped_request` óbvio: perguntou uma coisa,
+respondeu outra. **O convite existia e tinha 6 minutos.** Prova em duas tabelas que o auditor não
+lê: `event_participants.notified_at = 17/08 08:23:54 BRT` e `marker_logs EVENT_INVITES
+result=executed reason="2 invites sent"` no mesmo segundo. O RSVP-bare estava CERTO.
+
+A raiz é de paridade: os **dois** caminhos de convite do `engine.js` (2678 e 9467) gravam
+`[convite de ${senderName}: ${título}]`; o caminho do PWA
+(`internal-api.js /internal/event-invites`) mandava e não gravava. Corrigido hoje (`42b5aa11`),
+com teste de contrato no fonte (`src/convite-app-historico.test.js`), no mesmo molde do
+`fatura-ack-historico.test.js` que nasceu do incidente irmão de 09/08.
+
+**Medido e NÃO corrigido (fora do teto de 1/rodada):** o `internal-api.js` tem ~15 pontos de
+`whatsapp.sendMessage` e só 4 referências a `conversation_history`. Os outros ~11 são a mesma
+armadilha esperando virar achado fantasma.
+
+Regra que isto acrescenta à ETAPA 3: **quando o achado é `dropped_request` e o histórico mostra
+"pergunta A → resposta que serve pra B", não conclua nada antes de procurar B nas tabelas de
+efeito colateral** (`event_participants.notified_at`, `marker_logs`, `tasks.completed_at`,
+`pending_intents`). Histórico incompleto não parece incompleto — parece incoerência do TOM.
+
+Proposta de virar código: um teste de contrato único que varre `internal-api.js` e falha em
+qualquer `whatsapp.sendMessage` cujo bloco não escreva em `conversation_history`. Hoje a paridade
+depende de alguém lembrar, e já falhou duas vezes.
+
+### ETAPA 2 (varredura) — "achado alega repetição × contagem de inbound na janela" dá ZERO
+
+**Ocorrências:** 1 (23/08), medida sobre 38 achados. **Resultado negativo, registrado pra não
+ser refeito.**
+
+Lever testado: dos abertos não-altos sem `verified_note`, filtrar os 38 cujo `summary` alega
+repetição do usuário ("repetiu", "voltou a", "de novo", "insistiu") e contar os inbound na janela.
+Onze deram **1 inbound só** — mecanicamente impossível repetir. Parecia refutação barata em lote.
+
+**Nenhum era falso positivo.** A repetição existe, mas fora da janela: no `58a74708` (Jereh) o
+usuário disse **"JA FOI FEITO"** em **08/08 14:08:28 BRT** e a tarefa só fechou em **17/08
+19:09:28** — **9 dias e 3 inbound de distância**. A janela de ±2h/±8h não alcança isso. No
+`79917a36` (Alf 01/07) foi o inverso: a rajada é real e verificada — o MESMO texto reenviado 5×
+(17:37, 18:15, 18:41, 19:10, 21:08 BRT) — mas o `occurred_at` aponta pro turno da IMAGEM às
+23:14, onde não há repetição nenhuma. Conferir por ali fecharia um achado verdadeiro.
+
+Ou seja: `inbound_na_janela === 1` **não** refuta "o usuário repetiu". Refuta só "o usuário
+repetiu NESTA JANELA", que não é o que o achado afirma. É a mesma classe do neutro de 15/08 — a
+medição responde uma pergunta parecida com a que eu queria fazer, e a diferença inverte o veredito.
+
+**Resultado da varredura de hoje:** 53 candidatos pelo lever data+nome, 6 investigados a fundo,
+**zero fechados** — 5 confirmados bugs vivos com raiz escrita no `verified_note`, 1 inconclusivo
+(literal ausente). Terceira rodada (16/08, 19/08, 23/08) em que nada cai como "já corrigido";
+20/08 e 22/08 seguem sendo as exceções, e as duas vieram do lever data+nome.
