@@ -1141,6 +1141,11 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
   // Sprint EV-LEAK (08/06) — SEM [ev:...] visível: o marcador vazava código interno
   // pro usuário. O RSVP agora é resolvido pelo engine via convite pendente do
   // colaborador (applyRsvp → resolvePendingInviteEventId), sem token na mensagem.
+  // CONVITE-APP-SEM-HISTORICO (Alf 17/08): os dois caminhos de convite do engine gravam
+  // `[convite de X: Título]` em conversation_history; este não gravava. Sem a linha, o convite
+  // some do histórico — o contexto do TOM não sabe que convidou e a auditoria lê o "sim" do
+  // convidado como resposta à mensagem ANTERIOR (finding 5e81c4c6: "Sim" ao briefing).
+  const senderName = String(creator?.full_name || 'Alguém').split(' ')[0];
   for (const r of recipients) {
     const body =
       `📅 *${creator?.full_name || 'Alguém'}* te convidou pra um compromisso:\n\n` +
@@ -1151,6 +1156,11 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
     whatsapp.sendMessage(r.phone, body).catch(e =>
       console.error(`[InternalAPI] event-invite WA send err pra ${r.id}: ${e.message}`),
     );
+    const { error: logErr } = await supabase.from('conversation_history').insert({
+      collaborator_id: r.id, direction: 'outbound', message_type: 'text',
+      content: `[convite de ${senderName}: ${event.title}]`,
+    });
+    if (logErr) console.warn(`[InternalAPI] event-invite log err pra ${r.id}: ${logErr.message}`);
   }
 
   // Marca notified_at (best-effort)
