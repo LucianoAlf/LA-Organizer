@@ -45,6 +45,23 @@ test('erro do runner → inconclusivo (não barra)', async () => {
   assert.strictEqual(out[0].verdict, 'inconclusivo');
   assert.strictEqual(out[0].barrou, false);
 });
+test('marker_logs recebe result VÁLIDO pelo CHECK (verdict mapeado) + verdict no reason', async () => {
+  const d = deps(); // judge reprovado por padrão
+  await shadowPass([{ id: 'f1', summary: 'x', fix_intent: 'y' }], d);
+  const mk = d._markers[0];
+  assert.ok(mk, 'inseriu marker');
+  assert.strictEqual(mk.marker_type, 'SHADOW');
+  assert.strictEqual(mk.result, 'rejected'); // reprovado→rejected (satisfaz marker_logs_result_check)
+  assert.match(mk.reason, /reprovado/);
+});
+test('mapeia aprovado→executed e inconclusivo→skipped no marker_logs', async () => {
+  const da = deps({ judgeShadow: async () => ({ verdict: 'aprovado', reason: 'ok' }) });
+  await shadowPass([{ id: 'f1' }], da);
+  assert.strictEqual(da._markers[0].result, 'executed');
+  const di = deps({ isReproducible: () => ({ ok: false, motivo: 'grupo' }) });
+  await shadowPass([{ id: 'f1' }], di);
+  assert.strictEqual(di._markers[0].result, 'skipped');
+});
 test('finding cujo runShadow rejeita não impede o próximo de ser processado', async () => {
   let chamada = 0;
   const d = deps({

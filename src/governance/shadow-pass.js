@@ -3,6 +3,12 @@
 // APLICA o veredito. reprovado = reabre + barra; inconclusivo/aprovado = anota.
 function ymdUtc() { return new Date().toISOString().slice(0, 10); }
 
+// marker_logs.result tem CHECK (executed|rejected|skipped|redirected|fallback). O verdict da
+// sombra (aprovado|reprovado|inconclusivo) NÃO está nesse conjunto — inserir cru viola o CHECK
+// e o insert cai calado no best-effort (prova viva 23/08: 0 markers SHADOW sempre). Mapeia pro
+// vocabulário válido e guarda o verdict cru no reason.
+const VERDICT_TO_RESULT = { reprovado: 'rejected', aprovado: 'executed', inconclusivo: 'skipped' };
+
 async function shadowPass(findings, deps = {}) {
   const { supabase, isReproducible, runShadow, judgeShadow } = deps;
   const out = [];
@@ -29,7 +35,7 @@ async function shadowPass(findings, deps = {}) {
         } else {
           await supabase.from('tom_audit_findings').update({ verified_note: nota }).eq('id', f.id);
         }
-        await supabase.from('marker_logs').insert({ marker_type: 'SHADOW', result: verdict, reason: reason.slice(0, 120) });
+        await supabase.from('marker_logs').insert({ marker_type: 'SHADOW', result: VERDICT_TO_RESULT[verdict] || 'skipped', reason: `${verdict}: ${reason}`.slice(0, 120) });
       } catch (_) { /* persistência best-effort; nunca derruba o ciclo */ }
       out.push({ id: f.id, verdict, barrou });
     } catch (e) {
