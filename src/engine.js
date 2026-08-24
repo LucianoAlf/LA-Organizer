@@ -13084,14 +13084,19 @@ async function processMessage(phone, text, raw = {}) {
   if (!_finActionRan && typeof reply === 'string') {
     try {
       const { detectRegisterIntent, looksLikeFinanceConfirmation } = require('./finance/detect-register-intent');
-      const { detectDefeatism } = require('./finance/derrotismo-detect');
+      const { detectDefeatism, isFinanceCapabilityDenial } = require('./finance/derrotismo-detect');
       const { detectCorrection } = require('./finance/detect-correction');
       const _isConfab = looksLikeFinanceConfirmation(reply);
       // CAMINHO 2 / FATIA 1 (F1.3b): intercepta também a RECUSA do LLM (derrotismo), não só o
       // fake-sucesso (confab). Gate de finança = skill ativa (skill_active setado no 9124;
       // _metrics.actionable_intent só existe no 11073, DEPOIS daqui). A recusa NUNCA vai ao user.
       const _defPhrase = detectDefeatism(reply, {}).phrase;
-      const _defeatFinance = !!_defPhrase && _metrics.skill_active === 'financeiro-pessoal';
+      // RECUSA-FALSA-CAI-COM-SKILL (raiz, 24/08): o gate de skill cai no turno de follow-up/
+      // esclarecimento (pickSkill decide por palavra de dinheiro) → a rede desarmava e a recusa
+      // falsa passava (Rose/Matheus/Juliana 13/07/9a0a173a). Escopo por DOMÍNIO desacopla a rede
+      // da skill: dispara também quando a fala É uma recusa de capacidade FINANCEIRA (predicado
+      // preciso, fail-closed). Aditivo: mantém o caminho da skill intacto (zero-regressão nele).
+      const _defeatFinance = !!_defPhrase && (_metrics.skill_active === 'financeiro-pessoal' || isFinanceCapabilityDenial(reply));
       if (_isConfab || _defeatFinance) {
         const _origMsg = String(inboundVerbatimText || text || '');
         const _det = detectRegisterIntent(_origMsg, { typeHint: reply });

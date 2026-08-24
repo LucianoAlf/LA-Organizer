@@ -47,4 +47,26 @@ function detectDefeatism(reply, { actionableIntent = false, markerEmitted = fals
   return { suspect: !!phrase && actionableIntent && !markerEmitted, phrase };
 }
 
-module.exports = { detectDefeatism, RE_DEFEAT };
+// RECUSA-FALSA-CAI-COM-SKILL (raiz — Rose 16/07, Matheus 20/08, Juliana 13/07, 9a0a173a): o
+// interceptor de derrotismo do engine é gated em skill_active==='financeiro-pessoal'. No turno de
+// follow-up/esclarecimento a skill cai (pickSkill decide por palavra de dinheiro no turno) e a
+// recusa falsa passa. Cada gatilho estreito de pickSkill patcheava UM fluxo (whack-a-mole, 3
+// incidentes). Este predicado escopa a rede por DOMÍNIO, não por skill: True quando a fala é uma
+// recusa/redirect de CAPACIDADE FINANCEIRA (lançar/registrar/salvar transação/gasto/estorno) na
+// MESMA cláusula — a capacidade EXISTE (register_transaction em FINANCE_ACTIONS), então é sempre
+// mentira. FAIL-CLOSED: exclui limitação de CONSULTA (achar/ver/buscar — honesta) e exige objeto
+// financeiro (não sequestra recusa não-financeira nem a limitação de mídia do detectDefeatism).
+const _DENY_RE = /\bn[ãa]o consigo\b|\bn[ãa]o tenho como\b|\bn[ãa]o d[áa] pra\b|\bn[ãa]o rola\b|(?:direto\s+)?\bno app\b|m[óo]dulo de finan[çc]|gerencia no app|precisa ser[^.?!]{0,30}\bno app\b/i;
+const _FIN_OBJ_RE = /lan[çc]a(?:r|mento|ndo|mentos)?\b|transa[çc][ãa]o|transa[çc][õo]es|financeir[oa]s?\b|\bestorno\b|\bgasto\b|\bdespesa\b|\breceita\b/i;
+const _FIND_RE = /\b(?:achar|encontrar|localizar|ver|visualizar|mostrar|puxar|buscar|acessar|consultar|listar)\b/i;
+
+function isFinanceCapabilityDenial(reply) {
+  const t = String(reply || '');
+  if (!t.trim()) return false;
+  for (const clause of t.split(/[.?!\n;]+/)) {
+    if (_DENY_RE.test(clause) && _FIN_OBJ_RE.test(clause) && !_FIND_RE.test(clause)) return true;
+  }
+  return false;
+}
+
+module.exports = { detectDefeatism, isFinanceCapabilityDenial, RE_DEFEAT };

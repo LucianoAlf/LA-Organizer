@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectDefeatism } = require('./derrotismo-detect');
+const { detectDefeatism, isFinanceCapabilityDenial } = require('./derrotismo-detect');
 
 test('pega a recusa literal do Matheus (24/06)', () => {
   const r = detectDefeatism('não tenho como editar transações financeiras pelo chat. Não existe o comando pra isso aqui, independente de quando foi o lançamento.', { actionableIntent: true, markerEmitted: false });
@@ -50,4 +50,42 @@ test('finança real com "não consigo" (não-mídia) → phrase != null', () => 
 });
 test('coexistência: mídia honesta + derrotismo financeiro real → mantém (phrase != null)', () => {
   assert.notEqual(detectDefeatism('não consigo enviar a foto. E vai no app pra editar', {}).phrase, null);
+});
+
+// ── isFinanceCapabilityDenial (RECUSA-FALSA-CAI-COM-SKILL, raiz) ─────────────────
+// A rede de derrotismo é gated em skill_active==='financeiro-pessoal'; no turno de follow-up/
+// esclarecimento a skill cai e a recusa falsa passa (Rose/Matheus/Juliana/9a0a173a). Este
+// predicado escopa a rede por DOMÍNIO (recusa de capacidade FINANCEIRA na fala), desacoplando-a
+// da skill. Preciso: recusa/redirect + objeto financeiro NA MESMA cláusula, exceto find/consulta.
+test('Juliana 13/07: "não consigo registrar lançamentos financeiros direto por aqui" → true', () => {
+  assert.equal(isFinanceCapabilityDenial('Entendi, é despesa pessoal da área financeira. Mas não consigo registrar lançamentos financeiros direto por aqui — isso você gerencia no app de finanças.'), true);
+});
+test('Rose: "não consigo executar o lançamento por aqui" → true', () => {
+  assert.equal(isFinanceCapabilityDenial('Pô, não consigo executar o lançamento por aqui diretamente.'), true);
+});
+test('Matheus: "lançamento financeiro eu não consigo salvar pelo chat" → true', () => {
+  assert.equal(isFinanceCapabilityDenial('Pô Matheus, lançamento financeiro eu não consigo salvar pelo chat com segurança — precisa ser direto no app.'), true);
+});
+test('Matheus2: "não consigo salvar transações financeiras" → true', () => {
+  assert.equal(isFinanceCapabilityDenial('por aqui não consigo salvar transações financeiras, não tenho como lançar isso direto no módulo de finanças.'), true);
+});
+test('estorno em cartão (d2c98e92): "esse lançamento de estorno... não consigo fazer pelo chat" → true', () => {
+  assert.equal(isFinanceCapabilityDenial('Rose, esse lançamento de estorno em cartão de crédito ainda não consigo fazer pelo chat — precisa ser direto no app.'), true);
+});
+
+// FAIL-CLOSED / negativos — não pode sequestrar recusa NÃO-financeira nem limitação honesta.
+test('mídia honesta "não consigo encaminhar a imagem" → false', () => {
+  assert.equal(isFinanceCapabilityDenial('Não consigo encaminhar a imagem em si, mas passo os dados.'), false);
+});
+test('defeatism não-financeiro "não tenho como acessar seu email" → false', () => {
+  assert.equal(isFinanceCapabilityDenial('não tenho como acessar seu email, isso é fora do meu alcance'), false);
+});
+test('limitação de CONSULTA "não consigo achar essa transação" → false (não é recusa de capacidade)', () => {
+  assert.equal(isFinanceCapabilityDenial('não consigo achar essa transação no seu histórico'), false);
+});
+test('redirect honesto não-financeiro "vai no app: Agenda" → false', () => {
+  assert.equal(isFinanceCapabilityDenial('Esse evento vai direto no app: Agenda → Novo.'), false);
+});
+test('vazio/nulo/não-string → false sem lançar', () => {
+  for (const v of [null, undefined, '', '   ', 42, {}]) assert.equal(isFinanceCapabilityDenial(v), false);
 });
