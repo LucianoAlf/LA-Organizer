@@ -726,3 +726,75 @@ medição responde uma pergunta parecida com a que eu queria fazer, e a diferen�
 **zero fechados** — 5 confirmados bugs vivos com raiz escrita no `verified_note`, 1 inconclusivo
 (literal ausente). Terceira rodada (16/08, 19/08, 23/08) em que nada cai como "já corrigido";
 20/08 e 22/08 seguem sendo as exceções, e as duas vieram do lever data+nome.
+
+### ETAPA 2 — o achado "de maior severidade" pode estar TODO refutado, e a rodada quase ficou sem correção
+
+**Ocorrências:** 1 (24/08). É a primeira vez que os 3 altos abertos caem juntos.
+
+O protocolo manda pegar o de maior severidade quando não há sinal fresco. Em 24/08 os 3 altos
+abertos foram investigados até a prova, e **nenhum virou correção**:
+
+- `771b5bc1` (Rose 11/08, "apaga a fatura Itaú de R$950,21" → apagou Canva de R$34,90) — **já
+  corrigido** por `b29a7266` (16/08). `ANTES: one:Google Canva AI PhotoSA 34.90` → `HOJE: none`.
+  Fechado.
+- `5eb6bb00` (Matheus 14/07) e `29b8751b` (Leo 18/06) — **metade corrigida**: em ambos o guard que
+  nasceu depois do incidente conserta o SINTOMA VISÍVEL (a mentira, o jargão cru) e não conserta o
+  `dropped_request` que causou o dano. Ficaram abertos, anotados.
+
+O padrão vale além destes três: **um guard de honestidade fecha a boca do TOM, não a lacuna do
+executor.** Quem varrer procurando "o guard existe e nasceu depois" vai fechar essa classe inteira
+errado — é a regra de 14/08 (`545b8fe0`), agora medida em severidade alta.
+
+O que salvou a rodada foi mudar de alvo: a correção saiu de um `medio` da varredura (`0509fddb`),
+não dos altos. Consequência prática pro protocolo: **"maior severidade" é ordem de investigação,
+não garantia de que ali existe correção viável.** Quando os altos se refutam, a varredura vira a
+fonte da correção do dia — e isso não fura o teto, porque continua sendo UMA.
+
+### ETAPA 2/3 — o lever que pagou hoje: helper determinístico com UM só call site
+
+**Ocorrências:** 2 (23/08, 24/08). Duas rodadas seguidas, a mesma forma de bug.
+
+Em 23/08 a correção foi o convite do PWA que não gravava em `conversation_history` — os DOIS
+caminhos do engine gravavam, o terceiro não. Em 24/08 foi `buildReminderNotice`: o helper existe,
+é puro, tem teste próprio citando o caso pelo nome e pela hora, e tinha **um único call site**
+(`engine.js` ~11433, ramo de marker `<<TASK>>`). O ramo de **dup-bypass** (~7720) monta a
+confirmação à mão e retorna direto — então todo pedido com hora que caísse no menu de duplicidade
+perdia a hora na confirmação (caso Rafinha 10/08: `remind_at` correto no banco, fala muda).
+
+O lever, e é barato: **`grep` o nome de um helper determinístico e contar os call sites.** Um
+helper de honestidade/voz com 1 call site e 2+ caminhos de saída para o mesmo tipo de evento é
+bug esperando data. Não exige literal, não exige `git rev-list`, não exige reconstruir versão.
+
+Proposta de virar código: um teste de contrato que, para cada helper de `src/utils` e `src/lib`
+declarado como "surface determinístico" (é o vocabulário do cabeçalho desses módulos), falhe
+quando existir um `return { reply: ... }` no `engine.js` no mesmo domínio que não passe por ele.
+Versão barata e imediata: o `gov-runner` lista os helpers com exatamente 1 call site e entrega no
+início da rodada — foi exatamente essa lista que produziu a correção de hoje.
+
+### ETAPA 2 (varredura) — 4ª rodada seguida sem NENHUM fechamento por "já corrigido"
+
+**Ocorrências:** 4 (16/08, 19/08, 23/08, 24/08). A expectativa do protocolo segue desmentida.
+
+Varredura de 24/08: 31 candidatos pelo lever data+nome sobre 112 abertos não-altos sem
+`verified_note`; 8 investigados até a prova; **zero** fecharam como "já corrigido" e **zero** como
+falso positivo do auditor. Todos os 8 se confirmaram bugs vivos, com raiz e `arquivo:linha` no
+`verified_note`.
+
+Duas medições novas que a varredura de hoje produziu, e que valem mais que a vazão:
+
+1. **Categoria errada é comum, e empurra o conserto pro lugar errado.** `7f7a98bf` está como
+   `media_fail` e o áudio chegou transcrito por inteiro (é chokepoint sem ação → `dropped_request`).
+   `964232a9` está como `confabulation` "contradisse a data da MESMA tarefa" — são **quatro linhas
+   homônimas** em `tasks`, e as duas falas do TOM são verdadeiras sobre tarefas diferentes; o bug é
+   desambiguação, e fechar por confabulação enterraria isso. `e74b37dd` está como `frustration`
+   ("repetiu a demanda") e a raiz é `excluir` executado como `concluir`, seguido de um lookup de
+   cancelamento que não acha a tarefa que o próprio turno acabou de fechar.
+2. **O chokepoint também dispara FALSO POSITIVO, e o dano é simétrico.** Em `2724e538` (Ana 26/06)
+   a tarefa tinha sido persistida no turno anterior — o lembrete chegou a disparar às 09:00 — e
+   mesmo assim o "Pode ser" por quote levou a nota "não consegui registrar", que o próprio TOM
+   desmentiu um turno depois ("foi engano meu, tá registrada sim"). O guard existe para evitar a
+   impressão falsa de sucesso; aqui ele fabricou a impressão falsa de falha.
+
+O produto da varredura continua sendo diagnóstico, não baixa — e a métrica útil segue sendo
+quantos achados anotados viram correção depois. `0509fddb`, corrigido hoje, veio de um candidato
+gerado pelo mesmo lever.
