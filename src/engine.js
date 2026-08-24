@@ -7717,7 +7717,15 @@ async function tryDupBypass(collab, text) {
       }
       return { reply: `_Não consegui salvar a tarefa (${insErr.code || 'erro'}). Me passa de novo?_` };
     }
-    return { reply: `✅ Anotado: *${inserted?.title || tk.title}*${tk.due_date ? ` — até ${tk.due_date}` : ''}.` };
+    let _okReply = `✅ Anotado: *${inserted?.title || tk.title}*${tk.due_date ? ` — até ${tk.due_date}` : ''}.`;
+    // Caso Rafinha 10/08: "me lembra 07h" → remind_at nasce certo, mas esta confirmação omitia a
+    // hora e a pessoa achava que o lembrete tinha sumido. Mesmo helper do ramo de marker.
+    try {
+      const { buildReminderNotice } = require('./utils/reminder-notice');
+      const _rn = buildReminderNotice(insertRow.remind_at, _okReply);
+      if (_rn) _okReply += `\n\n${_rn}`;
+    } catch (e) { console.warn('[ReminderNotice] non-fatal:', e.message); }
+    return { reply: _okReply };
   }
 
   return null;
