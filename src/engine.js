@@ -10392,6 +10392,31 @@ async function processMessage(phone, text, raw = {}) {
         try { await whatsapp.sendMessage(phone, _outH); await logConversation(collab.id, 'outbound', _outH); } catch (_) { /* já persistiu */ }
         console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (create_habit_daily_${_okH})`);
         return;
+      } else if (userConfirm === 'yes' && Array.isArray(target.payload?.reschedule?.actions) && target.payload.reschedule.actions.length) {
+        // FATIA 6 (confirmação parse-on-open, reagendamento): TASK-RESCHEDULE-CONFIRM-NOOP residual
+        // (Matheus 14/07, finding 5eb6bb00). Quando o TOM propõe a remarcação em PROSA e pergunta
+        // SEM emitir o marker confirm:true, nenhum reschedule_confirm é estagiado → o "isso" caía
+        // no LLM sem executor → NOOP (o confab guard só calava a mentira, não remarcava). O hook de
+        // fim-de-turno estagiou payload.reschedule {actions:[{id,new_due_date}]} resolvido fail-
+        // closed; aqui aplica determinístico via applyTaskActions (mesmo executor do
+        // reschedule_confirm @~8900) e reporta parciais. Retorna cedo → o LLM NÃO re-estágia/loopa.
+        const _actsR = target.payload.reschedule.actions;
+        let _resR;
+        try {
+          _resR = await applyTaskActions(collab, _actsR, { inboundText: _confirmText });
+        } catch (e) { console.warn('[RescheduleConfirm] exec err:', e.message); _resR = { okCount: 0, failCount: _actsR.length }; }
+        await pendingIntents.resolveIntent(target.id, 'confirmed', `parse-on-open reschedule (engine) ${_resR.okCount || 0}/${_actsR.length}`);
+        let _outR;
+        if ((_resR.okCount || 0) > 0 && !_resR.failCount) _outR = `✅ Reagendei ${_resR.okCount === 1 ? 'a tarefa' : `as ${_resR.okCount} tarefas`}.`;
+        else if ((_resR.okCount || 0) > 0) _outR = `Reagendei ${_resR.okCount}, mas ${_resR.failCount} não ${_resR.failCount === 1 ? 'foi' : 'foram'}. Me passa de novo ${_resR.failCount === 1 ? 'a que faltou' : 'as que faltaram'}?`;
+        else _outR = '_Não consegui reagendar agora. Me passa de novo?_';
+        try {
+          await whatsapp.sendMessage(phone, _outR);
+          await logConversation(collab.id, 'outbound', _outR);
+          await logMarker(collab.id, 'TASK_UPDATE', (_resR.okCount || 0) ? 'executed' : 'rejected', `parse_on_open_reschedule ok=${_resR.okCount || 0} fail=${_resR.failCount || 0}`, null);
+        } catch (_) { /* já persistiu */ }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (reschedule_parseonopen_${_resR.okCount || 0}/${_actsR.length})`);
+        return;
       } else if (userConfirm === 'yes') {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
         // Injeta contexto inline pra LLM saber o que confirmar.
@@ -13738,6 +13763,39 @@ Output AGORA, apenas o marker:`;
                 }
               }
             } catch (e) { console.warn('[PendingIntents] delegate parse-on-open err (non-fatal):', e.message); }
+          }
+          // FATIA 6 (confirmação parse-on-open, reagendamento): "Vou reagendar: • *X* → 02/09.
+          // Confirma?" — extrai (título→data ABSOLUTA) da fala do TOM, resolve título→id fail-closed
+          // (resolveTaskTarget 'exato'), estagia payload.reschedule. O "sim" aplica determinístico
+          // (branch @~10395) em vez de o LLM re-emitir (não reemite → NOOP; Matheus 14/07, 5eb6bb00).
+          // Skip se outra fatia já estagiou. FAIL-CLOSED: qualquer título ambíguo/não-achado OU data
+          // relativa/dia-da-semana → payload segue só-texto de hoje. Data ERRADA é pior que o drop.
+          if (detected.kind === 'confirmation' && !payload.coordination && !payload.batch_complete && !payload.delegation) {
+            try {
+              const { parseRescheduleConfirmQuestion } = require('./tasks/reschedule-question-parse');
+              const _resched = parseRescheduleConfirmQuestion(reply, { todayYmd: todayYmdSP() });
+              if (_resched && _resched.actions.length) {
+                const { resolveTaskTarget } = require('./lib/task-target');
+                const _rActs = [];
+                let _allOk = true;
+                for (const _a of _resched.actions) {
+                  const { data: _cands } = await supabase.from('tasks')
+                    .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at')
+                    .eq('assigned_to', collab.id)
+                    .ilike('title', `%${String(_a.title).slice(0, 60)}%`)
+                    .not('status', 'in', '("done","cancelled")')
+                    .order('due_date', { ascending: true, nullsFirst: false })
+                    .limit(100);
+                  const _tr = resolveTaskTarget({ candidatos: _cands || [] });
+                  if (!_tr || _tr.modo !== 'exato' || !_tr.tarefa || !_tr.tarefa.id) { _allOk = false; break; }
+                  _rActs.push({ action: 'reschedule', id: _tr.tarefa.id, new_due_date: _a.new_due_date });
+                }
+                if (_allOk && _rActs.length) {
+                  payload.reschedule = { actions: _rActs };
+                  _metrics.confirm_parse_reschedule = _rActs.length;
+                }
+              }
+            } catch (e) { console.warn('[PendingIntents] reschedule parse-on-open err (non-fatal):', e.message); }
           }
           await pendingIntents.openIntent(collab.id, detected.kind, payload, reply.slice(0, 500));
           _metrics.pending_intent_opened = detected.kind;

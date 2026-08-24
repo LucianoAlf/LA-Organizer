@@ -26,7 +26,12 @@ function intentCarriesDeterministicExecutor(payload) {
   // (caso Fabi 11/07: "Confirma/Confirmo/Sim avisa" re-perguntava "Aviso o Luciano? Confirma?").
   const hasCoord = payload.coordination
     && Array.isArray(payload.coordination.items) && payload.coordination.items.length > 0;
-  return !!(hasAnchor || hasBatch || hasCoord);
+  // RESCHEDULE-CONFIRM-CLOBBER (Fatia 6, Matheus 5eb6bb00): a rede de reagendamento estagia
+  // {reschedule:{actions}} numa intent 'confirmation' e executa no "sim" (applyTaskActions). Sem
+  // cobri-lo, o registrador genérico de fim-de-turno superseçava-a → o "sim" caía no LLM → NOOP.
+  const hasResched = payload.reschedule
+    && Array.isArray(payload.reschedule.actions) && payload.reschedule.actions.length > 0;
+  return !!(hasAnchor || hasBatch || hasCoord || hasResched);
 }
 
 module.exports = { intentCarriesDeterministicExecutor };
