@@ -8855,6 +8855,15 @@ async function processMessage(phone, text, raw = {}) {
 
   const collab = await collaboratorService.findByPhone(phone);
   if (!collab) {
+    // OFFBOARDING-SILENCE (Alf 27/07): colaborador DESLIGADO (is_active=false) → silêncio
+    // TOTAL, nem o "não te encontrei" (ex-funcionário não deve receber orientação de cadastro).
+    // findCollaboratorByPhone NÃO filtra is_active → distingue ex-colaborador de estranho.
+    // Só desconhecido nunca cadastrado (retorno null) recebe a orientação — útil pra quem é novo.
+    const _known = await findCollaboratorByPhone(phone);
+    if (_known && _known.is_active === false) {
+      console.log(`[Engine] IGNORED inbound de colaborador inativo (${_known.full_name}) phone=${_phoneTail}`);
+      return;
+    }
     await whatsapp.sendMessage(phone, 'Nao te encontrei no sistema. Fala com seu coordenador pra te cadastrar.');
     console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (unknown_collab)`);
     return;
