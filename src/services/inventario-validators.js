@@ -1,4 +1,4 @@
-const VALID_ACTIONS = ['add_item', 'edit_item', 'delete_item', 'move_item', 'maintenance', 'shop_movement', 'ver', 'query_room', 'query_shop', 'query_rooms'];
+const VALID_ACTIONS = ['add_item', 'bulk_add', 'edit_item', 'delete_item', 'move_item', 'maintenance', 'shop_movement', 'ver', 'query_room', 'query_shop', 'query_rooms'];
 const VALID_CATEGORIAS = ['instrumento', 'eletronico', 'mobilia', 'consumivel', 'outros'];
 const VALID_CONDICOES = ['novo', 'bom', 'regular', 'ruim'];
 const VALID_STATUS = ['ativo', 'manutencao', 'baixa', 'inativo'];

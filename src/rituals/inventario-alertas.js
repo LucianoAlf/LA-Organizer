@@ -1,63 +1,64 @@
 // src/rituals/inventario-alertas.js
-// Cron semanal de alertas operacionais — estoque baixo + manutenções pendentes + revisões próximas.
-// Lê do LA Report e enfileira em la_organizer.notifications.
+// Cron semanal de alertas operacionais — estoque baixo + itens em manutenção + revisões próximas.
+// Lê do LA Report e ENTREGA por WhatsApp (via sendProativo, com quiet-gate).
+//
+// INVENTORY-ALERT-DEAD-DELIVERY (audit 24/08): antes inseria em `notifications` com schema errado
+// (`kind`/`active` — colunas inexistentes) e, pior, NADA consumia essa fila pra entregar → os
+// alertas NUNCA chegaram a ninguém. Agora envia direto pelo chokepoint proativo (sendProativo,
+// que embute o silêncio), com destinatário resolvido (Rafinha; fallback director) e log quando
+// falta destinatário (nunca silencioso).
 
 const inventarioService = require('../services/inventario-service');
 const supabase = require('../supabase/client');
+const { sendProativo } = require('../services/send-proativo');
+const { fmtEstoqueBaixo, fmtItensManutencao, fmtRevisoes } = require('./inventario-alertas-format');
 
-async function rafinhaId() {
-  const { data } = await supabase
-    .from('collaborators').select('id').ilike('full_name', '%rafinha%').eq('active', true).maybeSingle();
-  return data ? data.id : null;
+// Destinatário dos alertas: Rafinha (gestão de loja/inventário). Fallback: 1º director ativo.
+// NUNCA silencioso — loga quando não acha ninguém com telefone.
+async function resolveDestinatario() {
+  const { data: r, error: er } = await supabase
+    .from('collaborators').select('id, full_name, phone')
+    .ilike('full_name', '%rafinha%').eq('is_active', true).limit(1).maybeSingle();
+  if (er) console.warn('[inventario-alertas] erro buscando rafinha:', er.message);
+  if (r && r.id && r.phone) return r;
+  console.warn('[inventario-alertas] Rafinha não encontrada/sem telefone — fallback pro director');
+  const { data: dir } = await supabase
+    .from('collaborators').select('id, full_name, phone')
+    .eq('role', 'director').eq('is_active', true).order('full_name').limit(1).maybeSingle();
+  if (dir && dir.id && dir.phone) return dir;
+  console.error('[inventario-alertas] NENHUM destinatário (Rafinha/director) com telefone — alerta não enviado');
+  return null;
 }
 
-async function enfileirarNotificacao(collaboratorId, titulo, corpo) {
-  if (!collaboratorId) return;
-  await supabase.from('notifications').insert({
-    collaborator_id: collaboratorId,
-    title: titulo,
-    body: corpo,
-    kind: 'inventario_alerta',
-    created_at: new Date().toISOString(),
-  });
+async function enviarAlerta(dest, corpo, label) {
+  if (!corpo) return; // nada a alertar → silêncio correto
+  if (!dest) return;  // já logado em resolveDestinatario
+  const r = await sendProativo(dest.id, dest.phone, corpo, { context: 'work', label: `inv:${label}` });
+  if (r.enviado) console.log(`[inventario-alertas] ${label} → ${dest.full_name}`);
+  else if (!r.deferido) console.warn(`[inventario-alertas] ${label} NÃO enviado: ${r.motivo}`);
 }
 
 async function runInventarioEstoqueBaixo() {
-  const baixos = await inventarioService.listarEstoqueBaixo();
-  if (baixos.length === 0) return;
-  const rafinha = await rafinhaId();
-  const linhas = baixos.map(p => `• ${p.nome}: ${p.estoque_atual}/${p.estoque_minimo}`);
-  const corpo = `🔴 *Estoque baixo* (${baixos.length} produto${baixos.length > 1 ? 's' : ''}):\n\n${linhas.join('\n')}\n\nPra encomendar: /loja encomenda`;
-  await enfileirarNotificacao(rafinha, 'Estoque baixo', corpo);
+  const corpo = fmtEstoqueBaixo(await inventarioService.listarEstoqueBaixo());
+  if (!corpo) return;
+  await enviarAlerta(await resolveDestinatario(), corpo, 'estoque_baixo');
 }
 
 async function runInventarioManutencoesPendentes() {
-  const pendentes = await inventarioService.listarManutencoesPendentes(14);
-  if (pendentes.length === 0) return;
-  const rafinha = await rafinhaId();
-  const linhas = pendentes.map(m => {
-    const dias = Math.floor((Date.now() - new Date(m.data_manutencao).getTime()) / 86400000);
-    const nome = (m.inventario && m.inventario.nome) || `Item ${m.item_id}`;
-    return `• ${nome} — ${dias}d (${m.tipo})`;
-  });
-  const corpo = `🔧 *Manutenções pendentes +14d* (${pendentes.length}):\n\n${linhas.join('\n')}`;
-  await enfileirarNotificacao(rafinha, 'Manutenções pendentes', corpo);
+  const corpo = fmtItensManutencao(await inventarioService.listarItensEmManutencao(14), Date.now());
+  if (!corpo) return;
+  await enviarAlerta(await resolveDestinatario(), corpo, 'manutencao');
 }
 
 async function runInventarioRevisoesProgramadas() {
-  const revisoes = await inventarioService.listarRevisoesProgramadas(7);
-  if (revisoes.length === 0) return;
-  const rafinha = await rafinhaId();
-  const linhas = revisoes.map(i => {
-    const data = i.proxima_revisao ? new Date(i.proxima_revisao).toLocaleDateString('pt-BR') : '?';
-    return `• ${i.nome} — ${data}`;
-  });
-  const corpo = `🗓 *Revisões programadas (próximos 7d)* (${revisoes.length}):\n\n${linhas.join('\n')}`;
-  await enfileirarNotificacao(rafinha, 'Revisões programadas', corpo);
+  const corpo = fmtRevisoes(await inventarioService.listarRevisoesProgramadas(7));
+  if (!corpo) return;
+  await enviarAlerta(await resolveDestinatario(), corpo, 'revisoes');
 }
 
 module.exports = {
   runInventarioEstoqueBaixo,
   runInventarioManutencoesPendentes,
   runInventarioRevisoesProgramadas,
+  resolveDestinatario,
 };

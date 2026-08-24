@@ -34,6 +34,22 @@ test('BUG-ALVO: sem sessão + texto sem sala + marker herdou sala do histórico 
   assert.strictEqual(salaConfirmada({ markerSalaNome: 'Sala 13', persisted: null, inboundText: t }), false);
 });
 
+test('BUG-SUBSTRING: marker "Sala 1" + user disse "sala 13" → NÃO confirma (sala errada)', () => {
+  assert.strictEqual(salaConfirmada({ markerSalaNome: 'Sala 1', persisted: null, inboundText: 'cadastra na sala 13' }), false);
+});
+
+test('substring: marker "Sala 1" só confirma com "sala 1" de verdade', () => {
+  assert.strictEqual(salaConfirmada({ markerSalaNome: 'Sala 1', persisted: null, inboundText: 'poe na sala 1 mesmo' }), true);
+});
+
+test('composto: "Sala 8 Teclas" citada inteira no texto → confirma', () => {
+  assert.strictEqual(salaConfirmada({ markerSalaNome: 'Sala 8 Teclas', persisted: null, inboundText: 'la na sala 8 teclas' }), true);
+});
+
+test('nome não-numérico "Kids Club" citado → confirma (fronteira, não substring)', () => {
+  assert.strictEqual(salaConfirmada({ markerSalaNome: 'Kids Club', persisted: null, inboundText: 'poe la no kids club da barra' }), true);
+});
+
 test('normalização: acento/caixa não atrapalham', () => {
   assert.strictEqual(salaConfirmada({ markerSalaNome: 'Salão Nobre', persisted: null, inboundText: 'cadastra no salao nobre' }), true);
 });

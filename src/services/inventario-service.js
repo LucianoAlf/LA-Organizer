@@ -1,5 +1,7 @@
 const { laReportClient } = require('./la-report-client');
 const { checkAccess } = require('./la-report-access');
+const { enriquecerProdutos } = require('./loja-estoque');
+const { selecionarItensParados } = require('./inventario-manutencao');
 
 function gate(collab, dataType, fnName) {
   const access = checkAccess(collab, dataType);
@@ -106,26 +108,17 @@ async function listarLojaPorUnidade(unidadeId) {
     .order('nome');
   if (e1) throw e1;
   const ids = (produtos || []).map(p => p.id);
-  let estoqueMap = new Map();
-  if (ids.length && unidadeId) {
-    const { data: estoque } = await laReportClient
-      .from('loja_estoque')
-      .select('produto_id, quantidade')
-      .eq('unidade_id', unidadeId)
-      .in('produto_id', ids);
-    for (const e of estoque || []) {
-      estoqueMap.set(e.produto_id, (estoqueMap.get(e.produto_id) || 0) + e.quantidade);
-    }
+  // Busca o estoque SEMPRE (não só quando há unidade). Sem unidade → soma todas as unidades.
+  // Gatear por `&& unidadeId` zerava o estoque no alerta semanal (chamado sem unidade) →
+  // todo produto saía zerado (INVENTORY-ESTOQUE-BAIXO-FALSE-ALARM). Ver loja-estoque.js.
+  let estoqueRows = [];
+  if (ids.length) {
+    let q = laReportClient.from('loja_estoque').select('produto_id, quantidade').in('produto_id', ids);
+    if (unidadeId) q = q.eq('unidade_id', unidadeId);
+    const { data: estoque } = await q;
+    estoqueRows = estoque || [];
   }
-  return (produtos || []).map(p => {
-    const qtd = estoqueMap.get(p.id) || 0;
-    return {
-      ...p,
-      estoque_atual: qtd,
-      abaixo_minimo: p.estoque_minimo > 0 && qtd < p.estoque_minimo,
-      zerado: qtd === 0,
-    };
-  });
+  return enriquecerProdutos(produtos, estoqueRows);
 }
 
 async function buscarProdutoPorNome(nome) {
@@ -150,6 +143,24 @@ async function listarManutencoesPendentes(diasMin = 14) {
     .order('data_manutencao');
   if (error) throw error;
   return data || [];
+}
+
+// INVENTORY-MANUTENCAO-PENDENTE-FALSO (audit 24/08): "pendente" = ITEM preso em status='manutencao'
+// (não log de manutenção concluída). Retorna os parados há > diasMin. Ver inventario-manutencao.js.
+async function listarItensEmManutencao(diasMin = 14) {
+  const { data: itens, error } = await laReportClient
+    .from('inventario')
+    .select('id, nome, codigo_patrimonio, updated_at, salas(nome, unidade_id, unidades(nome))')
+    .eq('status', 'manutencao').eq('ativo', true);
+  if (error) throw error;
+  if (!itens || !itens.length) return [];
+  const ids = itens.map(i => i.id);
+  const { data: logs } = await laReportClient
+    .from('inventario_manutencoes')
+    .select('item_id, data_manutencao, tipo, descricao')
+    .in('item_id', ids)
+    .order('data_manutencao', { ascending: false });
+  return selecionarItensParados(itens, logs || [], { nowMs: Date.now(), diasMin });
 }
 
 async function listarRevisoesProgramadas(diasAtePrazo = 7) {
@@ -214,9 +225,14 @@ async function registrarMovimentacao(input, viaTomNome) {
     .single();
   if (error) throw error;
   if (input.tipo === 'transferencia' && input.sala_destino_id) {
-    await laReportClient.from('inventario')
-      .update({ sala_id: input.sala_destino_id, updated_at: new Date().toISOString() })
-      .eq('id', input.item_id);
+    // INVENTORY-MOVE-UNIDADE-ORFA (audit 24/08): mover pra sala de OUTRA unidade atualizava só
+    // sala_id → unidade_id ficava velho e o item sumia das contagens/listas que filtram por
+    // unidade_id (PWA useInventarioStats). Mantém unidade_id coerente com a sala destino.
+    const patch = { sala_id: input.sala_destino_id, updated_at: new Date().toISOString() };
+    const { data: salaDest } = await laReportClient
+      .from('salas').select('unidade_id').eq('id', input.sala_destino_id).maybeSingle();
+    if (salaDest && salaDest.unidade_id) patch.unidade_id = salaDest.unidade_id;
+    await laReportClient.from('inventario').update(patch).eq('id', input.item_id);
   }
   return data;
 }
@@ -324,7 +340,7 @@ module.exports = {
   listarUnidades, listarSalasPorUnidade, buscarSalaPorNome, detalheSala,
   buscarItemPorNome,
   listarLojaPorUnidade, buscarProdutoPorNome,
-  listarEstoqueBaixo, listarManutencoesPendentes, listarRevisoesProgramadas,
+  listarEstoqueBaixo, listarManutencoesPendentes, listarItensEmManutencao, listarRevisoesProgramadas,
   // escrita
   inserirItem, registrarMovimentacao, registrarManutencao,
   ajustarEstoqueLoja, uploadFotoItem,

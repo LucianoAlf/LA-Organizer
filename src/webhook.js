@@ -62,6 +62,7 @@ async function pdfToText(buf, mime, caption) {
 const shutdown = require('./services/shutdown');
 const webhookPersistence = require('./services/webhook-persistence');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
+const inventoryPhotoGate = require('./services/inventory-photo-gate');
 const groupBridgeIn = require('./services/group-chat-bridge-in');
 const uazapiGroups = require('./services/uazapi-groups');
 
@@ -331,10 +332,15 @@ async function processWebhookBody(body) {
         whatsapp.sendMessage(phone, 'recebi sua imagem mas não consegui baixar. Tenta enviar de novo?').catch(() => {});
         return;
       }
-      // Guarda a foto pra eventual anexo no inventário — o insert costuma vir
-      // turnos depois ("qual sala?"). Consumida no handler <<INVENTORY_ACTION>>.
-      try { pendingInventoryPhoto.set(phone, buf.toString('base64'), mime); } catch (e) { /* não-fatal */ }
       const r = await vision.analyzeImage(buf, mime, caption);
+      // Guarda a foto pra eventual anexo no inventário — o insert costuma vir turnos depois
+      // ("qual sala?"). SÓ se NÃO for documento financeiro (comprovante fotografado virava a foto
+      // do próximo item — INVENTORY-PHOTO-CROSSDOMAIN). Consumida no handler <<INVENTORY_ACTION>>.
+      try {
+        if (!inventoryPhotoGate.isLikelyNonInventoryImage(caption, r && r.ok ? r.text : '')) {
+          pendingInventoryPhoto.set(phone, buf.toString('base64'), mime);
+        }
+      } catch (e) { /* não-fatal */ }
       if (r.ok) {
         const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
         text = `[O usuário ACABOU DE ENVIAR uma imagem agora — primeira vez vendo este arquivo. Análise automática:]\n${captionLine}${r.text}`;

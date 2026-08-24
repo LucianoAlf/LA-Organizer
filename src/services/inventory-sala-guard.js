@@ -12,6 +12,16 @@ function norm(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 }
 
+// INVENTORY-SALA-SUBSTRING (audit 24/08): `includes` cru confirmava sala ERRADA — "sala 1" é
+// substring de "sala 13"/"sala 10" → cadastro caía na sala errada (a classe que o guard existe
+// pra travar). Match por FRONTEIRA de token (Unicode-aware: \b é ASCII em JS e falha em acentos).
+function includesWhole(haystack, needle) {
+  if (!needle) return false;
+  const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(?:^|[^\\p{L}\\p{N}])${esc}(?:[^\\p{L}\\p{N}]|$)`, 'u');
+  return re.test(haystack);
+}
+
 /**
  * @param {{markerSalaNome?:string, markerSalaId?:string|number, persisted?:{sala_id?:any,sala_nome?:string}|null, inboundText?:string}} args
  * @returns {boolean} true se a sala do cadastro é confirmada (não herdada do histórico)
@@ -27,7 +37,7 @@ function salaConfirmada({ markerSalaNome, markerSalaId, persisted, inboundText }
   const t = norm(inboundText);
   if (markerSalaNome && t) {
     const sn = norm(markerSalaNome);
-    if (sn && t.includes(sn)) return true;
+    if (sn && includesWhole(t, sn)) return true;
     const num = (String(markerSalaNome).match(/\d+/) || [])[0];
     if (num && new RegExp(`sala\\s*${num}\\b`).test(t)) return true;
   }

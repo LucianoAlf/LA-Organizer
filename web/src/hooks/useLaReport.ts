@@ -396,6 +396,14 @@ export function useReportAlertas(unidadeId?: string | null) {
         .select('*, loja_categorias(nome, icone)')
         .eq('ativo', true);
 
+      // INVENTORY-ESTOQUE-BAIXO-FALSE-ALARM (audit 24/08): loja_produtos NÃO tem estoque_atual →
+      // sem juntar loja_estoque, todo produto saía zerado no app. Busca o estoque e agrega.
+      let estoqueQtdQ = laReportClient
+        .from('loja_estoque')
+        .select('produto_id, quantidade');
+      if (unidadeId) estoqueQtdQ = estoqueQtdQ.eq('unidade_id', unidadeId);
+      estoqueQtdQ = applyUnitFilter(estoqueQtdQ, 'unidade_id', access.unitFilter);
+
       let invQ = laReportClient
         .from('inventario')
         .select('*')
@@ -419,18 +427,26 @@ export function useReportAlertas(unidadeId?: string | null) {
         else manutQ = manutQ.eq('inventario.unidade_id', f);
       }
 
-      const [estoqueRes, invRes, manutRes] = await Promise.all([estoqueQ, invQ, manutQ]);
+      const [estoqueRes, invRes, manutRes, estoqueQtdRes] = await Promise.all([estoqueQ, invQ, manutQ, estoqueQtdQ]);
       if (estoqueRes.error) throw estoqueRes.error;
       if (invRes.error) throw invRes.error;
       if (manutRes.error) throw manutRes.error;
+      if (estoqueQtdRes.error) throw estoqueQtdRes.error;
 
+      const estoqueMap = new Map<number, number>();
+      for (const e of (estoqueQtdRes.data || []) as any[]) {
+        if (e && e.produto_id != null) estoqueMap.set(e.produto_id, (estoqueMap.get(e.produto_id) || 0) + (Number(e.quantidade) || 0));
+      }
       const estoque_baixo = ((estoqueRes.data || []) as any[])
-        .map(p => ({
-          ...p,
-          estoque_atual: p.estoque_atual ?? 0,
-          abaixo_minimo: p.estoque_minimo != null && (p.estoque_atual ?? 0) < p.estoque_minimo,
-          zerado: (p.estoque_atual ?? 0) === 0,
-        }))
+        .map(p => {
+          const qtd = estoqueMap.get(p.id) ?? 0;
+          return {
+            ...p,
+            estoque_atual: qtd,
+            abaixo_minimo: p.estoque_minimo > 0 && qtd < p.estoque_minimo,
+            zerado: qtd === 0,
+          };
+        })
         .filter(p => p.abaixo_minimo || p.zerado) as ReportProduto[];
 
       return {

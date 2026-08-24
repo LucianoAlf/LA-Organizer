@@ -27,6 +27,7 @@ const { buildEventReminderRows } = require('./services/event-reminders');
 const { matchRowsByShortId } = require('./services/short-id-match');
 const { getActiveWindow } = require('./services/active-window');
 const inventarioValidators = require('./services/inventario-validators');
+const { isBulkAdd, parseBulkAdd } = require('./services/inventario-bulk');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
 const approvalsService = require('./services/approvals');
@@ -10770,12 +10771,12 @@ async function processMessage(phone, text, raw = {}) {
       if (tokens[0].toLowerCase() === 'alertas') {
         const [estoque, manut, revisoes] = await Promise.all([
           inventarioService.listarEstoqueBaixo(),
-          inventarioService.listarManutencoesPendentes(14),
+          inventarioService.listarItensEmManutencao(14),
           inventarioService.listarRevisoesProgramadas(7),
         ]);
         let replyInv = `🔔 *Alertas inventário*\n\n`;
         replyInv += `🔴 Estoque baixo: ${estoque.length}\n`;
-        replyInv += `🔧 Manutenções +14d: ${manut.length}\n`;
+        replyInv += `🔧 Itens parados em manutenção +14d: ${manut.length}\n`;
         replyInv += `🗓 Revisões próximas (7d): ${revisoes.length}\n`;
         await whatsapp.sendMessage(phone, replyInv);
         return;
@@ -12218,7 +12219,7 @@ async function processMessage(phone, text, raw = {}) {
           consultar: 'ver', query: 'ver', buscar: 'ver', search: 'ver', get: 'ver', view: 'ver',
           listar: 'query_rooms', list: 'query_rooms', list_rooms: 'query_rooms',
         };
-        const KNOWN_ACTIONS = ['add_item', 'edit_item', 'delete_item', 'move_item', 'maintenance', 'shop_movement', 'ver', 'query_room', 'query_shop', 'query_rooms'];
+        const KNOWN_ACTIONS = ['add_item', 'bulk_add', 'edit_item', 'delete_item', 'move_item', 'maintenance', 'shop_movement', 'ver', 'query_room', 'query_shop', 'query_rooms'];
         if (payload.action && actionAliases[String(payload.action).toLowerCase()]) {
           const novo = actionAliases[String(payload.action).toLowerCase()];
           console.log(`[InventoryAction] alias action: ${payload.action} → ${novo}`);
@@ -12265,7 +12266,65 @@ async function processMessage(phone, text, raw = {}) {
           }
 
           try {
-            if (payload.action === 'add_item') {
+            if (isBulkAdd(payload)) {
+              // INVENTORY-BULK-ADD (Leo 18/06, finding 29b8751b): cadastro em LOTE. O LLM lota N
+              // itens numa ação só (bulk_add ou add_item com items[]); antes o handler só sabia 1
+              // item/marker → o lote caía inteiro (90 itens do Leo). Resolve sala/unidade UMA vez
+              // (compartilhadas), dup-check em memória, e reporta QUAIS falharam (não "lote parcial
+              // mudo"). Persiste no MESMO turno do "confirma" — a lista sobrevive no histórico via
+              // truncateHistoryMsg (preserva listas inteiras).
+              const bulk = parseBulkAdd(payload);
+              if (!bulk || bulk.items.length === 0) {
+                reply = (reply ? reply + '\n\n' : '') + 'Não consegui ler nenhum item da lista. Me reenvia (um item por linha, com a quantidade)?';
+                await logMarker(collab.id, 'INVENTORY_ACTION', 'rejected', 'bulk_add:sem_itens', null);
+              } else {
+                let unidadeId = bulk.unidadeIdShared || await resolverUnidadeId(bulk.unidadeShared);
+                if (!unidadeId && (bulk.salaIdShared || bulk.salaShared)) {
+                  if (bulk.salaIdShared) {
+                    const { laReportClient: _lrcU } = require('./services/la-report-client');
+                    const { data: s } = await _lrcU.from('salas').select('unidade_id').eq('id', bulk.salaIdShared).maybeSingle();
+                    if (s) unidadeId = s.unidade_id;
+                  } else {
+                    const _salas = await inventarioService.buscarSalaPorNome(bulk.salaShared);
+                    if (_salas.length === 1) unidadeId = _salas[0].unidade_id;
+                  }
+                }
+                if (!unidadeId) {
+                  reply = (reply ? reply + '\n\n' : '') + `Pra cadastrar os ${bulk.items.length} itens, me diz a *unidade* (Barra/Recreio/CG).`;
+                } else {
+                  const salaId = bulk.salaIdShared || await resolverSalaId(bulk.salaShared, unidadeId);
+                  if (salaId == null) { reply = (reply ? reply + '\n\n' : '') + `Sala "${bulk.salaShared || ''}" não encontrada.`; }
+                  else if (typeof salaId === 'object' && salaId.ambiguous) { reply = (reply ? reply + '\n\n' : '') + `Mais de uma sala: ${salaId.ambiguous}. Qual?`; }
+                  else if (!salaConfirmada({ markerSalaNome: bulk.salaShared, markerSalaId: bulk.salaIdShared || salaId, persisted: ctx && ctx.invSalaContext, inboundText: inboundVerbatimText })) {
+                    reply = `Em qual *unidade* e *sala* eu cadastro os ${bulk.items.length} itens? (ex: Kids Club — Barra)`;
+                  } else {
+                    const { laReportClient: _lrcB } = require('./services/la-report-client');
+                    const { data: _exist } = await _lrcB.from('inventario').select('nome').eq('sala_id', salaId).eq('ativo', true);
+                    const _existSet = new Set((_exist || []).map(r => String(r.nome).trim().toLowerCase()));
+                    const _ok = [], _dup = [], _fail = [], _seen = new Set();
+                    for (const it of bulk.items) {
+                      const _key = it.nome.toLowerCase();
+                      if (_existSet.has(_key) || _seen.has(_key)) { _dup.push(it.nome); continue; }
+                      try {
+                        await inventarioService.inserirItem({
+                          nome: it.nome, sala_id: salaId, unidade_id: unidadeId,
+                          categoria: it.categoria || null, quantidade: it.quantidade, condicao: it.condicao,
+                          status: 'ativo', marca: it.marca || null, modelo: it.modelo || null,
+                          observacoes: it.observacoes || null,
+                        }, userName);
+                        _seen.add(_key); _ok.push(it.nome); _invPersisted++;
+                      } catch (e) { _fail.push(it.nome); console.error('[Inventory bulk] insert falhou:', it.nome, e.message); }
+                    }
+                    const _fmt = (arr) => arr.slice(0, 15).join(', ') + (arr.length > 15 ? ` +${arr.length - 15}` : '');
+                    const _partes = [`✅ ${_ok.length} de ${bulk.items.length} itens cadastrados na *${bulk.salaShared || 'sala'}*.`];
+                    if (_dup.length) _partes.push(`⚠️ Já existiam (não dupliquei): ${_fmt(_dup)}.`);
+                    if (_fail.length) _partes.push(`❌ Falharam: ${_fmt(_fail)}. Me chama que eu tento de novo.`);
+                    if (bulk.dropped) _partes.push(`(${bulk.dropped} linha(s) sem nome legível foram ignoradas.)`);
+                    reply = (reply ? reply + '\n\n' : '') + _partes.join('\n');
+                  }
+                }
+              }
+            } else if (payload.action === 'add_item') {
               const vc = inventarioValidators.validateAddItem(p);
               if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + friendlyInventoryError(vc.errors); await logMarker(collab.id, 'INVENTORY_ACTION', 'rejected', `${payload.action}:${vc.errors.join(',')}`.slice(0, 90), null); }
               else {
@@ -12381,12 +12440,19 @@ async function processMessage(phone, text, raw = {}) {
                   }
                   if (produtoId) {
                     const qty = p.tipo === 'entrada' ? Math.abs(p.quantidade) : -Math.abs(p.quantidade);
-                    const res = await inventarioService.ajustarEstoqueLoja({
-                      produto_id: produtoId, unidade_id: unidadeId, quantidade: qty, tipo: p.tipo,
-                      nota_fiscal: p.nota_fiscal, motivo: p.motivo,
-                    }, userName);
-                    reply = (reply ? reply + '\n\n' : '') + `✅ Estoque atualizado. Saldo agora: ${res.saldo_apos} un.`;
-                    _invPersisted++;
+                    // INVENTORY-ESTOQUE-LOST-UPDATE (audit 24/08): usa a RPC ATÔMICA
+                    // ajustar_estoque_manual (mesma do SHOP_ACTION) em vez do read-modify-write do
+                    // service ajustarEstoqueLoja, que perdia updates em ajustes concorrentes.
+                    const { laReportClient: _lrcShop } = require('./services/la-report-client');
+                    const { data: _rpcData, error: _rpcErr } = await _lrcShop.rpc('ajustar_estoque_manual', {
+                      p_produto_id: produtoId,
+                      p_unidade_id: unidadeId,
+                      p_delta: qty,
+                      p_motivo: p.motivo || p.nota_fiscal || 'movimentação via TOM',
+                      p_via_audit: `via TOM por ${userName}`,
+                    });
+                    if (_rpcErr) { reply = (reply ? reply + '\n\n' : '') + `⚠️ Não consegui atualizar o estoque: ${_rpcErr.message}`; }
+                    else { reply = (reply ? reply + '\n\n' : '') + `✅ Estoque atualizado. Saldo agora: ${_rpcData?.[0]?.saldo_apos} un.`; _invPersisted++; }
                   }
                 }
               }
