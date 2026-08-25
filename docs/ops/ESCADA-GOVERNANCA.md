@@ -798,3 +798,59 @@ Duas medições novas que a varredura de hoje produziu, e que valem mais que a v
 O produto da varredura continua sendo diagnóstico, não baixa — e a métrica útil segue sendo
 quantos achados anotados viram correção depois. `0509fddb`, corrigido hoje, veio de um candidato
 gerado pelo mesmo lever.
+
+### ETAPA 3 — o CONTROLE tem que ser válido nas DUAS versões, não só na de hoje
+
+**Ocorrências:** 2 (17/08, 25/08). Reincidiu, e desta vez o neutro apareceu só do lado ANTIGO.
+
+Em 17/08 ficou medido que o controle precisa ser escolhido contra a COMPARAÇÃO que a função faz.
+Em 25/08 o mesmo erro voltou numa comparação de duas versões, e o detalhe é novo: **o controle era
+válido para o código de HOJE e inválido para a versão antiga.**
+
+Investigando `49a1340b` (Dai 24/06), comparei a versão de 22/06 do `optimistic-confirm.js` contra a
+de hoje. Controle: `'✅ Concluí a tarefa de materiais de canto!'` — claim forte, óbvia. Resultado:
+**HOJE `true`, ANTES `false`.** Lido no automático, isso diz "o guard não pegava esse caso em junho",
+que é precisamente a conclusão que 22/08 ensina a não tirar.
+
+A causa é ortográfica. O `COMPLETION_CORE` da versão antiga termina em `\b`, e em JS sem a flag `u`
+o `\b` é ASCII: depois de **"Concluí"** — `í` não é word-char — seguido de espaço não existe
+boundary, e o regex falha. Trocado por `'Registrado! A tarefa de materiais tá no sistema.'` (verbo
+ancorado, sem vogal acentuada no fim), o controle passou a disparar nas duas versões; o negativo
+("Bom dia, tudo certo por aí?") ficou `false` nas duas; e a variante que o fix de 22/06 cobria
+("Te cobro conforme os dias.") deu `true` nas duas. **Só então a comparação teve valor.**
+
+Medido depois, para não deixar suspeita no ar: hoje `hasCompletionClaim` devolve `true` em
+"Concluí", "Conclui", "Concluído", "Registrei" e na forma com emoji — o buraco do `\b` ASCII é da
+versão de junho e **já está corrigido**. Não há bug vivo aqui; havia bug no meu controle.
+
+Regra: **num diff de duas versões, valide o controle nas duas antes de ler qualquer coisa do caso
+real.** Controle que só dispara de um lado transforma diferença de INSTRUMENTO em diferença de
+COMPORTAMENTO — e o erro aponta para "isso nasceu depois", o lado que fecha achado vivo.
+
+### ETAPA 2 (varredura) — a família "não consegui registrar" É parcialmente provável
+
+**Ocorrências:** 1 (25/08). **Corrige o veredito de 19/08 sobre o maior cluster do acervo.**
+
+Em 19/08 registrei que a família "não consegui registrar" (23 achados, o maior cluster) era
+improvável por construção: o chokepoint apaga a entrada que o teste precisaria, e o `raw_excerpt`
+guarda a nota já rebaixada. Isso continua verdade **para provar o que o LLM disse** — e é falso
+para uma parte relevante dos achados.
+
+O que a mensagem entregue contém é `sanitizeOptimisticConfirm(original,'failed') + NOTE`. A primeira
+parcela está **inteira** no `conversation_history`. Quando o achado alega *contradição intra-mensagem*
+— prosa afirmando persistência ao lado da nota de falha — o que ele afirma é exatamente sobre o
+RESÍDUO, não sobre o original. E o resíduo é testável.
+
+No `49a1340b` a linha residual é _"Tarefa fica aberta até sábado pra você fechar o registro completo.
+Te cobro depois do Recreio!"_. Medido: `hasCompletionClaim(linha)` = **false nas duas versões**, e a
+linha **sobrevive** ao `sanitize(prosa,'failed')` nas duas. Ou seja o sintoma do achado se reproduz
+hoje, sem precisar do original — bug vivo, deixado aberto com raiz.
+
+A raiz é a mesma de 13/08 e vale para o cluster: o `PLANNING_CLAIM_RE` cobre
+"te cobro/lembro/aviso + conforme|quando|à medida|nos dias|cada" (criado em 22/06 justamente por um
+caso Dai de 21/06) e **não cobre "te cobro DEPOIS" nem afirmação de ESTADO** ("tarefa fica aberta
+até X"). Dois dias depois do fix, a mesma pessoa bateu no mesmo guard com fraseado adjacente.
+
+Regra: **antes de declarar um achado do cluster improvável, olhe o que ele AFIRMA.** Se afirma
+contradição, o resíduo basta e a prova é possível; se afirma que o TOM mentiu sobre ter gravado, aí
+sim o original é necessário e o achado é improvável. Eram duas classes contadas como uma.
