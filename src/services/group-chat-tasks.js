@@ -120,25 +120,20 @@ function pickVisibleCompletionTarget(rows, todayYmd) {
   return pickInstanceTarget(visiveis);
 }
 
-// Fuso SP — YMD determinístico (reusado pelos resolvedores por frase/label).
-const _SP_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' });
-function _spYmd(ts) { try { return _SP_FMT.format(new Date(ts)); } catch (_) { return null; } }
-function _withCreatedYmd(rows) {
-  return (Array.isArray(rows) ? rows : []).map((t) => ({ ...t, created_ymd: t && t.created_at ? _spYmd(t.created_at) : (t && t.created_ymd) || null }));
-}
-
-// GROUPCHAT-FALLBACK-VISIBILITY (Rose 25/08) — a trava que faltava em TODO resolvedor por
-// FRASE/LABEL (não só no completer primário). Antes os fallbacks (_resolveByPhraseFallback,
-// _resolvePackageChildByLabel) chamavam pickInstanceTarget CRU e pegavam a ocorrência mais ANTIGA
-// aberta — inclusive um ciclo velho que já tem GÊMEA concluída e que o digest ESCONDE: o TOM fechou
-// a 25/07 done-twin'd em vez da 25/08 que a Rose fez. Fix CIRÚRGICO: aplica o MESMO
-// dropOpenWithDoneTwin do digest (esconde a gêmea) antes do pickInstanceTarget. Assim a 25/07 sai e
-// a 25/08 vira a mais antiga aberta → escolhida. rows precisa vir com DONE incluído (senão não há
-// gêmea a detectar). NÃO aplica retroativa/futuro (escopo do digest/complete; aqui só a gêmea era o
-// bug, e adicioná-los esconderia alvo legítimo que o fallback antigo alcançava).
-function pickVisibleInstance(rows, todayYmd) {
+// GROUPCHAT-FALLBACK-VISIBILITY (Rose 25/08) — a trava que faltava em TODO resolvedor de alvo por
+// título/frase/label. Só o completer PRIMÁRIO (pickVisibleCompletionTarget) tinha; os DOIS fallbacks
+// (frase, label de pacote) E as PRIMÁRIAS de reschedule/cancel chamavam pickInstanceTarget CRU e
+// pegavam a ocorrência mais ANTIGA aberta — inclusive um ciclo velho que já tem GÊMEA concluída e que
+// o digest ESCONDE (o TOM fechou/remarcou a 25/07 done-twin'd em vez da 25/08 que a Rose fez). Fix de
+// RAIZ: um só chokepoint de visibilidade — dropOpenWithDoneTwin (o MESMO do digest) antes do
+// pickInstanceTarget. rows precisa vir com DONE incluído (senão não há gêmea a detectar). NÃO aplica
+// retroativa/futuro (escopo do digest/complete; aqui só a gêmea era o bug, e adicioná-los esconderia
+// alvo legítimo que o resolvedor antigo alcançava — quebrou os testes com fixture retroativo).
+function pickVisibleInstance(rows) {
+  // NÃO filtra is_group: reschedule/cancel de CONTAINER (pacote) é legítimo (cascateia pras filhas).
+  // Barrar container é escopo do COMPLETE — o completer guarda isso à parte (semContainer / o
+  // pickVisibleCompletionTarget tem o filtro). Aqui só a gêmea-concluída era o bug.
   const visiveis = dropOpenWithDoneTwin(Array.isArray(rows) ? rows : [])
-    .filter((t) => t && t.is_group !== true)
     .sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
   return pickInstanceTarget(visiveis);
 }
@@ -201,10 +196,9 @@ async function _resolveByPhraseFallback({ supabase, groupId, phrase }) {
     // Inclui DONE (só exclui cancelled): o pickVisibleInstance precisa da gêmea-concluída pra
     // esconder o ciclo velho e mirar o corrente — MESMA verdade do digest (GROUPCHAT-FALLBACK-VISIBILITY).
     const { data: pool } = await supabase.from('tasks')
-      .select('id, title, recurrence_rule, recurrence_parent_id, due_date, is_group, is_recurrence_template, status, created_at')
+      .select('id, title, recurrence_rule, recurrence_parent_id, due_date, is_group, is_recurrence_template, status')
       .eq('assigned_group_id', groupId).neq('status', 'cancelled').limit(200);
-    const matched = _withCreatedYmd(matchPoolByPhrase(pool || [], phrase));
-    return pickVisibleInstance(matched, _SP_FMT.format(new Date()));
+    return pickVisibleInstance(matchPoolByPhrase(pool || [], phrase));
   } catch (_) { return null; }
 }
 
@@ -226,16 +220,16 @@ async function _resolvePackageChildByLabel({ supabase, groupId, label }) {
     const child = _normTitle(label.slice(i + 1));
     if (!pkg || !child) return null;
     const { data } = await supabase.from('tasks')
-      .select('id, title, due_date, parent_task_id, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template, status, created_at')
+      .select('id, title, due_date, parent_task_id, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template, status')
       .eq('assigned_group_id', groupId).neq('status', 'cancelled').limit(300);
     const rows = data || [];
     const containers = new Set(rows.filter((r) => r.is_group === true && _normTitle(r.title) === pkg).map((r) => r.id));
     if (!containers.size) return null;
     // Inclui DONE no filtro pra o pickVisibleInstance detectar gêmea e mirar o ciclo corrente
     // (mesma verdade do digest — GROUPCHAT-FALLBACK-VISIBILITY).
-    const filhas = _withCreatedYmd(rows.filter((r) => r.parent_task_id && containers.has(r.parent_task_id)
-      && _normTitle(r.title) === child && r.recurrence_rule == null));
-    return pickVisibleInstance(filhas, _SP_FMT.format(new Date()));
+    const filhas = rows.filter((r) => r.parent_task_id && containers.has(r.parent_task_id)
+      && _normTitle(r.title) === child && r.recurrence_rule == null);
+    return pickVisibleInstance(filhas);
   } catch (_) { return null; }
 }
 
@@ -495,17 +489,18 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           // recurrence_parent_id obrigatório — ver a nota no ramo `complete`. Cancelar a
           // filha-template no lugar da real é pior que concluir: some trabalho da frente
           // de todo mundo e o molde fica marcado.
-          .select('id, title, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template')
+          .select('id, title, due_date, status, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template')
           .eq('assigned_group_id', groupId)
-          .neq('status', 'done')
+          // Inclui DONE (só exclui cancelled) pro pickVisibleInstance esconder a gêmea-concluída e
+          // mirar o ciclo corrente — MESMA verdade do digest (GROUPCHAT-FALLBACK-VISIBILITY, Rose 25/08).
           .neq('status', 'cancelled')
           .ilike('title', title)
-          .order('created_at', { ascending: false })
-          .limit(5);
+          .order('due_date', { ascending: true })
+          .limit(30);
         // Protege a série recorrente: cancela a INSTÂNCIA visível, NUNCA o molde.
         // Cancelar o template mata a série inteira — materializeAll pula molde
         // cancelado, então nunca mais regenera (caso Conciliação de Cartões/Rose 17/06).
-        let target = pickInstanceTarget(hit);
+        let target = pickVisibleInstance(hit || []);
         if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title, excludeCancelled: true });
         if (!target) { failed.push({ action: a, why: 'not_found_in_group' }); continue; }
         // updated_by (13/08): quem pediu o cancelamento fica registrado — inclusive na
@@ -533,10 +528,12 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           // recurrence_parent_id obrigatório — ver a nota no ramo `complete`. Remarcar a
           // filha-template move o molde e descasa a série: foi o que fez o TOM "criar 3
           // duplicadas" ao remanejar os Repasses da Rose em 31/07.
-          .select('id, title, recurrence_rule, recurrence_parent_id, is_group, is_recurrence_template').eq('assigned_group_id', groupId)
-          .neq('status', 'done').neq('status', 'cancelled').ilike('title', title)
-          .order('due_date', { ascending: true }).limit(5);
-        let target = pickInstanceTarget(found);
+          .select('id, title, due_date, status, recurrence_rule, recurrence_parent_id, is_group, is_recurrence_template').eq('assigned_group_id', groupId)
+          // Inclui DONE (só exclui cancelled): pickVisibleInstance esconde a gêmea-concluída e mira o
+          // ciclo corrente — antes remarcava a data do ciclo VELHO (GROUPCHAT-FALLBACK-VISIBILITY).
+          .neq('status', 'cancelled').ilike('title', title)
+          .order('due_date', { ascending: true }).limit(30);
+        let target = pickVisibleInstance(found || []);
         if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title, excludeCancelled: true });
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         // updated_by (13/08): remarcar move trabalho de dia sem deixar rastro de quem moveu —

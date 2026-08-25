@@ -597,3 +597,35 @@ test('pickInstanceTarget: COM a coluna, escolhe a instância mesmo vindo depois'
   ];
   assert.strictEqual(pickInstanceTarget(comColuna).id, 'instancia');
 });
+
+// GROUPCHAT-FALLBACK-VISIBILITY (varredura 25/08) — reschedule/cancel PRIMÁRIOS também miravam o
+// ciclo VELHO done-twin (mesma raiz do complete). Agora funilam no pickVisibleInstance.
+test('reschedule: mira o ciclo corrente (25/08), não o 25/07 done-twin', async () => {
+  const events = [];
+  const tasks = [
+    G({ id: 'jul-done', title: 'Cartão X', due_date: '2026-07-25', status: 'done', recurrence_parent_id: 'tpl' }),
+    G({ id: 'jul-open', title: 'Cartão X', due_date: '2026-07-25', recurrence_parent_id: 'tpl' }),
+    G({ id: 'aug-open', title: 'Cartão X', due_date: '2026-08-25', recurrence_parent_id: 'tpl' }),
+  ];
+  await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'Cartão X', new_due_date: '2026-09-01' }],
+  });
+  assert.ok(events.find((e) => e.kind === 'update' && e.id === 'aug-open' && e.patch.due_date === '2026-09-01'), 'remarcou a 25/08');
+  assert.ok(!events.find((e) => e.kind === 'update' && e.id === 'jul-open'), 'NÃO tocou a 25/07 done-twin');
+});
+
+test('cancel: mira o ciclo corrente (25/08), não o 25/07 done-twin', async () => {
+  const events = [];
+  const tasks = [
+    G({ id: 'jd', title: 'Cartão Y', due_date: '2026-07-25', status: 'done', recurrence_parent_id: 'tpl' }),
+    G({ id: 'jo', title: 'Cartão Y', due_date: '2026-07-25', recurrence_parent_id: 'tpl' }),
+    G({ id: 'ao', title: 'Cartão Y', due_date: '2026-08-25', recurrence_parent_id: 'tpl' }),
+  ];
+  await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'cancel', title: 'Cartão Y' }],
+  });
+  assert.ok(events.find((e) => e.kind === 'update' && e.id === 'ao' && e.patch.status === 'cancelled'), 'cancelou a 25/08');
+  assert.ok(!events.find((e) => e.kind === 'update' && e.id === 'jo'), 'NÃO tocou a 25/07');
+});
