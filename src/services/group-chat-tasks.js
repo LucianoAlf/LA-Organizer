@@ -120,6 +120,29 @@ function pickVisibleCompletionTarget(rows, todayYmd) {
   return pickInstanceTarget(visiveis);
 }
 
+// Fuso SP — YMD determinístico (reusado pelos resolvedores por frase/label).
+const _SP_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' });
+function _spYmd(ts) { try { return _SP_FMT.format(new Date(ts)); } catch (_) { return null; } }
+function _withCreatedYmd(rows) {
+  return (Array.isArray(rows) ? rows : []).map((t) => ({ ...t, created_ymd: t && t.created_at ? _spYmd(t.created_at) : (t && t.created_ymd) || null }));
+}
+
+// GROUPCHAT-FALLBACK-VISIBILITY (Rose 25/08) — a trava que faltava em TODO resolvedor por
+// FRASE/LABEL (não só no completer primário). Antes os fallbacks (_resolveByPhraseFallback,
+// _resolvePackageChildByLabel) chamavam pickInstanceTarget CRU e pegavam a ocorrência mais ANTIGA
+// aberta — inclusive um ciclo velho que já tem GÊMEA concluída e que o digest ESCONDE: o TOM fechou
+// a 25/07 done-twin'd em vez da 25/08 que a Rose fez. Fix CIRÚRGICO: aplica o MESMO
+// dropOpenWithDoneTwin do digest (esconde a gêmea) antes do pickInstanceTarget. Assim a 25/07 sai e
+// a 25/08 vira a mais antiga aberta → escolhida. rows precisa vir com DONE incluído (senão não há
+// gêmea a detectar). NÃO aplica retroativa/futuro (escopo do digest/complete; aqui só a gêmea era o
+// bug, e adicioná-los esconderia alvo legítimo que o fallback antigo alcançava).
+function pickVisibleInstance(rows, todayYmd) {
+  const visiveis = dropOpenWithDoneTwin(Array.isArray(rows) ? rows : [])
+    .filter((t) => t && t.is_group !== true)
+    .sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
+  return pickInstanceTarget(visiveis);
+}
+
 // Dado candidatos por título, acha o MOLDE da série (recurrence_rule != null). Pura.
 // Usado por ENCERRAR SÉRIE (ação deliberada): aí sim a gente quer o molde, não a instância.
 function resolveSeriesTemplate(rows) {
@@ -173,14 +196,15 @@ function filterNewSubtasks(existingChildTitles, subtasks, threshold = SIM_THRESH
 // Fallback IO do resolvedor: busca o pool ABERTO do grupo e casa por FRASE (matchPoolByPhrase),
 // mirando o ciclo visível (pickInstanceTarget). Só roda quando o `.ilike` EXATO não achou — em
 // geral porque a pessoa colou o label decorado do relatório. Degrada pra null; nunca lança.
-async function _resolveByPhraseFallback({ supabase, groupId, phrase, excludeCancelled = false }) {
+async function _resolveByPhraseFallback({ supabase, groupId, phrase }) {
   try {
-    let q = supabase.from('tasks')
-      .select('id, title, recurrence_rule, recurrence_parent_id, due_date, is_group, is_recurrence_template')
-      .eq('assigned_group_id', groupId).neq('status', 'done');
-    if (excludeCancelled) q = q.neq('status', 'cancelled');
-    const { data: pool } = await q.limit(200);
-    return pickInstanceTarget(matchPoolByPhrase(pool, phrase));
+    // Inclui DONE (só exclui cancelled): o pickVisibleInstance precisa da gêmea-concluída pra
+    // esconder o ciclo velho e mirar o corrente — MESMA verdade do digest (GROUPCHAT-FALLBACK-VISIBILITY).
+    const { data: pool } = await supabase.from('tasks')
+      .select('id, title, recurrence_rule, recurrence_parent_id, due_date, is_group, is_recurrence_template, status, created_at')
+      .eq('assigned_group_id', groupId).neq('status', 'cancelled').limit(200);
+    const matched = _withCreatedYmd(matchPoolByPhrase(pool || [], phrase));
+    return pickVisibleInstance(matched, _SP_FMT.format(new Date()));
   } catch (_) { return null; }
 }
 
@@ -202,14 +226,16 @@ async function _resolvePackageChildByLabel({ supabase, groupId, label }) {
     const child = _normTitle(label.slice(i + 1));
     if (!pkg || !child) return null;
     const { data } = await supabase.from('tasks')
-      .select('id, title, due_date, parent_task_id, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template')
-      .eq('assigned_group_id', groupId).neq('status', 'done').neq('status', 'cancelled').limit(300);
+      .select('id, title, due_date, parent_task_id, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template, status, created_at')
+      .eq('assigned_group_id', groupId).neq('status', 'cancelled').limit(300);
     const rows = data || [];
     const containers = new Set(rows.filter((r) => r.is_group === true && _normTitle(r.title) === pkg).map((r) => r.id));
     if (!containers.size) return null;
-    const filhas = rows.filter((r) => r.parent_task_id && containers.has(r.parent_task_id)
-      && _normTitle(r.title) === child && r.recurrence_rule == null);
-    return pickInstanceTarget(filhas);
+    // Inclui DONE no filtro pra o pickVisibleInstance detectar gêmea e mirar o ciclo corrente
+    // (mesma verdade do digest — GROUPCHAT-FALLBACK-VISIBILITY).
+    const filhas = _withCreatedYmd(rows.filter((r) => r.parent_task_id && containers.has(r.parent_task_id)
+      && _normTitle(r.title) === child && r.recurrence_rule == null));
+    return pickVisibleInstance(filhas, _SP_FMT.format(new Date()));
   } catch (_) { return null; }
 }
 
@@ -614,7 +640,7 @@ async function derecurSeries({ supabase, templateId }) {
 }
 
 module.exports = {
-  applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, pickVisibleCompletionTarget,
+  applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, pickVisibleCompletionTarget, pickVisibleInstance,
   findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, matchPoolByPhrase,
   resolveSeriesTemplate, endSeries, reviveSeries, derecurSeries, _resolvePackageChildByLabel,
 };
