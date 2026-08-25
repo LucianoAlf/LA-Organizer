@@ -13935,10 +13935,11 @@ Output AGORA, apenas o marker:`;
     if (_npW && !_metrics.marker_attempted && (hasCompletionClaim(reply) || hasWeakCompletionClaim(reply))) {
       const _sinceIso = new Date(_t0 - 180_000).toISOString();
       const { data: _rw } = await supabase.from('tasks')
-        .select('title').eq('assigned_to', collab.id)
+        .select('title,remind_at').eq('assigned_to', collab.id)
         .gte('updated_at', _sinceIso)
         .order('updated_at', { ascending: false }).limit(5);
-      _restatesRecentWrite = restatesRecentWrite(reply, (_rw || []).map((r) => r.title));
+      // remind_at junto do título (Rafinha 24/08): reafirmar lembrete cita data/hora, não o nome.
+      _restatesRecentWrite = restatesRecentWrite(reply, _rw || []);
     }
   } catch (_) {}
   try {

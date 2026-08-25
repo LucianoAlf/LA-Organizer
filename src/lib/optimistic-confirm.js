@@ -328,13 +328,35 @@ function _restateTokens(s) {
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length >= 4 && !_RESTATE_STOPWORDS.has(t));
 }
-function restatesRecentWrite(reply, titulos) {
-  const lista = Array.isArray(titulos) ? titulos : [];
+// CHOKEPOINT-NEGA-LEMBRETE-RECENTE (Rafinha 24/08 17:31 BRT): reafirmação de LEMBRETE não cita
+// o título ("já tá salvo! 16/09 às 12h eu te chamo"), então o overlap dava 0 e o guard negava
+// uma verdade gravada 45s antes. A âncora aqui é o `remind_at` — tão concreta quanto o título,
+// e por isso NÃO reabre o freio: exige dia/mês E hora do lembrete que acabou de ser escrito.
+function _citaLembrete(reply, remindAt) {
+  if (!remindAt) return false;
+  const d = new Date(remindAt);
+  if (Number.isNaN(d.getTime())) return false;
+  const brt = new Date(d.getTime() - 3 * 3600 * 1000);
+  const dia = brt.getUTCDate();
+  const mes = brt.getUTCMonth() + 1;
+  const hora = brt.getUTCHours();
+  const min = brt.getUTCMinutes();
+  if (!new RegExp(`\\b0?${dia}\\s*/\\s*0?${mes}\\b`).test(reply)) return false;
+  const hh = `0?${hora}`;
+  const re = min === 0
+    ? new RegExp(`\\b${hh}\\s*(?:h\\b|hs\\b|horas\\b|:00\\b|h00\\b)`, 'i')
+    : new RegExp(`\\b${hh}\\s*[h:]\\s*${String(min).padStart(2, '0')}\\b`, 'i');
+  return re.test(reply);
+}
+function restatesRecentWrite(reply, itens) {
+  const lista = Array.isArray(itens) ? itens : [];
   if (!reply || !lista.length) return false;
   const hay = new Set(_restateTokens(reply));
-  if (!hay.size) return false;
-  return lista.some((t) => {
-    const toks = _restateTokens(t);
+  return lista.some((it) => {
+    const item = it && typeof it === 'object' ? it : { title: it, remind_at: null };
+    if (_citaLembrete(reply, item.remind_at)) return true;
+    if (!hay.size) return false;
+    const toks = _restateTokens(item.title);
     if (toks.length < 2) return false;
     const hits = toks.filter((tk) => hay.has(tk)).length;
     return hits >= 2 && hits / toks.length >= 0.6;

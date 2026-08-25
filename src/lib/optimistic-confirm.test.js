@@ -524,6 +524,55 @@ test('ZERO-REGRESSAO: opt restatesRecentWrite AUSENTE → comportamento idêntic
   assert.strictEqual(out.fired, true, 'sem a opt explícita, a camada forte segue como antes');
 });
 
+// CHOKEPOINT-NEGA-LEMBRETE-RECENTE (Rafinha 24/08 17:31 BRT) — irmão do Dudu 18/08, e o que
+// escapou foi a ÂNCORA: o guard só sabe casar TÍTULO, e uma reafirmação de lembrete cita
+// data e hora, não o nome da tarefa.
+//   17:31:19  Rafinha (áudio): "Tom, coloca pra me lembrar também, por favor."
+//   17:31:33  TASK_UPDATE executed ok=1 → task com remind_at 16/09 12:00 BRT   ← ESCREVEU
+//   17:31:35  TOM: "✅ Te lembro também no dia 16/09 às 12h — *Pedido na Staner…*"
+//   17:31:44  Rafinha: "Isso"                                                  ← só um ACK
+//   17:32:18  TOM (real, antes do guard): "Beleza, já tá salvo! 16/09 às 12h eu te chamo. ✅"
+//   17:32:19  TOM (no WhatsApp): "_⚠️ Na real não consegui registrar isso agora_"  ← MENTIRA
+// A fala não repete nenhum token do título, então o overlap dá 0 e o guard nega uma verdade
+// gravada 45s antes. O que ela reafirma é o `remind_at` — âncora tão concreta quanto o título.
+const REAL_RAFINHA = 'Beleza, já tá salvo! 16/09 às 12h eu te chamo. ✅';
+const ITEM_RAFINHA = { title: 'Pedido na Staner — 2 caixas bluetooth KUB', remind_at: '2026-09-16T15:00:00+00:00' };
+
+test('restatesRecentWrite: reply que reafirma o LEMBRETE recém-gravado casa (Rafinha 24/08)', () => {
+  assert.strictEqual(restatesRecentWrite(REAL_RAFINHA, [ITEM_RAFINHA]), true);
+});
+
+test('FREIO: reply que cita OUTRA data/hora não casa o lembrete recente', () => {
+  assert.strictEqual(restatesRecentWrite('Beleza, já tá salvo! 17/09 às 12h eu te chamo. ✅', [ITEM_RAFINHA]), false);
+  assert.strictEqual(restatesRecentWrite('Beleza, já tá salvo! 16/09 às 9h eu te chamo. ✅', [ITEM_RAFINHA]), false);
+});
+
+test('FREIO: item sem remind_at só casa por título (comportamento do Dudu preservado)', () => {
+  assert.strictEqual(restatesRecentWrite(REAL_RAFINHA, [{ title: ITEM_RAFINHA.title, remind_at: null }]), false);
+  assert.strictEqual(restatesRecentWrite(REAL_DUDU, [{ title: TITULO_DUDU, remind_at: null }]), true);
+});
+
+test('ZERO-REGRESSAO: lista de strings segue funcionando como antes', () => {
+  assert.strictEqual(restatesRecentWrite(REAL_DUDU, [TITULO_DUDU]), true);
+  assert.strictEqual(restatesRecentWrite(REAL_RAFINHA, [ITEM_RAFINHA.title]), false);
+});
+
+test('CHOKEPOINT não nega o lembrete que o próprio TOM gravou 45s antes (Rafinha 24/08)', () => {
+  const opts = {
+    nothingPersisted: true, pendingActionRecent: true, markerAttempted: false,
+    infoGathering: false, contentSolicitation: false, userProgressStatus: false,
+  };
+  const antes = enforceNoMarkerHonesty(REAL_RAFINHA, { ...opts, restatesRecentWrite: false }, { meta: true });
+  assert.strictEqual(antes.fired, true, 'baseline: sem o sinal, o guard nega a verdade');
+
+  const depois = enforceNoMarkerHonesty(REAL_RAFINHA, {
+    ...opts,
+    restatesRecentWrite: restatesRecentWrite(REAL_RAFINHA, [ITEM_RAFINHA]),
+  }, { meta: true });
+  assert.strictEqual(depois.fired, false, 'o lembrete existia — o guard não pode negá-lo');
+  assert.strictEqual(depois.reply, REAL_RAFINHA, 'resposta tem que sobreviver intacta');
+});
+
 // T2H-WEAK reincidiu em 11/11 ramos de falha (Dudu 21/08): failed/partial passou a stripar a
 // lista FRACA por padrão (a invariante mora na fonte, não em cada call-site). Escape de
 // cordialidade+plano preserva "Beleza, crio separado" (caso Juliana).
