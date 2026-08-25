@@ -118,19 +118,11 @@ const RESULTING_STATE_RE = new RegExp(
   ')'
 , 'iu');
 
-// CONFAB-CHECKLIST (audit 25/08, caso "Junho encerrado" com ✓ por item) — o ✓ sozinho é
-// decorativo (protege a voz), mas ≥2 linhas "• título ✓" viram relatório de conclusão falso
-// quando nada persistiu. Sinal de MENSAGEM (não de linha).
-const _CHECK_TAIL_RE = /[✓✔✅]\s*$/u;
-function _isChecklistCheckLine(line) {
-  const t = String(line).trim();
-  if (!_CHECK_TAIL_RE.test(t)) return false;
-  return t.replace(SUCCESS_EMOJI_GLOBAL, '').replace(LEADING_MARKUP, '').trim().length > 0;
-}
-function hasCheckmarkCompletionList(text) {
-  if (!text) return false;
-  return String(text).split('\n').filter(_isChecklistCheckLine).length >= 2;
-}
+// CONFAB-CHECKLIST (audit 25/08) — a forma "≥2 linhas • título ✓" foi AVALIADA e DESCARTADA: o
+// shadow test (8000 msgs reais) mostrou que ✓-listas também são RECAP legítimo da conquista do
+// usuário ("Entendi do áudio: • Relatório feito ✅", "Fechamento do dia: você mandou bem ✅").
+// Um regex não distingui "EU fiz ✅" de "VOCÊ fez ✅" com segurança, e o custo do falso-positivo
+// (apagar a celebração do usuário) é alto demais pra voz sagrada. Só o padrão de ESTADO (A) ficou.
 
 // TOM-AFIRMA-DEPOIS-DESMENTE (Rose 06/08, Krissya 05/08) — dois buracos de FORMA que
 // sobraram depois do fix do Valcílio. Nos dois casos a afirmação ficou EM CIMA e o
@@ -189,17 +181,11 @@ function _stripLeadingEmoji(line) {
 // Uma linha é "otimista" quando afirma que a ação foi concluída.
 // includeWeak: também trata afirmações FRACAS ("Fechou/Combinado/Beleza/Show") como otimistas
 // — só ligado pelo enforceNoMarkerHonesty quando o eixo de estado já autorizou (Rede 1).
-function _isOptimisticLine(line, includeWeak, checklistMode) {
+function _isOptimisticLine(line, includeWeak) {
   const t = String(line).trim();
   if (!t) return false;
   if (SUCCESS_EMOJI_RE.test(t)) return true;
   if (RECUR_RE.test(t)) return true;
-  // CONFAB-CHECKLIST: sob lista de ✓ (≥2), a linha "• título ✓" e a linha-resumo com verbo de
-  // conclusão em qualquer posição ("Junho encerrado redondo") são parte do relatório falso.
-  if (checklistMode) {
-    if (_isChecklistCheckLine(t)) return true;
-    if (!t.endsWith('?') && _claimSemNegacao(t, COMPLETION_ANYWHERE)) return true;
-  }
   // CONFAB-ESTADO-RESULTANTE: "estão no banco" / "entrou nas recorrências" / "Tarefa fica aberta".
   if (!t.endsWith('?') && _claimSemNegacao(t, RESULTING_STATE_RE)) return true;
   const noEmoji = _stripLeadingEmoji(t);
@@ -238,8 +224,7 @@ function _downgradeTotalizers(line) {
 
 function hasOptimisticConfirm(text) {
   if (!text) return false;
-  const checklistMode = hasCheckmarkCompletionList(text);
-  return String(text).split('\n').some((l) => _isOptimisticLine(l, false, checklistMode));
+  return String(text).split('\n').some((l) => _isOptimisticLine(l, false));
 }
 
 function sanitizeOptimisticConfirm(text, outcome, opts) {
@@ -255,13 +240,12 @@ function sanitizeOptimisticConfirm(text, outcome, opts) {
     ? !!opts.includeWeak
     : true;
 
-  const checklistMode = hasCheckmarkCompletionList(text);
   const out = [];
   const lines = String(text).split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) { out.push(line); continue; }
-    if (!_isOptimisticLine(line, includeWeak, checklistMode)) { out.push(line); continue; }
+    if (!_isOptimisticLine(line, includeWeak)) { out.push(line); continue; }
 
     if (outcome === 'failed') {
       // Nada persistiu → a confirmação é falsa: remove a linha inteira.
@@ -425,8 +409,7 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   // caminho mais comum. Uma pergunta ao lado não torna a afirmação verdadeira, e `nothingPersisted`
   // já é o gate duro. O veto continua valendo para a camada FRACA, que é onde mora o falso-fire
   // de banter ("Beleza! Quer que eu veja mais alguma coisa?") — ali a pergunta É o sinal.
-  // CONFAB-CHECKLIST (audit 25/08): ≥2 linhas "• título ✓" sem nada persistido = relatório falso.
-  let strong = hasCompletionClaim(reply) || hasCheckmarkCompletionList(reply);
+  let strong = hasCompletionClaim(reply);
   // FALSEFIRE-COMPOSICAO (Rose ADM 14/08): quando o TOM PEDE conteúdo/insumo (content-solicitation:
   // "Anotado! Pode mandar o próximo") e NENHUM marker foi tentado no turno, ele não afirmou ação de
   // domínio — é rascunho de mensagem, e `nothingPersisted` é o estado CORRETO, não sintoma. Veta só
@@ -449,4 +432,4 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
 // NO_MARKER_HONEST_NOTE sai exportado (20/08): o guard de reação-sozinha (lib/reacao-muda)
 // precisa da MESMA frase. Duplicar a string criaria um segundo espelho da voz do TOM pra
 // apodrecer — a voz tem uma fonte só.
-module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, hasCheckmarkCompletionList, enforceNoMarkerHonesty, isProgressStatusReply, restatesRecentWrite, NO_MARKER_HONEST_NOTE };
+module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply, restatesRecentWrite, NO_MARKER_HONEST_NOTE };

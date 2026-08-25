@@ -1,12 +1,12 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { enforceNoMarkerHonesty, hasCompletionClaim, hasCheckmarkCompletionList } = require('./optimistic-confirm');
+const { enforceNoMarkerHonesty } = require('./optimistic-confirm');
 
-// CONFAB-ESTADO-E-CHECKLIST (audit 25/08, root "afirmação de estado passa inteira").
-// Guard roda só sob nothingPersisted. Duas formas novas que escapavam:
+// CONFAB-ESTADO-RESULTANTE (audit 25/08, root "afirmação de estado passa inteira").
+// Guard roda só sob nothingPersisted. Forma nova que escapava:
 //   A) estado resultante em 3ª pessoa ("já estão no banco", "entrou nas recorrências", "fica aberta")
-//   C) lista de conclusão com ✓ por item (>=2 linhas)
+// (a forma C "lista de ✓" foi descartada pelo shadow test — over-fire em recap legítimo do usuário.)
 const OFF = { nothingPersisted: true };
 
 function scrubbed(reply) {
@@ -26,14 +26,11 @@ test('A3: "Tarefa fica aberta até sábado" → dispara', () => {
   assert.equal(scrubbed('Tarefa fica aberta até sábado pra você fechar o registro completo.'), true);
 });
 
-// ── C: lista de ✓ (RED — hoje escapa) ─────────────────────────────────────
-test('C: 2+ linhas "• título ✓" → dispara e limpa', () => {
-  const reply = '• Reunião com Juliana ✓\n• Reunião com Rafinha ✓\nJunho encerrado redondo. 💪';
-  assert.equal(hasCheckmarkCompletionList(reply), true);
-  const out = enforceNoMarkerHonesty(reply, OFF, { meta: true });
-  assert.equal(out.fired, true);
-  assert.ok(!/Juliana ✓/.test(out.reply), 'a linha de checkmark deve sair');
-  assert.ok(/não consegui registrar/i.test(out.reply), 'nota honesta anexada');
+// ── C DESCARTADO (shadow test 25/08): agenda de TÍTULOS com ✅ (sem verbo de conclusão) é
+// relatório de status legítimo — o padrão "≥2 linhas ✅" comeria a voz. Sem C, sobrevive. ──
+test('C-descartado: "• Gerar boletos ✅ / • Conferir Emusys ✅" (títulos, sem verbo) → NÃO dispara', () => {
+  const reply = 'Bom dia, Ana! Hoje:\n• Gerar boletos Ifood benefícios ✅\n• Conferir Emusys Recreio e CG ✅';
+  assert.equal(scrubbed(reply), false);
 });
 
 // ── Não-regressão: legítimas que PRECISAM sobreviver ──────────────────────
@@ -49,8 +46,7 @@ test('NEG A: pergunta "está no banco?" → NÃO dispara', () => {
 test('NEG A: negação "não está no banco ainda" → NÃO dispara', () => {
   assert.equal(scrubbed('Isso não está no banco ainda — me confirma?'), false);
 });
-test('NEG C: 1 checkmark decorativo sozinho → NÃO dispara', () => {
-  assert.equal(hasCheckmarkCompletionList('Boa ideia ✓'), false);
+test('✓ decorativo sozinho (sem verbo) → NÃO dispara', () => {
   assert.equal(scrubbed('Boa ideia ✓'), false);
 });
 test('NEG geral: nada persistiu falso? guard OFF quando persistiu', () => {
