@@ -18,7 +18,7 @@ const financeService = require('../services/financeiro-service');
 const { getStaleWorkEvents } = require('../services/open-pendencies');
 const { renderRecentMediaBlock } = require('../utils/media-context');
 const { stripReplyScaffold } = require('../events/detect-approval-reply');
-const { selecionarJanela } = require('../lib/context-task-order');
+const { selecionarJanela, HORIZONTE_DIAS } = require('../lib/context-task-order');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -1530,6 +1530,13 @@ async function fetchCollaboratorContext(collaborator) {
   const today = todaySaoPaulo();
   const next7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
   const past7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
+  // CTX-WINDOW-TETO-CEGO (27/08) — a BUSCA é o gate de verdade do bloco de tarefas: `lte(due_date,
+  // next7days)` fazia tarefa do dia 8+ nunca chegar ao renderizador, então nenhuma janela de render
+  // podia mostrá-la. Alinha a busca ao MESMO horizonte que o `selecionarJanela` promete — senão a
+  // janela mente sobre a cobertura. Medido: +63 linhas na org inteira; o teto por caracteres do
+  // render continua sendo o freio do prompt. Só o bloco de tarefas usa isto (eventos e
+  // done-futuro seguem em 7 dias de propósito).
+  const horizonteTarefas = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + HORIZONTE_DIAS); return d.toISOString().slice(0, 10); })();
   const TASK_COLS = 'id, title, description, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name), parent_task_id, is_group, recurrence_rule, recurrence_parent_id';
 
   const isLeadership = collaborator.role === 'director' || collaborator.role === 'coordinator' ||
@@ -1570,7 +1577,7 @@ async function fetchCollaboratorContext(collaborator) {
     // viram tiebreak pra tasks sem sort_position definido.
     supabase.from('tasks')
       .select(TASK_COLS)
-      .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'personal')
+      .eq('assigned_to', id).lte('due_date', horizonteTarefas).eq('context', 'personal')
       .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
       // Bug 30/05 (Juh/Bianca): remind_at antes de due_date fazia tasks com lembrete
@@ -1582,7 +1589,7 @@ async function fetchCollaboratorContext(collaborator) {
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('tasks')
       .select(TASK_COLS)
-      .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'work')
+      .eq('assigned_to', id).lte('due_date', horizonteTarefas).eq('context', 'work')
       .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
