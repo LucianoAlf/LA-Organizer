@@ -209,6 +209,14 @@ async function queryGroupTasks(supabase, groupId, now = new Date()) {
             'creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
     .eq('assigned_group_id', groupId)
     .neq('status', 'cancelled')
+    // CTX-READERS-DIVERGEM (27/08): `health-check` filtra `data_classification='real'` no eixo de
+    // grupo e este leitor não filtrava — 6 tarefas `archived` contavam pra um e não pro outro.
+    // NÃO era latente: "Vídeos de Boas Vindas" (08/08, Yuri) vinha sendo relatada como ATRASADA no
+    // grupo MKT há 19 dias, arquivada. Comparação em produção nos 13 grupos: só essa linha sai; os
+    // outros 12 grupos ficam idênticos. É a mesma família de "atrasada fantasma" do done-twin.
+    // NÃO entra nos resolvedores do chat (group-chat-tasks/engine) de propósito: lá, esconder faria
+    // o completer não achar uma tarefa que a pessoa nomeou — o mal maior é "não achei", não relatar.
+    .eq('data_classification', 'real')
     .order('due_date', { ascending: true, nullsFirst: false });
   // Map id→título dos CONTAINERS de pacote (is_group) — resolve o nome do pacote na filha
   // (parent_task_id) SEM query extra: o container vem no MESMO result set (mesmo assigned_group_id,

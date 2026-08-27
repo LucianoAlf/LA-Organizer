@@ -332,3 +332,25 @@ test('queryGroupTasks: resolve o título do PACOTE pai (container is_group) na f
   assert.strictEqual(venc.packageTitle, 'Depósito de Cheques');
   assert.strictEqual(venc.responsavel, 'Rose');
 });
+
+// CTX-READERS-DIVERGEM (27/08). `health-check` filtra data_classification='real' no eixo de grupo;
+// este leitor não filtrava. Não era latente: "Vídeos de Boas Vindas" (08/08) aparecia como
+// ATRASADA no grupo MKT há 19 dias, arquivada. Nos outros 12 grupos a saída fica idêntica.
+test('queryGroupTasks filtra data_classification=real (invariante do health-check)', async () => {
+  const filtros = {};
+  const sb = {
+    from() {
+      return {
+        select() { return this; },
+        eq(col, val) { filtros[col] = val; return this; },
+        neq(col, val) { filtros['neq:' + col] = val; return this; },
+        in() { return this; },
+        order: async () => ({ data: [] }),
+      };
+    },
+  };
+  await queryGroupTasks(sb, 'g1', new Date('2026-08-27T12:00:00Z'));
+  assert.strictEqual(filtros.data_classification, 'real', 'sem isto, tarefa arquivada entra no relatório');
+  assert.strictEqual(filtros.assigned_group_id, 'g1');
+  assert.strictEqual(filtros['neq:status'], 'cancelled');
+});
