@@ -5,9 +5,9 @@
 // ordenadas como o SQL entregava: sort_position → due_date → remind_at).
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { orderByDueDate } = require('./context-task-order');
+const { orderByDueDate, selecionarJanela, HORIZONTE_DIAS } = require('./context-task-order');
 
-const JANELA = 8; // o mesmo slice(0,8) do renderTaskList em src/prompts/system.js
+const JANELA = 8; // o teto ANTIGO do renderTaskList — mantido aqui como prova histórica
 
 const LINHAS_REAIS = [
   { title: '3 adaptador p10/P2', due_date: '2026-08-31', sort_position: 0 },
@@ -62,4 +62,65 @@ test('não muta o array recebido', () => {
   const entrada = [{ due_date: '2026-09-01' }, { due_date: '2026-08-26' }];
   orderByDueDate(entrada);
   assert.strictEqual(entrada[0].due_date, '2026-09-01');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CTX-WINDOW-TETO-CEGO (27/08) — o fix de 26/08 arrumou a ORDEM, mas o teto fixo de 8 continuou.
+// Medido em produção: 8 dos 23 colaboradores têm mais de 8 abertas; a maior fila tem 132. Quem
+// perguntasse por uma data além das 8 deadlines mais próximas ouvia "não vejo nada" — falso-
+// negativo que NENHUM guard de honestidade pega, porque o LLM nunca viu o dado.
+// ─────────────────────────────────────────────────────────────────────────────
+const HOJE = '2026-08-27';
+const dias = (n) => { const d = new Date(HOJE + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const mk = (due, title = 'T', description = '') => ({ id: 'x', title, description, due_date: due });
+
+test('DADO REAL: com o teto de 8, o 17º item do Rafinha ficava invisível; com a janela, não fica', () => {
+  const antes = orderByDueDate(LINHAS_REAIS).slice(0, JANELA);
+  assert.strictEqual(antes.length, 8, 'o teto antigo entregava 8 de 17');
+  const { mostradas, ocultas } = selecionarJanela(LINHAS_REAIS, { hoje: '2026-08-26' });
+  assert.strictEqual(mostradas.length, LINHAS_REAIS.length, 'as 17 cabem na janela de 14 dias');
+  assert.strictEqual(ocultas, 0);
+});
+
+test('CASO RAFINHA continua verde pela janela nova (não só pelo slice)', () => {
+  const titulos = selecionarJanela(LINHAS_REAIS, { hoje: '2026-08-26' }).mostradas.map((t) => t.title);
+  for (const t of QUINTA) assert.ok(titulos.includes(t), `"${t}" ficou fora da janela`);
+});
+
+test('40 tarefas dentro do horizonte: nenhuma fica de fora (o teto de 8 cortava 32)', () => {
+  const arr = [...Array(40)].map((_, i) => mk(dias(i % 14), `t${i}`));
+  const { mostradas, ocultas } = selecionarJanela(arr, { hoje: HOJE });
+  assert.strictEqual(mostradas.length, 40);
+  assert.strictEqual(ocultas, 0);
+});
+
+test('atrasada NUNCA é cortada — é o que mais dói', () => {
+  const arr = [...Array(30)].map((_, i) => mk(dias(i % 14), `t${i}`)).concat([mk(dias(-30), 'atrasadona')]);
+  assert.strictEqual(selecionarJanela(arr, { hoje: HOJE }).mostradas[0].title, 'atrasadona');
+});
+
+test('fora do horizonte entra só se sobrar espaço — e o que sobra é CONTADO, nunca some', () => {
+  const arr = [mk(dias(1), 'perto')].concat([...Array(60)].map((_, i) => mk(dias(200 + i), `longe${i}`)));
+  const { mostradas, ocultas } = selecionarJanela(arr, { hoje: HOJE, maxItens: 10 });
+  assert.strictEqual(mostradas[0].title, 'perto');
+  assert.strictEqual(mostradas.length, 10);
+  assert.strictEqual(mostradas.length + ocultas, arr.length);
+});
+
+test('teto por CARACTERES protege o prompt mesmo com tudo dentro do horizonte', () => {
+  const gorda = () => mk(dias(2), 'T'.repeat(200), 'D'.repeat(400));
+  const { mostradas, ocultas } = selecionarJanela([...Array(200)].map(gorda), { hoje: HOJE, maxChars: 5000 });
+  assert.ok(mostradas.length > 0 && mostradas.length < 200, 'corta, mas sempre entrega alguma coisa');
+  assert.strictEqual(mostradas.length + ocultas, 200);
+});
+
+test('sem-prazo é enchimento: nunca na frente de quem tem prazo', () => {
+  const { mostradas } = selecionarJanela([mk(null, 'sem1'), mk(null, 'sem2'), mk(dias(3), 'com')], { hoje: HOJE });
+  assert.strictEqual(mostradas[0].title, 'com');
+});
+
+test('lista vazia/lixo não quebra; HORIZONTE_DIAS é contrato', () => {
+  assert.deepStrictEqual(selecionarJanela([], { hoje: HOJE }), { mostradas: [], ocultas: 0 });
+  assert.deepStrictEqual(selecionarJanela(null, { hoje: HOJE }), { mostradas: [], ocultas: 0 });
+  assert.strictEqual(HORIZONTE_DIAS, 14);
 });

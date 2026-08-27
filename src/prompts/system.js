@@ -18,7 +18,7 @@ const financeService = require('../services/financeiro-service');
 const { getStaleWorkEvents } = require('../services/open-pendencies');
 const { renderRecentMediaBlock } = require('../utils/media-context');
 const { stripReplyScaffold } = require('../events/detect-approval-reply');
-const { orderByDueDate } = require('../lib/context-task-order');
+const { selecionarJanela } = require('../lib/context-task-order');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -454,10 +454,15 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
     return d.toISOString().slice(0, 10);
   };
   const renderTaskList = (arr) => {
-    // CTX-WINDOW-SORTPOS-BLIND (Rafinha 26/08): o prazo decide quem cabe nos 8 slots. Sem isto,
+    // CTX-WINDOW-SORTPOS-BLIND (Rafinha 26/08): o prazo decide quem cabe na janela. Sem isto,
     // sort_position do DnD do PWA jogava tarefa de 31/08 na frente da de amanhã e o TOM dizia
     // "não vejo nada cadastrado" pra quinta com 3 tarefas no banco.
-    orderByDueDate(arr).slice(0, 8).forEach((t, i) => {
+    // CTX-WINDOW-TETO-CEGO (27/08): o teto FIXO de 8 era o resto do mesmo bug — 8 dos 23
+    // colaboradores têm mais de 8 abertas (maior fila: 132). Agora atrasadas + 14 dias entram
+    // sempre, e o que ficar de fora é DECLARADO (ver aviso abaixo) — o TOM não pode negar
+    // existência com base numa lista que ele sabe estar cortada.
+    const { mostradas, ocultas } = selecionarJanela(arr, { hoje: today });
+    mostradas.forEach((t, i) => {
       const sid = String(t.id || '').slice(0, 8);
       let timeBit = '';
       if (t.remind_at) {
@@ -498,6 +503,11 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       const _cb = renderChecklistBlock(t._checklist || []);
       if (_cb) _cb.split('\n').forEach((l) => lines.push(`   ${l}`));
     });
+    // O corte tem que ser DITO. Lista cortada em silêncio vira "não tem nada" — foi exatamente
+    // isso com o Rafinha em 26/08. Aqui o TOM sabe que é parcial e que precisa perguntar/filtrar.
+    if (ocultas > 0) {
+      lines.push(`_⚠️ +${ocultas} tarefa(s) desta lista NÃO estão acima (prazo distante ou sem prazo). Lista PARCIAL: nunca responda que "não há nada" ou que algo não existe com base só nela — filtre pela data/assunto que a pessoa pediu antes de negar._`);
+    }
   };
 
   const { renderChecklistBlock } = require('../services/checklist-render');
@@ -543,6 +553,12 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
         lines.push(`   ↳ ${desc.length > 200 ? desc.slice(0, 200) + '…' : desc}`);
       }
     });
+    // Mesmo teto cego do bloco datado: 114 das 132 tarefas do maior acervo são SEM prazo, e o
+    // corte em 20 era silencioso. Declara o resto (CTX-WINDOW-TETO-CEGO 27/08).
+    const _semPrazoOcultas = Math.max(0, openTasksNoDue.length - 20);
+    if (_semPrazoOcultas > 0) {
+      lines.push(`_⚠️ +${_semPrazoOcultas} tarefa(s) sem prazo NÃO estão acima. Lista PARCIAL: não negue existência com base só nela._`);
+    }
   } else {
     lines.push('_nenhuma_');
   }
