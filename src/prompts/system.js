@@ -18,6 +18,7 @@ const financeService = require('../services/financeiro-service');
 const { getStaleWorkEvents } = require('../services/open-pendencies');
 const { renderRecentMediaBlock } = require('../utils/media-context');
 const { stripReplyScaffold } = require('../events/detect-approval-reply');
+const { orderByDueDate } = require('../lib/context-task-order');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -453,7 +454,10 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
     return d.toISOString().slice(0, 10);
   };
   const renderTaskList = (arr) => {
-    arr.slice(0, 8).forEach((t, i) => {
+    // CTX-WINDOW-SORTPOS-BLIND (Rafinha 26/08): o prazo decide quem cabe nos 8 slots. Sem isto,
+    // sort_position do DnD do PWA jogava tarefa de 31/08 na frente da de amanhã e o TOM dizia
+    // "não vejo nada cadastrado" pra quinta com 3 tarefas no banco.
+    orderByDueDate(arr).slice(0, 8).forEach((t, i) => {
       const sid = String(t.id || '').slice(0, 8);
       let timeBit = '';
       if (t.remind_at) {
