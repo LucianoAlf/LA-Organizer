@@ -9,7 +9,12 @@ const MULTITURNO_RE = /fatura|parte\s*[1-9]|cruzamento|cobran[çc]a|lote|todos o
 // caminho quebrado pra repetir. O `summary` é prosa do AUDITOR sobre o bug; encenar isso faz o
 // TOM conversar SOBRE o defeito e o juiz aprovar um turno vazio. Chokepoint único: o gate e o
 // runner extraem a fala pela MESMA função, então não dá pra um aceitar o que o outro recusa.
-const FALA_RE = /^\s*(?:USU[ÁA]RIO|Pessoa)\s*:\s*(.+)$/i;
+// O `[carimbo]` opcional é obrigatório aqui: a evidência real vem como
+// "[14/08 (sex) 19:56] USUÁRIO: Confirma" (fix AUDIT-RELATIVE-DATE-BLIND, 02/08). Sem tolerá-lo,
+// o rótulo nunca casa e findings que TÊM a fala do usuário são recusados como se não tivessem —
+// a mesma armadilha que já tinha cegado o pickProbe em 19/08. Só no INÍCIO da linha: colchete no
+// meio do texto é conteúdo ("manda o [relatório] hoje").
+const FALA_RE = /^\s*(?:\[[^\]]*\]\s*)?(?:USU[ÁA]RIO|Pessoa)\s*:\s*(.+)$/i;
 function extrairFalasDoUsuario(finding) {
   return String((finding && finding.evidence) || '')
     .split('\n')

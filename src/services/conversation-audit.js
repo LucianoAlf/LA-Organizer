@@ -518,6 +518,7 @@ async function resolveIncidentAt(sb, collaboratorId, evidence, occurredAt, since
  * `extrairFalasDoUsuario` vem do gate da sonda de propósito: quem ESCREVE a evidência e quem a
  * LÊ precisam concordar sobre o que conta como fala do usuário. Duas definições divergiriam. */
 const MAX_TURNO = 500;
+const JANELA_TROCA_MS = 15 * 60 * 1000;   // par usuário↔TOM só vale dentro da mesma troca
 async function ancorarEvidencia(sb, collaboratorId, evidence, sinceIso) {
   try {
     const { extrairFalasDoUsuario } = require('../governance/shadow-reproducibility');
@@ -545,6 +546,13 @@ async function ancorarEvidencia(sb, collaboratorId, evidence, sinceIso) {
       for (let k = i + 1; k < msgs.length; k++) { if (msgs[k].direction === 'inbound') { user = msgs[k]; break; } }
     }
     if (!user || !corta(user)) return null;   // sem fala do usuário não há o que ancorar
+    // Mensagem PROATIVA não tem turno que a disparou: colar o inbound anterior fabrica um nexo
+    // (achado no dry-run do backfill — `e4a434b2` ancorou numa fala de 5h antes, outro assunto).
+    // Só vale como par se as duas mensagens forem da MESMA troca.
+    if (tom) {
+      const dt = Math.abs(new Date(tom.created_at) - new Date(user.created_at));
+      if (!Number.isFinite(dt) || dt > JANELA_TROCA_MS) return null;
+    }
     const linhas = [`USUÁRIO: ${corta(user)}`];
     if (tom && corta(tom)) linhas.push(`TOM: ${corta(tom)}`);
     return linhas.join('\n');

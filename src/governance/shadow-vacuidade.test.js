@@ -35,6 +35,23 @@ test('extrairFalasDoUsuario pega USUÁRIO: e Pessoa:, ignora a fala do TOM', () 
   assert.deepStrictEqual(extrairFalasDoUsuario(null), []);
 });
 
+// AUDIT-PROBE-CARIMBO-CEGA-ANCORA bateu de novo, agora no MEU extrator (27/08, achado no dry-run
+// do backfill): a evidência real vem carimbada — "[14/08 (sex) 19:56] USUÁRIO: Confirma". O ^ do
+// regex fazia o rótulo nunca casar, então findings que TÊM a fala do usuário eram recusados como
+// se não tivessem. Mesma armadilha que o pickProbe já tinha levado em 19/08.
+test('CARIMBO: "[14/08 (sex) 19:56] USUÁRIO: ..." conta como fala do usuário', () => {
+  const ev = '[14/08 (sex) 19:56] USUÁRIO: Confirma\n[14/08 (sex) 19:56] TOM: Opa, perdi o fio aqui';
+  assert.deepStrictEqual(extrairFalasDoUsuario({ evidence: ev }), ['Confirma']);
+  assert.strictEqual(isReproducible({ category: 'dropped_request', evidence: ev }).ok, true);
+});
+
+test('CARIMBO: colchete no MEIO do texto continua sendo conteúdo, não carimbo', () => {
+  assert.deepStrictEqual(
+    extrairFalasDoUsuario({ evidence: 'USUÁRIO: manda o [relatório] hoje' }),
+    ['manda o [relatório] hoje'],
+  );
+});
+
 test('RUNNER: derivarCenario NUNCA inventa turno a partir do summary', () => {
   assert.strictEqual(derivarCenario(soResumo).turns.length, 0);
   assert.strictEqual(derivarCenario(comFala).turns.length, 1);

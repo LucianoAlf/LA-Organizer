@@ -65,6 +65,25 @@ test('NÃO fabrica: sem casar a âncora, ou sem turno de usuário antes, devolve
   assert.strictEqual(await ancorarEvidencia(sbCom(soTom), 'c1', 'mensagem proativa do TOM sozinha', '2026-08-25T00:00:00Z'), null);
 });
 
+test('PROATIVA: turno do usuário distante no tempo NÃO vira evidência (achado no dry-run)', async () => {
+  // O achado `e4a434b2` (proactive_overreach) ancorou numa fala de 5h antes, sobre outro assunto:
+  // mensagem proativa não TEM turno que a disparou. Colar o inbound anterior fabrica um nexo.
+  const proativa = [
+    { created_at: '2026-08-26T14:00:00Z', direction: 'outbound', content: '👻 Higiene de tarefas: encontrei 4 tarefas paradas' },
+    { created_at: '2026-08-26T09:00:00Z', direction: 'inbound', content: 'Haha, pai brabo é pai orgulhoso' },
+  ];
+  assert.strictEqual(await ancorarEvidencia(sbCom(proativa), 'c1', '👻 Higiene de tarefas: encontrei 4 tarefas paradas', '2026-08-25T00:00:00Z'), null);
+});
+
+test('PROATIVA: turno próximo (mesma troca) continua ancorando', async () => {
+  const perto = [
+    { created_at: '2026-08-26T14:00:00Z', direction: 'outbound', content: 'não vejo nada cadastrado pra quinta' },
+    { created_at: '2026-08-26T13:52:00Z', direction: 'inbound', content: 'o que eu tenho pra quinta' },
+  ];
+  const out = await ancorarEvidencia(sbCom(perto), 'c1', 'não vejo nada cadastrado pra quinta', '2026-08-25T00:00:00Z');
+  assert.match(String(out), /^USUÁRIO: o que eu tenho pra quinta/m);
+});
+
 test('entrada lixo / banco vazio não quebra', async () => {
   assert.strictEqual(await ancorarEvidencia(sbCom([]), 'c1', 'qualquer coisa aqui', '2026-08-25T00:00:00Z'), null);
   assert.strictEqual(await ancorarEvidencia(sbCom(CONVERSA), 'c1', '', '2026-08-25T00:00:00Z'), null);
