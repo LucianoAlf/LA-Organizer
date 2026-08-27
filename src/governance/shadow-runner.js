@@ -3,13 +3,14 @@
 // engine em modo QA (sendMessage stubado pelo caller de produção; aqui as deps são injetadas),
 // captura reply+markers+persistido e LIMPA sempre. Sem modelo.
 const FAIXA_QA = /^5500\d{9}$/;
+const { extrairFalasDoUsuario } = require('./shadow-reproducibility');
 
 // v1: a fala do usuário sai do evidence ("USUÁRIO: ..."). Cenários mais ricos entram depois.
+// SHADOW-VERDE-VACUO (27/08): NÃO existe mais fallback pro `summary`. Encenar a prosa do auditor
+// gerava verde que não exercitava o bug (ver shadow-vacuidade.test.js). Sem fala → cenário vazio,
+// e o runner abaixo recusa — o passe vira inconclusivo, nunca aprovado.
 function derivarCenario(finding) {
-  const ev = String((finding && finding.evidence) || '');
-  const falas = ev.split('\n').map((l) => l.match(/^\s*(?:USU[ÁA]RIO|Pessoa)\s*:\s*(.+)$/i)).filter(Boolean).map((m) => m[1].trim());
-  const turns = (falas.length ? falas : [String((finding && finding.summary) || '').slice(0, 200)]).map((userText) => ({ userText }));
-  return { setup: {}, turns };
+  return { setup: {}, turns: extrairFalasDoUsuario(finding).map((userText) => ({ userText })) };
 }
 
 async function runShadow(finding, deps = {}) {
@@ -18,6 +19,10 @@ async function runShadow(finding, deps = {}) {
   const { data: qa } = await supabase.from('collaborators').select('id, phone').eq('phone', qaPhone).maybeSingle();
   if (!qa) return { transcript: { turns: [] }, erro: 'perfil QA inexistente' };
   const cenario = derivarCenario(finding);
+  // 2ª trava (o gate isReproducible é a 1ª): nunca encenar sem a fala real do usuário.
+  if (!cenario.turns.length) {
+    return { transcript: { turns: [] }, erro: 'sem fala literal do usuário (resumo do finding não é fala)' };
+  }
   const turns = [];
   let erro = null;
   try {

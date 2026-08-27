@@ -238,8 +238,12 @@ async function main() {
             supabase, isReproducible, runShadow, judgeShadow,
             engine, whatsapp, turnClaim, qaPhone, chat,
           });
+          // "verificado" ≠ "passou pelo passe". Inconclusivo NÃO é prova — contar tudo como
+          // verificado é a mesma mordaça do gate sem prova de entrega. Separa os três.
           const barrados = res.filter((x) => x.barrou);
-          console.log(`[Shadow] ${res.length} verificados, ${barrados.length} reprovados (reabertos)`);
+          const aprovados = res.filter((x) => x.verdict === 'aprovado').length;
+          const incon = res.filter((x) => x.verdict === 'inconclusivo').length;
+          console.log(`[Shadow] ${res.length} no passe: ${aprovados} aprovados, ${barrados.length} reprovados (reabertos), ${incon} inconclusivos (NÃO provados)`);
         } else {
           console.log('[Shadow] nenhum finding corrigido neste ciclo pra verificar ao vivo');
         }
