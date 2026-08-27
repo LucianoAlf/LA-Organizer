@@ -19,6 +19,8 @@ const { getStaleWorkEvents } = require('../services/open-pendencies');
 const { renderRecentMediaBlock } = require('../utils/media-context');
 const { stripReplyScaffold } = require('../events/detect-approval-reply');
 const { selecionarJanela, HORIZONTE_DIAS } = require('../lib/context-task-order');
+const { extrairPeriodo } = require('../lib/date-phrase');
+const { renderBlocoPeriodo } = require('../lib/context-period-block');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -3163,7 +3165,34 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // sobreviverem à janela curta de histórico — o TOM não nega ter recebido a imagem.
   const recentMediaBlock = renderRecentMediaBlock(ctx.recentMedia);
 
-  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock + recentMediaBlock + pendingIntentsBlock + pendingFollowupsBlock;
+  // CTX-LEITURA-DETERMINISTICA fatia 1 (27/08) — pré-busca por PERÍODO.
+  // O bloco de briefing é cortado (max_daily_tasks, teto de caracteres), então "não vejo nada" ali
+  // nunca provou ausência: o LLM simplesmente não tinha o dado. Quando a fala do usuário cita uma
+  // data, consulta a RPC (fonte única) e injeta a resposta COMPLETA daquele período — assim o
+  // VAZIO passa a ser confiável e a lista cheia impede a negação. Gatilho é DATA, não assunto.
+  // Best-effort: qualquer erro aqui NUNCA derruba o prompt.
+  let periodoBlock = '';
+  try {
+    const periodo = extrairPeriodo(lastUserMessage, todaySaoPaulo());
+    if (periodo && collaborator && collaborator.id) {
+      const { data: tarefasPeriodo, error: errPeriodo } = await supabase.rpc('tom_tarefas_por_periodo', {
+        p_collab: collaborator.id, p_de: periodo.de, p_ate: periodo.ate, p_limite: 60,
+      });
+      // Erro na RPC = NÃO sabemos o período. Bloco fica de fora: um "nenhuma tarefa" fabricado por
+      // falha de rede seria pior que o bug original (viraria licença pra negar com confiança).
+      if (errPeriodo) {
+        console.warn('[Prompt] período: RPC falhou, bloco omitido —', errPeriodo.message);
+      } else {
+        periodoBlock = renderBlocoPeriodo(periodo, tarefasPeriodo || [], todaySaoPaulo());
+        console.log(`[Prompt] período "${periodo.rotulo}" ${periodo.de}..${periodo.ate} → ${(tarefasPeriodo || []).length} tarefa(s)`);
+      }
+    }
+  } catch (e) {
+    console.warn('[Prompt] período: pré-busca falhou (não derruba o prompt) —', e.message);
+  }
+
+  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock + recentMediaBlock + pendingIntentsBlock + pendingFollowupsBlock
+    + (periodoBlock ? '\n\n' + periodoBlock : '');
 
   const blocks = [
     BLOCK_RULES,
