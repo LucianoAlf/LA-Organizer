@@ -854,3 +854,89 @@ até X"). Dois dias depois do fix, a mesma pessoa bateu no mesmo guard com frase
 Regra: **antes de declarar um achado do cluster improvável, olhe o que ele AFIRMA.** Se afirma
 contradição, o resíduo basta e a prova é possível; se afirma que o TOM mentiu sobre ter gravado, aí
 sim o original é necessário e o achado é improvável. Eram duas classes contadas como uma.
+
+### ETAPA 2 (varredura) — o lever mais forte medido até hoje: `marker_logs` com `schema_invalid`
+
+**Ocorrências:** 1 (27/08), sobre os 96 abertos não-altos sem `verified_note`.
+
+Todos os levers anteriores geram candidato por *proximidade* (regex casa, data bate, o comentário
+cita o nome) e depois pagam ~50% de falso na execução. Este gera candidato por **entrada literal
+preservada**, e por isso não tem o mesmo teto de precisão.
+
+Como: para cada achado aberto, buscar `marker_logs` na janela de ±20 min com `result='rejected'` e
+`reason` casando `schema_invalid|invalid|malformed`. Deu **11 candidatos em 96**. O `raw_excerpt`
+dessas linhas guarda **o bloco `<<MARKER>>` inteiro que o LLM emitiu** — ou seja, exatamente o
+input que o validador recusou. Não é paráfrase, não é resumo do auditor, não precisa de agulha no
+`conversation_history`.
+
+Por que isso importa tanto: a maioria do acervo é `dropped_request`, e `dropped_request` quase
+sempre é *marker recusado pelo schema*. Com o bloco na mão, a ETAPA 3 vira uma chamada de função
+com o objeto real, e a ETAPA 4 (antes/depois) fica trivial.
+
+Resultado medido em 4 dos 11:
+
+- `0cf399dc` (Jereh 07/07) — **fechado com prova completa.** O excerpt mostrava
+  `request_id: "9d08f967"` (short-id de 8 hex). O validador de 07/07 exigia UUID de 36
+  (`/^[0-9a-f-]{36}$/`); o de hoje aceita 4-12 hex (`coord-request-id.js`, commit `c73fbccb`,
+  **08/07** — um dia depois, e o cabeçalho do módulo cita o caso pelo nome). Rodado nas duas
+  versões: literal `false → true`; controle UUID `true` nos dois; controles `"zzz"` e vazio
+  `false` nos dois. Dano confirmado à parte: `coordination_requests` segue `sent`/`responded_at
+  null` — a Gabi nunca foi avisada.
+- `caf078f2` (Peterson 22/07) — `<<EVENT_UPDATE>> [{"action":"complete","title":"…"}]`.
+  `validateEventUpdateAction` (`engine.js:2783`) exige `a.id`; `title` não é alias → `id:invalid`.
+  **Vivo.**
+- `4507f25e` (19/07) — `{"action":"skip","habit":"Ir para academia",…}`. **Vivo**, e o resultado
+  neutro pagou de novo (ver abaixo).
+- `a4efeaa4` (John 10/07) — `[{"action":"remove_watchers",…}]`. `watcher` não aparece **nenhuma
+  vez** no `engine.js`, e `src/prompts/system.js:75` **ensina** `action=add_watchers`. Prompt
+  ensinando ação inexistente — o achado da auditoria de 27/07, medido de novo.
+
+Proposta de virar código: o `gov-runner` entrega, no início da rodada, a lista de achados com
+`marker_logs rejected` na janela **e o `raw_excerpt` já anexado**. É o gerador de candidatos com
+melhor razão sinal/ruído medido até aqui, e é uma query só. Vale mais que o lever data+nome.
+
+Efeito colateral da medição, e é o achado mais caro do dia: **a generalização de alias ficou só no
+`HABIT_ACTION`.** O `habit-field-alias.js` (20/08) gera o produto cartesiano sufixo×prefixo porque
+"o defeito não era falta do alias X, era a LISTA". `EVENT_UPDATE` e `TASK_UPDATE` continuam com a
+lista fechada e recusam `title`. Três achados abertos hoje são a mesma classe em validadores
+diferentes.
+
+### ETAPA 3 — resultado NEUTRO pagou pela 4ª vez, agora num GATE de `action`
+
+**Ocorrências:** 4 (14/08, 15/08, 17/08, 27/08).
+
+Em `4507f25e` a predição escrita era "`normalizeHabitAliases` preenche `habit_name` a partir de
+`habit`" — foi exatamente o que aconteceu em `f02e41f1` na mesma rodada. Veio `undefined`. Pela
+regra, fui ler a assinatura antes de concluir: o gate em `habit-field-alias.js:60` é
+`action === 'log' | 'query_progress' | 'delete'`, e o literal é `action:"skip"`. Controles
+confirmaram que a chamada estava boa (`{action:'log',habit_name:'Ler'}` preserva; `{action:'log'}`
+devolve `undefined`).
+
+O novo, e vale registrar: **o gate não era um `if` de feature — era o próprio `action`.** Dois
+achados da MESMA família (`habit` como alias) na mesma rodada, um fechado como corrigido e o outro
+vivo, e a diferença é uma palavra dentro do JSON. Sem o controle, `f02e41f1` teria arrastado
+`4507f25e` junto — a 5ª reincidência do "mesma família = conclusão".
+
+### ETAPA 3 — classe nova: "o LLM nunca viu" não é confabulação
+
+**Ocorrências:** 1 (27/08), e é a correção da rodada.
+
+`62d4dc1c` estava catalogado como o TOM negando fato ("pra quinta 27/08 não vejo nada cadastrado"
+com 3 tarefas no banco, criadas por ele mesmo 1h17 antes). A leitura natural é confabulação, e o
+reflexo é procurar guard de honestidade.
+
+Não era. O bloco de tarefas do system prompt corta em `slice(0,8)` e a ordem vinha do SQL com
+`sort_position` (o DnD do PWA) na frente do `due_date`: seis compras de 31/08 com `sort_position`
+0..5 ocupavam a janela e as três de quinta caíam nas posições 11/12/13. **O contexto do LLM não
+continha as tarefas** — ele respondeu certo sobre o que recebeu.
+
+É a segunda vez pela MESMA raiz: o fix de 30/05 (Juh/Bianca) já tinha tirado `remind_at` da frente
+do `due_date` na mesma query. Voltou por outra coluna.
+
+Regra: **antes de tratar negação de fato como confabulação, reconstrua a JANELA de contexto do
+turno.** Se o dado não coube, o alvo é o seam de montagem do prompt, não o guard de honestidade —
+e nenhum guard de honestidade jamais consertaria isso, porque não há nada de desonesto na resposta.
+
+Medido e **não corrigido** no mesmo lugar (fora do teto): o cabeçalho do bloco renderiza
+`Tarefas trabalho hoje (N)` com N = total da janela de 7 dias, enquanto só 8 linhas são
+renderizadas e o rótulo diz "hoje". Mesma origem, decisão de desenho.

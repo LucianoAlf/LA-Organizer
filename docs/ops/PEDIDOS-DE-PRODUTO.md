@@ -16,3 +16,4 @@ Uma linha por pedido. Se já existir a linha, **incremente a contagem** em vez d
 | 16/07 | Rose | "já que vc n pode apagar por aqui" — estorno em lote (1ª vez em 11/07 23:44 BRT: "Apaga tudo", 11 lançamentos do Nubank) | feature (Fase B do roadmap financeiro) | 2 |
 | 19/06 | Daiana | "Envie às 17:30 um lembrete para a Anne separar todos os cheques..." — recado com horário agendado | feature (o schema do COORDINATION_REQUEST não tem campo de horário de envio) | 1 |
 | 22/06 | Rafinha | "Me manda a mensagem do Rodrigo novamente" | limitação (janela de contexto de 30 mensagens; nenhum marker faz retrieval de histórico) | 1 |
+| 26/08 | Rafinha | "É esse aqui" (reply-quote a um documento antigo) → depois "Ele é uma planilha" | limitação (`extractQuotedMessage` em `services/whatsapp.js:395` devolve só `{id,text,type,fromMe}` — não baixa mídia citada) + feature (planilha cai em `unsupported_mime`; `services/media.js:189` só aceita `image/*` e `application/pdf`) | 1 |
