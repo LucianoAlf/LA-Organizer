@@ -335,6 +335,11 @@ async function auditConversation(sb, chat, collaborator, hours = 24) {
       const inc = await resolveIncidentAt(sb, collaborator.id, f.evidence, f.occurred_at, sinceIso);
       f.incident_at = inc.incident_at;
       f.incident_confidence = inc.incident_confidence;
+      // AUDIT-EVIDENCE-ANCORA-NA-FALA-DO-TOM (27/08): troca a evidência pelo par literal
+      // USUÁRIO/TOM quando ela só tinha a fala do TOM. Faz o achado nascer encenável pela sonda
+      // e re-verificável por quem lê. Ancorar ANTES do upsert — depois o dedupe já fechou.
+      const ancorada = await ancorarEvidencia(sb, collaborator.id, f.evidence, sinceIso);
+      if (ancorada) f.evidence = ancorada;
     }
     return findings;
   } catch (err) {
@@ -499,9 +504,58 @@ async function resolveIncidentAt(sb, collaboratorId, evidence, occurredAt, since
   return { incident_at: null, incident_confidence: 'none' };
 }
 
+/** AUDIT-EVIDENCE-ANCORA-NA-FALA-DO-TOM (27/08) — recupera o turno LITERAL do usuário.
+ *
+ * O auditor grava no `evidence` a linha do TOM (quase sempre a de SUCESSO) em vez da fala que
+ * falhou. Isso (a) deixa a sonda sem cenário — 91 de 240 findings corrigidos não tinham fala do
+ * usuário e caíam no replay do resumo, que era verde vácuo — e (b) faz quem re-verifica lendo o
+ * evidence ver o TOM funcionando e fechar como falso positivo. Caso 62d4dc1c (Rafinha 26/08).
+ *
+ * O auditor ACERTA qual mensagem do TOM é (é o que já ancora o incident_at). Então o CÓDIGO usa
+ * essa âncora pra buscar o turno do usuário imediatamente anterior: LLM diz ONDE, código busca O
+ * QUÊ — o mesmo desenho da leitura determinística. Sem casar, devolve null: nunca fabrica.
+ *
+ * `extrairFalasDoUsuario` vem do gate da sonda de propósito: quem ESCREVE a evidência e quem a
+ * LÊ precisam concordar sobre o que conta como fala do usuário. Duas definições divergiriam. */
+const MAX_TURNO = 500;
+async function ancorarEvidencia(sb, collaboratorId, evidence, sinceIso) {
+  try {
+    const { extrairFalasDoUsuario } = require('../governance/shadow-reproducibility');
+    if (extrairFalasDoUsuario({ evidence }).length) return null;   // já tem fala — não mexe
+    const probe = pickProbe(evidence);
+    if (!probe) return null;
+    const { data } = await sb.from('conversation_history')
+      .select('created_at, direction, content, media_extracted_text')
+      .eq('collaborator_id', collaboratorId)
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: false })
+      .limit(60);
+    const msgs = data || [];
+    const casa = (m) => `${m.content || ''} ${m.media_extracted_text || ''}`.toLowerCase().includes(probe);
+    const i = msgs.findIndex(casa);
+    if (i < 0) return null;
+    const corta = (m) => String((m && m.content) || '').replace(/\s+/g, ' ').trim().slice(0, MAX_TURNO);
+    // A query vem DESC: índice MAIOR = mais antigo. "Anterior no tempo" é pra frente no array.
+    let user = null; let tom = null;
+    if (msgs[i].direction === 'inbound') {
+      user = msgs[i];
+      for (let k = i - 1; k >= 0; k--) { if (msgs[k].direction === 'outbound') { tom = msgs[k]; break; } }
+    } else {
+      tom = msgs[i];
+      for (let k = i + 1; k < msgs.length; k++) { if (msgs[k].direction === 'inbound') { user = msgs[k]; break; } }
+    }
+    if (!user || !corta(user)) return null;   // sem fala do usuário não há o que ancorar
+    const linhas = [`USUÁRIO: ${corta(user)}`];
+    if (tom && corta(tom)) linhas.push(`TOM: ${corta(tom)}`);
+    return linhas.join('\n');
+  } catch (_) {
+    return null;   // ancorar é melhoria; nunca pode derrubar a auditoria
+  }
+}
+
 module.exports = {
   normalizeSummary, signatureFor, chaveDoAchado, parseFindings, rankFindings,
-  loadConversation, rotuloDaLinha, linhasDeMarkers, loadMarkerTrail, auditConversation, upsertFinding, resolveIncidentAt, pickProbe,
+  loadConversation, rotuloDaLinha, linhasDeMarkers, loadMarkerTrail, auditConversation, upsertFinding, resolveIncidentAt, pickProbe, ancorarEvidencia,
   formatGroupTranscript, loadGroupConversation, auditGroupConversation,
   CLOSED_STATUSES, SEV_RANK,
 };
