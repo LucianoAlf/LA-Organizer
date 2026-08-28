@@ -148,8 +148,11 @@ if [ "$VARRER" = 1 ]; then
     echo "corrigidos=$total"
   } > "$ESTADO" 2>/dev/null && chmod 0600 "$ESTADO"
 
-  [ "$restante" -eq 0 ] && [ "$problemas" -eq 0 ] || exit 1
-  exit 0
+  if [ "$restante" -eq 0 ] && [ "$problemas" -eq 0 ]; then exit 0; fi
+  # Alerta EXTERNO. A sentinela detecta, mas quem avisa e isto.
+  ALERTAR="$(dirname "$(readlink -f "$0")")/alertar.sh"
+  [ -x "$ALERTAR" ] && "$ALERTAR" --chave varredura-permissoes --intervalo-min 60     "TOM: varredura de permissoes REPROVOU (restante=$restante problemas=$problemas passadas=$passadas) em $(hostname)" >/dev/null 2>&1
+  exit 1
 fi
 
 [ "$APLICAR" = 1 ] && echo "== APLICANDO ==" || echo "== DRY-RUN (nada alterado) =="
@@ -175,10 +178,35 @@ validar_raiz() {   # NAO ecoa: escreve em RAIZ_VALIDADA. Sem $( ), o contador gl
 
 # #6: r, w E x de grupo/outros. Diretorio 711 nao vaza listagem, mas e atravessavel —
 # quem souber o nome do arquivo entra e le. Traversal e exposicao.
+#
+# FAIL-CLOSED tambem aqui (laudo, item 2): o modo --varrer ja tinha sido corrigido, mas o
+# caminho normal (--aplicar) continuava com `2>/dev/null | wc -l` — o mesmo defeito, no
+# script que faz a contencao COMPLETA. Corrigir um e deixar o outro seria fechar a porta
+# e esquecer a janela, de novo. Erro de leitura agora conta como MEDIDA_FALHOU e reprova.
+MEDIDA_FALHOU=0
+ERRTMP=$(mktemp /run/conter.XXXXXX 2>/dev/null || mktemp) || { echo "[conter] mktemp falhou" >&2; exit 1; }
+chmod 0600 "$ERRTMP"; trap 'rm -f "$ERRTMP"' EXIT INT TERM
+
 expostos() {
-  find "$1" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>/dev/null | wc -l
+  local saida rc
+  saida=$(find "$1" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$ERRTMP")
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ -s "$ERRTMP" ]; then
+    echo "[conter] MEDIDA FALHOU em $1 (rc=$rc): $(head -1 "$ERRTMP" | cut -c1-120)" >&2
+    MEDIDA_FALHOU=$((MEDIDA_FALHOU+1)); echo 0; return
+  fi
+  printf '%s\n' "$saida" | grep -c . || true
 }
-executaveis() { find "$1" -type f -perm -u=x 2>/dev/null | wc -l; }
+executaveis() {
+  local saida rc
+  saida=$(find "$1" -type f -perm -u=x 2>"$ERRTMP")
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ -s "$ERRTMP" ]; then
+    echo "[conter] MEDIDA FALHOU (executaveis) em $1 (rc=$rc): $(head -1 "$ERRTMP" | cut -c1-120)" >&2
+    MEDIDA_FALHOU=$((MEDIDA_FALHOU+1)); echo 0; return
+  fi
+  printf '%s\n' "$saida" | grep -c . || true
+}
 
 relatorio() {
   local rot=$1 te=0 tx=0 e x
@@ -219,6 +247,7 @@ if [ "$APLICAR" = 1 ]; then
   ERRO=0
   [ "$RAIZES_FALTANDO" -eq 0 ] || { echo "FALHA: $RAIZES_FALTANDO raiz(es) ausente(s)/invalida(s)"; ERRO=1; }
   [ "$CHMOD_FALHOU"   -eq 0 ] || { echo "FALHA: $CHMOD_FALHOU chmod(s) retornaram erro"; ERRO=1; }
+  [ "$MEDIDA_FALHOU"  -eq 0 ] || { echo "FALHA: $MEDIDA_FALHOU medicao(oes) de permissao falharam — contagem NAO e confiavel"; ERRO=1; }
   [ "$TOTAL_EXPOSTOS" -eq 0 ] || { echo "FALHA: $TOTAL_EXPOSTOS artefato(s) ainda exposto(s) a grupo/outros"; ERRO=1; }
   [ "$TOTAL_EXEC" -eq "$EXEC_ANTES" ] || { echo "FALHA: executaveis do dono mudaram de $EXEC_ANTES para $TOTAL_EXEC"; ERRO=1; }
   if [ "$ERRO" -eq 0 ]; then
@@ -226,5 +255,6 @@ if [ "$APLICAR" = 1 ]; then
   else exit 1; fi
 else
   [ "$RAIZES_FALTANDO" -eq 0 ] || echo "ATENCAO: $RAIZES_FALTANDO raiz(es) ausente(s)/invalida(s) — com --aplicar isto REPROVA"
+  [ "$MEDIDA_FALHOU" -eq 0 ] || echo "ATENCAO: $MEDIDA_FALHOU medicao(oes) falharam — com --aplicar isto REPROVA"
   echo "== nada alterado. rode com --aplicar apos autorizacao do Alf =="
 fi

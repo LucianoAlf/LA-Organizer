@@ -20,7 +20,14 @@ DEST=/opt/backups/la-organizer/db
 TELEMETRY="$DEST/runs.jsonl"
 LIMITE_H=36
 
-grito() { echo "[check-backup] CRITICO: $1" >&2; exit 2; }
+grito() {
+  echo "[check-backup] CRITICO: $1" >&2
+  # Sem MTA neste host, um CRITICO no log nao avisa ninguem. A sentinela e horaria, entao
+  # o intervalo de supressao de 3h evita repetir o mesmo assunto a cada execucao.
+  A="$(dirname "$(readlink -f "$0")")/alertar.sh"
+  [ -x "$A" ] && "$A" --chave sentinela-backup --intervalo-min 180     "TOM: sentinela de backup CRITICO — $1" >/dev/null 2>&1
+  exit 2
+}
 campo() { sed -E "s/.*\"$1\":\"?([^,\"}]*)\"?.*/\1/" <<<"$2"; }
 
 [ -s "$TELEMETRY" ] || grito "sem telemetria em $TELEMETRY"
