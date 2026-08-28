@@ -104,7 +104,15 @@ TEXTO=${1:?uso: $0 [--chave K] [--intervalo-min N] "texto" | --testar-canal}
 # RETRY com a MESMA regra do engine (src/services/whatsapp.js): a UAZAPI da 404 intermitente
 # no /send/text ao resolver o chat, e hiberna devolvendo 503. Transitorio (404/408/429/5xx/sem
 # resposta) merece nova tentativa; 400/401/403 e payload ou token invalido — repetir nao muda.
-TENTATIVAS=3
+# PACIENCIA MAIOR QUE A DO ENGINE (v2.4). Medido em 28/08: o /send/text para GRUPO ficou
+# ~15 min sem responder byte nenhum (6 tentativas de 20 a 60 s), enquanto GET /instance/status,
+# POST /group/info com o MESMO jid e /send/text para NUMERO respondiam em ~1 s. Depois voltou
+# sozinho, em 2,1 s. E a intermitencia conhecida da UAZAPI.
+# Para uma mensagem de conversa, desistir rapido e correto — o TOM tenta de novo no proximo
+# turno. Para ALERTA nao: a mensagem perdida e justamente a que avisaria que o backup parou.
+# 5 tentativas com backoff 3/6/12/24s (~45 s no total) cabem folgado no cron e cobrem a
+# janela curta. Se ainda assim falhar, `alerta=falhou` vai para o estado e a sentinela grita.
+TENTATIVAS=5
 for i in $(seq 1 "$TENTATIVAS"); do
   CORPO=$(printf '%s' "$TEXTO" | python3 -c 'import json,sys; print(json.dumps({"number": sys.argv[1], "text": sys.stdin.read(), "readchat": True}))' "$GRUPO" 2>/dev/null) \
     || CORPO=$(printf '{"number":"%s","text":"%s","readchat":true}' "$GRUPO" "$(printf '%s' "$TEXTO" | sed 's/\\/\\\\/g; s/"/\\"/g')")
@@ -119,7 +127,7 @@ for i in $(seq 1 "$TENTATIVAS"); do
              exit 0 ;;
     400|401|403) echo "alertar: FALHA definitiva HTTP $HTTP: $(cut -c1-200 <<<"$RESP" | sanitizar)" >&2; exit 1 ;;
     *) echo "alertar: tentativa $i/$TENTATIVAS falhou (http=${HTTP:-sem-resposta} curl=$RC): $(cut -c1-160 <<<"$RESP" | sanitizar)" >&2
-       [ "$i" -lt "$TENTATIVAS" ] && sleep $(( i * 3 )) ;;
+       [ "$i" -lt "$TENTATIVAS" ] && sleep $(( 3 * (2 ** (i - 1)) )) ;;
   esac
 done
 echo "alertar: FALHA no envio apos $TENTATIVAS tentativas" >&2
