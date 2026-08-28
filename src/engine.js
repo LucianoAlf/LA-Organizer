@@ -15250,6 +15250,15 @@ function tryShopBypass(text) {
   // QUERY: tem que mencionar "loja" ou "lojinha"
   if (!/\b(lojinha|loja)\b/i.test(t)) return null;
 
+  // Caso Dudu 27/08: relatório de estoque de 836 chars citando "lojinha" e "estoque" virou
+  // `query_shop` da unidade "Vandinho" (fallback do extractUnidadeFromText pegou "do Vandinho"),
+  // e como o bypass é pré-LLM e dá return, o relatório inteiro foi descartado 3 vezes.
+  // Diferente dos ramos acima (estorno/reserva/pendência), este casa no MEIO do texto — então
+  // precisa do próprio limite. Query de lojinha digitada é curta: nas 36 mensagens que
+  // dispararam o bypass desde 01/05, as 5 reais têm ≤47 chars e ≤2 linhas; o resto é relatório,
+  // transcrição de reunião e áudio dump. Mesma ideia do guard de análise de imagem no engine.
+  if (t.length > 120 || t.split('\n').length > 2) return null;
+
   const queryIntent = /\b(o\s+que\s+tem|lista(?:r)?|mostra(?:r|e)?|me\s+mostra|estoque|consultar|ver|mostr[ae]\s+(?:o|a))\b/i;
   const shortLoc = /^\s*lojinha\s+(?:da|de|do)\s+([\wÀ-ú\s]+?)\s*[?!.\s]*$/i;
 
@@ -15776,4 +15785,4 @@ module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamS
   // applyEventActions gateia o único send via opts.suppressNotify). WhatsApp inalterado.
   parseEventCreateMarker, applyEventActions, parseCheckpointBatchMarker, applyCheckpointBatch,
   parseChecklistActionMarker, applyChecklistAction,
-  tryDupBypass };
+  tryDupBypass, tryShopBypass, extractUnidadeFromText };
