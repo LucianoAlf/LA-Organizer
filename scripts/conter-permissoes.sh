@@ -146,18 +146,27 @@ if [ "$VARRER" = 1 ]; then
     echo "problemas=$problemas"
     echo "passadas=$passadas"
     echo "corrigidos=$total"
-  } > "$ESTADO" 2>"$TMPERR"
+  } > "$ESTADO.parcial" 2>"$TMPERR"
 
   # FALSO-VERDE 2 (laudo v2): antes isto era `> "$ESTADO" 2>/dev/null && chmod 0600`. Se a
   # gravacao falhasse (disco cheio, permissao), o `&&` curto-circuitava e o script saia 0
-  # dizendo "varredura ok" — sobre um estado que ninguem conseguiu escrever. A sentinela so
-  # perceberia 45 min depois, pela idade. Agora a gravacao e VERIFICADA relendo o arquivo:
-  # sem `veredito=` de volta no disco, a varredura REPROVA.
-  if ! grep -q '^veredito=' "$ESTADO" 2>/dev/null; then
-    echo "[conter --varrer] FALHA: nao consegui gravar/reler $ESTADO: $(head -1 "$TMPERR" | cut -c1-120)" >&2
-    problemas=$((problemas+1)); restante=$((restante+1))
+  # dizendo "varredura ok" — sobre um estado que ninguem conseguiu escrever.
+  #
+  # ATOMICIDADE (laudo v2.2): escrever direto no destino tambem TRUNCA a prova anterior antes
+  # de ter a nova. Se a escrita morre no meio, a sentinela le um arquivo pela metade — e um
+  # `veredito=ok` de uma passada velha pode sobreviver no pedaco lido, virando prova
+  # reutilizada. Escreve em `.parcial`, confere, e so entao `mv` (atomico no mesmo fs).
+  if grep -q '^veredito=' "$ESTADO.parcial" 2>/dev/null; then
+    chmod 0600 "$ESTADO.parcial" 2>/dev/null
+    if ! mv -f "$ESTADO.parcial" "$ESTADO" 2>/dev/null; then
+      rm -f "$ESTADO.parcial"
+      echo "[conter --varrer] FALHA: nao consegui publicar $ESTADO" >&2
+      problemas=$((problemas+1)); restante=$((restante+1))
+    fi
   else
-    chmod 0600 "$ESTADO" 2>/dev/null || echo "[conter --varrer] aviso: chmod 0600 falhou em $ESTADO" >&2
+    rm -f "$ESTADO.parcial"
+    echo "[conter --varrer] FALHA: nao consegui gravar $ESTADO: $(head -1 "$TMPERR" | cut -c1-120)" >&2
+    problemas=$((problemas+1)); restante=$((restante+1))
   fi
 
   if [ "$restante" -eq 0 ] && [ "$problemas" -eq 0 ]; then exit 0; fi

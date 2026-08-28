@@ -96,8 +96,16 @@ set -e
 # #2: TODOS os erros, com padrao PRECISO. Nada de "contem a palavra extension".
 if [ "$RC" -ne 0 ]; then
   grep -iE '^pg_restore: (error|erro)' "$TMPD/restore.err" > "$TMPD/erros.txt" || true
-  TOTAL_ERR=$(grep -c . "$TMPD/erros.txt" || true)
+  TOTAL_ERR=$(wc -l < "$TMPD/erros.txt" 2>/dev/null || echo 0)
   echo "  pg_restore rc=$RC — $TOTAL_ERR linha(s) de erro, TODAS classificadas:"
+  # rc != 0 SEM nenhuma linha de erro reconhecivel e o pior caso: o restore falhou e o
+  # classificador nao tem o que classificar (pg_restore morto por sinal, saida em outro
+  # formato, stderr perdido). Antes isso resultava em tolerados=0/inesperados=0 e o drill
+  # seguia para o veredito como se nada tivesse acontecido. rc nao explicado REPROVA.
+  if [ "$TOTAL_ERR" -eq 0 ]; then
+    echo "    stderr bruto (primeiras linhas): $(head -3 "$TMPD/restore.err" | tr '\n' ' ' | cut -c1-200)"
+    falha "pg_restore saiu rc=$RC sem NENHUMA linha de erro classificavel — falha nao explicada"
+  fi
   INESPERADOS=0
   while IFS= read -r l; do
     case "$l" in
@@ -149,9 +157,15 @@ done
 # consistente tirado ANTES da consulta que gerou o baseline, entao:
 #   restaurado <= baseline  (o que entrou nos segundos seguintes nao esta no dump)
 #   restaurado >= baseline - FOLGA
-# FOLGA = 0,5% ou 20 linhas, o que for maior: cobre a escrita normal do TOM na janela do
-# dump (~15 s) sem deixar passar perda real. Uma tabela que voltasse com 1 de 28 mil
-# reprovava aqui, e antes passava.
+# FOLGA (v2.2, laudo): era "0,5% OU 20 linhas, o que for MAIOR" — e o piso de 20 era absoluto.
+# Em `collaborators`, que tem 40 linhas, isso tolerava perder 20: METADE da tabela passava
+# como aprovada. O piso absoluto veio de raciocinio sobre tabelas grandes e ficou sem limite
+# nas pequenas.
+# A janela real e de SEGUNDOS (o baseline e consultado logo depois do dump), entao a folga
+# nao precisa de piso generoso: 0,5% arredondado para cima, minimo 1 linha. Assim nenhuma
+# tabela pode perder mais que 0,5% do seu proprio tamanho, grande ou pequena.
+#   collaborators (40)        -> folga 1   (era 20 = 50%)
+#   conversation_history (28866) -> folga 145
 echo "== dados nas tabelas ancora (contra a contagem da ORIGEM) =="
 lista_baseline dados > "$TMPD/dados.esp"
 if [ ! -s "$TMPD/dados.esp" ]; then
@@ -162,7 +176,7 @@ else
     t=${linha%%:*}; esp=${linha##*:}
     if [ -z "$(q "select to_regclass('public.$t')")" ]; then falha "tabela ancora ausente: $t"; continue; fi
     obt=$(q "select count(*) from public.$t")
-    folga=$(( esp / 200 )); [ "$folga" -lt 20 ] && folga=20
+    folga=$(( (esp + 199) / 200 )); [ "$folga" -lt 1 ] && folga=1   # 0,5% para cima, min 1
     minimo=$(( esp - folga ))
     if [ "$obt" -gt "$esp" ]; then
       falha "$t: restaurado ($obt) MAIOR que a origem ($esp) — dump inconsistente"
@@ -215,16 +229,25 @@ ATESTADO="${DUMP%.dump}.drill"
   echo "fora_do_escopo=auth,storage,realtime,edge_functions,config_do_projeto"
   echo "host=$(hostname)"
   echo "# NAO cobre auth/storage/realtime/Edge Functions/config do projeto."
-} > "$ATESTADO" 2>/dev/null
+} > "$ATESTADO.parcial" 2>/dev/null
 
-# FALSO-VERDE (laudo v2): `> "$ATESTADO" 2>/dev/null && chmod` deixava a falha de gravacao
-# passar batido. Um drill "aprovado" cuja unica prova nao existe no disco nao vale nada — no
-# dia seguinte nao ha como mostrar que o restore foi testado. Gravacao vira verificacao:
-# releio o arquivo procurando o veredito. Nao achou, o drill REPROVA.
-if grep -q '^veredito=' "$ATESTADO" 2>/dev/null; then
-  chmod 0600 "$ATESTADO" 2>/dev/null || echo "[drill] aviso: chmod 0600 falhou em $ATESTADO" >&2
+# GRAVACAO ATOMICA (laudo v2.2): escrever direto no destino deixa uma janela em que o arquivo
+# existe pela metade — e um atestado truncado passa por atestado. Pior: se a escrita morre no
+# meio, o arquivo ANTIGO ja foi truncado e a prova velha some sem que a nova exista.
+# Escreve em `.parcial`, confere que o veredito esta la, e so entao renomeia. `mv` no mesmo
+# filesystem e atomico: ou o leitor ve o atestado antigo inteiro, ou o novo inteiro. Nunca meio.
+if grep -q '^veredito=' "$ATESTADO.parcial" 2>/dev/null; then
+  chmod 0600 "$ATESTADO.parcial" 2>/dev/null
+  if mv -f "$ATESTADO.parcial" "$ATESTADO" 2>/dev/null; then
+    :
+  else
+    rm -f "$ATESTADO.parcial"
+    echo "[drill] FALHA: nao consegui publicar o atestado em $ATESTADO" >&2
+    FALHAS=$((FALHAS+1)); VEREDITO=reprovado
+  fi
 else
-  echo "[drill] FALHA: nao consegui gravar/reler o atestado em $ATESTADO" >&2
+  rm -f "$ATESTADO.parcial"
+  echo "[drill] FALHA: nao consegui gravar o atestado em $ATESTADO" >&2
   FALHAS=$((FALHAS+1)); VEREDITO=reprovado
 fi
 

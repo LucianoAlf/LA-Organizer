@@ -39,11 +39,12 @@
 # No modo --pos-deploy: exit 0 se o conjunto de achados for idêntico ao baseline.
 
 set -uo pipefail
-MODO=normal; ESTADO=""
+MODO=normal; ESTADO=""; ACEITA_INALTERADO=0
 case "${1:-}" in
   --baseline)   MODO=baseline;   ESTADO=${2:?uso: --baseline <arquivo> [url]}; shift 2 ;;
   --pos-deploy) MODO=pos_deploy; ESTADO=${2:?uso: --pos-deploy <arquivo> [url]}; shift 2 ;;
 esac
+if [ "${1:-}" = "--aceitar-inalterado" ]; then ACEITA_INALTERADO=1; shift; fi
 URL=${1:-https://la-organizer.vercel.app}
 ALLOW="$(dirname "$(readlink -f "$0")")/bundle-allowlist.txt"
 MIN_LEN=40
@@ -54,14 +55,31 @@ chmod 0700 "$TMPD"; trap 'rm -rf "$TMPD"' EXIT INT TERM
 
 echo "== $URL =="
 # Baixar virou funcao porque o modo --pos-deploy precisa reconsultar ate o bundle mudar.
+# v2.2 (laudo bloqueador 6): o download nao exigia HTTP 200 nem verificava o que voltou.
+# Uma pagina de erro da Vercel, um 404 ou um HTML de manutencao entrariam como "bundle" —
+# e um "bundle" que nao contem literal nenhum sairia com ZERO achados, ou seja: verde.
+# Agora: --fail, codigo 200 obrigatorio nas duas requisicoes, e o corpo tem que parecer JS.
 baixar() {
-  local html
-  html=$(curl -sL -m 20 "$URL") || { echo "FALHA: nao consegui baixar a pagina"; return 1; }
+  local html cod ct
+  cod=$(curl --fail -sS -L -m 20 -o "$TMPD/pagina.html" -w '%{http_code}' "$URL" 2>"$TMPD/curl.err") \
+    || { echo "FALHA: pagina nao respondeu (curl: $(head -1 "$TMPD/curl.err" | cut -c1-120))"; return 1; }
+  [ "$cod" = 200 ] || { echo "FALHA: pagina respondeu HTTP $cod (esperado 200)"; return 1; }
+  html=$(cat "$TMPD/pagina.html")
   ASSET=$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' <<<"$html" | head -1)
-  [ -n "$ASSET" ] || { echo "FALHA: a pagina nao referencia bundle"; return 1; }
-  curl -sL -m 90 "${URL%/}$ASSET" -o "$TMPD/bundle.js" || { echo "FALHA: bundle nao baixou"; return 1; }
-  BUNDLE_SHA=$(sha256sum "$TMPD/bundle.js" | cut -d' ' -f1)
+  [ -n "$ASSET" ] || { echo "FALHA: a pagina nao referencia bundle /assets/index-*.js"; return 1; }
+  cod=$(curl --fail -sS -L -m 90 -o "$TMPD/bundle.js" -D "$TMPD/hdr.txt" -w '%{http_code}' "${URL%/}$ASSET" 2>"$TMPD/curl.err") \
+    || { echo "FALHA: bundle nao baixou (curl: $(head -1 "$TMPD/curl.err" | cut -c1-120))"; return 1; }
+  [ "$cod" = 200 ] || { echo "FALHA: bundle respondeu HTTP $cod (esperado 200)"; return 1; }
   BUNDLE_BYTES=$(stat -c%s "$TMPD/bundle.js")
+  [ "${BUNDLE_BYTES:-0}" -gt 100000 ] || { echo "FALHA: bundle com $BUNDLE_BYTES bytes — pequeno demais para ser o app"; return 1; }
+  ct=$(grep -i '^content-type:' "$TMPD/hdr.txt" | tail -1 | tr -d '\r')
+  case "$ct" in *javascript*|*ecmascript*) : ;;
+    *) echo "FALHA: content-type inesperado no bundle: ${ct:-ausente}"; return 1 ;; esac
+  head -c 200 "$TMPD/bundle.js" | grep -qiE '<!doctype|<html' \
+    && { echo "FALHA: o 'bundle' e HTML (pagina de erro servida no lugar do asset)"; return 1; }
+  BUNDLE_SHA=$(sha256sum "$TMPD/bundle.js" | cut -d' ' -f1)
+  VERCEL_ID=$(grep -i '^x-vercel-id:' "$TMPD/hdr.txt" | tail -1 | tr -d '\r' | cut -c1-80)
+  SERVIDO_EM=$(grep -i '^date:' "$TMPD/hdr.txt" | tail -1 | tr -d '\r')
   return 0
 }
 baixar || exit 1
@@ -81,7 +99,7 @@ if [ "$MODO" = pos_deploy ]; then
   done
   if [ "$BUNDLE_SHA" = "$SHA_BASE" ]; then
     MUDOU=nao
-    echo "bundle INALTERADO apos ${T}s — rebuild de fonte inalterada saiu byte identico (esperado)"
+    echo "bundle INALTERADO apos ${T}s (asset $ASSET, servido em ${SERVIDO_EM:-?}, ${VERCEL_ID:-?})"
   else
     MUDOU=sim
     echo "bundle MUDOU apos ${T}s: asset $ASSET_BASE -> $ASSET"
@@ -147,11 +165,16 @@ if [ "$MODO" = baseline ]; then
     echo "url=$URL"
     echo "asset=$ASSET"
     echo "bundle_sha=$BUNDLE_SHA"
+    echo "bundle_bytes=$BUNDLE_BYTES"
+    echo "vercel_id=${VERCEL_ID:-}"
+    echo "servido_em=${SERVIDO_EM:-}"
     echo "achados=$ACHADOS"
     sed 's/^/achado=/' "$TMPD/achados.txt"
-  } > "$ESTADO" 2>/dev/null
-  grep -q '^bundle_sha=' "$ESTADO" 2>/dev/null || { echo "FALHA: nao consegui gravar o baseline em $ESTADO"; exit 3; }
-  chmod 0600 "$ESTADO" 2>/dev/null
+  } > "$ESTADO.parcial" 2>/dev/null
+  # gravacao atomica: baseline pela metade viraria referencia errada no pos-deploy
+  grep -q '^bundle_sha=' "$ESTADO.parcial" 2>/dev/null || { rm -f "$ESTADO.parcial"; echo "FALHA: nao consegui gravar o baseline em $ESTADO"; exit 3; }
+  chmod 0600 "$ESTADO.parcial" 2>/dev/null
+  mv -f "$ESTADO.parcial" "$ESTADO" 2>/dev/null || { rm -f "$ESTADO.parcial"; echo "FALHA: nao consegui publicar o baseline em $ESTADO"; exit 3; }
   echo "== baseline gravado em $ESTADO ($ACHADOS achado(s) conhecido(s)) =="
   exit 0
 fi
@@ -164,7 +187,23 @@ if [ "$MODO" = pos_deploy ]; then
   SUMIRAM=$(LC_ALL=C comm -23 "$TMPD/base-achados.txt" "$TMPD/achados.txt" | grep -c . || true)
   echo "-- comparacao com o baseline --"
   echo "   bundle mudou: $MUDOU"
-  echo "   achados no baseline: $(grep -c . "$TMPD/base-achados.txt" || echo 0)   agora: $ACHADOS"
+  echo "   achados no baseline: $(wc -l < "$TMPD/base-achados.txt")   agora: $ACHADOS"
+
+  # v2.2 (laudo bloqueador 6): a v2.1 APROVAVA com o bundle inalterado — e eu confirmei que
+  # ela aprova mesmo sem deploy nenhum ter acontecido. Isso e falso-verde: "nada mudou" pode
+  # significar "o rebuild saiu identico" OU "o build ainda nao terminou" OU "o push nem
+  # disparou build". O teste nao distingue, entao nao pode afirmar.
+  # Bundle inalterado passa a ser INDETERMINADO (exit 2), nao aprovado. Quem confirmou pelo
+  # painel que o deployment esta READY e que o conteudo e mesmo identico usa
+  # --aceitar-inalterado, e ai a afirmacao tem dono.
+  if [ "$MUDOU" = nao ] && [ "$ACEITA_INALTERADO" != 1 ]; then
+    echo "== POS-DEPLOY INDETERMINADO: o bundle servido e o MESMO do baseline =="
+    echo "   Isso nao prova que o build terminou — prova apenas que nada novo chegou ate aqui."
+    echo "   Confirme no painel da Vercel que o deployment esta READY e entao:"
+    echo "     - se o conteudo for mesmo identico: rode de novo com --aceitar-inalterado"
+    echo "     - se ainda estiver buildando: aumente BUNDLE_ESPERA_SEG e rode de novo"
+    exit 2
+  fi
   [ "$SUMIRAM" -gt 0 ] && { echo "   $SUMIRAM achado(s) DESAPARECERAM (mudanca — confirme se foi intencional):";
                             LC_ALL=C comm -23 "$TMPD/base-achados.txt" "$TMPD/achados.txt" | sed 's/^/     sumiu  /' | cut -c1-26; }
   if [ "$NOVOS" -gt 0 ]; then
@@ -173,7 +212,16 @@ if [ "$MODO" = pos_deploy ]; then
     echo "== POS-DEPLOY REPROVADO: o deploy introduziu literal novo no bundle publico =="
     exit 1
   fi
-  echo "== POS-DEPLOY APROVADO: exatamente os achados conhecidos, nenhum novo =="
+  # "nenhum achado novo" nao basta: se o conjunto ESVAZIOU sem ninguem ter consertado o P0-4,
+  # a leitura mais provavel nao e "o segredo saiu" e sim "eu li o arquivo errado". Exigir o
+  # conjunto EXATO — igualdade nos dois sentidos — e o que fecha isso.
+  if [ "$SUMIRAM" -gt 0 ]; then
+    echo "== POS-DEPLOY REPROVADO: achado conhecido DESAPARECEU sem correcao declarada =="
+    echo "   Ou o P0-4 foi corrigido (e o baseline precisa ser refeito), ou o detector leu"
+    echo "   outro arquivo. Nos dois casos o resultado nao pode ser lido como aprovacao."
+    exit 1
+  fi
+  echo "== POS-DEPLOY APROVADO: conjunto de achados IDENTICO ao baseline ($ACHADOS), bundle mudou=$MUDOU =="
   echo "   (o P0-4 continua ABERTO — este teste prova que o deploy nao PIOROU, nao que esta resolvido)"
   exit 0
 fi

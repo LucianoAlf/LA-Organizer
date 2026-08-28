@@ -73,6 +73,20 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
             Write-Output "=== DEPLOY ABORTADO: rebase-conflito com origin/main. Hold recriado. Resolver manualmente. ==="
             exit 0
         }
+        # 6b. PREFLIGHT ANTES DO PUSH (laudo v2.2, bloqueador 1). O push move origin/main e
+        #     dispara a Vercel — dois efeitos que nao voltam atras. Se a VPS tem trabalho local
+        #     que o reset seguinte destruiria, descobrir isso DEPOIS de mover main significa
+        #     escolher entre perder o trabalho ou deixar producao dessincronizada. Entao a
+        #     pergunta e feita antes: da para resetar a VPS com seguranca?
+        $pfPre = (ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>/dev/null; ./scripts/preflight-deploy.sh origin/main --sem-snapshot 2>&1" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Set-Content -Path $holdFile -Value "HOLD auto: preflight da VPS reprovou ANTES do push no deploy $ts -- nada foi empurrado." -Encoding utf8
+            Write-Output "=== PUSH ABORTADO: a VPS tem trabalho local que o reset destruiria. ==="
+            Write-Output (($pfPre -split "`n" | Select-String "RECUSADO|PREFLIGHT") -join "`n")
+            Write-Output "=== Nada empurrado, main nao moveu, Vercel nao disparou. Hold criado. ==="
+            exit 1
+        }
+
         # 7. Push.
         git -C $srcRoot push origin main 2>$null
     }
@@ -99,8 +113,44 @@ if ($vpsAtras -gt 0) {
     $backend = (ssh tom "cd /opt/LA-Organizer && git diff --name-only HEAD origin/main 2>/dev/null | grep -cE '^(src/|skills/|migrations/)'" 2>$null) -as [int]
     Write-Output "=== VPS estava $vpsAtras commit(s) atras -- sincronizando (backend: $backend arquivo(s)) ==="
 
+    # 8-pre. PREFLIGHT + PONTO DE RETORNO (laudo v2.2, bloqueadores 1 e 3).
+    #   O preflight recusa se algum caminho — rastreado OU untracked que exista na arvore
+    #   alvo — divergir do que o reset vai escrever. E `$prev` guarda o commit atual: sem
+    #   ponto de retorno, uma falha DEPOIS do reset deixa HEAD e disco novos com o processo
+    #   antigo, e o turno seguinte ve `HEAD..origin/main = 0` e conclui que a VPS ja esta
+    #   atualizada. O deploy nunca mais e retomado e ninguem percebe.
+    $preflight = (ssh tom "cd /opt/LA-Organizer && ./scripts/preflight-deploy.sh origin/main 2>&1" 2>$null) | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Set-Content -Path $holdFile -Value "HOLD auto: preflight reprovou no deploy $ts -- VPS NAO resetada." -Encoding utf8
+        Write-Output "=== DEPLOY ABORTADO no preflight: ==="
+        Write-Output (($preflight -split "`n" | Select-String "RECUSADO|PREFLIGHT|snapshot") -join "`n")
+        exit 1
+    }
+    Write-Output "=== Preflight OK ==="
+    $prev = (ssh tom "cd /opt/LA-Organizer && git rev-parse HEAD" 2>$null) | Out-String
+    $prev = $prev.Trim()
+    if ($prev -notmatch '^[0-9a-f]{40}$') {
+        Write-Output "=== DEPLOY ABORTADO: nao consegui registrar o ponto de retorno da VPS. ==="
+        exit 1
+    }
+
+    # Volta a VPS ao estado anterior E devolve os guardas. Usada em toda falha pos-reset:
+    # estado hibrido (disco novo + processo velho) e pior que nao ter feito o deploy, porque
+    # se disfarca de sucesso.
+    function Invoke-RollbackVps([string]$motivo) {
+        Write-Output "=== ROLLBACK: $motivo -- voltando a VPS para $($prev.Substring(0,8)) ==="
+        ssh tom "cd /opt/LA-Organizer && git reset --hard $prev --quiet" 2>$null
+        $r = (ssh tom "cd /opt/LA-Organizer && ./scripts/pos-deploy-modos.sh 2>&1 || /opt/backups/la-organizer/guardas/restaurar-guardas.sh 2>&1" 2>$null) | Out-String
+        Write-Output $r.Trim()
+        Set-Content -Path $holdFile -Value "HOLD auto: $motivo no deploy $ts -- VPS revertida para $prev." -Encoding utf8
+    }
+
     if ($backend -gt 0) {
         ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Invoke-RollbackVps "o proprio reset --hard falhou"
+            exit 1
+        }
 
         # 8a. MODOS DEPOIS DO RESET — a trava que faltava (laudo v2, bloqueador 1).
         #     Git so grava 100644/100755; a contencao vive em 0750/0640. Medido em repo
@@ -111,10 +161,8 @@ if ($vpsAtras -gt 0) {
         #     mora AQUI, no caminho que roda de verdade, e antes do restart.
         $modos = (ssh tom "cd /opt/LA-Organizer && ./scripts/pos-deploy-modos.sh 2>&1" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
-            Set-Content -Path $holdFile -Value "HOLD auto: pos-deploy-modos.sh REPROVOU no deploy $ts -- NAO reiniciei o TOM." -Encoding utf8
-            Write-Output "=== RESTART ABORTADO: modos de contencao nao ficaram corretos apos o reset. ==="
             Write-Output $modos.Trim()
-            Write-Output "=== Codigo NO DISCO, processo no anterior. Hold criado. Resolver a mao. ==="
+            Invoke-RollbackVps "modos de contencao errados apos o reset"
             exit 1
         }
         Write-Output "=== Modos reaplicados: $($modos.Trim()) ==="
@@ -125,21 +173,70 @@ if ($vpsAtras -gt 0) {
         #     aqui inverte a ordem. Seguro porque o disco ja foi atualizado mas o PROCESSO ainda
         #     roda o codigo anterior: suite vermelha = nao reinicia = producao segue no que
         #     funcionava. Baseline 3 = os testes de loadout de prompt que falham por env ausente.
-        $tapOut = (ssh tom "cd /opt/LA-Organizer && timeout 240 node --env-file=.env --test src/ 2>&1 | grep -E '^# (tests|fail)'" 2>$null) | Out-String
+        #     POR IDENTIDADE, nao por contagem (laudo v2.2, bloqueador 4). `fail <= 3` aprovava
+        #     QUALQUER conjunto de ate 3 vermelhos: os 3 conhecidos podiam virar verdes e 3
+        #     regressoes novas entrarem no lugar, com o mesmo numero e o mesmo verde. Contar
+        #     falhas nao e o mesmo que reconhece-las. Os 3 conhecidos sao os de
+        #     system-loadout.test.js (falta TEST_COLLAB_ID no ambiente do cron), e a linha
+        #     `not ok` traz so o NOME do teste — o arquivo aparece na linha `location:`.
+        $tapOut = (ssh tom "cd /opt/LA-Organizer && timeout 240 node --env-file=.env --test src/ 2>&1" 2>$null) | Out-String
         $falhas = if ($tapOut -match '# fail (\d+)') { [int]$Matches[1] } else { -1 }
-        $total = if ($tapOut -match '# tests (\d+)') { [int]$Matches[1] } else { 0 }
+        $total  = if ($tapOut -match '# tests (\d+)') { [int]$Matches[1] } else { 0 }
+        $linhas = $tapOut -split "`n"
+        $emLoadout = 0
+        for ($i = 0; $i -lt $linhas.Count; $i++) {
+            if ($linhas[$i] -match '^not ok') {
+                $janela = ($linhas[($i+1)..([Math]::Min($i+4, $linhas.Count-1))] -join ' ')
+                if ($janela -match 'system-loadout\.test\.js') { $emLoadout++ }
+            }
+        }
 
         if ($falhas -lt 0 -or $total -lt 100) {
-            Write-Output "=== RESTART ABORTADO: nao consegui medir a suite (tests=$total). Codigo NO DISCO, processo no anterior. Rodar a mao. ==="
-            exit 0
-        }
-        if ($falhas -gt 3) {
-            Set-Content -Path $holdFile -Value "HOLD auto: suite em fail=$falhas (baseline 3) no deploy $ts -- NAO reiniciei o TOM." -Encoding utf8
-            Write-Output "=== RESTART ABORTADO: suite em fail=$falhas de $total (baseline 3). TOM segue no codigo anterior. Hold criado. ==="
+            Invoke-RollbackVps "nao consegui medir a suite (tests=$total)"
             exit 1
         }
-        Write-Output "=== Suite OK ($total testes, fail=$falhas) -- reiniciando ==="
+        #     A regra e IDENTIDADE, nao numero: todo vermelho tem que estar em
+        #     system-loadout.test.js, e no maximo os 3 conhecidos. Assim:
+        #       fail=3 todos em loadout  -> passa (o baseline conhecido)
+        #       fail=0                   -> passa (se alguem exportar TEST_COLLAB_ID no cron os
+        #                                  3 ficam verdes; bloquear deploy porque o teste
+        #                                  MELHOROU seria a trava trabalhando contra si mesma)
+        #       qualquer vermelho fora   -> reprova (a regressao que a suite existe para pegar)
+        #       fail=4+ mesmo em loadout -> reprova (vermelho novo naquele arquivo)
+        if ($falhas -ne $emLoadout -or $falhas -gt 3) {
+            Write-Output "=== Suite: fail=$falhas de $total; em system-loadout=$emLoadout (esperado: todos em loadout, no maximo 3) ==="
+            Write-Output (($linhas | Select-String '^not ok' | Select-Object -First 8) -join "`n")
+            Invoke-RollbackVps "vermelhos fora dos 3 conhecidos de system-loadout"
+            exit 1
+        }
+        Write-Output "=== Suite OK ($total testes; $falhas vermelho(s), todos em system-loadout) -- reiniciando ==="
         ssh tom "cd /opt/LA-Organizer && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Invoke-RollbackVps "pm2 restart retornou erro"
+            exit 1
+        }
+
+        # 8b2. HEALTH + SMOKE OBRIGATORIOS (laudo v2.2, bloqueador 4). Restart sem retorno era
+        #      um verde por omissao: o comando voltava, ninguem perguntava se o processo subiu.
+        #      A fase `reconciliacao` roda tudo menos o gate do P0-4, que reprova por desenho
+        #      enquanto o segredo estiver no bundle (bloqueador 5).
+        $health = (ssh tom "for i in 1 2 3 4 5 6 7 8 9 10; do C=`$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:3100/health); [ `"`$C`" = 200 ] && { echo 200; exit 0; }; sleep 3; done; echo `"`$C`"; exit 1" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Write-Output "=== Health nao voltou 200 apos o restart (ultimo: $($health.Trim())) ==="
+            Invoke-RollbackVps "TOM nao respondeu health apos o restart"
+            ssh tom "pm2 restart tom --no-color 2>&1 | tail -1" 2>$null
+            exit 1
+        }
+        Write-Output "=== Health 200 apos o restart ==="
+
+        $smoke = (ssh tom "cd /opt/LA-Organizer && ./scripts/smoke-pos-aplicacao.sh --fase reconciliacao 2>&1 | tail -20" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Write-Output $smoke.Trim()
+            Invoke-RollbackVps "smoke de reconciliacao reprovou apos o restart"
+            ssh tom "pm2 restart tom --no-color 2>&1 | tail -1" 2>$null
+            exit 1
+        }
+        Write-Output "=== Smoke de reconciliacao aprovado ==="
 
         # 8c. GUARDA-COSTAS PÓS-RESTART. Barato de proposito (segundos): confere que os 4
         #     scripts agendados seguem executaveis e que os 4 marcadores continuam no
@@ -156,14 +253,15 @@ if ($vpsAtras -gt 0) {
         }
         Write-Output "=== $($guardas.Trim()) ==="
     } else {
+        # Caminho de docs: tambem passa pelo preflight (8-pre, acima) e tambem reseta — logo
+        # tambem derruba os modos. Nao ha restart aqui, mas ha o mesmo estado hibrido possivel,
+        # entao usa o mesmo ponto de retorno.
         ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet" 2>$null
-        # O caminho de docs tambem reseta — logo tambem derruba os modos. Aqui nao ha
-        # restart para abortar, entao a falha vira aviso alto e hold, nao silencio.
+        if ($LASTEXITCODE -ne 0) { Invoke-RollbackVps "reset --hard de docs falhou"; exit 1 }
         $modosDoc = (ssh tom "cd /opt/LA-Organizer && ./scripts/pos-deploy-modos.sh 2>&1" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
-            Set-Content -Path $holdFile -Value "HOLD auto: pos-deploy-modos.sh REPROVOU no deploy de docs $ts." -Encoding utf8
-            Write-Output "=== ATENCAO: deploy de docs deixou os modos de contencao errados: ==="
             Write-Output $modosDoc.Trim()
+            Invoke-RollbackVps "modos errados apos o reset de docs"
             exit 1
         }
         Write-Output "=== Docs sincronizados. $($modosDoc.Trim()) ==="

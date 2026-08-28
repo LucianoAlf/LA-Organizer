@@ -62,10 +62,23 @@ for ext in baseline manifest sha256; do
 done
 
 # 4. o baseline precisa ter as secoes que o drill consome
-for c in tabelas funcoes policies indices constraints grants rls extensoes; do
-  grep -q -- "^--- lista:$c ---$" "$BASE.baseline" \
-    || grito "baseline sem a secao de $c — gerado por versao antiga, drill reprovaria"
+# 14/14, nao 8 (laudo v2.2). A sentinela exigia 8 secoes enquanto o drill compara 14 — entao
+# um baseline sem `colunas`, `views`, `sequences`, `types` ou `dados` passava pela sentinela
+# como "backup comprovado" e so seria reprovado la na frente, se alguem rodasse o drill.
+# Sentinela que aprova o que o drill reprova nao esta medindo o mesmo backup.
+# A lista sai do MESMO arquivo que o drill usa, para nao voltar a divergir por copia manual.
+LIBQ="$(dirname "$(readlink -f "$0")")/lib-baseline-queries.sh"
+if [ -r "$LIBQ" ] && . "$LIBQ" 2>/dev/null && [ "${#BASELINE_CHAVES[@]}" -ge 14 ]; then
+  CATEGORIAS=("${BASELINE_CHAVES[@]}")
+else
+  grito "nao consegui carregar as categorias de $LIBQ — sem isso nao sei o que exigir do baseline"
+fi
+FALTAM=""
+for c in "${CATEGORIAS[@]}"; do
+  grep -q -- "^--- lista:$c ---$" "$BASE.baseline" || FALTAM="$FALTAM $c"
 done
+[ -z "$FALTAM" ] || grito "baseline sem a(s) secao(oes):$FALTAM — o drill compara ${#CATEGORIAS[@]} categorias e reprovaria"
+echo "[check-backup] baseline: ${#CATEGORIAS[@]}/${#CATEGORIAS[@]} categorias presentes"
 
 # 5. checksums do conjunto
 ( cd "$(dirname "$ARQ")" && sha256sum -c --quiet "$BASE.sha256" ) 2>/dev/null \

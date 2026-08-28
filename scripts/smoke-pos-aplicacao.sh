@@ -12,7 +12,14 @@
 #       informada (--pwa-url) e, sem ela, a verificação é SKIP declarado — nunca um verde.
 #       Quando informada, o bundle é baixado e REPROVA se contiver o segredo interno.
 #
-# Uso: ./smoke-pos-aplicacao.sh --fase {contencao|backup|ddl|p0_4|final} [--pwa-url https://...]
+# Uso: ./smoke-pos-aplicacao.sh --fase {contencao|backup|ddl|reconciliacao|p0_4|final}
+#
+# FASE `reconciliacao` (v2.2, laudo bloqueador 5): o runbook mandava rodar `--fase final`
+# depois do deploy, mas `final` inclui o gate do P0-4 — que REPROVA por desenho enquanto o
+# segredo continuar no bundle. Runbook que manda rodar um teste fadado a falhar ensina a
+# ignorar o resultado, e ai o teste nao vale mais nada.
+# `reconciliacao` roda tudo (TOM de pe, suite, golden, contencao, backup, DDL) e para ANTES
+# do gate do P0-4. `p0_4`/`final` continuam existindo para quando o P0-4 estiver fechado.
 
 set -uo pipefail
 FASE=final
@@ -36,7 +43,7 @@ falha() { echo "FALHA $1"; FALHAS=$((FALHAS+1)); }
 pula()  { echo "SKIP  $1"; PULADOS=$((PULADOS+1)); }
 
 # Ordem das fases. `desde <fase>` responde: esta verificacao ja vale na fase atual?
-ordem() { case "$1" in contencao) echo 1;; backup) echo 2;; ddl) echo 3;; p0_4) echo 4;; final) echo 5;; *) echo 99;; esac; }
+ordem() { case "$1" in contencao) echo 1;; backup) echo 2;; ddl) echo 3;; reconciliacao) echo 4;; p0_4) echo 5;; final) echo 6;; *) echo 99;; esac; }
 ATUAL=$(ordem "$FASE"); [ "$ATUAL" = 99 ] && { echo "fase invalida: $FASE" >&2; exit 2; }
 desde() { [ "$ATUAL" -ge "$(ordem "$1")" ]; }
 
@@ -158,13 +165,17 @@ if install -d -m 0700 "$ATESTADOS" 2>/dev/null; then
     echo "md5_dispatcher=$(md5sum "$RAIZ/src/rituals/dispatcher.js" 2>/dev/null | cut -c1-12)"
     echo "tom_pid=$(pm2 jlist 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).find(x=>x.name==="tom").pid)}catch(e){console.log("?")}})')"
     echo "host=$(hostname)"
-  } > "$A" 2>/dev/null
+  } > "$A.parcial" 2>/dev/null
   # FALSO-VERDE (laudo v2): antes o `&& chmod && echo` fazia a falha de gravacao sumir — o
   # smoke passava e o atestado, que e a UNICA prova de que a fase rodou, nao existia.
-  # Atestado que nao grava e o mesmo que nao ter atestado; agora isso reprova.
-  if [ -s "$A" ] && grep -q '^veredito=' "$A" 2>/dev/null; then
-    chmod 0600 "$A" 2>/dev/null; echo "atestado: $A"
+  # ATOMICIDADE (laudo v2.2): grava em `.parcial`, confere o veredito e so entao renomeia,
+  # para que ninguem leia meio atestado como prova inteira.
+  if [ -s "$A.parcial" ] && grep -q '^veredito=' "$A.parcial" 2>/dev/null; then
+    chmod 0600 "$A.parcial" 2>/dev/null
+    if mv -f "$A.parcial" "$A" 2>/dev/null; then echo "atestado: $A"
+    else rm -f "$A.parcial"; falha "nao consegui publicar o atestado em $A"; fi
   else
+    rm -f "$A.parcial"
     falha "nao consegui gravar o atestado em $A — sem prova de que esta fase rodou"
   fi
   T=/opt/backups/la-organizer/db/runs.jsonl
