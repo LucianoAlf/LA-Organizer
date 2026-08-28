@@ -41,7 +41,7 @@ NOVO=$(printf '%s\n' "$ATUAL" \
   | grep -v '# tom-backup-db$'      \
   | grep -v '# tom-backup-secrets$' \
   | grep -v '# tom-check-backup$'   \
-  | grep -v '# tom-varrer-permissoes$' )
+  | grep -v '# tom-varrer-permissoes$'   | grep -v '# tom-restore-drill$' )
 
 # 2) acrescenta as linhas novas, sempre com marcador (o grep -v acima já garante
 #    que não duplicam)
@@ -53,7 +53,7 @@ NOVO=$(printf '%s\n%s\n%s\n%s\n%s\n' "$NOVO" \
   "0 6 * * * $SCRIPTS/backup-db.sh >>$LOG 2>&1 # tom-backup-db" \
   "15 6 * * * $SCRIPTS/backup-secrets.sh >>$LOG 2>&1 # tom-backup-secrets" \
   "7 * * * * $SCRIPTS/check-backup.sh >>$LOG 2>&1 # tom-check-backup" \
-  "*/15 * * * * $SCRIPTS/conter-permissoes.sh --varrer >>$LOG 2>&1 # tom-varrer-permissoes")
+  "*/15 * * * * $SCRIPTS/conter-permissoes.sh --varrer >>$LOG 2>&1 # tom-varrer-permissoes"   "30 4 * * 0 $SCRIPTS/restore-drill.sh \$(ls -t /opt/backups/la-organizer/db/*/*.dump 2>/dev/null | head -1) >>$LOG 2>&1 # tom-restore-drill")
 
 echo "=== DIFF (- remove / + adiciona) ==="
 diff <(printf '%s\n' "$ATUAL") <(printf '%s\n' "$NOVO") || true
@@ -67,7 +67,7 @@ fi
 # Faltava `conter-permissoes.sh` nesta lista (laudo v2): a varredura era instalada no cron
 # sem ninguem conferir se o arquivo era sequer executavel — e depois de um `git reset --hard`
 # ela chega 0644. Agendar script sem +x e agendar silencio.
-for s in backup-db.sh backup-secrets.sh check-backup.sh conter-permissoes.sh; do
+for s in backup-db.sh backup-secrets.sh check-backup.sh conter-permissoes.sh restore-drill.sh; do
   [ -x "$SCRIPTS/$s" ] || { echo "FATAL: $SCRIPTS/$s ausente ou nao executavel" >&2; exit 1; }
 done
 # O alerta nao vai no cron, mas os dois agendados dependem dele para avisar.
@@ -85,7 +85,7 @@ printf '%s\n' "$NOVO" | crontab -
 echo "=== crontab aplicado. conferindo: ==="
 INSTALADO=$(crontab -l 2>/dev/null)
 FALTOU=0
-for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes; do
+for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes tom-restore-drill; do
   if printf '%s\n' "$INSTALADO" | grep -q -- "# $m\$"; then
     printf '  ok      %s\n' "$m"
   else
@@ -96,4 +96,4 @@ if [ "$FALTOU" -gt 0 ]; then
   echo "FATAL: $FALTOU linha(s) esperada(s) nao entraram no crontab — restaure com --reverter" >&2
   exit 1
 fi
-echo "=== 4/4 linhas confirmadas no crontab instalado ==="
+echo "=== 5/5 linhas confirmadas no crontab instalado ==="

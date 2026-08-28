@@ -60,28 +60,62 @@ echo "== $URL =="
 # e um "bundle" que nao contem literal nenhum sairia com ZERO achados, ou seja: verde.
 # Agora: --fail, codigo 200 obrigatorio nas duas requisicoes, e o corpo tem que parecer JS.
 baixar() {
-  local html cod ct
-  cod=$(curl --fail -sS -L -m 20 -o "$TMPD/pagina.html" -w '%{http_code}' "$URL" 2>"$TMPD/curl.err") \
-    || { echo "FALHA: pagina nao respondeu (curl: $(head -1 "$TMPD/curl.err" | cut -c1-120))"; return 1; }
+  local html cod ct nome url_asset rodada novos
+  cod=$(curl --fail -sS -L -m 20 -o "$TMPD/pagina.html" -w '%{http_code}' "$URL" 2>"$TMPD/curl.err")     || { echo "FALHA: pagina nao respondeu (curl: $(head -1 "$TMPD/curl.err" | cut -c1-120))"; return 1; }
   [ "$cod" = 200 ] || { echo "FALHA: pagina respondeu HTTP $cod (esperado 200)"; return 1; }
   html=$(cat "$TMPD/pagina.html")
-  ASSET=$(grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' <<<"$html" | head -1)
-  [ -n "$ASSET" ] || { echo "FALHA: a pagina nao referencia bundle /assets/index-*.js"; return 1; }
-  cod=$(curl --fail -sS -L -m 90 -o "$TMPD/bundle.js" -D "$TMPD/hdr.txt" -w '%{http_code}' "${URL%/}$ASSET" 2>"$TMPD/curl.err") \
-    || { echo "FALHA: bundle nao baixou (curl: $(head -1 "$TMPD/curl.err" | cut -c1-120))"; return 1; }
-  [ "$cod" = 200 ] || { echo "FALHA: bundle respondeu HTTP $cod (esperado 200)"; return 1; }
-  BUNDLE_BYTES=$(stat -c%s "$TMPD/bundle.js")
-  [ "${BUNDLE_BYTES:-0}" -gt 100000 ] || { echo "FALHA: bundle com $BUNDLE_BYTES bytes — pequeno demais para ser o app"; return 1; }
-  ct=$(grep -i '^content-type:' "$TMPD/hdr.txt" | tail -1 | tr -d '\r')
-  case "$ct" in *javascript*|*ecmascript*) : ;;
-    *) echo "FALHA: content-type inesperado no bundle: ${ct:-ausente}"; return 1 ;; esac
-  head -c 200 "$TMPD/bundle.js" | grep -qiE '<!doctype|<html' \
-    && { echo "FALHA: o 'bundle' e HTML (pagina de erro servida no lugar do asset)"; return 1; }
-  BUNDLE_SHA=$(sha256sum "$TMPD/bundle.js" | cut -d' ' -f1)
-  VERCEL_ID=$(grep -i '^x-vercel-id:' "$TMPD/hdr.txt" | tail -1 | tr -d '\r' | cut -c1-80)
-  SERVIDO_EM=$(grep -i '^date:' "$TMPD/hdr.txt" | tail -1 | tr -d '\r')
+
+  rm -rf "$TMPD/assets"; mkdir -p "$TMPD/assets"
+  : > "$TMPD/lista-assets.txt"
+  # TODOS os assets JS da pagina, nao so o primeiro (laudo v2.3, bloqueador 7). Ler so
+  # `index-*.js` deixava os chunks lazy inteiros fora da varredura — e e exatamente neles que
+  # mora codigo de rota que carrega sob demanda.
+  grep -oE '/assets/[A-Za-z0-9_.-]+\.js' <<<"$html" | LC_ALL=C sort -u >> "$TMPD/lista-assets.txt"
+  ASSET=$(head -1 "$TMPD/lista-assets.txt")
+  [ -n "$ASSET" ] || { echo "FALHA: a pagina nao referencia nenhum /assets/*.js"; return 1; }
+
+  baixar_um() { # <caminho-do-asset>
+    local a=$1 dest cod ct
+    dest="$TMPD/assets/$(basename "$a")"
+    [ -s "$dest" ] && return 0
+    cod=$(curl --fail -sS -L -m 90 -o "$dest" -D "$TMPD/hdr.txt" -w '%{http_code}' "${URL%/}$a" 2>"$TMPD/curl.err") || return 1
+    [ "$cod" = 200 ] || { echo "  FALHA: $a respondeu HTTP $cod"; return 1; }
+    ct=$(grep -i '^content-type:' "$TMPD/hdr.txt" | tail -1 | tr -d "\r")
+    case "$ct" in *javascript*|*ecmascript*) : ;;
+      *) echo "  FALHA: content-type inesperado em $a: ${ct:-ausente}"; return 1 ;; esac
+    head -c 200 "$dest" | grep -qiE '<!doctype|<html' && { echo "  FALHA: $a veio como HTML (pagina de erro)"; return 1; }
+    return 0
+  }
+
+  # Rodadas: um chunk pode referenciar outro. Limite alto o suficiente para o app e baixo o
+  # suficiente para nao virar crawler.
+  for rodada in 1 2 3; do
+    novos=0
+    while IFS= read -r a; do
+      [ -n "$a" ] || continue
+      [ -s "$TMPD/assets/$(basename "$a")" ] && continue
+      baixar_um "$a" || return 1
+      novos=$((novos+1))
+    done < "$TMPD/lista-assets.txt"
+    # nomes de chunk citados DENTRO dos assets ja baixados
+    cat "$TMPD/assets"/*.js 2>/dev/null       | grep -oE '(\./|/)?assets/[A-Za-z0-9_.-]+\.js'       | sed -E 's#^\./#/#; s#^assets/#/assets/#' | LC_ALL=C sort -u > "$TMPD/refs.txt"
+    LC_ALL=C sort -u "$TMPD/lista-assets.txt" "$TMPD/refs.txt" -o "$TMPD/lista-assets.txt"
+    [ "$novos" -eq 0 ] && break
+    [ "$(wc -l < "$TMPD/lista-assets.txt")" -gt 60 ] && { echo "FALHA: mais de 60 assets — recusando varrer isso como bundle"; return 1; }
+  done
+
+  N_ASSETS=$(ls -1 "$TMPD/assets"/*.js 2>/dev/null | wc -l)
+  [ "$N_ASSETS" -ge 1 ] || { echo "FALHA: nenhum asset baixado"; return 1; }
+  BUNDLE_BYTES=$(cat "$TMPD/assets"/*.js | wc -c)
+  [ "${BUNDLE_BYTES:-0}" -gt 100000 ] || { echo "FALHA: $BUNDLE_BYTES bytes no total — pequeno demais para ser o app"; return 1; }
+  # sha do CONJUNTO (nome+hash de cada asset, ordenado): assim "o bundle mudou" cobre
+  # qualquer chunk, nao so o principal.
+  BUNDLE_SHA=$(for f in "$TMPD/assets"/*.js; do printf '%s %s\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d" " -f1)"; done | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
+  VERCEL_ID=$(grep -i '^x-vercel-id:' "$TMPD/hdr.txt" | tail -1 | tr -d "\r" | cut -c1-80)
+  SERVIDO_EM=$(grep -i '^date:' "$TMPD/hdr.txt" | tail -1 | tr -d "\r")
   return 0
 }
+
 baixar || exit 1
 
 # --pos-deploy: espera o rebuild da Vercel chegar. Se o bundle NAO mudar dentro da janela,
@@ -106,7 +140,9 @@ if [ "$MODO" = pos_deploy ]; then
   fi
 fi
 
-echo "bundle: $ASSET ($BUNDLE_BYTES bytes, sha256=${BUNDLE_SHA:0:12}…)"
+echo "assets: $N_ASSETS arquivo(s) JS, $BUNDLE_BYTES bytes no total, sha256 do conjunto=${BUNDLE_SHA:0:12}…"
+echo "        $(ls -1 "$TMPD/assets" | tr "
+" " ")"
 
 # Entropia de Shannon por caractere. Segredo real fica acima de ~3.5; texto/ids repetitivos ficam abaixo.
 entropia() {
@@ -118,8 +154,22 @@ entropia() {
   }' <<<"$1"
 }
 
-# Literais entre aspas simples ou duplas, alfabeto base64url + ponto (pega JWT tambem).
-grep -oE "[\"'][A-Za-z0-9_./+=-]{$MIN_LEN,400}[\"']" "$TMPD/bundle.js" \
+# Literais entre aspas, em TODOS os assets (laudo v2.3, bloqueador 7).
+#
+# ALFABETO — tentei primeiro "qualquer coisa entre aspas que nao seja aspa nem espaco", para
+# nao perder segredo com pontuacao incomum. MEDIDO em producao: 2.040 literais, dos quais
+# 2.027 eram fragmentos de codigo minificado (`&&!!t.value,p=h&&U_(t.value)`) — JS minificado
+# nao tem espacos, entao qualquer trecho entre duas aspas NAO RELACIONADAS casa. O detector
+# foi de 1 achado para 2.679. Detector que grita 2.679 vezes nao e lido: vira ruido, que e a
+# forma mais eficiente de nao detectar coisa nenhuma.
+# Entao o alfabeto e o de CREDENCIAL — hex, base64, base64url, JWT, DSN: alfanumerico mais
+# `_ . : + / = ~ -`. Cobre todo formato de segredo que este projeto usa ou usaria, e o `/`
+# continua dentro (o bypass do laudo era a regra de FORMA, corrigida abaixo, nao o alfabeto).
+# LIMITE HONESTO: segredo com caractere fora desse conjunto (`#`, `!`, `%`) nao seria
+# extraido. Para investigar um caso assim sem editar codigo: exporte BUNDLE_ALFABETO.
+ALFABETO=${BUNDLE_ALFABETO:-A-Za-z0-9_.:+/=~-}
+cat "$TMPD/assets"/*.js 2>/dev/null \
+  | grep -oE "[\"'][$ALFABETO]{$MIN_LEN,400}[\"']" \
   | sed -E "s/^[\"']//; s/[\"']$//" | LC_ALL=C sort -u > "$TMPD/lit.txt"
 
 TOTAL=$(wc -l < "$TMPD/lit.txt")
@@ -131,13 +181,22 @@ echo "literais candidatos (>= $MIN_LEN chars): $TOTAL"
 ACHADOS=0; PERMITIDOS=0; IGNORADOS=0
 while IFS= read -r lit; do
   [ -n "$lit" ] || continue
-  # ruido conhecido: caminhos, mime types, base64 de fonte/imagem, sourcemap
-  case "$lit" in
-    */*|*.js|*.css|*.woff*|*.png|*.svg|data:*|http*) IGNORADOS=$((IGNORADOS+1)); continue ;;
-  esac
+  # ORDEM INVERTIDA (laudo v2.3, bloqueador 7). Antes a heuristica de FORMA vinha primeiro e
+  # o padrao `*/*` descartava qualquer literal contendo barra — e `/` faz parte do alfabeto
+  # base64. Bastava o segredo ter uma barra para nunca chegar a ser examinado: bypass de uma
+  # linha, no detector que existe justamente para nao depender do formato do segredo.
+  # Agora a ENTROPIA decide quem pode ser vetado por forma:
+  #   >= 4.5  -> alta demais para caminho/mime/enum; nenhuma regra de forma pode veta-lo
+  #   <  3.5  -> texto, enum, id sequencial: ruido
+  #   entre   -> ai sim as regras de forma valem
   ENT=$(entropia "$lit")
-  # abaixo de 3.5 bits/char nao tem cara de segredo (texto, enum, id sequencial)
-  awk -v e="$ENT" 'BEGIN{exit !(e<3.5)}' && { IGNORADOS=$((IGNORADOS+1)); continue; }
+  if awk -v e="$ENT" 'BEGIN{exit !(e<3.5)}'; then IGNORADOS=$((IGNORADOS+1)); continue; fi
+  if awk -v e="$ENT" 'BEGIN{exit !(e<4.5)}'; then
+    case "$lit" in
+      /*|./*|data:*|http*|*.js|*.css|*.woff*|*.png|*.svg|*.map|*/*/*)
+        IGNORADOS=$((IGNORADOS+1)); continue ;;
+    esac
+  fi
   H=$(printf '%s' "$lit" | sha256sum | cut -d' ' -f1)
   if grep -qx "$H" "$TMPD/allow" 2>/dev/null; then
     PERMITIDOS=$((PERMITIDOS+1))
@@ -152,7 +211,7 @@ touch "$TMPD/achados.txt"; LC_ALL=C sort -u -o "$TMPD/achados.txt" "$TMPD/achado
 
 echo "-- referencias a headers de autenticacao no bundle (informativo) --"
 for h in x-internal-secret authorization apikey x-api-key; do
-  N=$(grep -o "$h" "$TMPD/bundle.js" | wc -l)
+  N=$(cat "$TMPD/assets"/*.js 2>/dev/null | grep -o "$h" | wc -l)
   [ "$N" -gt 0 ] && echo "  $h: $N referencia(s)"
 done
 

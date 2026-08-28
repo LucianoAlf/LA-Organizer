@@ -78,7 +78,22 @@ for c in "${CATEGORIAS[@]}"; do
   grep -q -- "^--- lista:$c ---$" "$BASE.baseline" || FALTAM="$FALTAM $c"
 done
 [ -z "$FALTAM" ] || grito "baseline sem a(s) secao(oes):$FALTAM — o drill compara ${#CATEGORIAS[@]} categorias e reprovaria"
-echo "[check-backup] baseline: ${#CATEGORIAS[@]}/${#CATEGORIAS[@]} categorias presentes"
+BV=$(grep -m1 '^baseline_versao=' "$BASE.baseline" | cut -d= -f2)
+[ "${BV:-1}" = "${BASELINE_VERSAO:-1}" ] || grito "baseline na versao ${BV:-1}, o drill exige ${BASELINE_VERSAO:-1} — este backup nao e drillavel"
+echo "[check-backup] baseline: ${#CATEGORIAS[@]}/${#CATEGORIAS[@]} categorias, versao ${BV:-1}"
+
+# 6. CERTIFICADO DE RECUPERACAO (laudo v2.3). Ate aqui a sentinela provava que o CONJUNTO
+# esta integro — dump, baseline, manifesto, checksum. Integro nao e o mesmo que RESTAURAVEL:
+# so o drill responde isso, e a sentinela nunca exigia um. "Backup verde" sem drill aprovado
+# e a definicao de backup nao testado.
+# Janela de 8 dias porque o drill roda semanalmente no cron (tom-restore-drill).
+DRILL_MAX_DIAS=${DRILL_MAX_DIAS:-8}
+ULT_DRILL=$(find "$DEST" -name '*.drill' -type f -mtime "-$DRILL_MAX_DIAS" 2>/dev/null             -exec grep -l '^veredito=aprovado' {} + 2>/dev/null | sort | tail -1)
+if [ -z "$ULT_DRILL" ]; then
+  ANY=$(find "$DEST" -name '*.drill' -type f 2>/dev/null | wc -l)
+  grito "nenhum restore drill APROVADO nos ultimos $DRILL_MAX_DIAS dias ($ANY atestado(s) no total) — backup integro, recuperacao NAO comprovada"
+fi
+echo "[check-backup] drill aprovado: $(basename "$ULT_DRILL") ($(( ( $(date +%s) - $(stat -c %Y "$ULT_DRILL") ) / 86400 ))d)"
 
 # 5. checksums do conjunto
 ( cd "$(dirname "$ARQ")" && sha256sum -c --quiet "$BASE.sha256" ) 2>/dev/null \

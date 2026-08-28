@@ -61,6 +61,14 @@ trap limpar EXIT INT TERM
 lista_baseline() { sed -n "/^--- lista:$1 ---$/,/^--- fim:$1 ---$/p" "$BASELINE" | sed '1d;$d'; }
 esperado() { grep -m1 "^$1=" "$BASELINE" | cut -d= -f2; }
 
+# GUARD DE VERSAO (laudo v2.3). Comparar consulta nova contra baseline velho produz
+# centenas de diferencas falsas e um REPROVADO que nao significa nada. Melhor recusar.
+BV=$(grep -m1 '^baseline_versao=' "$BASELINE" | cut -d= -f2)
+if [ "${BV:-1}" != "${BASELINE_VERSAO:-1}" ]; then
+  echo "baseline na versao ${BV:-1}, este drill exige a ${BASELINE_VERSAO:-1}." >&2
+  echo "Rode backup-db.sh para gerar um baseline no formato atual e refaca o drill." >&2
+  exit 2
+fi
 for c in "${BASELINE_CHAVES[@]}"; do
   grep -q -- "^--- lista:$c ---$" "$BASELINE" || { echo "baseline sem a secao de $c — gerado por versao antiga do backup-db" >&2; exit 2; }
 done
@@ -149,7 +157,10 @@ for par in "${BASELINE_QUERIES[@]}"; do
   chave=${par%%|*}; sql=${par#*|}
   # extensoes e dados tem secao propria: a primeira usa allowlist, a segunda compara
   # NUMEROS com tolerancia declarada (hash de contagem nao serve — a origem muda).
-  case "$chave" in extensoes|dados) continue ;; esac
+  # `sequences_estado` entra aqui tambem: e NUMERO que so cresce entre o dump e a consulta
+  # do baseline, entao compara-lo por identidade daria falso vermelho toda vez que o TOM
+  # escrevesse na janela. Tem secao propria, com a mesma regra assimetrica das ancoras.
+  case "$chave" in extensoes|dados|sequences_estado) continue ;; esac
   comparar "$chave" "$sql"
 done
 
@@ -176,7 +187,10 @@ else
     t=${linha%%:*}; esp=${linha##*:}
     if [ -z "$(q "select to_regclass('public.$t')")" ]; then falha "tabela ancora ausente: $t"; continue; fi
     obt=$(q "select count(*) from public.$t")
-    folga=$(( (esp + 199) / 200 )); [ "$folga" -lt 1 ] && folga=1   # 0,5% para cima, min 1
+    # v2.3: era 0,5% ARREDONDADO PARA CIMA com minimo 1 — o que em collaborators (40 linhas)
+    # dava folga 1 = 2,5%, nao 0,5%. Piso minimo virou ZERO: tabela com menos de 200 linhas
+    # nao tem folga nenhuma, e e isso mesmo — em 15 segundos ela nao perde linha por acaso.
+    folga=$(( esp / 200 ))
     minimo=$(( esp - folga ))
     if [ "$obt" -gt "$esp" ]; then
       falha "$t: restaurado ($obt) MAIOR que a origem ($esp) — dump inconsistente"
@@ -186,6 +200,32 @@ else
       printf '  ok  %-22s %s de %s na origem (folga %s)\n' "$t:" "$obt" "$esp" "$folga"
     fi
   done < "$TMPD/dados.esp"
+fi
+
+# ESTADO DAS SEQUENCES (laudo v2.3). `sequences` compara nome e tipo — uma sequence que
+# voltasse ZERADA passava, e a proxima escrita colidiria com chave existente. Regra e a mesma
+# das ancoras: o valor so cresce, entao restaurado <= baseline. Menor que isso e perda.
+echo "== estado das sequences (restaurado <= baseline) =="
+lista_baseline sequences_estado > "$TMPD/seq.esp"
+if [ ! -s "$TMPD/seq.esp" ]; then
+  falha "baseline sem a secao 'sequences_estado'"
+else
+  SEQ_OK=0; SEQ_RUIM=0
+  while IFS= read -r linha; do
+    [ -n "$linha" ] || continue
+    nome=${linha%%:*}; espv=${linha##*:}
+    obtv=$(q "select coalesce(last_value::text,'0') from pg_sequences where schemaname='public' and sequencename='$nome'" 2>/dev/null)
+    if [ -z "$obtv" ]; then
+      falha "sequence ausente no restaurado: $nome"; SEQ_RUIM=$((SEQ_RUIM+1)); continue
+    fi
+    if [ "$obtv" -gt "$espv" ] 2>/dev/null; then
+      falha "sequence $nome: restaurado ($obtv) MAIOR que a origem ($espv)"; SEQ_RUIM=$((SEQ_RUIM+1))
+    elif [ "$obtv" -lt "$espv" ] 2>/dev/null; then
+      falha "sequence $nome: restaurado $obtv, origem $espv — valor PERDIDO (proxima escrita colide)"
+      SEQ_RUIM=$((SEQ_RUIM+1))
+    else SEQ_OK=$((SEQ_OK+1)); fi
+  done < "$TMPD/seq.esp"
+  echo "  ok  $SEQ_OK sequence(s) com valor preservado, $SEQ_RUIM com problema"
 fi
 
 # #2: extensoes vindas DO BASELINE. Ausencia so passa se a extensao for comprovadamente

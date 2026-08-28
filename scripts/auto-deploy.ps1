@@ -1,4 +1,9 @@
 # auto-deploy.ps1 (v2 — _remote e clone git; sem robocopy/la-deploy-work)
+# ATENCAO: este .ps1 nao tem BOM e o Windows PowerShell 5.1 le arquivo sem BOM como ANSI.
+# Um caractere nao-ASCII dentro de STRING vira bytes que incluem aspas (o travessao vira
+# `a€"`), a string fecha no lugar errado e o script inteiro para de parsear. Em COMENTARIO e
+# inofensivo (o parser pula), e por isso os travessoes antigos nunca deram problema.
+# Regra: comentario pode ter acento; codigo e string, so ASCII.
 # Stop hook: commita/pusha o _remote DIRETO e reseta a VPS.
 $ErrorActionPreference = "SilentlyContinue"
 $srcRoot = "D:\la-organizer\_remote"
@@ -57,6 +62,15 @@ git -C $srcRoot diff --cached --quiet 2>$null
 $temCommit = ($LASTEXITCODE -ne 0)
 
 $ts = Get-Date -Format "yyyy-MM-dd HH:mm"
+
+# Estado do gate da Vercel. Inicializado aqui porque o bloco de push e condicional: sem isto
+# o gate leria variavel indefinida quando o turno nao empurra nada (VPS atras por push do
+# outro chat, por exemplo). `$empurrou` responde "este turno moveu main?" — se nao moveu, o
+# gate pertence ao turno que moveu, nao a este.
+$empurrou = $false
+$temBaseline = $false
+$webMudou = 0
+$blFile = "/opt/backups/la-organizer/bundle-baseline.txt"
 if ($temCommit) {
     # 5. Commit.
     git -C $srcRoot commit -m "Auto-deploy $ts
@@ -73,22 +87,54 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
             Write-Output "=== DEPLOY ABORTADO: rebase-conflito com origin/main. Hold recriado. Resolver manualmente. ==="
             exit 0
         }
-        # 6b. PREFLIGHT ANTES DO PUSH (laudo v2.2, bloqueador 1). O push move origin/main e
-        #     dispara a Vercel — dois efeitos que nao voltam atras. Se a VPS tem trabalho local
-        #     que o reset seguinte destruiria, descobrir isso DEPOIS de mover main significa
-        #     escolher entre perder o trabalho ou deixar producao dessincronizada. Entao a
-        #     pergunta e feita antes: da para resetar a VPS com seguranca?
-        $pfPre = (ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>/dev/null; ./scripts/preflight-deploy.sh origin/main --sem-snapshot 2>&1" 2>$null) | Out-String
+        # 6b. PREFLIGHT ANTES DO PUSH, CONTRA O TIP CANDIDATO (laudo v2.3, bloqueador 1).
+        #     A v2.2 media contra `origin/main` — o alvo VELHO, que nao e o que sera resetado.
+        #     Reproduzido: alvo velho e candidato dao vereditos DIFERENTES sobre a mesma
+        #     colisao untracked. Medir o alvo errado antes de um push irreversivel e pior que
+        #     nao medir, porque produz confianca.
+        #     Solucao: empurra os objetos do candidato para um ref ISOLADO na VPS
+        #     (`refs/candidato/pendente`). Isso nao move main, nao move HEAD, nao dispara
+        #     Vercel — so deixa os objetos disponiveis para o preflight medir o alvo REAL.
+        $tip = (git -C $srcRoot rev-parse HEAD 2>$null) | Out-String
+        $tip = $tip.Trim()
+        git -C $srcRoot push --force tom:/opt/LA-Organizer HEAD:refs/candidato/pendente 2>$null
         if ($LASTEXITCODE -ne 0) {
-            Set-Content -Path $holdFile -Value "HOLD auto: preflight da VPS reprovou ANTES do push no deploy $ts -- nada foi empurrado." -Encoding utf8
-            Write-Output "=== PUSH ABORTADO: a VPS tem trabalho local que o reset destruiria. ==="
+            Set-Content -Path $holdFile -Value "HOLD auto: nao consegui publicar o tip candidato na VPS no deploy $ts -- nada empurrado." -Encoding utf8
+            Write-Output "=== PUSH ABORTADO: nao consegui enviar o candidato para a VPS medir. Nada empurrado. ==="
+            exit 1
+        }
+        $refRemoto = (ssh tom "cd /opt/LA-Organizer && git rev-parse refs/candidato/pendente" 2>$null) | Out-String
+        if ($refRemoto.Trim() -ne $tip) {
+            Set-Content -Path $holdFile -Value "HOLD auto: candidato na VPS ($($refRemoto.Trim())) != tip local ($tip) no deploy $ts." -Encoding utf8
+            Write-Output "=== PUSH ABORTADO: o candidato na VPS nao bate com o tip local. Nada empurrado. ==="
+            exit 1
+        }
+        $pfPre = (ssh tom "cd /opt/LA-Organizer && ./scripts/preflight-deploy.sh refs/candidato/pendente --sem-snapshot 2>&1" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Set-Content -Path $holdFile -Value "HOLD auto: preflight contra o TIP CANDIDATO reprovou no deploy $ts -- nada foi empurrado." -Encoding utf8
+            Write-Output "=== PUSH ABORTADO: a VPS tem trabalho que o reset para o candidato destruiria. ==="
             Write-Output (($pfPre -split "`n" | Select-String "RECUSADO|PREFLIGHT") -join "`n")
             Write-Output "=== Nada empurrado, main nao moveu, Vercel nao disparou. Hold criado. ==="
             exit 1
         }
+        Write-Output "=== Preflight contra o candidato $($tip.Substring(0,8)): OK ==="
 
-        # 7. Push.
+        # 6c. BASELINE DO BUNDLE ANTES DO PUSH (laudo v2.3, bloqueador 2). O gate da Vercel so
+        #     existe se for tirado ANTES do build novo; depois nao ha com o que comparar.
+        $webMudou = (git -C $srcRoot diff --name-only origin/main HEAD -- web/ 2>$null | Measure-Object).Count
+        ssh tom "cd /opt/LA-Organizer && ./scripts/verificar-bundle.sh --baseline $blFile >/dev/null 2>&1" 2>$null
+        $temBaseline = ($LASTEXITCODE -eq 0)
+        if (-not $temBaseline) { Write-Output "=== AVISO: nao consegui tirar o baseline do bundle; o gate da Vercel ficara indisponivel neste deploy ===" }
+
+        # 7. Push — com retorno conferido. Push que falha calado deixava o resto do script
+        #    agindo como se main tivesse movido.
         git -C $srcRoot push origin main 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Set-Content -Path $holdFile -Value "HOLD auto: git push origin main FALHOU no deploy $ts." -Encoding utf8
+            Write-Output "=== PUSH FALHOU (exit $LASTEXITCODE). Nada mais foi feito. Hold criado. ==="
+            exit 1
+        }
+        $empurrou = $true
     }
 }
 
@@ -137,12 +183,46 @@ if ($vpsAtras -gt 0) {
     # Volta a VPS ao estado anterior E devolve os guardas. Usada em toda falha pos-reset:
     # estado hibrido (disco novo + processo velho) e pior que nao ter feito o deploy, porque
     # se disfarca de sucesso.
+    #
+    # v2.3 (laudo bloqueador 3): a v2.2 escrevia "VPS revertida para $prev" sem conferir NADA
+    # — nem o reset, nem a restauracao, nem o processo. Rollback que mente e a pior peca do
+    # conjunto: ele e acionado justamente quando algo ja deu errado, e uma mensagem de sucesso
+    # falsa ali encerra a investigacao. Agora cada etapa e verificada e o resultado e um
+    # veredito honesto: REVERTIDA (tudo comprovado) ou CRITICO (intervencao humana).
     function Invoke-RollbackVps([string]$motivo) {
         Write-Output "=== ROLLBACK: $motivo -- voltando a VPS para $($prev.Substring(0,8)) ==="
+        $problemas = @()
+
         ssh tom "cd /opt/LA-Organizer && git reset --hard $prev --quiet" 2>$null
-        $r = (ssh tom "cd /opt/LA-Organizer && ./scripts/pos-deploy-modos.sh 2>&1 || /opt/backups/la-organizer/guardas/restaurar-guardas.sh 2>&1" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) { $problemas += "reset --hard retornou erro" }
+        $head = ((ssh tom "cd /opt/LA-Organizer && git rev-parse HEAD" 2>$null) | Out-String).Trim()
+        if ($head -ne $prev) { $problemas += "HEAD ficou em $head, esperado $prev" }
+
+        # modos primeiro; se os guardas nem existirem mais, restaura do snapshot
+        $r = (ssh tom "cd /opt/LA-Organizer && ./scripts/pos-deploy-modos.sh 2>&1" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Write-Output $r.Trim()
+            $r = (ssh tom "/opt/backups/la-organizer/guardas/restaurar-guardas.sh 2>&1" 2>$null) | Out-String
+            if ($LASTEXITCODE -ne 0) { $problemas += "guardas NAO restaurados" }
+        }
         Write-Output $r.Trim()
-        Set-Content -Path $holdFile -Value "HOLD auto: $motivo no deploy $ts -- VPS revertida para $prev." -Encoding utf8
+
+        # o processo tem que voltar a rodar o codigo anterior, e isso se prova com health
+        ssh tom "pm2 restart tom --no-color >/dev/null 2>&1" 2>$null
+        if ($LASTEXITCODE -ne 0) { $problemas += "pm2 restart do codigo anterior retornou erro" }
+        $h = ((ssh tom "for i in 1 2 3 4 5 6 7 8 9 10; do C=`$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:3100/health); [ `"`$C`" = 200 ] && { echo 200; exit 0; }; sleep 3; done; echo `"`$C`"; exit 1" 2>$null) | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { $problemas += "health nao voltou 200 apos o rollback (ultimo: $h)" }
+
+        if ($problemas.Count -eq 0) {
+            Set-Content -Path $holdFile -Value "HOLD auto: $motivo no deploy $ts -- VPS REVERTIDA e comprovada em $prev (HEAD, guardas, health 200)." -Encoding utf8
+            Write-Output "=== ROLLBACK COMPROVADO: HEAD=$($prev.Substring(0,8)), guardas ok, health 200. ==="
+        } else {
+            $txt = "CRITICO auto: $motivo no deploy $ts -- ROLLBACK INCOMPLETO: " + ($problemas -join '; ')
+            Set-Content -Path $holdFile -Value $txt -Encoding utf8
+            Write-Output "=== ROLLBACK INCOMPLETO -- NAO confie no estado da VPS: ==="
+            $problemas | ForEach-Object { Write-Output "    - $_" }
+            ssh tom "cd /opt/LA-Organizer && [ -x scripts/alertar.sh ] && ./scripts/alertar.sh --chave rollback-incompleto --intervalo-min 30 'TOM: ROLLBACK INCOMPLETO no deploy -- $motivo' >/dev/null 2>&1" 2>$null
+        }
     }
 
     if ($backend -gt 0) {
@@ -265,6 +345,41 @@ if ($vpsAtras -gt 0) {
             exit 1
         }
         Write-Output "=== Docs sincronizados. $($modosDoc.Trim()) ==="
+    }
+
+    # 9. GATE DA VERCEL NO CAMINHO CANONICO (laudo v2.3, bloqueador 2). A v2.2 documentava que
+    #    o automatico fazia isso e o codigo nao fazia — o smoke so via HTTP 200, que uma pagina
+    #    de erro tambem devolve. Roda nos DOIS ramos de proposito: mudanca so em `web/` cai no
+    #    ramo de docs (o filtro de backend e src|skills|migrations), entao amarrar o gate ao
+    #    ramo de backend deixaria justamente o deploy de front sem gate nenhum.
+    if (-not $empurrou) {
+        Write-Output "=== Gate Vercel nao se aplica: este turno nao moveu main (sincronizacao de push alheio). ==="
+    } elseif ($temBaseline) {
+        # `--aceitar-inalterado` so quando o diff PROVA que web/ nao mudou. A afirmacao passa
+        # a vir da medicao, nao de suposicao. Se web/ mudou, exige bundle novo de verdade.
+        $flag = if ($webMudou -eq 0) { "--aceitar-inalterado" } else { "" }
+        Write-Output "=== Gate Vercel (web/ com $webMudou arquivo(s) alterado(s)) ==="
+        $vb = (ssh tom "cd /opt/LA-Organizer && BUNDLE_ESPERA_SEG=300 ./scripts/verificar-bundle.sh --pos-deploy $blFile $flag 2>&1 | tail -12" 2>$null) | Out-String
+        $rcVb = $LASTEXITCODE
+        Write-Output $vb.Trim()
+        if ($rcVb -eq 1) {
+            # literal novo (ou achado conhecido sumindo) no bundle PUBLICO: nao se reverte a
+            # VPS por isso — sao sistemas independentes — mas ninguem segue sem saber.
+            Set-Content -Path $holdFile -Value "CRITICO auto: gate da Vercel REPROVOU no deploy $ts -- bundle publico mudou de forma nao esperada." -Encoding utf8
+            ssh tom "cd /opt/LA-Organizer && [ -x scripts/alertar.sh ] && ./scripts/alertar.sh --chave gate-vercel --intervalo-min 60 'TOM: gate do bundle publico REPROVOU apos deploy' >/dev/null 2>&1" 2>$null
+            Write-Output "=== ATENCAO: bundle publico com achado inesperado. TOM segue no ar; investigar antes do proximo deploy. ==="
+            exit 1
+        }
+        if ($rcVb -eq 2) {
+            Set-Content -Path $holdFile -Value "HOLD auto: gate da Vercel INDETERMINADO no deploy $ts -- build pode nao ter terminado." -Encoding utf8
+            Write-Output "=== Gate Vercel INDETERMINADO: confirmar no painel se o deployment ficou READY e rodar --pos-deploy de novo. ==="
+            exit 1
+        }
+        Write-Output "=== Gate Vercel aprovado ==="
+    } else {
+        Set-Content -Path $holdFile -Value "HOLD auto: deploy $ts sem baseline do bundle -- gate da Vercel NAO foi executado." -Encoding utf8
+        Write-Output "=== Gate Vercel NAO executado (sem baseline). Hold criado para nao passar por verificado. ==="
+        exit 1
     }
 }
 exit 0

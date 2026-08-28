@@ -74,8 +74,16 @@ FAIL=$(grep -c '^not ok' <<<"$SAIDA")
 # errado, o mesmo defeito que essa suite inteira existe para pegar.
 NOMES=$(grep -A3 '^not ok' <<<"$SAIDA" | grep -c "system-loadout.test.js")
 echo "  fail=$FAIL  deles com location em system-loadout=$NOMES"
-if [ "$FAIL" = 3 ] && [ "$NOMES" = 3 ]; then ok "so os 3 vermelhos conhecidos (system-loadout, falta TEST_COLLAB_ID)"
-else falha "vermelhos inesperados: fail=$FAIL, em system-loadout=$NOMES"; grep -A3 '^not ok' <<<"$SAIDA" | head -12; fi
+# v2.3 (laudo bloqueador 4): este gate exigia EXATAMENTE 3 enquanto o gate pre-restart do
+# auto-deploy aceita 0 de proposito. Dois gates com regras diferentes sobre a mesma suite se
+# contradizem: se os 3 ficarem verdes (basta TEST_COLLAB_ID no ambiente), o primeiro aprova e
+# este forca rollback. Regra unica, identica a de la: todo vermelho em system-loadout, no
+# maximo 3.
+if [ "$FAIL" -eq "$NOMES" ] && [ "$FAIL" -le 3 ]; then
+  ok "$FAIL vermelho(s), todos em system-loadout (falta TEST_COLLAB_ID)"
+else
+  falha "vermelhos fora dos conhecidos: fail=$FAIL, em system-loadout=$NOMES"; grep -A3 '^not ok' <<<"$SAIDA" | head -12
+fi
 
 echo "-- 5. golden do Mapa com TEST_COLLAB_ID: exige 0 falhas --"
 ID=$(node --env-file=.env -e "require('./src/supabase/client').from('collaborators').select('id').eq('is_active',true).limit(1).single().then(r=>console.log(r.data?r.data.id:''))" 2>/dev/null | head -1)
@@ -84,14 +92,17 @@ if [ -n "$ID" ]; then
   case "$G" in *"# fail 0"*) ok "golden do Mapa: $G" ;; *) falha "golden do Mapa: $G" ;; esac
 else falha "nao consegui resolver um collaborator ativo para o golden"; fi
 
-echo "-- 6. contencao de permissoes (4 raizes do TOM) --"
+echo "-- 6. contencao de permissoes (5 raizes do TOM) --"
 if desde contencao; then
   # #3: a v2.3 fazia `[ -d "$r" ] || continue` e uma raiz obrigatoria que sumisse era
   # simplesmente pulada — o mesmo verde vacuo que o script de contencao ja tinha corrigido.
   TOT=0; AUSENTES=0; MEDIU_ERRADO=0
   FERR=$(mktemp /run/smoke-find.XXXXXX 2>/dev/null || mktemp)
   chmod 0600 "$FERR" 2>/dev/null
-  for r in "$RAIZ_BKP" "$RAIZ"/.claude-tom "$RAIZ"/.claude-tom-w0 "$RAIZ"/.claude-tom-w1; do
+  # 5 raizes, nao 4 (laudo v2.3): `logs/` estava fora daqui mas DENTRO da varredura — 61 MB
+  # de log operacional, com conteudo de conversa. O smoke aprovava contencao sem olhar
+  # justamente a raiz que originou o incidente.
+  for r in "$RAIZ_BKP" "$RAIZ"/.claude-tom "$RAIZ"/.claude-tom-w0 "$RAIZ"/.claude-tom-w1 "$RAIZ"/logs; do
     if [ ! -d "$r" ]; then echo "      AUSENTE (obrigatoria): $r"; AUSENTES=$((AUSENTES+1)); continue; fi
     # inclui o bit x de grupo/outros: diretorio 711 nao lista, mas e ATRAVESSAVEL.
     # FALSO-VERDE (laudo v2): com `2>/dev/null` um diretorio ilegivel produzia zero linhas,
@@ -108,7 +119,7 @@ if desde contencao; then
   rm -f "$FERR"
   [ "$MEDIU_ERRADO" -eq 0 ] || falha "$MEDIU_ERRADO medicao(oes) de exposicao falharam — a contagem nao vale"
   [ "$AUSENTES" -eq 0 ] || falha "$AUSENTES raiz(es) obrigatoria(s) ausente(s)"
-  [ "$TOT" -eq 0 ] && [ "$AUSENTES" -eq 0 ] && ok "0 artefatos expostos (r/w/x) nas 4 raizes"     || { [ "$TOT" -gt 0 ] && falha "$TOT artefato(s) ainda exposto(s)"; }
+  [ "$TOT" -eq 0 ] && [ "$AUSENTES" -eq 0 ] && ok "0 artefatos expostos (r/w/x) nas 5 raizes"     || { [ "$TOT" -gt 0 ] && falha "$TOT artefato(s) ainda exposto(s)"; }
 else pula "contencao (fase anterior)"; fi
 
 echo "-- 7. backup valido e conferido --"

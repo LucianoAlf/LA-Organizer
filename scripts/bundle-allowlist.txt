@@ -30,6 +30,20 @@ f423747445e8d214a8837ddcdf83820cb30a5f1861c1e0f08b4aa863829c26b2  # code: apos "
 # RLS — este hash so deve permanecer aqui depois que o P0-1a estiver aplicado e verificado.
 79bb4b2ae5d832fac571c4549c2d756b786531b4bcad30b8fb636c6221e39b77  # JWT anon, 208 chars, adjacente a const com a URL do projeto Supabase
 
+# --- Achados novos, revelados pela varredura dos 47 chunks (v2.3) -------------------------
+# Ate a v2.2 o detector lia so `index-*.js`. Ao passar a varrer os 46 chunks lazy, apareceram
+# tres literais que nunca tinham sido examinados. Classificados por PROPRIEDADE, sem imprimir
+# valor: contando caracteres distintos e decodificando o header/claims do JWT.
+02a3b5155093b03b36e4776cb1618f16d49c71669f4cd1a621fa5ab51864cb71  # 64 chars, 64 DISTINTOS = alfabeto base64 de biblioteca. Segredo nao tem todos os simbolos distintos.
+459efb5d996d6127e5d012f1b8677ca47189e04a0ca150d5b9258780dab7458f  # 66 chars, 66 DISTINTOS = alfabeto base64url com padding. Mesma assinatura.
+4527b37ad4b51da92a7378d309508b6a62b1d198ce5d5d3d963d35d08480022f  # JWT anon do LA REPORT (ref=ouqwbbermlzqqvtqwlul, role=anon). Publico por desenho, igual a anon do TOM.
+#
+# ⚠️ A anon do LA Report tem a MESMA condicao da anon do TOM: so e inofensiva enquanto a RLS
+#    daquele projeto estiver correta. O P0-1a auditou e fechou o projeto do TOM
+#    (cesnbnrynvxvgdhfmaua). O LA Report (ouqwbbermlzqqvtqwlul) NAO foi auditado — item aberto,
+#    fora deste pacote. Este hash fica aqui porque a chave e publica por construcao, nao
+#    porque o projeto dela esteja provado seguro.
+
 # =========================================================================================
 # NÃO ALLOWLISTADO — É O P0-4
 #

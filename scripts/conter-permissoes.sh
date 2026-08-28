@@ -87,7 +87,9 @@ if [ "$VARRER" = 1 ]; then
   # contexto do colaborador. Escopo estreito e a prova contra symlink: `-type f` com find -P
   # (padrao) e falso para link simbolico, entao nenhum link plantado por outro usuario
   # redireciona o chmod. `-user root` fecha o resto.
-  if ntmp=$(find /tmp -maxdepth 1 -name 'tom-*' -type f -user root \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w \) 2>"$TMPERR" | { grep -c . || true; }) && [ ! -s "$TMPERR" ]; then :
+  # bits x aqui tambem: eram DUAS medicoes de /tmp e so uma foi corrigida na primeira
+  # passada da revisao. Arquivo 0711 e executavel por qualquer um e nao aparecia em nenhuma.
+  if ntmp=$(find /tmp -maxdepth 1 -name 'tom-*' -type f -user root \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$TMPERR" | { grep -c . || true; }) && [ ! -s "$TMPERR" ]; then :
   else echo "[varrer] find em /tmp falhou: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); ntmp=0; fi
   if [ "$ntmp" -gt 0 ]; then
     if find /tmp -maxdepth 1 -name 'tom-*' -type f -user root -exec chmod go-rwx {} +; then
@@ -115,7 +117,11 @@ if [ "$VARRER" = 1 ]; then
         if c=$(contar "$r"); then restante=$(( restante + c )); else problemas=$((problemas+1)); fi
       fi
     done
-    if nt=$(find /tmp -maxdepth 1 -name 'tom-*' -type f -user root \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w \) 2>"$TMPERR" | { grep -c . || true; }) && [ ! -s "$TMPERR" ]; then
+    # bits x incluidos (laudo v2.3): esta medicao olhava so r/w, entao um arquivo 0711 em
+    # /tmp/tom-* ficava EXECUTAVEL por qualquer usuario e a varredura dizia verde. O `chmod
+    # go-rwx` logo abaixo ja tirava o x — a MEDICAO e que nao enxergava, ou seja: o gate podia
+    # aprovar antes de a correcao acontecer.
+    if nt=$(find /tmp -maxdepth 1 -name 'tom-*' -type f -user root \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$TMPERR" | { grep -c . || true; }) && [ ! -s "$TMPERR" ]; then
       restante=$(( restante + nt ))
     else problemas=$((problemas+1)); fi
     [ "$restante" -eq 0 ] && break

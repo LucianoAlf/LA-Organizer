@@ -123,6 +123,11 @@ PARCIAL=""
 # ---------------------------------------------------------------------------
 gerar_lista() { psql -tA -c "$1" 2>/dev/null | LC_ALL=C sort; }
 {
+  # Versao do FORMATO, primeira linha. Sem ela, um baseline gerado por versao anterior seria
+  # comparado com as consultas NOVAS do drill — centenas de diferencas falsas e um REPROVADO
+  # sem sentido. O drill recusa versao diferente em vez de tentar comparar.
+  printf 'baseline_versao=%s
+' "${BASELINE_VERSAO:-1}"
   for par in "${BASELINE_QUERIES[@]}"
   do
     chave=${par%%|*}; sql=${par#*|}
@@ -139,6 +144,7 @@ gerar_lista() { psql -tA -c "$1" 2>/dev/null | LC_ALL=C sort; }
 } > "$BASELINE" || falhar "nao consegui gerar o baseline"
 grep -q '^ERRO=' "$BASELINE" && falhar "baseline incompleto: $(grep '^ERRO=' "$BASELINE")"
 grep -q '^tabelas_n=' "$BASELINE" || falhar "baseline sem a chave tabelas_n"
+grep -q '^baseline_versao=' "$BASELINE" || falhar "baseline sem baseline_versao"
 chmod 0600 "$BASELINE"
 for c in "${BASELINE_CHAVES[@]}"; do
   grep -q -- "^--- lista:$c ---$" "$BASELINE" || falhar "baseline sem a secao de lista de $c"

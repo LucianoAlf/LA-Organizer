@@ -41,6 +41,16 @@ BASELINE_QUERIES=(
   "constraints|select c.conrelid::regclass::text||':'||c.conname||'|'||md5(pg_get_constraintdef(c.oid)) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where n.nspname='public'"
 
   "grants|select table_name||':'||grantee||':'||privilege_type from information_schema.role_table_grants where table_schema='public' and grantee in ('anon','authenticated','service_role')"
+  # ACL DE FUNCAO (laudo v2.3): `grants` acima le `role_table_grants` — TABELAS. Nenhuma
+  # medicao cobria EXECUTE em funcao, e o drill tolera generico `must be owner of`, entao um
+  # restore que perdesse a ACL das funcoes passava aprovado. Sao 45+ funcoes SECURITY DEFINER
+  # neste banco: privilegio de funcao nao e detalhe.
+  "acl_funcoes|select p.proname||'('||pg_get_function_identity_arguments(p.oid)||'):'||r.rolname||':EXECUTE' from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join (select unnest(array['anon','authenticated','service_role']) as rolname) r where n.nspname='public' and p.prokind in ('f','p') and not exists (select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and has_function_privilege(r.rolname, p.oid, 'EXECUTE')"
+  # ESTADO DAS SEQUENCES (laudo v2.3): `sequences` acima compara nome e tipo — nao o VALOR.
+  # Uma sequence restaurada zerada passava. NAO entra na comparacao por identidade: entre o
+  # dump e o baseline (~15 s) o TOM pode avancar sequences, o que daria falso vermelho. E
+  # comparada com a mesma regra assimetrica das ancoras de dados: restaurado <= baseline.
+  "sequences_estado|select sequencename||':'||coalesce(last_value::text,'0') from pg_sequences where schemaname='public'"
 
   "rls|select c.relname||':'||c.relrowsecurity::text||':'||c.relforcerowsecurity::text from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity"
 
@@ -55,4 +65,14 @@ BASELINE_QUERIES=(
 )
 
 # Chaves na ordem, para quem precisa iterar sem reparsear.
-BASELINE_CHAVES=(tabelas colunas funcoes views sequences triggers types policies indices constraints grants rls extensoes dados)
+BASELINE_CHAVES=(tabelas colunas funcoes views sequences triggers types policies indices constraints grants acl_funcoes rls extensoes dados sequences_estado)
+
+# Categorias comparadas por IDENTIDADE (conjunto identico, tolerancia zero). `dados` e
+# `sequences_estado` ficam de fora: sao NUMEROS que so crescem entre o dump e a consulta do
+# baseline, e comparar numero movel por identidade produz falso vermelho.
+BASELINE_CHAVES_IDENTIDADE=(tabelas colunas funcoes views sequences triggers types policies indices constraints grants acl_funcoes rls extensoes)
+
+# Versao do formato. Mudou a lista de categorias ou o SELECT de alguma? Suba isto. O drill
+# recusa baseline de versao diferente em vez de comparar consulta nova contra dado velho —
+# que produziria centenas de diferencas falsas e um REPROVADO sem sentido.
+BASELINE_VERSAO=2
