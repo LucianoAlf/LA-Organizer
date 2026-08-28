@@ -23,8 +23,8 @@
 # Pular o passo 3 deixa a VPS rodando sem nenhum guarda, e calada sobre isso.
 
 set -uo pipefail
-DEST=/opt/backups/la-organizer/guardas
-RAIZ=/opt/LA-Organizer
+DEST=${GUARDAS_DIR:-/opt/backups/la-organizer/guardas}
+RAIZ=${GUARDAS_RAIZ:-/opt/LA-Organizer}
 
 if [ "${1:-}" = "--listar" ]; then
   ls -la "$DEST"/guardas-*.tar.gz 2>/dev/null || echo "nenhum snapshot em $DEST"
@@ -36,6 +36,9 @@ if [ -z "$TAR" ]; then
   TAR=$(find "$DEST" -name 'guardas-*.tar.gz' -type f 2>/dev/null | sort | tail -1)
 fi
 [ -n "$TAR" ] && [ -s "$TAR" ] || { echo "FATAL: nenhum snapshot utilizavel em $DEST" >&2; exit 1; }
+# Integridade ANTES de extrair: este script pega sempre o mais recente, entao um tarball
+# truncado seria escolhido de preferencia ao bom. Rollback nao e hora de descobrir isso.
+tar -tzf "$TAR" >/dev/null 2>&1 || { echo "FATAL: $TAR esta corrompido — use --listar e escolha outro" >&2; exit 1; }
 echo "== restaurando guardas de $TAR =="
 echo "   ($(tar -tzf "$TAR" 2>/dev/null | wc -l) arquivos, de $(stat -c %y "$TAR" | cut -c1-19))"
 

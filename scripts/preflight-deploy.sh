@@ -26,9 +26,10 @@ SNAP=1; [ "${2:-}" = "--sem-snapshot" ] && SNAP=0
 cd "$(dirname "$(readlink -f "$0")")/.." || exit 2
 
 GUARDAS=(alertar backup-db backup-secrets check-backup conter-permissoes lib-baseline-queries
-         lib-pgconn patch-crontab pos-deploy-modos restaurar-modos restore-drill
-         smoke-pos-aplicacao teste-negativo-dataapi teste-negativo-permissoes verificar-bundle)
-DEST=/opt/backups/la-organizer/guardas
+         lib-pgconn patch-crontab pos-deploy-modos preflight-deploy restaurar-guardas
+         restaurar-modos restore-drill smoke-pos-aplicacao teste-negativo-dataapi
+         teste-negativo-permissoes verificar-bundle)
+DEST=${GUARDAS_DIR:-/opt/backups/la-organizer/guardas}
 PROBLEMAS=0
 
 echo "== preflight para $REF =="
@@ -72,13 +73,33 @@ fi
 if [ "$SNAP" = 1 ]; then
   if install -d -m 0700 "$DEST" 2>/dev/null; then
     TAR="$DEST/guardas-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+    # So entra no tar o que EXISTE: um caminho ausente na lista faz o tar inteiro falhar,
+    # e ai o snapshot — que e a rede do rollback — nao acontece justo quando importa.
     PRESENTES=(); for g in "${GUARDAS[@]}"; do [ -f "scripts/$g.sh" ] && PRESENTES+=("scripts/$g.sh"); done
-    PRESENTES+=(scripts/bundle-allowlist.txt)
-    if tar -czf "$TAR" --owner=0 --group=0 -- "${PRESENTES[@]}" 2>/dev/null && [ -s "$TAR" ]; then
+    [ -f scripts/bundle-allowlist.txt ] && PRESENTES+=(scripts/bundle-allowlist.txt)
+    if [ "${#PRESENTES[@]}" -eq 0 ]; then
+      echo "  RECUSADO: nenhum guarda encontrado para snapshot — arvore incompleta?"; PROBLEMAS=$((PROBLEMAS+1))
+    # umask ANTES de criar: o `chmod 0600` vinha depois do tar e so no caminho de sucesso —
+    # um tar que falha deixava parcial 0644 dentro do diretorio de rollback. Foi pego pela
+    # propria varredura, que acusou 1 artefato exposto. Agora nasce fechado, e o parcial
+    # e REMOVIDO: snapshot corrompido e pior que snapshot nenhum, porque restaurar-guardas
+    # pega sempre o mais recente.
+    elif ( umask 0177; tar -czf "$TAR" --owner=0 --group=0 -- "${PRESENTES[@]}" 2>/dev/null ) \
+         && [ -s "$TAR" ] && tar -tzf "$TAR" >/dev/null 2>&1; then
       chmod 0600 "$TAR"
       echo "  snapshot dos guardas: $TAR ($(tar -tzf "$TAR" | wc -l) arquivos)"
+      # O restaurador tambem precisa sobreviver. Ele mora em scripts/, entao um revert que
+      # apaga os guardas apagaria a propria ferramenta de restaura-los. Uma copia fica FORA
+      # do repo, ao lado do snapshot — que e onde o rollback vai procurar.
+      if cp -f scripts/restaurar-guardas.sh "$DEST/restaurar-guardas.sh" 2>/dev/null; then
+        chmod 0750 "$DEST/restaurar-guardas.sh"
+        echo "  restaurador fora do repo: $DEST/restaurar-guardas.sh"
+      else
+        echo "  RECUSADO: nao consegui copiar o restaurador para $DEST"; PROBLEMAS=$((PROBLEMAS+1))
+      fi
     else
-      echo "  RECUSADO: nao consegui gravar o snapshot dos guardas em $TAR"; PROBLEMAS=$((PROBLEMAS+1))
+      rm -f "$TAR"
+      echo "  RECUSADO: nao consegui gravar/validar o snapshot dos guardas em $TAR (parcial removido)"; PROBLEMAS=$((PROBLEMAS+1))
     fi
   else
     echo "  RECUSADO: nao consegui criar $DEST"; PROBLEMAS=$((PROBLEMAS+1))
