@@ -57,4 +57,19 @@ done
 ( cd "$(dirname "$ARQ")" && sha256sum -c --quiet "$BASE.sha256" ) 2>/dev/null \
   || grito "sha256sum -c reprovou o conjunto (arquivo alterado ou corrompido)"
 
+# A sentinela roda de hora em hora e alguém olha para ela. Como não há MTA neste host, ela
+# é o único lugar onde a falha da varredura (que roda a cada 15 min) pode ser NOTADA.
+# Sem isto, um scanner reprovando ficava enterrado no backup.log e ninguém saberia.
+ESTADO=/opt/backups/la-organizer/varredura-status
+if [ -f "$ESTADO" ]; then
+  V=$(sed -n 's/^veredito=//p' "$ESTADO"); E=$(sed -n 's/^epoch=//p' "$ESTADO")
+  IDADE_MIN=$(( ( $(date +%s) - ${E:-0} ) / 60 ))
+  [ "$V" = ok ] || grito "varredura de permissoes REPROVOU (restante=$(sed -n 's/^restante=//p' "$ESTADO"), problemas=$(sed -n 's/^problemas=//p' "$ESTADO"))"
+  # roda a cada 15 min; acima de 45 min significa que parou de rodar
+  [ "$IDADE_MIN" -le 45 ] || grito "varredura de permissoes parada ha ${IDADE_MIN} min (esperado <= 45)"
+  echo "[check-backup] varredura: $V, ha ${IDADE_MIN} min"
+else
+  grito "sem estado da varredura de permissoes em $ESTADO — ela nunca rodou ou nao consegue gravar"
+fi
+
 echo "[check-backup] ok: run=$RUN idade=${IDADE_H}h; dump+baseline+manifest+sha256 conferidos ($BYTES bytes)"

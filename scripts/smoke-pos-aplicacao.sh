@@ -134,7 +134,15 @@ if install -d -m 0700 "$ATESTADOS" 2>/dev/null; then
     echo "veredito=$([ "$FALHAS" -eq 0 ] && echo aprovado || echo reprovado)"
     echo "falhas=$FALHAS"
     echo "pulados=$PULADOS"
+    # O commit sozinho MENTE quando o runtime está dirty (laudo, item 4): o atestado dizia
+    # `commit=38f4e1d5` enquanto testava código enviado por scp que não está nesse commit.
+    # Registrar o estado do working tree e o md5 dos arquivos que estão REALMENTE rodando
+    # torna o atestado verificável — é o hash, não o commit, que identifica o que foi testado.
     echo "commit=$(git -C "$RAIZ" rev-parse --short HEAD 2>/dev/null || echo desconhecido)"
+    echo "working_tree=$(git -C "$RAIZ" status --porcelain src/ 2>/dev/null | grep -c . | sed 's/^0$/limpo/;s/^[1-9].*/dirty/')"
+    echo "dirty_em_src=$(git -C "$RAIZ" status --porcelain src/ 2>/dev/null | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')"
+    echo "md5_index=$(md5sum "$RAIZ/src/index.js" 2>/dev/null | cut -c1-12)"
+    echo "md5_dispatcher=$(md5sum "$RAIZ/src/rituals/dispatcher.js" 2>/dev/null | cut -c1-12)"
     echo "tom_pid=$(pm2 jlist 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).find(x=>x.name==="tom").pid)}catch(e){console.log("?")}})')"
     echo "host=$(hostname)"
   } > "$A" 2>/dev/null && chmod 0600 "$A" && echo "atestado: $A"

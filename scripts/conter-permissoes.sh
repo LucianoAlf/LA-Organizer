@@ -48,7 +48,24 @@ if [ "$VARRER" = 1 ]; then
   # `2>/dev/null`. Rodando de 15 em 15 minutos no cron, isso significava um scanner que
   # podia parar de proteger e continuar saindo 0 — silêncio que parece saúde.
   # Agora cada desvio vira PROBLEMA contado, e qualquer problema derruba o exit code.
-  contar() { find "$1" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>/dev/null | wc -l; }
+  # FAIL-CLOSED DE VERDADE (laudo, item 1): `find ... 2>/dev/null | wc -l` transformava
+  # QUALQUER erro em zero — um diretório ilegível, um I/O error, um mount sumido viravam
+  # "nada exposto aqui". Num scanner de segurança, erro engolido é a pior resposta possível:
+  # parece saúde. Agora o stderr do find é capturado e qualquer linha vira `problemas`.
+  ERR_FIND=""
+  contar() {
+    local saida rc
+    saida=$(find "$1" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$TMPERR")
+    rc=$?
+    if [ "$rc" -ne 0 ] || [ -s "$TMPERR" ]; then
+      ERR_FIND="$(head -1 "$TMPERR")"
+      echo "[varrer] find falhou em $1 (rc=$rc): ${ERR_FIND:0:120}" >&2
+      return 1
+    fi
+    printf '%s\n' "$saida" | grep -c . || true
+  }
+  TMPERR=$(mktemp /run/varrer.XXXXXX 2>/dev/null || mktemp) || { echo "[varrer] mktemp falhou" >&2; exit 1; }
+  chmod 0600 "$TMPERR"; trap 'rm -f "$TMPERR"' EXIT INT TERM
   total=0; problemas=0
   for r in "${TODAS[@]}"; do
     if [ ! -d "$r" ]; then echo "[varrer] AUSENTE: $r" >&2; problemas=$((problemas+1)); continue; fi
@@ -57,7 +74,7 @@ if [ "$VARRER" = 1 ]; then
     if [ "$(stat -c%U "$real")" != "$DONO_ESPERADO" ]; then
       echo "[varrer] RECUSADO (dono != $DONO_ESPERADO): $real" >&2; problemas=$((problemas+1)); continue
     fi
-    n=$(contar "$real")
+    if ! n=$(contar "$real"); then problemas=$((problemas+1)); continue; fi
     if [ "$n" -gt 0 ]; then
       if ! find "$real" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} +; then
         echo "[varrer] chmod retornou erro em $real" >&2; problemas=$((problemas+1))
@@ -70,7 +87,8 @@ if [ "$VARRER" = 1 ]; then
   # contexto do colaborador. Escopo estreito e a prova contra symlink: `-type f` com find -P
   # (padrao) e falso para link simbolico, entao nenhum link plantado por outro usuario
   # redireciona o chmod. `-user root` fecha o resto.
-  ntmp=$(find /tmp -maxdepth 1 -name 'tom-*' -type f -user root \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w \) 2>/dev/null | wc -l)
+  if ntmp=$(find /tmp -maxdepth 1 -name 'tom-*' -type f -user root \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w \) 2>"$TMPERR" | { grep -c . || true; }) && [ ! -s "$TMPERR" ]; then :
+  else echo "[varrer] find em /tmp falhou: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); ntmp=0; fi
   if [ "$ntmp" -gt 0 ]; then
     if find /tmp -maxdepth 1 -name 'tom-*' -type f -user root -exec chmod go-rwx {} +; then
       total=$((total + ntmp))
@@ -93,20 +111,43 @@ if [ "$VARRER" = 1 ]; then
     passadas=$passada
     restante=0
     for r in "${TODAS[@]}"; do
-      [ -d "$r" ] && restante=$(( restante + $(contar "$r") ))
+      if [ -d "$r" ]; then
+        if c=$(contar "$r"); then restante=$(( restante + c )); else problemas=$((problemas+1)); fi
+      fi
     done
-    restante=$(( restante + $(find /tmp -maxdepth 1 -name 'tom-*' -type f -user root \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w \) 2>/dev/null | wc -l) ))
+    if nt=$(find /tmp -maxdepth 1 -name 'tom-*' -type f -user root \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w \) 2>"$TMPERR" | { grep -c . || true; }) && [ ! -s "$TMPERR" ]; then
+      restante=$(( restante + nt ))
+    else problemas=$((problemas+1)); fi
     [ "$restante" -eq 0 ] && break
     # ainda há exposto: corrige e mede de novo
     for r in "${TODAS[@]}"; do
       [ -d "$r" ] || continue
-      find "$r" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} + 2>/dev/null
+      find "$r" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} + 2>"$TMPERR"         || { echo "[varrer] chmod da passada falhou em $r: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); }
     done
-    find /tmp -maxdepth 1 -name 'tom-*' -type f -user root -exec chmod go-rwx {} + 2>/dev/null
+    find /tmp -maxdepth 1 -name 'tom-*' -type f -user root -exec chmod go-rwx {} + 2>"$TMPERR"       || { echo "[varrer] chmod da passada falhou em /tmp: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); }
     total=$((total + restante))
   done
 
   echo "[conter --varrer] corrigidos=$total restante=$restante problemas=$problemas passadas=$passadas"
+
+  # CANAL DE ALARME (laudo, item 1). Eu tinha escrito que "o cron grita sozinho" — está
+  # errado: não há MTA nem MAILTO neste host, então cron não notifica ninguém. Um scanner
+  # que reprova morria em silêncio dentro do backup.log.
+  # Sem canal externo, a saída é deixar o estado em arquivo e fazer a SENTINELA horária —
+  # que já existe e já é consultada — reprovar quando este arquivo estiver ruim ou velho.
+  # Não é notificação ativa; é detecção garantida. Notificação externa (webhook/WhatsApp) é
+  # decisão do Alf, e está anotada como pendente.
+  ESTADO=/opt/backups/la-organizer/varredura-status
+  {
+    echo "ts=$(date -Iseconds)"
+    echo "epoch=$(date +%s)"
+    echo "veredito=$([ "$restante" -eq 0 ] && [ "$problemas" -eq 0 ] && echo ok || echo falha)"
+    echo "restante=$restante"
+    echo "problemas=$problemas"
+    echo "passadas=$passadas"
+    echo "corrigidos=$total"
+  } > "$ESTADO" 2>/dev/null && chmod 0600 "$ESTADO"
+
   [ "$restante" -eq 0 ] && [ "$problemas" -eq 0 ] || exit 1
   exit 0
 fi
