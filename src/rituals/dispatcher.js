@@ -9,6 +9,20 @@
 //   node src/rituals/dispatcher.js --force=briefing_trabalho    # ignora horário
 //   node src/rituals/dispatcher.js --force=briefing_trabalho --phone=5521981278047
 
+// Umask 077 ANTES de qualquer require, pelo mesmo motivo do src/index.js — e este arquivo
+// é justamente o caso que o fix de lá NÃO cobria.
+//
+// O dispatcher não é filho do engine: é iniciado pelo CRON a cada 5 minutos, então herda o
+// umask do cron (022), não o do processo do TOM. E ele spawna o CLI do Claude
+// (claude-sentinel). Resultado medido em 28/08: a varredura de permissões, que roda em
+// */15, reprovou com `restante=1` exatamente em :00, :15 e :30 — os minutos em que o
+// dispatcher (*/5) colide com ela. Arquivo nascia 644 no meio da varredura.
+//
+// Lição: corrigir o umask do processo principal não basta quando há um segundo entrypoint
+// iniciado por fora. Ao fechar uma raiz, procurar TODOS os processos que produzem o mesmo
+// tipo de artefato — aqui, `crontab -l | grep node`.
+process.umask(0o077);
+
 // Resolve dependências do projeto (cwd-agnostic).
 const path = require('path');
 process.chdir(path.join(__dirname, '..', '..'));

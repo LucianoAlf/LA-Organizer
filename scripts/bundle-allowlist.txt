@@ -1,0 +1,46 @@
+# Allowlist do verificar-bundle.sh — literais de alta entropia ACEITOS no bundle público.
+#
+# Formato: <sha256 do literal>  # motivo
+#
+# Regra: um literal só entra aqui com motivo escrito, depois de alguém decidir que ele é
+# público POR DESENHO. O hash não revela o valor, mas a linha registra a decisão.
+# Para obter o hash de um valor sem expô-lo:  printf %s "$VALOR" | sha256sum
+#
+# =========================================================================================
+# CLASSIFICAÇÃO DE 2026-08-28 — 9 achados no bundle de produção, identificados pelo
+# CONTEXTO em que aparecem no código minificado (nenhum valor foi impresso).
+# =========================================================================================
+
+# --- Constantes de biblioteca (não são segredo) ------------------------------------------
+775ad11d37eebfe985acd54acdaa5d2c40181421389044b87d29d62182a43e6c  # alfabeto base64: 64 chars, 64 DISTINTOS. Aparece logo apos AuthInvalidJwtError, no @supabase/auth-js. Entropia 6.00 = maxima possivel para 64 simbolos, assinatura de alfabeto, nao de segredo.
+
+# --- Códigos de erro do WebAuthn (biblioteca de passkey) ---------------------------------
+f66a0a5dfa54632f130cc05b841419b1c3ba5ed3003d12d9759e5abcaebc00c3  # code: apos "credentials were required but no available authenticator supported it"
+90c7067e596ca4526c22668a4ebfe8223ab090a70cebb3fe0665bdba59792ec5  # code: apos "...ation was required but no available authenticator supported it"
+2c2456847caa5248a2170a33d29de94ce88099debd77b57ab716e4992a9b7459  # code: apos "...any of the specified pubKeyCredParams algorithms"
+df5043ebd715ff803040af7350724d1620ef875d79e790ea6ad4600401fddbbc  # code: apos "The authenticator was previously registered"
+f423747445e8d214a8837ddcdf83820cb30a5f1861c1e0f08b4aa863829c26b2  # code: apos "...during automatic registration but it could not be performed"
+
+# --- Código da própria aplicação ---------------------------------------------------------
+473e6b0742dfb35d5d6f9f9083b6e880801a60382948892a39c94a939f850609  # fragmento de select do PostgREST: "...checklist_completions!inner(reference_date, op_checklists(name))"
+
+# --- Chave anon do Supabase --------------------------------------------------------------
+# ATENCAO: publica POR DESENHO (vai no cliente para o PostgREST aplicar RLS). Ela so e
+# inofensiva ENQUANTO a RLS estiver correta. Em 2026-08-28 ela da SELECT em 5 tabelas sem
+# RLS — este hash so deve permanecer aqui depois que o P0-1a estiver aplicado e verificado.
+79bb4b2ae5d832fac571c4549c2d756b786531b4bcad30b8fb636c6221e39b77  # JWT anon, 208 chars, adjacente a const com a URL do projeto Supabase
+
+# =========================================================================================
+# NÃO ALLOWLISTADO — É O P0-4
+#
+#   08dabf36fe915d8305101cb63f636b86e23c8a731260c9b7306db8e0fae870fd
+#   64 chars, 16 caracteres distintos = hexadecimal (formato de `openssl rand -hex 32`).
+#   Aparece como `const hs="",ms="<valor>"` — o par bate exatamente com tomEngine.ts:
+#     const TOM_BASE       = import.meta.env.VITE_TOM_API_BASE       || ''   -> hs=""
+#     const INTERNAL_SECRET= import.meta.env.VITE_INTERNAL_API_SECRET || ''   -> ms="..."
+#   É o VITE_INTERNAL_API_SECRET, única proteção de 19 endpoints /internal/*.
+#
+#   Este hash NÃO deve ser allowlistado. Ele deve DESAPARECER do bundle — trocando o
+#   mecanismo (JWT do Supabase ou proxy server-side), rotacionando e rebuildando.
+#   Enquanto ele aparecer, o verificar-bundle.sh reprova, e deve reprovar.
+# =========================================================================================

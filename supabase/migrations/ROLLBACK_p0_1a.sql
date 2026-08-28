@@ -1,0 +1,83 @@
+-- =============================================================================
+-- ROLLBACK do P0-1a. NÃO É PARA RODAR NO GATE A.
+--
+-- MUDANÇA v2.3 -> v2.4 (bloqueador #4): o rollback anterior só desligava RLS e não
+-- restaurava privilégio nenhum. Aqui os GRANTs estão escritos LITERALMENTE, extraídos do
+-- catálogo vivo em 2026-08-28 antes de qualquer alteração — não de memória, não inferidos.
+--
+-- Estado capturado (idêntico nas 5 tabelas, para anon, authenticated, postgres e
+-- service_role):
+--     delete, insert, references, select, trigger, truncate, update
+-- Como o P0-1a NÃO toca em postgres nem em service_role, o rollback também não precisa
+-- tocá-los. Só o que foi revogado é restaurado.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- PASSO 1 — desligar RLS (restaura disponibilidade sem reabrir exposição).
+-- Faça SÓ na tabela afetada, nunca em bloco por reflexo.
+-- -----------------------------------------------------------------------------
+-- alter table public.event_category_leaders            disable row level security;
+-- alter table public.pf_transactions_bkp_20260716_rose disable row level security;
+-- alter table public.task_classifications              disable row level security;
+-- alter table public.voice_message_log                 disable row level security;
+-- alter table public.webhook_queue                     disable row level security;
+
+-- Na maioria dos cenários o rollback PARA AQUI. O passo 2 reabre o P0.
+
+-- -----------------------------------------------------------------------------
+-- PASSO 2 — restauração literal do estado anterior. REABRE A EXPOSIÇÃO PÚBLICA.
+-- Só execute com autorização explícita e por escrito do Alf, para a tabela específica,
+-- e com prazo para refazer o fechamento. Não é "desfazer": é reabrir o incidente.
+-- -----------------------------------------------------------------------------
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.event_category_leaders to anon;
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.event_category_leaders to authenticated;
+--
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.pf_transactions_bkp_20260716_rose to anon;
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.pf_transactions_bkp_20260716_rose to authenticated;
+--
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.task_classifications to anon;
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.task_classifications to authenticated;
+--
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.voice_message_log to anon;
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.voice_message_log to authenticated;
+--
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.webhook_queue to anon;
+-- grant delete, insert, references, select, trigger, truncate, update
+--   on public.webhook_queue to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- CONFERÊNCIA DO ESTADO ANTES DE QUALQUER ROLLBACK (read-only) — rode e guarde a saída.
+-- Rollback sem foto do antes é chute.
+-- -----------------------------------------------------------------------------
+-- select table_name, grantee,
+--        string_agg(distinct lower(privilege_type), ', ' order by lower(privilege_type)) privs
+--   from information_schema.role_table_grants
+--  where table_schema='public'
+--    and table_name in ('event_category_leaders','pf_transactions_bkp_20260716_rose',
+--                       'task_classifications','voice_message_log','webhook_queue')
+--  group by table_name, grantee order by table_name, grantee;
+
+
+-- =============================================================================
+-- QUARENTENA de pf_transactions_bkp_20260716_rose (58 linhas) — DECISÃO SEPARADA
+-- =============================================================================
+-- NÃO é deleção. Move para schema privado, fora do search_path da Data API, sem grant
+-- público. Reversível. É backup de transações financeiras pessoais: se a origem sumir,
+-- pode ser a única cópia. Apagar é irreversível e não é P0 — o P0 fecha com RLS + revoke.
+--
+--   create schema if not exists archive;
+--   revoke all on schema archive from public, anon, authenticated;
+--   grant usage on schema archive to service_role;
+--   alter table public.pf_transactions_bkp_20260716_rose set schema archive;
+--   revoke all on archive.pf_transactions_bkp_20260716_rose from anon, authenticated;
+--
+-- Reversão: alter table archive.pf_transactions_bkp_20260716_rose set schema public;

@@ -1,3 +1,18 @@
+// Umask 077 ANTES de qualquer require: tudo que este processo e seus filhos criarem nasce
+// 0600/0700, nunca legível por outro usuário do host compartilhado.
+//
+// Por que aqui: o host tem 8 contas além de root e o umask padrão é 022. Medido em 28/08:
+// o CLI do Claude, que é filho deste processo, criava ~27 arquivos/hora e as sessões
+// nasciam 644 — dois minutos depois de uma contenção completa já havia arquivo reexposto.
+// Havia também 5 `tom-sysprompt-*.txt` esquecidos em /tmp, 644, ~115 KB cada, com o prompt
+// COMPLETO e o contexto do colaborador dentro.
+//
+// A varredura de 15 min é curativo; isto é a raiz: o processo deixa de PRODUZIR exposição.
+// Seguro porque tudo que este processo escreve (temporários em os.tmpdir(), HOMEs dos
+// workers do CLI, marcadores internos) é lido apenas por ele mesmo e pelos filhos, todos
+// como root — nada é servido a outro usuário ou processo.
+process.umask(0o077);
+
 const express = require('express');
 const config = require('./config');
 const webhook = require('./webhook');
