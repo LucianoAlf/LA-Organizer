@@ -135,7 +135,11 @@ if [ "$SNAP" = 1 ]; then
         chmod 0600 "$TAR"
         echo "  snapshot: $TAR ($GUARDAS_ESPERADOS/$GUARDAS_ESPERADOS guardas)"
         if cp -f scripts/restaurar-guardas.sh "$DEST/restaurar-guardas.sh" 2>/dev/null; then
-          chmod 0750 "$DEST/restaurar-guardas.sh"
+          # 0700, nao 0750: este arquivo mora DENTRO de /opt/backups, e a regra de contencao
+          # daquela arvore e "nada legivel/executavel por grupo ou outros". Com 0750 ele
+          # aparecia como artefato exposto — o proprio smoke pegou a contradicao. So root
+          # roda isto, entao 0700 atende as duas coisas.
+          chmod 0700 "$DEST/restaurar-guardas.sh"
           echo "  restaurador fora do repo: $DEST/restaurar-guardas.sh"
         else
           recusa "nao consegui copiar o restaurador para $DEST"
