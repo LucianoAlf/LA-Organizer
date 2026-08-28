@@ -32,7 +32,7 @@ EXEC750=(
   scripts/teste-negativo-dataapi.sh scripts/teste-negativo-permissoes.sh
   scripts/verificar-bundle.sh
 )
-DADO640=( scripts/bundle-allowlist.txt )
+DADO640=( scripts/bundle-allowlist.txt scripts/bundle-esperados.txt scripts/suite-vermelhos-conhecidos.txt )
 
 FALHAS=0
 aplicar() { # <modo> <arquivo>

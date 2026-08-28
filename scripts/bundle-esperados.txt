@@ -1,0 +1,14 @@
+# Achados NAO-ALLOWLISTADOS que sao ESPERADOS e ja aprovados por decisao humana.
+#
+# Diferenca para a allowlist: a allowlist diz "isto nao e segredo". Este arquivo diz "isto E
+# um problema conhecido, ja registrado, e nao deve fazer o gate explodir a cada execucao".
+#
+# Existe por causa do laudo v2.3 (bloqueador 3): `--baseline` gravava QUALQUER achado
+# nao-allowlistado como "conhecido" e saia 0. Ou seja: se um segredo novo entrasse no bundle
+# ANTES do baseline, o proprio baseline o canonizava, e o `--pos-deploy` depois comparava
+# "conjunto igual ao baseline" e aprovava. O detector passaria a proteger o segredo novo.
+#
+# Agora `--baseline` REPROVA se o conjunto de achados nao for exatamente este.
+# Acrescentar linha aqui e decisao consciente, com motivo escrito, nunca efeito colateral.
+
+08dabf36fe915d8305101cb63f636b86e23c8a731260c9b7306db8e0fae870fd  # P0-4: VITE_INTERNAL_API_SECRET no bundle publico. Aberto, com plano proprio (trocar mecanismo -> rotacionar -> rebuildar). Enquanto nao fechar, e o unico achado esperado.

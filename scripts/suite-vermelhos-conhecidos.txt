@@ -1,0 +1,15 @@
+# Os TRES vermelhos conhecidos da suite, por NOME de teste — nao por arquivo.
+#
+# Laudo v2.3, bloqueador 5: a regra anterior era "todo vermelho dentro de
+# system-loadout.test.js, no maximo 3". Isso reconhece o ARQUIVO, nao os testes: qualquer
+# regressao nova naquele arquivo — ate tres — passava como se fosse o baseline conhecido.
+# Reconhecer nao e contar; e saber QUAIS.
+#
+# Motivo dos tres: system-loadout compara o prompt montado byte a byte e precisa de um
+# colaborador real; sem TEST_COLLAB_ID no ambiente (que e o caso do cron) eles falham.
+# Com TEST_COLLAB_ID exportado, os tres passam — por isso zero vermelho tambem e aceito.
+#
+# Uma linha por nome exato, como aparece depois de "not ok N - ".
+operational: passar loadout full == não passar loadout (byte a byte)
+conversational: é o prefixo-voz EXATO do full, sem o resto
+conversational: ctx devolvido é ÍNTEGRO (contrato que o engine consome)

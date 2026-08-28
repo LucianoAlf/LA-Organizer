@@ -31,7 +31,7 @@ GUARDAS=(alertar backup-db backup-secrets check-backup conter-permissoes lib-bas
          lib-pgconn patch-crontab pos-deploy-modos preflight-deploy restaurar-guardas
          restaurar-modos restore-drill smoke-pos-aplicacao teste-negativo-dataapi
          teste-negativo-permissoes verificar-bundle)
-GUARDAS_ESPERADOS=$(( ${#GUARDAS[@]} + 1 ))   # +1 = bundle-allowlist.txt
+GUARDAS_ESPERADOS=$(( ${#GUARDAS[@]} + 3 ))   # +3 = allowlist, esperados, vermelhos-conhecidos
 DEST=${GUARDAS_DIR:-/opt/backups/la-organizer/guardas}
 PROBLEMAS=0
 T=$(mktemp -d /run/preflight.XXXXXX 2>/dev/null || mktemp -d) || { echo "FATAL: mktemp" >&2; exit 2; }
@@ -94,8 +94,20 @@ echo "  rastreados nao-limpos: $NTRACK"
 # --- 2. UNTRACKED que COLIDE com a arvore alvo -------------------------------------------
 # Este e o caso que a v2.1 ignorava. Sao exatamente os arquivos entregues por scp antes de
 # serem commitados: se ja forem identicos, o reset e no-op; se divergirem, o reset apaga.
-git status --porcelain=v1 -z -uall 2>/dev/null | tr '\0' '\n' \
-  | sed -n 's/^?? //p' | LC_ALL=C sort > "$T/unt.txt" || true
+# FAIL-OPEN (laudo v2.3, bloqueador 1): era `... | sed ... > unt.txt || true`. O `|| true`
+# valia para o PIPELINE INTEIRO, entao um `git status` que falhasse deixava unt.txt vazio e o
+# preflight concluia "0 untracked, nada colide, PREFLIGHT OK, exit 0". Reproduzido pelo Alf
+# fazendo o git status sair 42. Fail-open no gate que existe para impedir perda de trabalho.
+# Agora o status vai para arquivo com o retorno CONFERIDO, e so depois e filtrado.
+git status --porcelain=v1 -z -uall > "$T/status.z" 2>"$T/status.err"; RC_ST=$?
+if [ "$RC_ST" -ne 0 ]; then
+  # o rc tem que ser capturado ANTES de qualquer outro comando: dentro do `if`, `$?` ja e o
+  # resultado do proprio teste, e a mensagem saia sempre "rc=0" — erro reportado como sucesso.
+  echo "FATAL: git status -uall falhou (rc=$RC_ST): $(head -1 "$T/status.err" | cut -c1-140)" >&2
+  echo "       sem inventario confiavel de untracked, o reset nao pode ser liberado" >&2
+  exit 2
+fi
+tr '\0' '\n' < "$T/status.z" | sed -n 's/^?? //p' | LC_ALL=C sort > "$T/unt.txt"
 NUNT=$(wc -l < "$T/unt.txt")            # wc -l, nunca grep -c: zero e resultado valido
 LC_ALL=C comm -12 "$T/alvo.txt" "$T/unt.txt" > "$T/colide.txt"
 NCOL=$(wc -l < "$T/colide.txt")
@@ -120,8 +132,9 @@ if [ "$SNAP" = 1 ]; then
     for g in "${GUARDAS[@]}"; do
       if [ -f "scripts/$g.sh" ]; then PRESENTES+=("scripts/$g.sh"); else AUSENTES+=("$g.sh"); fi
     done
-    if [ -f scripts/bundle-allowlist.txt ]; then PRESENTES+=(scripts/bundle-allowlist.txt)
-    else AUSENTES+=(bundle-allowlist.txt); fi
+    for d in bundle-allowlist.txt bundle-esperados.txt suite-vermelhos-conhecidos.txt; do
+      if [ -f "scripts/$d" ]; then PRESENTES+=("scripts/$d"); else AUSENTES+=("$d"); fi
+    done
     # v2.1 aceitava snapshot parcial (bastava >=1 arquivo). Rollback com snapshot incompleto
     # restaura uma parte dos guardas e deixa o resto ausente — pior que nao restaurar, porque
     # PARECE que restaurou. Agora e 18/18 ou recusa.

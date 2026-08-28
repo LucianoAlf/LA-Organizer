@@ -87,13 +87,20 @@ echo "[check-backup] baseline: ${#CATEGORIAS[@]}/${#CATEGORIAS[@]} categorias, v
 # so o drill responde isso, e a sentinela nunca exigia um. "Backup verde" sem drill aprovado
 # e a definicao de backup nao testado.
 # Janela de 8 dias porque o drill roda semanalmente no cron (tom-restore-drill).
-DRILL_MAX_DIAS=${DRILL_MAX_DIAS:-8}
-ULT_DRILL=$(find "$DEST" -name '*.drill' -type f -mtime "-$DRILL_MAX_DIAS" 2>/dev/null             -exec grep -l '^veredito=aprovado' {} + 2>/dev/null | sort | tail -1)
-if [ -z "$ULT_DRILL" ]; then
-  ANY=$(find "$DEST" -name '*.drill' -type f 2>/dev/null | wc -l)
-  grito "nenhum restore drill APROVADO nos ultimos $DRILL_MAX_DIAS dias ($ANY atestado(s) no total) — backup integro, recuperacao NAO comprovada"
+# DO DUMP DESTE RUN, nao "um drill recente qualquer" (laudo v2.3, bloqueador 6). A v2.3
+# procurava qualquer .drill aprovado nos ultimos 8 dias — entao o drill de segunda certificava
+# o backup de sexta, que pode ter nascido corrompido. Drill alheio nao prova nada sobre ESTE
+# conjunto. O atestado exigido e o do proprio artefato: <dump sem .dump>.drill.
+DRILL="$BASE.drill"
+if [ ! -f "$DRILL" ]; then
+  RECENTES=$(find "$DEST" -name '*.drill' -type f -mtime -8 2>/dev/null | wc -l)
+  grito "sem drill para ESTE backup ($(basename "$DRILL") ausente; $RECENTES drill(s) de outros dumps nos ultimos 8 dias) — integro, recuperacao NAO comprovada"
 fi
-echo "[check-backup] drill aprovado: $(basename "$ULT_DRILL") ($(( ( $(date +%s) - $(stat -c %Y "$ULT_DRILL") ) / 86400 ))d)"
+grep -q '^veredito=aprovado' "$DRILL" 2>/dev/null   || grito "o drill deste backup existe mas NAO esta aprovado: $(sed -n 's/^veredito=//p' "$DRILL" | head -1)"
+# O drill tem que ter rodado com o formato de baseline atual, senao ele comparou outra coisa.
+DV=$(sed -n 's/^baseline_versao=//p' "$DRILL" | head -1)
+[ -z "$DV" ] || [ "$DV" = "${BASELINE_VERSAO:-1}" ]   || grito "drill deste backup rodou com baseline versao $DV, atual e ${BASELINE_VERSAO:-1}"
+echo "[check-backup] drill DESTE backup: aprovado ($(basename "$DRILL"))"
 
 # 5. checksums do conjunto
 ( cd "$(dirname "$ARQ")" && sha256sum -c --quiet "$BASE.sha256" ) 2>/dev/null \

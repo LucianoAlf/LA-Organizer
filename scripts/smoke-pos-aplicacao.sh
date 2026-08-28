@@ -72,17 +72,30 @@ FAIL=$(grep -c '^not ok' <<<"$SAIDA")
 # A linha `not ok` traz so o NOME do teste; o arquivo aparece na linha `location:` logo
 # abaixo. A v2.4 grepava o arquivo na linha errada e reprovava sempre — assercao no campo
 # errado, o mesmo defeito que essa suite inteira existe para pegar.
-NOMES=$(grep -A3 '^not ok' <<<"$SAIDA" | grep -c "system-loadout.test.js")
-echo "  fail=$FAIL  deles com location em system-loadout=$NOMES"
+# Por NOME (v2.4, laudo bloqueador 5): contar vermelhos dentro de um ARQUIVO deixava passar
+# regressao nova naquele mesmo arquivo. A lista de nomes conhecidos e versionada ao lado.
+CONHECIDOS="$RAIZ/scripts/suite-vermelhos-conhecidos.txt"
+if [ ! -r "$CONHECIDOS" ]; then
+  falha "lista de vermelhos conhecidos ausente ($CONHECIDOS) — sem ela nao da para reconhecer os vermelhos"
+  NOMES=-1
+else
+  grep -v '^#' "$CONHECIDOS" | grep -v '^[[:space:]]*$' | LC_ALL=C sort -u > /tmp/.conhecidos.$$
+  grep '^not ok' <<<"$SAIDA" | sed -E 's/^not ok [0-9]+ - //' | LC_ALL=C sort -u > /tmp/.vermelhos.$$
+  DESCONHECIDOS=$(LC_ALL=C comm -13 /tmp/.conhecidos.$$ /tmp/.vermelhos.$$ | grep -c . || true)
+  NOMES=$(( FAIL - DESCONHECIDOS ))
+  [ "$DESCONHECIDOS" -gt 0 ] && { echo "  vermelhos NAO reconhecidos:"; LC_ALL=C comm -13 /tmp/.conhecidos.$$ /tmp/.vermelhos.$$ | sed 's/^/    /' | head -6; }
+  rm -f /tmp/.conhecidos.$$ /tmp/.vermelhos.$$
+fi
+echo "  fail=$FAIL  deles reconhecidos pelo nome=$NOMES"
 # v2.3 (laudo bloqueador 4): este gate exigia EXATAMENTE 3 enquanto o gate pre-restart do
 # auto-deploy aceita 0 de proposito. Dois gates com regras diferentes sobre a mesma suite se
 # contradizem: se os 3 ficarem verdes (basta TEST_COLLAB_ID no ambiente), o primeiro aprova e
 # este forca rollback. Regra unica, identica a de la: todo vermelho em system-loadout, no
 # maximo 3.
 if [ "$FAIL" -eq "$NOMES" ] && [ "$FAIL" -le 3 ]; then
-  ok "$FAIL vermelho(s), todos em system-loadout (falta TEST_COLLAB_ID)"
+  ok "$FAIL vermelho(s), todos reconhecidos pelo nome (falta TEST_COLLAB_ID)"
 else
-  falha "vermelhos fora dos conhecidos: fail=$FAIL, em system-loadout=$NOMES"; grep -A3 '^not ok' <<<"$SAIDA" | head -12
+  falha "vermelhos fora dos conhecidos: fail=$FAIL, reconhecidos=$NOMES"; grep -A3 '^not ok' <<<"$SAIDA" | head -12
 fi
 
 echo "-- 5. golden do Mapa com TEST_COLLAB_ID: exige 0 falhas --"

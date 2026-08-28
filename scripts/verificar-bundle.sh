@@ -167,7 +167,19 @@ entropia() {
 # continua dentro (o bypass do laudo era a regra de FORMA, corrigida abaixo, nao o alfabeto).
 # LIMITE HONESTO: segredo com caractere fora desse conjunto (`#`, `!`, `%`) nao seria
 # extraido. Para investigar um caso assim sem editar codigo: exporte BUNDLE_ALFABETO.
-ALFABETO=${BUNDLE_ALFABETO:-A-Za-z0-9_.:+/=~-}
+# ALFABETO (v2.4, laudo bloqueador 4). A v2.3 usava so o alfabeto de credencial
+# `A-Za-z0-9_.:+/=~-` e o Alf furou com um literal de 71 chars, entropia 5,44, contendo
+# `!`, `#` e `%`: zero candidatos, verde. Segredo NAO e obrigado a caber no alfabeto que eu
+# imaginei para ele.
+# A versao "tudo entre aspas" tambem nao serve: JS minificado nao tem espacos, entao trechos
+# entre aspas NAO RELACIONADAS casam e o detector foi para 2.679 achados (ruido = cegueira).
+# O meio-termo MEDIDO: alfabeto largo MENOS os caracteres de ESTRUTURA de codigo
+# — ( ) [ ] { } ; , < > & | \ e crase. Credencial praticamente nunca os usa; codigo
+# minificado nao vive sem eles.
+#   credencial (v2.3)        -> 18 candidatos, NAO pega o sintetico do laudo
+#   tudo menos aspa/espaco   -> 2.040 candidatos (2.027 sao codigo)
+#   sem estrutura de codigo  -> 23 candidatos, PEGA o sintetico   <- este
+ALFABETO=${BUNDLE_ALFABETO:-A-Za-z0-9_.:+/=~!#$%*?@^-}
 cat "$TMPD/assets"/*.js 2>/dev/null \
   | grep -oE "[\"'][$ALFABETO]{$MIN_LEN,400}[\"']" \
   | sed -E "s/^[\"']//; s/[\"']$//" | LC_ALL=C sort -u > "$TMPD/lit.txt"
@@ -178,7 +190,7 @@ echo "literais candidatos (>= $MIN_LEN chars): $TOTAL"
 [ -r "$ALLOW" ] || { echo "AVISO: allowlist ausente em $ALLOW — todo literal sera reportado"; : > "$TMPD/allow"; }
 [ -r "$ALLOW" ] && grep -oE '^[a-f0-9]{64}' "$ALLOW" > "$TMPD/allow" 2>/dev/null || true
 
-ACHADOS=0; PERMITIDOS=0; IGNORADOS=0
+ACHADOS=0; PERMITIDOS=0; IGNORADOS=0; SEM_DIGITO=0
 while IFS= read -r lit; do
   [ -n "$lit" ] || continue
   # ORDEM INVERTIDA (laudo v2.3, bloqueador 7). Antes a heuristica de FORMA vinha primeiro e
@@ -189,6 +201,16 @@ while IFS= read -r lit; do
   #   >= 4.5  -> alta demais para caminho/mime/enum; nenhuma regra de forma pode veta-lo
   #   <  3.5  -> texto, enum, id sequencial: ruido
   #   entre   -> ai sim as regras de forma valem
+  # SEM DIGITO = nao e credencial (v2.4). Ampliar o alfabeto para pegar `!#%` trouxe de volta
+  # 3 fragmentos de codigo minificado (`Interaction.hover.active=!1,e.axisInt`) que passaram a
+  # casar por nao terem parenteses. Todos com a mesma assinatura: ZERO digitos.
+  # Segredo gerado por maquina sempre tem digito — hex, base64, base64url, JWT e UUID nao
+  # existem sem eles. LIMITE HONESTO: uma senha escolhida por humano so com letras escaparia;
+  # nao e o formato de nenhum segredo deste projeto, e o custo de nao ter a regra e um
+  # detector barulhento, que e como se perde a deteccao de verdade.
+  case "$lit" in *[0-9]*) : ;;
+    *) SEM_DIGITO=$((SEM_DIGITO+1)); IGNORADOS=$((IGNORADOS+1)); continue ;;
+  esac
   ENT=$(entropia "$lit")
   if awk -v e="$ENT" 'BEGIN{exit !(e<3.5)}'; then IGNORADOS=$((IGNORADOS+1)); continue; fi
   if awk -v e="$ENT" 'BEGIN{exit !(e<4.5)}'; then
@@ -215,10 +237,29 @@ for h in x-internal-secret authorization apikey x-api-key; do
   [ "$N" -gt 0 ] && echo "  $h: $N referencia(s)"
 done
 
-echo "== $ACHADOS achado(s), $PERMITIDOS permitido(s), $IGNORADOS ignorado(s) por ruido/entropia =="
+echo "== $ACHADOS achado(s), $PERMITIDOS permitido(s), $IGNORADOS ignorado(s) por ruido/entropia (destes, $SEM_DIGITO sem nenhum digito) =="
 
 # --baseline: congela o estado ANTES do push, para o pos-deploy ter contra o que comparar.
 if [ "$MODO" = baseline ]; then
+  # GUARD (laudo v2.3, bloqueador 3). Sem isto o baseline CANONIZAVA segredo novo: bastava um
+  # literal desconhecido entrar antes do baseline para ele virar "conhecido", e o --pos-deploy
+  # depois aprovava por igualdade. O detector passaria a proteger justamente o que deveria
+  # denunciar. O conjunto de achados tem que ser EXATAMENTE o aprovado em bundle-esperados.txt.
+  ESPERADOS="$(dirname "$(readlink -f "$0")")/bundle-esperados.txt"
+  if [ ! -r "$ESPERADOS" ]; then
+    echo "FALHA: $ESPERADOS ilegivel — sem a lista de achados aprovados nao ha baseline confiavel"; exit 3
+  fi
+  grep -oE '^[a-f0-9]{64}' "$ESPERADOS" | LC_ALL=C sort -u > "$TMPD/esperados.txt"
+  NOVOS_B=$(LC_ALL=C comm -13 "$TMPD/esperados.txt" "$TMPD/achados.txt" | grep -c . || true)
+  SUMIU_B=$(LC_ALL=C comm -23 "$TMPD/esperados.txt" "$TMPD/achados.txt" | grep -c . || true)
+  if [ "$NOVOS_B" -gt 0 ] || [ "$SUMIU_B" -gt 0 ]; then
+    echo "== BASELINE RECUSADO: o bundle atual nao bate com os achados aprovados =="
+    [ "$NOVOS_B" -gt 0 ] && { echo "   $NOVOS_B achado(s) NAO aprovado(s) — classifique antes de tirar baseline:";
+                              LC_ALL=C comm -13 "$TMPD/esperados.txt" "$TMPD/achados.txt" | cut -c1-14 | sed 's/^/     /'; }
+    [ "$SUMIU_B" -gt 0 ] && { echo "   $SUMIU_B achado(s) aprovado(s) DESAPARECEU — se foi corrigido, atualize $(basename "$ESPERADOS"):";
+                              LC_ALL=C comm -23 "$TMPD/esperados.txt" "$TMPD/achados.txt" | cut -c1-14 | sed 's/^/     /'; }
+    exit 1
+  fi
   {
     echo "ts=$(date -Iseconds)"
     echo "url=$URL"

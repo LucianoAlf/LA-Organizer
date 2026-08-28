@@ -262,6 +262,7 @@ ATESTADO="${DUMP%.dump}.drill"
   # laudo apontou). O rc=1 vem de extensoes de PLATAFORMA que nao existem fora do Supabase.
   # Registrar as duas contagens separadas tira a ambiguidade: o que reprova e
   # `erros_inesperados`, nunca o rc bruto.
+  echo "baseline_versao=${BASELINE_VERSAO:-1}"
   echo "pg_restore_rc=${RC:-0}"
   echo "pg_restore_erros_total=${TOTAL_ERR:-0}"
   echo "pg_restore_erros_tolerados=${TOLERADOS:-0}"

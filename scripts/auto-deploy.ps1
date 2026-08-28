@@ -97,19 +97,26 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         #     Vercel — so deixa os objetos disponiveis para o preflight medir o alvo REAL.
         $tip = (git -C $srcRoot rev-parse HEAD 2>$null) | Out-String
         $tip = $tip.Trim()
-        git -C $srcRoot push --force tom:/opt/LA-Organizer HEAD:refs/candidato/pendente 2>$null
+        # REF IMUTAVEL (laudo v2.3, bloqueador 7). `refs/candidato/pendente` era um nome fixo
+        # e mutavel: entre conferir "o ref bate com o tip" e o preflight medir contra ele,
+        # outro processo podia reescrever o ref e o preflight mediria outra arvore. O nome
+        # agora CONTEM o sha, entao e enderecado por conteudo: nao existe "o mesmo ref com
+        # outro conteudo". Sem --force de proposito — se ja existe com esse nome, e o mesmo
+        # objeto. E o ref e apagado no fim, para nao virar lixo acumulado.
+        $refCand = "refs/candidato/$tip"
+        git -C $srcRoot push tom:/opt/LA-Organizer "HEAD:$refCand" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: nao consegui publicar o tip candidato na VPS no deploy $ts -- nada empurrado." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: nao consegui enviar o candidato para a VPS medir. Nada empurrado. ==="
             exit 1
         }
-        $refRemoto = (ssh tom "cd /opt/LA-Organizer && git rev-parse refs/candidato/pendente" 2>$null) | Out-String
+        $refRemoto = (ssh tom "cd /opt/LA-Organizer && git rev-parse $refCand" 2>$null) | Out-String
         if ($refRemoto.Trim() -ne $tip) {
             Set-Content -Path $holdFile -Value "HOLD auto: candidato na VPS ($($refRemoto.Trim())) != tip local ($tip) no deploy $ts." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: o candidato na VPS nao bate com o tip local. Nada empurrado. ==="
             exit 1
         }
-        $pfPre = (ssh tom "cd /opt/LA-Organizer && ./scripts/preflight-deploy.sh refs/candidato/pendente --sem-snapshot 2>&1" 2>$null) | Out-String
+        $pfPre = (ssh tom "cd /opt/LA-Organizer && ./scripts/preflight-deploy.sh $refCand --sem-snapshot 2>&1" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: preflight contra o TIP CANDIDATO reprovou no deploy $ts -- nada foi empurrado." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: a VPS tem trabalho que o reset para o candidato destruiria. ==="
@@ -124,7 +131,18 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         $webMudou = (git -C $srcRoot diff --name-only origin/main HEAD -- web/ 2>$null | Measure-Object).Count
         ssh tom "cd /opt/LA-Organizer && ./scripts/verificar-bundle.sh --baseline $blFile >/dev/null 2>&1" 2>$null
         $temBaseline = ($LASTEXITCODE -eq 0)
-        if (-not $temBaseline) { Write-Output "=== AVISO: nao consegui tirar o baseline do bundle; o gate da Vercel ficara indisponivel neste deploy ===" }
+        if (-not $temBaseline) {
+            # FALHA FECHADA (laudo v2.3, bloqueador 2): a v2.3 so AVISAVA e empurrava assim
+            # mesmo — o gate da Vercel ficava indisponivel exatamente no deploy que ia mexer
+            # no bundle. Gate opcional nao e gate. E o --baseline agora tambem reprova quando
+            # o bundle tem achado nao aprovado, entao "nao consegui tirar baseline" pode
+            # significar "ha segredo novo no ar". Motivo de mais para parar.
+            Set-Content -Path $holdFile -Value "HOLD auto: baseline do bundle FALHOU no deploy $ts -- nada empurrado." -Encoding utf8
+            Write-Output "=== PUSH ABORTADO: nao consegui tirar o baseline do bundle. ==="
+            Write-Output "=== Pode ser rede, ou pode ser achado novo no bundle publico. Rodar --baseline a mao. ==="
+            ssh tom "cd /opt/LA-Organizer && git update-ref -d $refCand" 2>$null
+            exit 1
+        }
 
         # 7. Push — com retorno conferido. Push que falha calado deixava o resto do script
         #    agindo como se main tivesse movido.
@@ -262,14 +280,11 @@ if ($vpsAtras -gt 0) {
         $tapOut = (ssh tom "cd /opt/LA-Organizer && timeout 240 node --env-file=.env --test src/ 2>&1" 2>$null) | Out-String
         $falhas = if ($tapOut -match '# fail (\d+)') { [int]$Matches[1] } else { -1 }
         $total  = if ($tapOut -match '# tests (\d+)') { [int]$Matches[1] } else { 0 }
-        $linhas = $tapOut -split "`n"
-        $emLoadout = 0
-        for ($i = 0; $i -lt $linhas.Count; $i++) {
-            if ($linhas[$i] -match '^not ok') {
-                $janela = ($linhas[($i+1)..([Math]::Min($i+4, $linhas.Count-1))] -join ' ')
-                if ($janela -match 'system-loadout\.test\.js') { $emLoadout++ }
-            }
-        }
+        # Por NOME, e a comparacao acontece na VPS contra o arquivo versionado
+        # scripts/suite-vermelhos-conhecidos.txt — fonte unica, a mesma que o smoke usa.
+        # Contar vermelhos por ARQUIVO deixava passar regressao nova dentro daquele arquivo.
+        $desconhecidos = ($tapOut | ssh tom "cd /opt/LA-Organizer && grep -v '^#' scripts/suite-vermelhos-conhecidos.txt | grep -v '^[[:space:]]*`$' | LC_ALL=C sort -u > /tmp/.kn.`$`$; cat > /tmp/.tap.`$`$; grep '^not ok' /tmp/.tap.`$`$ | sed -E 's/^not ok [0-9]+ - //' | LC_ALL=C sort -u > /tmp/.rd.`$`$; LC_ALL=C comm -13 /tmp/.kn.`$`$ /tmp/.rd.`$`$ | grep -c . || true; rm -f /tmp/.kn.`$`$ /tmp/.rd.`$`$ /tmp/.tap.`$`$" 2>$null) | Out-String
+        $desconhecidos = [int]($desconhecidos.Trim())
 
         if ($falhas -lt 0 -or $total -lt 100) {
             Invoke-RollbackVps "nao consegui medir a suite (tests=$total)"
@@ -283,13 +298,12 @@ if ($vpsAtras -gt 0) {
         #                                  MELHOROU seria a trava trabalhando contra si mesma)
         #       qualquer vermelho fora   -> reprova (a regressao que a suite existe para pegar)
         #       fail=4+ mesmo em loadout -> reprova (vermelho novo naquele arquivo)
-        if ($falhas -ne $emLoadout -or $falhas -gt 3) {
-            Write-Output "=== Suite: fail=$falhas de $total; em system-loadout=$emLoadout (esperado: todos em loadout, no maximo 3) ==="
-            Write-Output (($linhas | Select-String '^not ok' | Select-Object -First 8) -join "`n")
-            Invoke-RollbackVps "vermelhos fora dos 3 conhecidos de system-loadout"
+        if ($desconhecidos -gt 0 -or $falhas -gt 3) {
+            Write-Output "=== Suite: fail=$falhas de $total; $desconhecidos vermelho(s) NAO reconhecido(s) pelo nome ==="
+            Invoke-RollbackVps "vermelhos fora dos 3 conhecidos (por nome)"
             exit 1
         }
-        Write-Output "=== Suite OK ($total testes; $falhas vermelho(s), todos em system-loadout) -- reiniciando ==="
+        Write-Output "=== Suite OK ($total testes; $falhas vermelho(s), todos reconhecidos pelo nome) -- reiniciando ==="
         ssh tom "cd /opt/LA-Organizer && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Invoke-RollbackVps "pm2 restart retornou erro"
@@ -355,11 +369,24 @@ if ($vpsAtras -gt 0) {
     if (-not $empurrou) {
         Write-Output "=== Gate Vercel nao se aplica: este turno nao moveu main (sincronizacao de push alheio). ==="
     } elseif ($temBaseline) {
-        # `--aceitar-inalterado` so quando o diff PROVA que web/ nao mudou. A afirmacao passa
-        # a vir da medicao, nao de suposicao. Se web/ mudou, exige bundle novo de verdade.
-        $flag = if ($webMudou -eq 0) { "--aceitar-inalterado" } else { "" }
+        # DUAS PERGUNTAS DIFERENTES (laudo v2.3, bloqueador 2). A v2.3 usava
+        # `--aceitar-inalterado` automatico quando web/ nao mudava — ou seja, afirmava
+        # "o bundle e o mesmo porque nada mudou", que e suposicao vestida de medicao, e
+        # ainda por cima sem provar que houve deployment. Nao da para provar READY sem a API
+        # da Vercel (x-vercel-id e id de REQUISICAO, nao de deploy), entao paro de fingir que
+        # provo e passo a afirmar so o que da para medir:
+        #   web/ MUDOU     -> exijo bundle novo e comparo com o baseline (--pos-deploy).
+        #                     Se nao mudar na janela: INDETERMINADO, nao aprovado.
+        #   web/ NAO MUDOU -> nao ha o que esperar. Rodo o detector simples, que exige que o
+        #                     bundle SERVIDO tenha exatamente os achados aprovados. Isso
+        #                     responde a pergunta de seguranca ("tem segredo novo no ar?")
+        #                     sem alegar nada sobre deployment.
         Write-Output "=== Gate Vercel (web/ com $webMudou arquivo(s) alterado(s)) ==="
-        $vb = (ssh tom "cd /opt/LA-Organizer && BUNDLE_ESPERA_SEG=300 ./scripts/verificar-bundle.sh --pos-deploy $blFile $flag 2>&1 | tail -12" 2>$null) | Out-String
+        if ($webMudou -gt 0) {
+            $vb = (ssh tom "cd /opt/LA-Organizer && BUNDLE_ESPERA_SEG=300 ./scripts/verificar-bundle.sh --pos-deploy $blFile 2>&1 | tail -12" 2>$null) | Out-String
+        } else {
+            $vb = (ssh tom "cd /opt/LA-Organizer && ./scripts/verificar-bundle.sh 2>&1 | tail -8" 2>$null) | Out-String
+        }
         $rcVb = $LASTEXITCODE
         Write-Output $vb.Trim()
         if ($rcVb -eq 1) {

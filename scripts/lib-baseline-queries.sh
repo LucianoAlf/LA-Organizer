@@ -24,7 +24,10 @@ BASELINE_QUERIES=(
 
   "views|select table_name||'|'||md5(coalesce(view_definition,'')) from information_schema.views where table_schema='public'"
 
-  "sequences|select sequence_name||':'||data_type from information_schema.sequences where sequence_schema='public'"
+  # CONFIGURACAO da sequence, nao so nome e tipo (v3): start, incremento, limites e cycle.
+  # Uma sequence restaurada com incremento ou limite diferente nao quebra na hora — quebra
+  # depois, e ai ninguem liga ao restore.
+  "sequences|select s.sequencename||':'||s.data_type||':start='||s.start_value||':inc='||s.increment_by||':min='||s.min_value||':max='||s.max_value||':cycle='||s.cycle::text from pg_sequences s where s.schemaname='public'"
 
   "triggers|select c.relname||':'||t.tgname||'|'||md5(pg_get_triggerdef(t.oid)) from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and not t.tgisinternal"
 
@@ -45,12 +48,25 @@ BASELINE_QUERIES=(
   # medicao cobria EXECUTE em funcao, e o drill tolera generico `must be owner of`, entao um
   # restore que perdesse a ACL das funcoes passava aprovado. Sao 45+ funcoes SECURITY DEFINER
   # neste banco: privilegio de funcao nao e detalhe.
-  "acl_funcoes|select p.proname||'('||pg_get_function_identity_arguments(p.oid)||'):'||r.rolname||':EXECUTE' from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join (select unnest(array['anon','authenticated','service_role']) as rolname) r where n.nspname='public' and p.prokind in ('f','p') and not exists (select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and has_function_privilege(r.rolname, p.oid, 'EXECUTE')"
+  # ACL REAL, nao "os 3 papeis que eu lembrei" (v3, laudo v2.3 bloqueador 6). A versao
+  # anterior perguntava `has_function_privilege` para anon/authenticated/service_role — ou
+  # seja, media a resposta a UMA pergunta minha, nao o ESTADO. Ficavam de fora: PUBLIC (e
+  # `proacl` NULO significa exatamente o default, que inclui EXECUTE para PUBLIC — a
+  # armadilha do Supabase), o dono, e qualquer papel que eu nao tivesse listado.
+  # Agora vai a ACL crua mais o owner. Um restore que perdesse o dono, ou que trocasse ACL
+  # explicita por default (= abrindo para PUBLIC), passa a divergir.
+  "acl_funcoes|select p.proname||'('||pg_get_function_identity_arguments(p.oid)||')|owner='||pg_get_userbyid(p.proowner)||'|acl='||coalesce(array_to_string(p.proacl,','),'DEFAULT_PUBLIC_EXECUTE') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind in ('f','p') and not exists (select 1 from pg_depend d where d.objid=p.oid and d.deptype='e')"
+  # Mesma logica para TABELA: `grants` acima le information_schema.role_table_grants, que NAO
+  # mostra PUBLIC nem o dono. relacl mostra os dois.
+  "acl_tabelas|select c.relname||'|owner='||pg_get_userbyid(c.relowner)||'|acl='||coalesce(array_to_string(c.relacl,','),'DEFAULT_SEM_GRANT') from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind in ('r','v','m')"
   # ESTADO DAS SEQUENCES (laudo v2.3): `sequences` acima compara nome e tipo — nao o VALOR.
   # Uma sequence restaurada zerada passava. NAO entra na comparacao por identidade: entre o
   # dump e o baseline (~15 s) o TOM pode avancar sequences, o que daria falso vermelho. E
   # comparada com a mesma regra assimetrica das ancoras de dados: restaurado <= baseline.
-  "sequences_estado|select sequencename||':'||coalesce(last_value::text,'0') from pg_sequences where schemaname='public'"
+  # is_called incluido (v3): `pg_sequences.last_value` e NULO enquanto a sequence nunca foi
+  # lida — ou seja, NULO == is_called false. Distinguir isso de `0` importa: uma sequence
+  # restaurada com is_called errado entrega o MESMO numero duas vezes.
+  "sequences_estado|select sequencename||':'||coalesce(last_value::text,'0')||':called='||(last_value is not null)::text from pg_sequences where schemaname='public'"
 
   "rls|select c.relname||':'||c.relrowsecurity::text||':'||c.relforcerowsecurity::text from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity"
 
@@ -65,14 +81,14 @@ BASELINE_QUERIES=(
 )
 
 # Chaves na ordem, para quem precisa iterar sem reparsear.
-BASELINE_CHAVES=(tabelas colunas funcoes views sequences triggers types policies indices constraints grants acl_funcoes rls extensoes dados sequences_estado)
+BASELINE_CHAVES=(tabelas colunas funcoes views sequences triggers types policies indices constraints grants acl_funcoes acl_tabelas rls extensoes dados sequences_estado)
 
 # Categorias comparadas por IDENTIDADE (conjunto identico, tolerancia zero). `dados` e
 # `sequences_estado` ficam de fora: sao NUMEROS que so crescem entre o dump e a consulta do
 # baseline, e comparar numero movel por identidade produz falso vermelho.
-BASELINE_CHAVES_IDENTIDADE=(tabelas colunas funcoes views sequences triggers types policies indices constraints grants acl_funcoes rls extensoes)
+BASELINE_CHAVES_IDENTIDADE=(tabelas colunas funcoes views sequences triggers types policies indices constraints grants acl_funcoes acl_tabelas rls extensoes)
 
 # Versao do formato. Mudou a lista de categorias ou o SELECT de alguma? Suba isto. O drill
 # recusa baseline de versao diferente em vez de comparar consulta nova contra dado velho —
 # que produziria centenas de diferencas falsas e um REPROVADO sem sentido.
-BASELINE_VERSAO=2
+BASELINE_VERSAO=3
