@@ -162,9 +162,16 @@ if [ "$VARRER" = 1 ]; then
   # de ter a nova. Se a escrita morre no meio, a sentinela le um arquivo pela metade — e um
   # `veredito=ok` de uma passada velha pode sobreviver no pedaco lido, virando prova
   # reutilizada. Escreve em `.parcial`, confere, e so entao `mv` (atomico no mesmo fs).
-  if grep -q '^veredito=' "$ESTADO.parcial" 2>/dev/null; then
+  # `mv arquivo diretorio` move o arquivo PARA DENTRO e retorna 0 — foi assim que o teste
+  # negativo (destino virou diretorio) passou verde sem gravar estado nenhum. O destino
+  # precisa ser arquivo regular ANTES, e ser conferido DEPOIS.
+  if [ -e "$ESTADO" ] && [ ! -f "$ESTADO" ]; then
+    rm -f "$ESTADO.parcial"
+    echo "[conter --varrer] FALHA: $ESTADO existe e nao e arquivo regular ($(stat -c %F "$ESTADO" 2>/dev/null))" >&2
+    problemas=$((problemas+1)); restante=$((restante+1))
+  elif grep -q '^veredito=' "$ESTADO.parcial" 2>/dev/null; then
     chmod 0600 "$ESTADO.parcial" 2>/dev/null
-    if ! mv -f "$ESTADO.parcial" "$ESTADO" 2>/dev/null; then
+    if ! mv -f "$ESTADO.parcial" "$ESTADO" 2>/dev/null || [ ! -f "$ESTADO" ] || ! grep -q '^veredito=' "$ESTADO" 2>/dev/null; then
       rm -f "$ESTADO.parcial"
       echo "[conter --varrer] FALHA: nao consegui publicar $ESTADO" >&2
       problemas=$((problemas+1)); restante=$((restante+1))

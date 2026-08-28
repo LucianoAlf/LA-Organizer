@@ -1,71 +1,89 @@
 #!/bin/bash
-# alertar.sh — canal de alerta EXTERNO para os guardas do safety gate.
+# alertar.sh — canal de alerta EXTERNO para os guardas do safety gate. WhatsApp, via UAZAPI.
 #
-# Por que existe (laudo, item 1): este host não tem MTA nem MAILTO, então tudo que o cron
-# imprime morre dentro do backup.log. A sentinela DETECTAVA a falha, mas ninguém era
-# avisado — detecção sem notificação é meia-vigilância.
+# POR QUE EXISTE: este host nao tem MTA nem MAILTO, entao tudo que o cron imprime morre dentro
+# do backup.log. A sentinela DETECTAVA a falha e ninguem era avisado — deteccao sem notificacao
+# e meia-vigilancia.
 #
-# Por que Telegram: não inventei canal novo. O host já tem um, em uso e provado, pelos
-# monitores `check-agentes.py` e `check-openai-billing.py`. Alerta que chega onde a pessoa
-# já olha vale mais do que alerta bonito num canal que ninguém abre.
+# POR QUE WHATSAPP, E NAO TELEGRAM (correcao de 28/08). A primeira versao mandava para o
+# Telegram porque o HOST ja tinha um canal provado ali — o dos monitores de infra
+# (`check-agentes.py`, `check-openai-billing.py`). Foi raciocinio errado: "existe um canal
+# neste servidor" nao e o mesmo que "existe um canal que a pessoa OLHA". O TOM nao fala
+# Telegram; ele fala WhatsApp. Alerta que chega onde ninguem le e igual a nao ter alerta — com
+# o agravante de parecer que tem. A sentinela chegou a depender desse canal.
 #
-# FONTE ÚNICA, sem duplicar segredo nem destino:
-#   token   -> /etc/monitor-agentes.env (mesmo arquivo dos monitores)
-#   destino -> CHAT_ID/TOPIC_ID lidos do próprio check-agentes.py
-# Nada é copiado para cá. Se a origem mudar, este script acompanha ou falha explícito —
-# nunca manda para o lugar errado por causa de uma cópia velha.
+# DESTINO: TOM_ALERTA_WA_JID — o espelho WhatsApp do grupo de engenharia do Alf e do Hugo
+# (o mesmo TOM_OPS_GROUP_ID onde o agente de governanca publica). E o canal de operacao,
+# isento de quiet hours por desenho. Alerta de backup/varredura no grupo financeiro da Rose
+# seria ruido para quem nao pode agir nele.
 #
-# Uso:  ./alertar.sh "texto"            envia
-#       ./alertar.sh --testar-canal     só valida token/destino, NÃO envia nada
+# ATENCAO ao configurar: TOM_OPS_GROUP_ID e um UUID de `work_groups` (grupo do APP), nao um
+# endereco de WhatsApp. Mandar esse UUID no campo `number` da UAZAPI nao da erro — da
+# TIMEOUT, tres vezes, e parece problema de rede. O que a UAZAPI quer e o JID do espelho
+# (`...@g.us`), que mora em `work_groups.wa_group_jid` e foi copiado para o .env como
+# TOM_ALERTA_WA_JID para que este script nao dependa do banco para conseguir gritar.
 #
-# O token nunca é impresso. Em erro, a URL é sanitizada.
+# NAO DEPENDE DO ENGINE. Fala direto com a UAZAPI por curl, porque este script e acionado
+# justamente quando algo esta quebrado — inclusive, possivelmente, o proprio TOM.
+#
+# Uso:  ./alertar.sh [--chave K] [--intervalo-min N] "texto"   envia
+#       ./alertar.sh --testar-canal                            so valida, NAO envia nada
+#
+# NADA de valor de credencial e impresso. Toda saida da API passa por `sanitizar()` antes de
+# aparecer: em 28/08 eu imprimi o token da instancia ao inspecionar /instance/status a mao, e
+# essa e a razao desta funcao existir aqui dentro em vez de virar cuidado do chamador.
 
 set -uo pipefail
-ENV_MONITOR=/etc/monitor-agentes.env
-MONITOR_PY=/usr/local/bin/check-agentes.py
+ENV_TOM=${TOM_ENV_FILE:-/opt/LA-Organizer/.env}
 
-sanitizar() { sed -E 's#bot[0-9]+:[A-Za-z0-9_-]+#bot<REDACTED>#g'; }
-
-ler_token() {
-  [ -r "$ENV_MONITOR" ] || { echo "alertar: $ENV_MONITOR ilegivel" >&2; return 1; }
-  local t
-  t=$(grep -m1 -E '^[[:space:]]*TELEGRAM_BOT_TOKEN[[:space:]]*=' "$ENV_MONITOR" \
-      | sed -E 's/^[^=]*=[[:space:]]*//; s/^["'"'"']//; s/["'"'"']$//')
-  [ -n "$t" ] || { echo "alertar: TELEGRAM_BOT_TOKEN ausente" >&2; return 1; }
-  printf '%s' "$t"
+# Redige token (uuid), header `token:` e qualquer coisa com cara de credencial longa.
+sanitizar() {
+  sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<REDACTED>/g;
+          s/("token"[[:space:]]*:[[:space:]]*")[^"]*/\1<REDACTED>/g;
+          s/[A-Za-z0-9_-]{40,}/<REDACTED>/g'
 }
-ler_const() {  # nome da constante no monitor
-  [ -r "$MONITOR_PY" ] || { echo "alertar: $MONITOR_PY ilegivel" >&2; return 1; }
+
+# Le UMA variavel do .env sem `source` e sem `eval`: o .env tem dezenas de segredos e
+# carrega-lo inteiro no ambiente deste script exporia tudo a qualquer subprocesso.
+ler_env() {
+  [ -r "$ENV_TOM" ] || { echo "alertar: $ENV_TOM ilegivel" >&2; return 1; }
   local v
-  v=$(grep -m1 -E "^${1}[[:space:]]*=" "$MONITOR_PY" | sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*#.*$//; s/^["'"'"']//; s/["'"'"']$//' | tr -d '[:space:]')
-  [ -n "$v" ] || { echo "alertar: constante $1 nao encontrada em $MONITOR_PY" >&2; return 1; }
+  v=$(grep -m1 "^[[:space:]]*$1[[:space:]]*=" "$ENV_TOM" \
+      | sed -E 's/^[^=]*=[[:space:]]*//; s/^["'"'"']//; s/["'"'"']$//' | tr -d '\r')
+  [ -n "$v" ] || { echo "alertar: $1 ausente em $ENV_TOM" >&2; return 1; }
   printf '%s' "$v"
 }
 
-TOKEN=$(ler_token) || exit 2
-CHAT=$(ler_const CHAT_ID) || exit 2
-TOPICO=$(ler_const TOPIC_ID) || true   # opcional: nem todo destino usa tópico
+URL=$(ler_env UAZAPI_URL)          || exit 2
+TOKEN=$(ler_env UAZAPI_TOKEN)      || exit 2
+GRUPO=$(ler_env TOM_ALERTA_WA_JID) || exit 2
+case "$GRUPO" in *@g.us|*@s.whatsapp.net) : ;;
+  *) echo "alertar: TOM_ALERTA_WA_JID nao parece endereco de WhatsApp (esperado ...@g.us)" >&2; exit 2 ;;
+esac
 
 if [ "${1:-}" = "--testar-canal" ]; then
-  # getMe é LEITURA: prova que o token é válido sem mandar mensagem para ninguém.
-  RESP=$(curl -s -m 15 "https://api.telegram.org/bot$TOKEN/getMe")
-  if grep -q '"ok":true' <<<"$RESP"; then
-    echo "alertar: token OK (bot $(sed -E 's/.*"username":"([^"]+)".*/\1/' <<<"$RESP"))"
-    echo "alertar: destino chat=${CHAT:0:4}…(mascarado) topico=${TOPICO:-nenhum}"
+  # /instance/status e LEITURA: prova que a instancia esta conectada sem mandar mensagem.
+  RESP=$(curl -s -m 15 -H "token: $TOKEN" "$URL/instance/status")
+  ST=$(sed -E 's/.*"status"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' <<<"$RESP")
+  NOME=$(sed -E 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' <<<"$RESP")
+  if [ "$ST" = connected ]; then
+    echo "alertar: instancia CONECTADA ($NOME)"
+    echo "alertar: destino=${GRUPO:0:6}…(mascarado)"
     echo "alertar: NENHUMA mensagem foi enviada"
     exit 0
   fi
-  echo "alertar: token REPROVADO: $(cut -c1-160 <<<"$RESP" | sanitizar)" >&2; exit 1
+  echo "alertar: instancia NAO conectada (status=${ST:-desconhecido}): $(cut -c1-160 <<<"$RESP" | sanitizar)" >&2
+  exit 1
 fi
 
-# ANTI-SPAM. O scanner roda a cada 15 min e a sentinela de hora em hora: uma falha
-# persistente viraria ~120 mensagens/dia, e alerta que satura vira alerta ignorado — o
-# oposto do que ele existe para fazer. Com --chave, o mesmo assunto só reenvia depois de
-# --intervalo-min (padrão 60). O estado fica em /run: reinício limpa e o alerta volta.
+# ANTI-SPAM. A varredura roda a cada 15 min e a sentinela de hora em hora: uma falha
+# persistente viraria ~120 mensagens/dia num grupo de pessoas, e alerta que satura vira alerta
+# ignorado — o oposto do que ele existe para fazer. Com --chave, o mesmo assunto so reenvia
+# depois de --intervalo-min. O estado fica em /run: reinicio limpa e o alerta volta.
 CHAVE=""; INTERVALO=60
 while [ $# -gt 1 ]; do
   case "$1" in
-    --chave)        CHAVE=$2; shift 2 ;;
+    --chave)         CHAVE=$2; shift 2 ;;
     --intervalo-min) INTERVALO=$2; shift 2 ;;
     *) break ;;
   esac
@@ -81,14 +99,28 @@ if [ -n "$CHAVE" ]; then
   fi
 fi
 
-TEXTO=${1:?uso: $0 [--chave K] [--intervalo-min N] \"texto\" | --testar-canal}
-CAMPOS=(--data-urlencode "chat_id=$CHAT" --data-urlencode "text=$TEXTO")
-[ -n "${TOPICO:-}" ] && CAMPOS+=(--data-urlencode "message_thread_id=$TOPICO")
+TEXTO=${1:?uso: $0 [--chave K] [--intervalo-min N] "texto" | --testar-canal}
 
-RESP=$(curl -s -m 20 -X POST "${CAMPOS[@]}" "https://api.telegram.org/bot$TOKEN/sendMessage")
-if grep -q '"ok":true' <<<"$RESP"; then
-  [ -n "$CHAVE" ] && { date +%s > "$MARCA" 2>/dev/null; chmod 0600 "$MARCA" 2>/dev/null; }
-  echo "alertar: enviado"; exit 0
-fi
-echo "alertar: FALHA no envio: $(cut -c1-200 <<<"$RESP" | sanitizar)" >&2
+# RETRY com a MESMA regra do engine (src/services/whatsapp.js): a UAZAPI da 404 intermitente
+# no /send/text ao resolver o chat, e hiberna devolvendo 503. Transitorio (404/408/429/5xx/sem
+# resposta) merece nova tentativa; 400/401/403 e payload ou token invalido — repetir nao muda.
+TENTATIVAS=3
+for i in $(seq 1 "$TENTATIVAS"); do
+  CORPO=$(printf '%s' "$TEXTO" | python3 -c 'import json,sys; print(json.dumps({"number": sys.argv[1], "text": sys.stdin.read(), "readchat": True}))' "$GRUPO" 2>/dev/null) \
+    || CORPO=$(printf '{"number":"%s","text":"%s","readchat":true}' "$GRUPO" "$(printf '%s' "$TEXTO" | sed 's/\\/\\\\/g; s/"/\\"/g')")
+  HTTP=$(curl -s -m 25 -o /tmp/.alertar.$$ -w '%{http_code}' \
+         -X POST -H "token: $TOKEN" -H 'Content-Type: application/json' \
+         -d "$CORPO" "$URL/send/text")
+  RC=$?
+  RESP=$(cat /tmp/.alertar.$$ 2>/dev/null); rm -f /tmp/.alertar.$$
+  case "$HTTP" in
+    200|201) echo "alertar: enviado (destino ${GRUPO:0:6}…)"
+             [ -n "$CHAVE" ] && { date +%s > "$MARCA" 2>/dev/null; chmod 0600 "$MARCA" 2>/dev/null; }
+             exit 0 ;;
+    400|401|403) echo "alertar: FALHA definitiva HTTP $HTTP: $(cut -c1-200 <<<"$RESP" | sanitizar)" >&2; exit 1 ;;
+    *) echo "alertar: tentativa $i/$TENTATIVAS falhou (http=${HTTP:-sem-resposta} curl=$RC): $(cut -c1-160 <<<"$RESP" | sanitizar)" >&2
+       [ "$i" -lt "$TENTATIVAS" ] && sleep $(( i * 3 )) ;;
+  esac
+done
+echo "alertar: FALHA no envio apos $TENTATIVAS tentativas" >&2
 exit 1
