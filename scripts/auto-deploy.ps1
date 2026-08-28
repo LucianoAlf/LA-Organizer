@@ -102,6 +102,23 @@ if ($vpsAtras -gt 0) {
     if ($backend -gt 0) {
         ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet" 2>$null
 
+        # 8a. MODOS DEPOIS DO RESET — a trava que faltava (laudo v2, bloqueador 1).
+        #     Git so grava 100644/100755; a contencao vive em 0750/0640. Medido em repo
+        #     descartavel: `reset --hard` sobrescreve untracked sem recusar e derruba 0750
+        #     para 0644 — os crons de backup/sentinela/varredura param, e `alertar.sh` sem
+        #     +x faz o guard `[ -x ]` da sentinela emudecer o canal junto.
+        #     O runbook manual consertava UMA vez; o proximo deploy reabria tudo. Por isso
+        #     mora AQUI, no caminho que roda de verdade, e antes do restart.
+        $modos = (ssh tom "cd /opt/LA-Organizer && ./scripts/pos-deploy-modos.sh 2>&1" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Set-Content -Path $holdFile -Value "HOLD auto: pos-deploy-modos.sh REPROVOU no deploy $ts -- NAO reiniciei o TOM." -Encoding utf8
+            Write-Output "=== RESTART ABORTADO: modos de contencao nao ficaram corretos apos o reset. ==="
+            Write-Output $modos.Trim()
+            Write-Output "=== Codigo NO DISCO, processo no anterior. Hold criado. Resolver a mao. ==="
+            exit 1
+        }
+        Write-Output "=== Modos reaplicados: $($modos.Trim()) ==="
+
         # 8b. SUITE ANTES DO RESTART — a trava que faltava.
         #     Ate 10/08 o restart vinha primeiro e a verificacao era humana, DEPOIS: se dois
         #     trabalhos concorrentes conflitassem, a gente descobria com o TOM ja no ar. Rodar
@@ -123,8 +140,33 @@ if ($vpsAtras -gt 0) {
         }
         Write-Output "=== Suite OK ($total testes, fail=$falhas) -- reiniciando ==="
         ssh tom "cd /opt/LA-Organizer && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
+
+        # 8c. GUARDA-COSTAS PÓS-RESTART. Barato de proposito (segundos): confere que os 4
+        #     scripts agendados seguem executaveis e que os 4 marcadores continuam no
+        #     crontab. Nao roda o smoke completo aqui — smoke pesado no caminho quente
+        #     de TODO deploy vira flaky que bloqueia entrega. Isto so responde
+        #     "os guardas sobreviveram a este deploy?", que e a pergunta do dia.
+        $guardas = (ssh tom "cd /opt/LA-Organizer && F=0; for s in backup-db backup-secrets check-backup conter-permissoes alertar pos-deploy-modos; do [ -x scripts/\$s.sh ] || { echo \"sem +x: \$s.sh\"; F=1; }; done; for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes; do crontab -l 2>/dev/null | grep -q -- \"# \$m\$\" || { echo \"cron faltando: \$m\"; F=1; }; done; [ \$F -eq 0 ] && echo 'guardas ok: 6 scripts executaveis, 4 crons presentes'; exit \$F" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Set-Content -Path $holdFile -Value "HOLD auto: guardas de seguranca quebrados apos deploy $ts -- $($guardas.Trim())" -Encoding utf8
+            Write-Output "=== ATENCAO: TOM reiniciou, mas os guardas NAO passaram: ==="
+            Write-Output $guardas.Trim()
+            Write-Output "=== Hold criado. Backup/sentinela/varredura podem estar mudos. ==="
+            exit 1
+        }
+        Write-Output "=== $($guardas.Trim()) ==="
     } else {
         ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet" 2>$null
+        # O caminho de docs tambem reseta — logo tambem derruba os modos. Aqui nao ha
+        # restart para abortar, entao a falha vira aviso alto e hold, nao silencio.
+        $modosDoc = (ssh tom "cd /opt/LA-Organizer && ./scripts/pos-deploy-modos.sh 2>&1" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Set-Content -Path $holdFile -Value "HOLD auto: pos-deploy-modos.sh REPROVOU no deploy de docs $ts." -Encoding utf8
+            Write-Output "=== ATENCAO: deploy de docs deixou os modos de contencao errados: ==="
+            Write-Output $modosDoc.Trim()
+            exit 1
+        }
+        Write-Output "=== Docs sincronizados. $($modosDoc.Trim()) ==="
     }
 }
 exit 0

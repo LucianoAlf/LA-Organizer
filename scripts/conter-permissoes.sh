@@ -146,12 +146,40 @@ if [ "$VARRER" = 1 ]; then
     echo "problemas=$problemas"
     echo "passadas=$passadas"
     echo "corrigidos=$total"
-  } > "$ESTADO" 2>/dev/null && chmod 0600 "$ESTADO"
+  } > "$ESTADO" 2>"$TMPERR"
+
+  # FALSO-VERDE 2 (laudo v2): antes isto era `> "$ESTADO" 2>/dev/null && chmod 0600`. Se a
+  # gravacao falhasse (disco cheio, permissao), o `&&` curto-circuitava e o script saia 0
+  # dizendo "varredura ok" — sobre um estado que ninguem conseguiu escrever. A sentinela so
+  # perceberia 45 min depois, pela idade. Agora a gravacao e VERIFICADA relendo o arquivo:
+  # sem `veredito=` de volta no disco, a varredura REPROVA.
+  if ! grep -q '^veredito=' "$ESTADO" 2>/dev/null; then
+    echo "[conter --varrer] FALHA: nao consegui gravar/reler $ESTADO: $(head -1 "$TMPERR" | cut -c1-120)" >&2
+    problemas=$((problemas+1)); restante=$((restante+1))
+  else
+    chmod 0600 "$ESTADO" 2>/dev/null || echo "[conter --varrer] aviso: chmod 0600 falhou em $ESTADO" >&2
+  fi
 
   if [ "$restante" -eq 0 ] && [ "$problemas" -eq 0 ]; then exit 0; fi
+
   # Alerta EXTERNO. A sentinela detecta, mas quem avisa e isto.
+  # FALSO-VERDE 3 (laudo v2): antes era `[ -x "$A" ] && "$A" ... >/dev/null 2>&1`, que joga
+  # fora saida E codigo de retorno. Alerta que falha calado e pior que nao ter alerta: a
+  # gente acha que esta coberto. Agora o resultado do envio e registrado NO PROPRIO estado,
+  # onde a sentinela horaria le — assim "nao consegui avisar" tambem vira sinal.
   ALERTAR="$(dirname "$(readlink -f "$0")")/alertar.sh"
-  [ -x "$ALERTAR" ] && "$ALERTAR" --chave varredura-permissoes --intervalo-min 60     "TOM: varredura de permissoes REPROVOU (restante=$restante problemas=$problemas passadas=$passadas) em $(hostname)" >/dev/null 2>&1
+  if [ ! -x "$ALERTAR" ]; then
+    echo "[conter --varrer] ALERTA INDISPONIVEL: $ALERTAR ausente ou sem +x" >&2
+    echo "alerta=indisponivel" >> "$ESTADO" 2>/dev/null
+  elif SAIDA=$("$ALERTAR" --chave varredura-permissoes --intervalo-min 60       "TOM: varredura de permissoes REPROVOU (restante=$restante problemas=$problemas passadas=$passadas) em $(hostname)" 2>&1); then
+    case "$SAIDA" in
+      *suprimido*) echo "alerta=suprimido" >> "$ESTADO" 2>/dev/null ;;
+      *)           echo "alerta=enviado"   >> "$ESTADO" 2>/dev/null ;;
+    esac
+  else
+    echo "[conter --varrer] ALERTA FALHOU: $(printf '%s' "$SAIDA" | head -1 | cut -c1-160)" >&2
+    echo "alerta=falhou" >> "$ESTADO" 2>/dev/null
+  fi
   exit 1
 fi
 
@@ -183,9 +211,21 @@ validar_raiz() {   # NAO ecoa: escreve em RAIZ_VALIDADA. Sem $( ), o contador gl
 # caminho normal (--aplicar) continuava com `2>/dev/null | wc -l` — o mesmo defeito, no
 # script que faz a contencao COMPLETA. Corrigir um e deixar o outro seria fechar a porta
 # e esquecer a janela, de novo. Erro de leitura agora conta como MEDIDA_FALHOU e reprova.
-MEDIDA_FALHOU=0
+# ARMADILHA DO SUBSHELL, DE NOVO (laudo v2, bloqueador 3). Eu ja tinha caido nela no
+# `validar_raiz` e reintroduzi aqui: estas duas funcoes SAO chamadas dentro de `$( )`
+# (`e=$(expostos "$r")`), logo rodam em subshell. Um `MEDIDA_FALHOU=$((...+1))` la dentro
+# morre com o subshell e o gate da aplicacao lia SEMPRE zero — falso-verde perfeito: a
+# medicao falhava, a contagem virava 0, e "0 expostos" era declarado como sucesso.
+#
+# Funcao que precisa ECOAR um valor nao pode manter contador em variavel. O contador vira
+# ARQUIVO: cada falha acrescenta uma linha, e o pai conta as linhas. Arquivo atravessa
+# subshell; variavel nao.
 ERRTMP=$(mktemp /run/conter.XXXXXX 2>/dev/null || mktemp) || { echo "[conter] mktemp falhou" >&2; exit 1; }
-chmod 0600 "$ERRTMP"; trap 'rm -f "$ERRTMP"' EXIT INT TERM
+FALHASF=$(mktemp /run/conter-falhas.XXXXXX 2>/dev/null || mktemp) || { echo "[conter] mktemp falhou" >&2; exit 1; }
+chmod 0600 "$ERRTMP" "$FALHASF"; trap 'rm -f "$ERRTMP" "$FALHASF"' EXIT INT TERM
+
+# Le o contador. Se nem isso der certo, devolve numero alto: falha de leitura NUNCA vira zero.
+medidas_falhas() { wc -l < "$FALHASF" 2>/dev/null || echo 9999; }
 
 expostos() {
   local saida rc
@@ -193,7 +233,7 @@ expostos() {
   rc=$?
   if [ "$rc" -ne 0 ] || [ -s "$ERRTMP" ]; then
     echo "[conter] MEDIDA FALHOU em $1 (rc=$rc): $(head -1 "$ERRTMP" | cut -c1-120)" >&2
-    MEDIDA_FALHOU=$((MEDIDA_FALHOU+1)); echo 0; return
+    echo "expostos $1 rc=$rc" >> "$FALHASF"; echo 0; return
   fi
   printf '%s\n' "$saida" | grep -c . || true
 }
@@ -203,7 +243,7 @@ executaveis() {
   rc=$?
   if [ "$rc" -ne 0 ] || [ -s "$ERRTMP" ]; then
     echo "[conter] MEDIDA FALHOU (executaveis) em $1 (rc=$rc): $(head -1 "$ERRTMP" | cut -c1-120)" >&2
-    MEDIDA_FALHOU=$((MEDIDA_FALHOU+1)); echo 0; return
+    echo "executaveis $1 rc=$rc" >> "$FALHASF"; echo 0; return
   fi
   printf '%s\n' "$saida" | grep -c . || true
 }
@@ -242,6 +282,8 @@ for raiz in "${TODAS[@]}"; do
 done
 
 relatorio DEPOIS
+
+MEDIDA_FALHOU=$(medidas_falhas)   # lido do ARQUIVO, ja fora de qualquer subshell
 
 if [ "$APLICAR" = 1 ]; then
   ERRO=0

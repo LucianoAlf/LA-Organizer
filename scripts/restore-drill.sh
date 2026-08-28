@@ -215,12 +215,25 @@ ATESTADO="${DUMP%.dump}.drill"
   echo "fora_do_escopo=auth,storage,realtime,edge_functions,config_do_projeto"
   echo "host=$(hostname)"
   echo "# NAO cobre auth/storage/realtime/Edge Functions/config do projeto."
-} > "$ATESTADO" 2>/dev/null && chmod 0600 "$ATESTADO"
+} > "$ATESTADO" 2>/dev/null
+
+# FALSO-VERDE (laudo v2): `> "$ATESTADO" 2>/dev/null && chmod` deixava a falha de gravacao
+# passar batido. Um drill "aprovado" cuja unica prova nao existe no disco nao vale nada — no
+# dia seguinte nao ha como mostrar que o restore foi testado. Gravacao vira verificacao:
+# releio o arquivo procurando o veredito. Nao achou, o drill REPROVA.
+if grep -q '^veredito=' "$ATESTADO" 2>/dev/null; then
+  chmod 0600 "$ATESTADO" 2>/dev/null || echo "[drill] aviso: chmod 0600 falhou em $ATESTADO" >&2
+else
+  echo "[drill] FALHA: nao consegui gravar/reler o atestado em $ATESTADO" >&2
+  FALHAS=$((FALHAS+1)); VEREDITO=reprovado
+fi
 
 TELEMETRY_DRILL=/opt/backups/la-organizer/db/runs.jsonl
 if [ -w "$TELEMETRY_DRILL" ]; then
   printf '{"ts":"%s","evento":"restore-drill","status":"%s","dump":"%s","falhas":%s,"imagem":"%s"}\n' \
     "$(date -Iseconds)" "$VEREDITO" "$(basename "$DUMP")" "$FALHAS" "$IMAGEM" >> "$TELEMETRY_DRILL"
+else
+  echo "[drill] aviso: telemetria $TELEMETRY_DRILL nao gravavel — este drill nao aparece no runs.jsonl" >&2
 fi
 
 echo

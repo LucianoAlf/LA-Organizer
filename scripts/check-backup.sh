@@ -24,8 +24,15 @@ grito() {
   echo "[check-backup] CRITICO: $1" >&2
   # Sem MTA neste host, um CRITICO no log nao avisa ninguem. A sentinela e horaria, entao
   # o intervalo de supressao de 3h evita repetir o mesmo assunto a cada execucao.
+  # FALSO-VERDE (laudo v2): `>/dev/null 2>&1` jogava fora saida e codigo de retorno do
+  # alerta. Se o envio falhasse, o CRITICO ia para o log e ninguem era avisado — exatamente
+  # o buraco que este canal existe para fechar. Agora a falha de ENVIO tambem e impressa.
   A="$(dirname "$(readlink -f "$0")")/alertar.sh"
-  [ -x "$A" ] && "$A" --chave sentinela-backup --intervalo-min 180     "TOM: sentinela de backup CRITICO — $1" >/dev/null 2>&1
+  if [ ! -x "$A" ]; then
+    echo "[check-backup] ALERTA INDISPONIVEL: $A ausente ou sem +x — o CRITICO acima nao foi notificado" >&2
+  elif ! S=$("$A" --chave sentinela-backup --intervalo-min 180         "TOM: sentinela de backup CRITICO — $1" 2>&1); then
+    echo "[check-backup] ALERTA FALHOU: $(printf '%s' "$S" | head -1 | cut -c1-160)" >&2
+  fi
   exit 2
 }
 campo() { sed -E "s/.*\"$1\":\"?([^,\"}]*)\"?.*/\1/" <<<"$2"; }
@@ -74,7 +81,13 @@ if [ -f "$ESTADO" ]; then
   [ "$V" = ok ] || grito "varredura de permissoes REPROVOU (restante=$(sed -n 's/^restante=//p' "$ESTADO"), problemas=$(sed -n 's/^problemas=//p' "$ESTADO"))"
   # roda a cada 15 min; acima de 45 min significa que parou de rodar
   [ "$IDADE_MIN" -le 45 ] || grito "varredura de permissoes parada ha ${IDADE_MIN} min (esperado <= 45)"
-  echo "[check-backup] varredura: $V, ha ${IDADE_MIN} min"
+  # A varredura agora registra se conseguiu AVISAR. Alerta que nao sai e mordaça: a falha
+  # existe, o canal esta mudo, e sem esta linha ninguem saberia da mudez.
+  AL=$(sed -n 's/^alerta=//p' "$ESTADO" | tail -1)
+  case "${AL:-}" in
+    falhou|indisponivel) grito "varredura tentou alertar e NAO conseguiu (alerta=$AL) — canal externo mudo" ;;
+  esac
+  echo "[check-backup] varredura: $V, ha ${IDADE_MIN} min${AL:+, alerta=$AL}"
 else
   grito "sem estado da varredura de permissoes em $ESTADO — ela nunca rodou ou nao consegue gravar"
 fi

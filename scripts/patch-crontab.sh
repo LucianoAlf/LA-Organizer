@@ -63,15 +63,37 @@ if [ "$APLICAR" != 1 ]; then
   exit 0
 fi
 
-# Pré-condição: os três scripts precisam existir e ser executáveis ANTES de agendar.
-for s in backup-db.sh backup-secrets.sh check-backup.sh; do
+# Pré-condição: TODO script agendado precisa existir e ser executável ANTES de agendar.
+# Faltava `conter-permissoes.sh` nesta lista (laudo v2): a varredura era instalada no cron
+# sem ninguem conferir se o arquivo era sequer executavel — e depois de um `git reset --hard`
+# ela chega 0644. Agendar script sem +x e agendar silencio.
+for s in backup-db.sh backup-secrets.sh check-backup.sh conter-permissoes.sh; do
   [ -x "$SCRIPTS/$s" ] || { echo "FATAL: $SCRIPTS/$s ausente ou nao executavel" >&2; exit 1; }
 done
+# O alerta nao vai no cron, mas os dois agendados dependem dele para avisar.
+[ -x "$SCRIPTS/alertar.sh" ] || echo "AVISO: $SCRIPTS/alertar.sh sem +x — os crons vao detectar mas NAO avisar" >&2
 
 install -d -m 0700 "$BKP_DIR"
 printf '%s\n' "$ATUAL" > "$BKP_DIR/crontab-$(date -u +%Y%m%dT%H%M%SZ).bak"
 chmod 0600 "$BKP_DIR"/crontab-*.bak
 
 printf '%s\n' "$NOVO" | crontab -
+
+# Conferir de verdade: antes o `grep -E '# tom-(backup|check)'` nem casava a linha da
+# varredura (marcador `# tom-varrer-permissoes`) e, sendo so um `grep` de exibicao, nao
+# reprovava nada. Agora cada marcador esperado e exigido de volta do crontab instalado.
 echo "=== crontab aplicado. conferindo: ==="
-crontab -l | grep -E '# tom-(backup|check)'
+INSTALADO=$(crontab -l 2>/dev/null)
+FALTOU=0
+for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes; do
+  if printf '%s\n' "$INSTALADO" | grep -q -- "# $m\$"; then
+    printf '  ok      %s\n' "$m"
+  else
+    printf '  FALTOU  %s\n' "$m"; FALTOU=$((FALTOU+1))
+  fi
+done
+if [ "$FALTOU" -gt 0 ]; then
+  echo "FATAL: $FALTOU linha(s) esperada(s) nao entraram no crontab — restaure com --reverter" >&2
+  exit 1
+fi
+echo "=== 4/4 linhas confirmadas no crontab instalado ==="

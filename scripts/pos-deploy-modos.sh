@@ -27,6 +27,7 @@ EXEC750=(
   scripts/alertar.sh scripts/backup-db.sh scripts/backup-secrets.sh
   scripts/check-backup.sh scripts/conter-permissoes.sh
   scripts/lib-baseline-queries.sh scripts/lib-pgconn.sh scripts/patch-crontab.sh
+  scripts/preflight-deploy.sh scripts/restaurar-guardas.sh
   scripts/restaurar-modos.sh scripts/restore-drill.sh scripts/smoke-pos-aplicacao.sh
   scripts/teste-negativo-dataapi.sh scripts/teste-negativo-permissoes.sh
   scripts/verificar-bundle.sh

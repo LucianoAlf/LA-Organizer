@@ -1,6 +1,17 @@
 -- =============================================================================
 -- P0-1a v2.4 — Fechar a EXPOSIÇÃO PÚBLICA de 5 tabelas. NADA MAIS.
--- NÃO APLICADO. Aguarda GATE HUMANO A.
+--
+-- ✅ APLICADA EM PRODUÇÃO em 2026-08-28, registrada como version 20260828111457.
+--
+-- O arquivo nasceu 20260828000000 e o banco registrou 20260828111457 (o timestamp real da
+-- aplicação). Enquanto os dois divergiam, `supabase migration list` mostrava esta migration
+-- como PENDENTE e um `db push` tentaria aplicá-la de novo — reexecutando `enable row level
+-- security` e `revoke` sobre um estado que já os tem. O arquivo foi renomeado para a version
+-- registrada, então nome e conteúdo agora batem com o histórico do banco. NÃO renomear de volta.
+--
+-- O rollback saiu de `supabase/migrations/` para `supabase/rollbacks/`: dentro de migrations
+-- ele é um SQL sem prefixo de version que ninguém deveria aplicar, mas que um `db push`
+-- distraído poderia varrer — e ele DESLIGA a RLS que esta migration acabou de ligar.
 --
 -- MUDANÇA v2.3 -> v2.4 (bloqueador #4, acatado):
 --   A v2.3 misturava duas coisas de classes de risco diferentes na mesma migration:

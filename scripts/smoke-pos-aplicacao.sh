@@ -81,12 +81,25 @@ echo "-- 6. contencao de permissoes (4 raizes do TOM) --"
 if desde contencao; then
   # #3: a v2.3 fazia `[ -d "$r" ] || continue` e uma raiz obrigatoria que sumisse era
   # simplesmente pulada — o mesmo verde vacuo que o script de contencao ja tinha corrigido.
-  TOT=0; AUSENTES=0
+  TOT=0; AUSENTES=0; MEDIU_ERRADO=0
+  FERR=$(mktemp /run/smoke-find.XXXXXX 2>/dev/null || mktemp)
+  chmod 0600 "$FERR" 2>/dev/null
   for r in "$RAIZ_BKP" "$RAIZ"/.claude-tom "$RAIZ"/.claude-tom-w0 "$RAIZ"/.claude-tom-w1; do
     if [ ! -d "$r" ]; then echo "      AUSENTE (obrigatoria): $r"; AUSENTES=$((AUSENTES+1)); continue; fi
     # inclui o bit x de grupo/outros: diretorio 711 nao lista, mas e ATRAVESSAVEL.
-    TOT=$(( TOT + $(find "$r" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>/dev/null | wc -l) ))
+    # FALSO-VERDE (laudo v2): com `2>/dev/null` um diretorio ilegivel produzia zero linhas,
+    # e zero linhas era lido como "nada exposto". Erro de medicao virava aprovacao. Agora o
+    # stderr do find e capturado e qualquer ruido reprova a fase.
+    : > "$FERR"
+    N=$(find "$r" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$FERR" | wc -l)
+    if [ "${PIPESTATUS[0]}" -ne 0 ] || [ -s "$FERR" ]; then
+      echo "      MEDICAO FALHOU em $r: $(head -1 "$FERR" | cut -c1-120)"
+      MEDIU_ERRADO=$((MEDIU_ERRADO+1))
+    fi
+    TOT=$(( TOT + N ))
   done
+  rm -f "$FERR"
+  [ "$MEDIU_ERRADO" -eq 0 ] || falha "$MEDIU_ERRADO medicao(oes) de exposicao falharam — a contagem nao vale"
   [ "$AUSENTES" -eq 0 ] || falha "$AUSENTES raiz(es) obrigatoria(s) ausente(s)"
   [ "$TOT" -eq 0 ] && [ "$AUSENTES" -eq 0 ] && ok "0 artefatos expostos (r/w/x) nas 4 raizes"     || { [ "$TOT" -gt 0 ] && falha "$TOT artefato(s) ainda exposto(s)"; }
 else pula "contencao (fase anterior)"; fi
@@ -145,10 +158,22 @@ if install -d -m 0700 "$ATESTADOS" 2>/dev/null; then
     echo "md5_dispatcher=$(md5sum "$RAIZ/src/rituals/dispatcher.js" 2>/dev/null | cut -c1-12)"
     echo "tom_pid=$(pm2 jlist 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).find(x=>x.name==="tom").pid)}catch(e){console.log("?")}})')"
     echo "host=$(hostname)"
-  } > "$A" 2>/dev/null && chmod 0600 "$A" && echo "atestado: $A"
+  } > "$A" 2>/dev/null
+  # FALSO-VERDE (laudo v2): antes o `&& chmod && echo` fazia a falha de gravacao sumir — o
+  # smoke passava e o atestado, que e a UNICA prova de que a fase rodou, nao existia.
+  # Atestado que nao grava e o mesmo que nao ter atestado; agora isso reprova.
+  if [ -s "$A" ] && grep -q '^veredito=' "$A" 2>/dev/null; then
+    chmod 0600 "$A" 2>/dev/null; echo "atestado: $A"
+  else
+    falha "nao consegui gravar o atestado em $A — sem prova de que esta fase rodou"
+  fi
   T=/opt/backups/la-organizer/db/runs.jsonl
   [ -w "$T" ] && printf '{"ts":"%s","evento":"smoke","fase":"%s","status":"%s","falhas":%s,"pulados":%s}\n' \
     "$(date -Iseconds)" "$FASE" "$([ "$FALHAS" -eq 0 ] && echo aprovado || echo reprovado)" "$FALHAS" "$PULADOS" >> "$T"
+else
+  # O `install -d` falhando levava embora atestado E telemetria de uma vez, em silencio,
+  # e o smoke ainda saia 0. Sem diretorio de atestado nao ha prova nenhuma da execucao.
+  falha "nao consegui criar/acessar $ATESTADOS — sem atestado e sem telemetria desta fase"
 fi
 
 exit $(( FALHAS > 0 ? 1 : 0 ))
