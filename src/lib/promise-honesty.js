@@ -35,12 +35,12 @@ function downgradeEmptyPromise(text) {
   const ehPromessa = (t) => REPLY_PROMISE_RE.test(t) && !OFERTA_CONDICIONAL_RE.test(t);
   const linhas = s.split('\n');
   if (!linhas.some(ehPromessa)) return { reply: s, fired: false };
-  const kept = linhas
-    .filter((line) => {
-      if (!line.trim()) return false; // colapsa linhas em branco órfãs (espelha coord-send-honesty)
-      return !ehPromessa(line);
-    });
-  const stripped = kept.join('\n').trim();
+  // Dropar TODA linha em branco (como era) colapsa também o separador entre duas linhas
+  // MANTIDAS. O reply segue daqui para o chokepoint (engine ~13946), que remove a claim junto
+  // com o parágrafo dela — sem o separador, o bloco de conteúdo vira parte da claim e some.
+  // Caso Dudu 27/08 18:51: o pedido dos cabos voltou como duas notas de erro e nada mais.
+  const kept = linhas.filter((line) => !ehPromessa(line));
+  const stripped = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   return {
     reply: stripped ? `${stripped}\n\n${PROMISE_NOMARKER_DISCLAIMER}` : PROMISE_NOMARKER_DISCLAIMER,
     fired: true,

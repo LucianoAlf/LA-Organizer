@@ -89,3 +89,51 @@ test('REPLY_PROMISE_RE exportada casa o vocabulário do engine (amostra)', () =>
     assert.ok(REPLY_PROMISE_RE.test(s), s);
   }
 });
+
+// PROMISE-DOWNGRADE-COLAPSA-PARAGRAFO (achado bb26cbe6 — Dudu, 27/08 18:51 BRT).
+// Literal do banco (marker_logs ACTIONABLE_NO_MARKER 18:51:27, raw_excerpt): o Dudu mandou
+// áudio pedindo "guarda isso aí" sobre os cabos XLR e recebeu DUAS notas de erro empilhadas e
+// mais NADA — o conteúdo (o que o TOM tinha entendido) sumiu da mensagem entregue.
+//
+// A raiz não está em nenhum dos dois guards isolados, está no encadeamento. O filtro daqui
+// dropava TODA linha em branco, inclusive a que separa o cabeçalho do bloco de bullets. Sem
+// esse separador, o `sanitizeOptimisticConfirm` do chokepoint (que roda depois, engine.js
+// ~13946, sobre o MESMO reply) lê os bullets como parte do parágrafo da claim e come o bloco
+// inteiro. Medido, com e sem a linha em branco: "• Cabos XLR…" vs "" — a diferença é 1 caractere.
+const DUDU_CABOS =
+  'Entendido, Dudu! Guardando:\n' +
+  '\n' +
+  '• 🔌 Cabos XLR com defeito + cabo do Vandinho → na sala do Rafinha\n' +
+  '• 🔌 Cabo P10 com defeito (encontrado na sala do Rodrigo) → também colocado junto, na sala do Rafinha\n' +
+  '\n' +
+  'Tá anotado. Continua aí!';
+
+test('caso real (Dudu, 27/08): rebaixar não pode colapsar o parágrafo do conteúdo', () => {
+  const r = downgradeEmptyPromise(DUDU_CABOS);
+  assert.strictEqual(r.fired, true, 'a promessa vazia ("Tá anotado") tem que ser rebaixada');
+  assert.ok(!/tá anotado/i.test(r.reply), 'a linha da promessa vazia some');
+  assert.match(r.reply, /Cabos XLR com defeito/, 'o conteúdo entendido permanece');
+  assert.match(
+    r.reply,
+    /Guardando:\n\n• 🔌 Cabos XLR/,
+    'a linha em branco ENTRE duas linhas mantidas sobrevive — é ela que impede o chokepoint seguinte de comer os bullets'
+  );
+});
+
+test('caso real (Dudu, 27/08): a saída rebaixada não é destruída pelo chokepoint seguinte', () => {
+  const { sanitizeOptimisticConfirm } = require('./optimistic-confirm');
+  const rebaixado = downgradeEmptyPromise(DUDU_CABOS).reply;
+  const sobrevive = sanitizeOptimisticConfirm(rebaixado, 'failed');
+  assert.match(
+    sobrevive,
+    /Cabos XLR com defeito/,
+    'encadeado com o guard seguinte, o usuário ainda tem que ver o que o TOM entendeu'
+  );
+});
+
+test('CONTROLE: linha em branco órfã (sobra da promessa removida) continua colapsando', () => {
+  const r = downgradeEmptyPromise('Beleza, Alf!\n\nVou criar na agenda pros 8.');
+  assert.strictEqual(r.fired, true);
+  assert.ok(!/\n\n\n/.test(r.reply), 'não sobra buraco triplo onde a promessa foi removida');
+  assert.match(r.reply, /^Beleza, Alf!\n\n_⚠️/, 'a nota honesta encosta direto na linha neutra');
+});
