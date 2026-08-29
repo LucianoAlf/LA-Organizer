@@ -29,7 +29,10 @@ SNAP=1; [ "${2:-}" = "--sem-snapshot" ] && SNAP=0
 # novo diretorio e `readlink -f` devolve um caminho que nao existe. Foi assim que este
 # script disse "lib-guardas.sh ausente" com a lib ao lado dele.
 AQUI="$(dirname "$(readlink -f "$0")")"
-cd "$AQUI/.." || exit 2
+# Raiz do repo sobrescrevivel: permite MEDIR um repo (a VPS, por exemplo) sem antes
+# instalar o script dentro dele. Medicao read-only nao devia exigir entrega previa.
+REPO=${PREFLIGHT_REPO:-$AQUI/..}
+cd "$REPO" || exit 2
 
 # INVENTARIO VEM DA LIB, nao de copia local: duas listas do mesmo fato divergem com o tempo,
 # e foi o que aconteceu entre este arquivo e pos-deploy-modos.sh.
