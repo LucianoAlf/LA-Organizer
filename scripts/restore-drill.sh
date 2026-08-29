@@ -210,22 +210,35 @@ lista_baseline sequences_estado > "$TMPD/seq.esp"
 if [ ! -s "$TMPD/seq.esp" ]; then
   falha "baseline sem a secao 'sequences_estado'"
 else
-  SEQ_OK=0; SEQ_RUIM=0
-  while IFS= read -r linha; do
-    [ -n "$linha" ] || continue
-    nome=${linha%%:*}; espv=${linha##*:}
-    obtv=$(q "select coalesce(last_value::text,'0') from pg_sequences where schemaname='public' and sequencename='$nome'" 2>/dev/null)
-    if [ -z "$obtv" ]; then
-      falha "sequence ausente no restaurado: $nome"; SEQ_RUIM=$((SEQ_RUIM+1)); continue
-    fi
-    if [ "$obtv" -gt "$espv" ] 2>/dev/null; then
-      falha "sequence $nome: restaurado ($obtv) MAIOR que a origem ($espv)"; SEQ_RUIM=$((SEQ_RUIM+1))
-    elif [ "$obtv" -lt "$espv" ] 2>/dev/null; then
-      falha "sequence $nome: restaurado $obtv, origem $espv — valor PERDIDO (proxima escrita colide)"
-      SEQ_RUIM=$((SEQ_RUIM+1))
-    else SEQ_OK=$((SEQ_OK+1)); fi
-  done < "$TMPD/seq.esp"
-  echo "  ok  $SEQ_OK sequence(s) com valor preservado, $SEQ_RUIM com problema"
+  # PARSER ESTRITO (v2.5, laudo v2.4 bloqueador 2). O formato virou
+  # `nome:valor:called=BOOL`, mas o parser continuou usando `${linha##*:}` — que devolve
+  # `called=true`, nao o valor. E o pior nao e errar o campo: com valor nao-numerico as DUAS
+  # comparacoes `-gt`/`-lt` falham em silencio (2>/dev/null) e o fluxo cai no `else`, que
+  # conta como OK. O drill dizia "2 sequence(s) com valor preservado" sem ter comparado nada.
+  # Agora: 3 campos exatos, valor tem que ser inteiro, `called=` tem que ser true/false, e
+  # qualquer desvio REPROVA em vez de virar sucesso.
+  # A comparacao mora em lib-seq-compare.sh para poder ser testada sem subir um drill
+  # inteiro. Aqui fica so a leitura do restaurado e o mapeamento para falha().
+  LIBSEQ="$(dirname "$(readlink -f "$0")")/lib-seq-compare.sh"
+  if [ ! -r "$LIBSEQ" ]; then
+    falha "lib-seq-compare.sh ausente — sem ela nao da para comparar sequences"
+  else
+    # shellcheck disable=SC1090
+    . "$LIBSEQ"
+    SEQ_OK=0
+    while IFS= read -r linha; do
+      [ -n "$linha" ] || continue
+      nome=${linha%%:*}
+      obt=$(q "select coalesce(last_value::text,'') || ':' || (last_value is not null)::text from pg_sequences where schemaname='public' and sequencename='$nome'" 2>/dev/null | tr -d '[:space:]')
+      seq_verificar "$linha" "$obt"; rc=$?
+      case $rc in
+        0) SEQ_OK=$((SEQ_OK+1)) ;;
+        1) falha "$SEQ_MOTIVO" ;;
+        *) falha "sequences_estado (nao interpretavel, fail-closed): $SEQ_MOTIVO" ;;
+      esac
+    done < "$TMPD/seq.esp"
+    echo "  ok  $SEQ_OK de $(wc -l < "$TMPD/seq.esp") sequence(s) com valor E is_called preservados"
+  fi
 fi
 
 # #2: extensoes vindas DO BASELINE. Ausencia so passa se a extensao for comprovadamente
@@ -262,6 +275,12 @@ ATESTADO="${DUMP%.dump}.drill"
   # laudo apontou). O rc=1 vem de extensoes de PLATAFORMA que nao existem fora do Supabase.
   # Registrar as duas contagens separadas tira a ambiguidade: o que reprova e
   # `erros_inesperados`, nunca o rc bruto.
+  # AMARRACAO AOS ARTEFATOS (laudo v2.4, bloqueador 8). Sem isto o atestado dizia "aprovado"
+  # sem dizer aprovado sobre O QUE: trocar o dump, o baseline ou o manifesto depois do drill
+  # deixava o atestado valendo para um conjunto que ja nao existia. Agora ele carrega o hash
+  # de cada artefato que afirma certificar, e a sentinela reconfere.
+  echo "backup_id=$(basename "${DUMP%.dump}")"
+  echo "manifest_sha256=$( [ -f "${DUMP%.dump}.manifest" ] && sha256sum "${DUMP%.dump}.manifest" | cut -d" " -f1 || echo ausente)"
   echo "baseline_versao=${BASELINE_VERSAO:-1}"
   echo "pg_restore_rc=${RC:-0}"
   echo "pg_restore_erros_total=${TOTAL_ERR:-0}"
@@ -272,23 +291,17 @@ ATESTADO="${DUMP%.dump}.drill"
   echo "# NAO cobre auth/storage/realtime/Edge Functions/config do projeto."
 } > "$ATESTADO.parcial" 2>/dev/null
 
-# GRAVACAO ATOMICA (laudo v2.2): escrever direto no destino deixa uma janela em que o arquivo
-# existe pela metade — e um atestado truncado passa por atestado. Pior: se a escrita morre no
-# meio, o arquivo ANTIGO ja foi truncado e a prova velha some sem que a nova exista.
-# Escreve em `.parcial`, confere que o veredito esta la, e so entao renomeia. `mv` no mesmo
-# filesystem e atomico: ou o leitor ve o atestado antigo inteiro, ou o novo inteiro. Nunca meio.
-if grep -q '^veredito=' "$ATESTADO.parcial" 2>/dev/null; then
-  chmod 0600 "$ATESTADO.parcial" 2>/dev/null
-  if mv -f "$ATESTADO.parcial" "$ATESTADO" 2>/dev/null; then
-    :
-  else
-    rm -f "$ATESTADO.parcial"
-    echo "[drill] FALHA: nao consegui publicar o atestado em $ATESTADO" >&2
+LIBPUB="$(dirname "$(readlink -f "$0")")/lib-publicar.sh"
+if [ -r "$LIBPUB" ]; then
+  # shellcheck disable=SC1090
+  . "$LIBPUB"
+  if ! publicar_atomico "$ATESTADO" '^veredito=' 0600; then
+    echo "[drill] FALHA ao publicar o atestado: $PUBLICAR_MOTIVO" >&2
     FALHAS=$((FALHAS+1)); VEREDITO=reprovado
   fi
 else
   rm -f "$ATESTADO.parcial"
-  echo "[drill] FALHA: nao consegui gravar o atestado em $ATESTADO" >&2
+  echo "[drill] FALHA: lib-publicar.sh ausente em $LIBPUB" >&2
   FALHAS=$((FALHAS+1)); VEREDITO=reprovado
 fi
 

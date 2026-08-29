@@ -31,6 +31,9 @@ EXEC750=(
   scripts/restaurar-modos.sh scripts/restore-drill.sh scripts/smoke-pos-aplicacao.sh
   scripts/teste-negativo-dataapi.sh scripts/teste-negativo-permissoes.sh
   scripts/verificar-bundle.sh
+  # libs e testes acrescentados na v2.5 — se ficarem de fora, o proprio gate de modos
+  # passa a medir menos do que o pacote entrega, que e como a contencao decai sem ninguem ver.
+  scripts/lib-publicar.sh scripts/lib-seq-compare.sh scripts/teste-alertar-mock.sh scripts/teste-bundle-mock.sh scripts/teste-deploy-lock-sha.sh scripts/teste-publicar.sh scripts/teste-sentinela-timeline.sh scripts/teste-seq-compare.sh
 )
 DADO640=( scripts/bundle-allowlist.txt scripts/bundle-esperados.txt scripts/suite-vermelhos-conhecidos.txt )
 

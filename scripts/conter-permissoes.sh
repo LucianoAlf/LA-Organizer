@@ -162,23 +162,20 @@ if [ "$VARRER" = 1 ]; then
   # de ter a nova. Se a escrita morre no meio, a sentinela le um arquivo pela metade — e um
   # `veredito=ok` de uma passada velha pode sobreviver no pedaco lido, virando prova
   # reutilizada. Escreve em `.parcial`, confere, e so entao `mv` (atomico no mesmo fs).
-  # `mv arquivo diretorio` move o arquivo PARA DENTRO e retorna 0 — foi assim que o teste
-  # negativo (destino virou diretorio) passou verde sem gravar estado nenhum. O destino
-  # precisa ser arquivo regular ANTES, e ser conferido DEPOIS.
-  if [ -e "$ESTADO" ] && [ ! -f "$ESTADO" ]; then
-    rm -f "$ESTADO.parcial"
-    echo "[conter --varrer] FALHA: $ESTADO existe e nao e arquivo regular ($(stat -c %F "$ESTADO" 2>/dev/null))" >&2
-    problemas=$((problemas+1)); restante=$((restante+1))
-  elif grep -q '^veredito=' "$ESTADO.parcial" 2>/dev/null; then
-    chmod 0600 "$ESTADO.parcial" 2>/dev/null
-    if ! mv -f "$ESTADO.parcial" "$ESTADO" 2>/dev/null || [ ! -f "$ESTADO" ] || ! grep -q '^veredito=' "$ESTADO" 2>/dev/null; then
-      rm -f "$ESTADO.parcial"
-      echo "[conter --varrer] FALHA: nao consegui publicar $ESTADO" >&2
+  # Publicacao atomica compartilhada (lib-publicar.sh): guard de diretorio/symlink, marcador
+  # obrigatorio, `mv -T` e reconferencia do destino. Cada escritor tinha a sua versao disso e
+  # o guard so existia em um — formato classico de regressao voltar pelo lugar que ficou de fora.
+  LIBPUB="$(dirname "$(readlink -f "$0")")/lib-publicar.sh"
+  if [ -r "$LIBPUB" ]; then
+    # shellcheck disable=SC1090
+    . "$LIBPUB"
+    if ! publicar_atomico "$ESTADO" '^veredito=' 0600; then
+      echo "[conter --varrer] FALHA ao publicar $ESTADO: $PUBLICAR_MOTIVO" >&2
       problemas=$((problemas+1)); restante=$((restante+1))
     fi
   else
     rm -f "$ESTADO.parcial"
-    echo "[conter --varrer] FALHA: nao consegui gravar $ESTADO: $(head -1 "$TMPERR" | cut -c1-120)" >&2
+    echo "[conter --varrer] FALHA: lib-publicar.sh ausente em $LIBPUB" >&2
     problemas=$((problemas+1)); restante=$((restante+1))
   fi
 

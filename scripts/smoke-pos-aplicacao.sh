@@ -190,17 +190,14 @@ if install -d -m 0700 "$ATESTADOS" 2>/dev/null; then
     echo "tom_pid=$(pm2 jlist 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).find(x=>x.name==="tom").pid)}catch(e){console.log("?")}})')"
     echo "host=$(hostname)"
   } > "$A.parcial" 2>/dev/null
-  # FALSO-VERDE (laudo v2): antes o `&& chmod && echo` fazia a falha de gravacao sumir — o
-  # smoke passava e o atestado, que e a UNICA prova de que a fase rodou, nao existia.
-  # ATOMICIDADE (laudo v2.2): grava em `.parcial`, confere o veredito e so entao renomeia,
-  # para que ninguem leia meio atestado como prova inteira.
-  if [ -s "$A.parcial" ] && grep -q '^veredito=' "$A.parcial" 2>/dev/null; then
-    chmod 0600 "$A.parcial" 2>/dev/null
-    if mv -f "$A.parcial" "$A" 2>/dev/null; then echo "atestado: $A"
-    else rm -f "$A.parcial"; falha "nao consegui publicar o atestado em $A"; fi
+  LIBPUB="$RAIZ/scripts/lib-publicar.sh"
+  if [ -r "$LIBPUB" ]; then
+    # shellcheck disable=SC1090
+    . "$LIBPUB"
+    if publicar_atomico "$A" '^veredito=' 0600; then echo "atestado: $A"
+    else falha "nao consegui publicar o atestado: $PUBLICAR_MOTIVO"; fi
   else
-    rm -f "$A.parcial"
-    falha "nao consegui gravar o atestado em $A — sem prova de que esta fase rodou"
+    rm -f "$A.parcial"; falha "lib-publicar.sh ausente — atestado nao publicado"
   fi
   T=/opt/backups/la-organizer/db/runs.jsonl
   [ -w "$T" ] && printf '{"ts":"%s","evento":"smoke","fase":"%s","status":"%s","falhas":%s,"pulados":%s}\n' \

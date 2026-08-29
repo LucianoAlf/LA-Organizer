@@ -67,6 +67,19 @@ $ts = Get-Date -Format "yyyy-MM-dd HH:mm"
 # o gate leria variavel indefinida quando o turno nao empurra nada (VPS atras por push do
 # outro chat, por exemplo). `$empurrou` responde "este turno moveu main?" — se nao moveu, o
 # gate pertence ao turno que moveu, nao a este.
+# LOCK DE DEPLOY (laudo v2.4, bloqueador 4). Entre publicar o objeto, medir o preflight,
+# empurrar e aplicar existe uma janela de minutos. Duas reconciliacoes concorrentes nessa
+# janela medem uma coisa e aplicam outra. `mkdir` e atomico no POSIX — ou cria, ou falha —
+# entao serve de lock sem depender de daemon nenhum. TTL para orfao nao travar o deploy para
+# sempre; quem tomar o lock registra quem e e quando.
+$lockDir = "/run/tom-deploy.lock"
+$lockTtlMin = 30
+function Tomar-LockDeploy {
+    $r = (ssh tom "if mkdir $lockDir 2>/dev/null; then echo ADQUIRIDO; date +%s > $lockDir/epoch; echo `"auto-deploy $env:COMPUTERNAME`" > $lockDir/dono; else IDADE=`$(( ( `$(date +%s) - `$(cat $lockDir/epoch 2>/dev/null || echo 0) ) / 60 )); if [ `"`$IDADE`" -ge $lockTtlMin ]; then rm -rf $lockDir; mkdir $lockDir && { date +%s > $lockDir/epoch; echo ORFAO-REMOVIDO; }; else echo `"OCUPADO `$IDADE`"; fi; fi" 2>$null) | Out-String
+    return $r.Trim()
+}
+function Soltar-LockDeploy { ssh tom "rm -rf $lockDir" 2>$null | Out-Null }
+
 $empurrou = $false
 $temBaseline = $false
 $webMudou = 0
@@ -97,6 +110,16 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         #     Vercel — so deixa os objetos disponiveis para o preflight medir o alvo REAL.
         $tip = (git -C $srcRoot rev-parse HEAD 2>$null) | Out-String
         $tip = $tip.Trim()
+        if ($tip -notmatch '^[0-9a-f]{40}$') {
+            Write-Output "=== DEPLOY ABORTADO: nao consegui resolver o tip local. ==="
+            exit 1
+        }
+        $lk = Tomar-LockDeploy
+        if ($lk -notmatch 'ADQUIRIDO|ORFAO-REMOVIDO') {
+            Write-Output "=== DEPLOY ADIADO: outra reconciliacao esta em andamento ($lk). Proximo turno tenta. ==="
+            Soltar-LockDeploy; exit 0
+        }
+        Write-Output "=== Lock de deploy: $lk ==="
         # REF IMUTAVEL (laudo v2.3, bloqueador 7). `refs/candidato/pendente` era um nome fixo
         # e mutavel: entre conferir "o ref bate com o tip" e o preflight medir contra ele,
         # outro processo podia reescrever o ref e o preflight mediria outra arvore. O nome
@@ -108,21 +131,24 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: nao consegui publicar o tip candidato na VPS no deploy $ts -- nada empurrado." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: nao consegui enviar o candidato para a VPS medir. Nada empurrado. ==="
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         $refRemoto = (ssh tom "cd /opt/LA-Organizer && git rev-parse $refCand" 2>$null) | Out-String
         if ($refRemoto.Trim() -ne $tip) {
             Set-Content -Path $holdFile -Value "HOLD auto: candidato na VPS ($($refRemoto.Trim())) != tip local ($tip) no deploy $ts." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: o candidato na VPS nao bate com o tip local. Nada empurrado. ==="
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
-        $pfPre = (ssh tom "cd /opt/LA-Organizer && ./scripts/preflight-deploy.sh $refCand --sem-snapshot 2>&1" 2>$null) | Out-String
+        # SHA LITERAL, nao o nome do ref (laudo v2.4, bloqueador 4). A ref transporta o objeto;
+        # a MEDICAO usa o sha ja verificado acima. Assim, mover a ref depois da conferencia nao
+        # muda o que o preflight mede nem o que o reset aplica — o alvo e imutavel por natureza.
+        $pfPre = (ssh tom "cd /opt/LA-Organizer && ./scripts/preflight-deploy.sh $tip --sem-snapshot 2>&1" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: preflight contra o TIP CANDIDATO reprovou no deploy $ts -- nada foi empurrado." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: a VPS tem trabalho que o reset para o candidato destruiria. ==="
             Write-Output (($pfPre -split "`n" | Select-String "RECUSADO|PREFLIGHT") -join "`n")
             Write-Output "=== Nada empurrado, main nao moveu, Vercel nao disparou. Hold criado. ==="
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         Write-Output "=== Preflight contra o candidato $($tip.Substring(0,8)): OK ==="
 
@@ -141,7 +167,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
             Write-Output "=== PUSH ABORTADO: nao consegui tirar o baseline do bundle. ==="
             Write-Output "=== Pode ser rede, ou pode ser achado novo no bundle publico. Rodar --baseline a mao. ==="
             ssh tom "cd /opt/LA-Organizer && git update-ref -d $refCand" 2>$null
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
 
         # 7. Push — com retorno conferido. Push que falha calado deixava o resto do script
@@ -150,7 +176,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: git push origin main FALHOU no deploy $ts." -Encoding utf8
             Write-Output "=== PUSH FALHOU (exit $LASTEXITCODE). Nada mais foi feito. Hold criado. ==="
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         $empurrou = $true
     }
@@ -170,7 +196,7 @@ if ($vpsAtras -gt 0) {
     ssh tom "flock -n /tmp/la-gov.lock true" 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Output "=== DEPLOY ADIADO: ciclo de governanca rodando (lock /tmp/la-gov.lock). VPS $vpsAtras commit(s) atras; proximo turno sincroniza. ==="
-        exit 0
+        Soltar-LockDeploy; exit 0
     }
 
     # Restart so quando muda o que o processo carrega; doc/plano nao precisa derrubar o TOM.
@@ -188,14 +214,14 @@ if ($vpsAtras -gt 0) {
         Set-Content -Path $holdFile -Value "HOLD auto: preflight reprovou no deploy $ts -- VPS NAO resetada." -Encoding utf8
         Write-Output "=== DEPLOY ABORTADO no preflight: ==="
         Write-Output (($preflight -split "`n" | Select-String "RECUSADO|PREFLIGHT|snapshot") -join "`n")
-        exit 1
+        Soltar-LockDeploy; exit 1
     }
     Write-Output "=== Preflight OK ==="
     $prev = (ssh tom "cd /opt/LA-Organizer && git rev-parse HEAD" 2>$null) | Out-String
     $prev = $prev.Trim()
     if ($prev -notmatch '^[0-9a-f]{40}$') {
         Write-Output "=== DEPLOY ABORTADO: nao consegui registrar o ponto de retorno da VPS. ==="
-        exit 1
+        Soltar-LockDeploy; exit 1
     }
 
     # Volta a VPS ao estado anterior E devolve os guardas. Usada em toda falha pos-reset:
@@ -247,7 +273,7 @@ if ($vpsAtras -gt 0) {
         ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Invoke-RollbackVps "o proprio reset --hard falhou"
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
 
         # 8a. MODOS DEPOIS DO RESET — a trava que faltava (laudo v2, bloqueador 1).
@@ -261,7 +287,7 @@ if ($vpsAtras -gt 0) {
         if ($LASTEXITCODE -ne 0) {
             Write-Output $modos.Trim()
             Invoke-RollbackVps "modos de contencao errados apos o reset"
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         Write-Output "=== Modos reaplicados: $($modos.Trim()) ==="
 
@@ -288,7 +314,7 @@ if ($vpsAtras -gt 0) {
 
         if ($falhas -lt 0 -or $total -lt 100) {
             Invoke-RollbackVps "nao consegui medir a suite (tests=$total)"
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         #     A regra e IDENTIDADE, nao numero: todo vermelho tem que estar em
         #     system-loadout.test.js, e no maximo os 3 conhecidos. Assim:
@@ -301,13 +327,13 @@ if ($vpsAtras -gt 0) {
         if ($desconhecidos -gt 0 -or $falhas -gt 3) {
             Write-Output "=== Suite: fail=$falhas de $total; $desconhecidos vermelho(s) NAO reconhecido(s) pelo nome ==="
             Invoke-RollbackVps "vermelhos fora dos 3 conhecidos (por nome)"
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         Write-Output "=== Suite OK ($total testes; $falhas vermelho(s), todos reconhecidos pelo nome) -- reiniciando ==="
         ssh tom "cd /opt/LA-Organizer && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Invoke-RollbackVps "pm2 restart retornou erro"
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
 
         # 8b2. HEALTH + SMOKE OBRIGATORIOS (laudo v2.2, bloqueador 4). Restart sem retorno era
@@ -319,7 +345,7 @@ if ($vpsAtras -gt 0) {
             Write-Output "=== Health nao voltou 200 apos o restart (ultimo: $($health.Trim())) ==="
             Invoke-RollbackVps "TOM nao respondeu health apos o restart"
             ssh tom "pm2 restart tom --no-color 2>&1 | tail -1" 2>$null
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         Write-Output "=== Health 200 apos o restart ==="
 
@@ -328,7 +354,7 @@ if ($vpsAtras -gt 0) {
             Write-Output $smoke.Trim()
             Invoke-RollbackVps "smoke de reconciliacao reprovou apos o restart"
             ssh tom "pm2 restart tom --no-color 2>&1 | tail -1" 2>$null
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         Write-Output "=== Smoke de reconciliacao aprovado ==="
 
@@ -337,13 +363,13 @@ if ($vpsAtras -gt 0) {
         #     crontab. Nao roda o smoke completo aqui — smoke pesado no caminho quente
         #     de TODO deploy vira flaky que bloqueia entrega. Isto so responde
         #     "os guardas sobreviveram a este deploy?", que e a pergunta do dia.
-        $guardas = (ssh tom "cd /opt/LA-Organizer && F=0; for s in backup-db backup-secrets check-backup conter-permissoes alertar pos-deploy-modos; do [ -x scripts/\$s.sh ] || { echo \"sem +x: \$s.sh\"; F=1; }; done; for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes; do crontab -l 2>/dev/null | grep -q -- \"# \$m\$\" || { echo \"cron faltando: \$m\"; F=1; }; done; [ \$F -eq 0 ] && echo 'guardas ok: 6 scripts executaveis, 4 crons presentes'; exit \$F" 2>$null) | Out-String
+        $guardas = (ssh tom "cd /opt/LA-Organizer && F=0; for s in backup-db backup-secrets check-backup conter-permissoes alertar pos-deploy-modos; do [ -x scripts/\$s.sh ] || { echo \"sem +x: \$s.sh\"; F=1; }; done; for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes tom-restore-drill; do crontab -l 2>/dev/null | grep -q -- \"# \$m\$\" || { echo \"cron faltando: \$m\"; F=1; }; done; [ \$F -eq 0 ] && echo 'guardas ok: 6 scripts executaveis, 5 crons presentes'; exit \$F" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: guardas de seguranca quebrados apos deploy $ts -- $($guardas.Trim())" -Encoding utf8
             Write-Output "=== ATENCAO: TOM reiniciou, mas os guardas NAO passaram: ==="
             Write-Output $guardas.Trim()
             Write-Output "=== Hold criado. Backup/sentinela/varredura podem estar mudos. ==="
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         Write-Output "=== $($guardas.Trim()) ==="
     } else {
@@ -356,7 +382,7 @@ if ($vpsAtras -gt 0) {
         if ($LASTEXITCODE -ne 0) {
             Write-Output $modosDoc.Trim()
             Invoke-RollbackVps "modos errados apos o reset de docs"
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
         Write-Output "=== Docs sincronizados. $($modosDoc.Trim()) ==="
     }
@@ -383,32 +409,59 @@ if ($vpsAtras -gt 0) {
         #                     sem alegar nada sobre deployment.
         Write-Output "=== Gate Vercel (web/ com $webMudou arquivo(s) alterado(s)) ==="
         if ($webMudou -gt 0) {
+            # web/ MUDOU: exige bundle novo e comparacao com o baseline. E, para amarrar ao
+            # COMMIT exato com estado READY, seria preciso a API da Vercel — que este host nao
+            # tem credencial para chamar. Sem isso nao ha como provar "este deployment e o do
+            # commit X e esta READY", entao o gate NAO declara aprovado: devolve INDETERMINADO
+            # e para. `x-vercel-id` nao serve: e id de REQUISICAO, nao de deployment.
             $vb = (ssh tom "cd /opt/LA-Organizer && BUNDLE_ESPERA_SEG=300 ./scripts/verificar-bundle.sh --pos-deploy $blFile 2>&1 | tail -12" 2>$null) | Out-String
+            $rcVb = $LASTEXITCODE
         } else {
-            $vb = (ssh tom "cd /opt/LA-Organizer && ./scripts/verificar-bundle.sh 2>&1 | tail -8" 2>$null) | Out-String
+            # web/ NAO mudou: nao ha deployment novo a esperar, e a pergunta que importa e de
+            # seguranca — "o bundle servido tem exatamente os achados aprovados?". O modo
+            # --conferir-esperados responde isso. O modo normal serviria de nada aqui: ele sai
+            # 1 sempre que existe achado nao-allowlistado, e o P0-4 e um achado conhecido e
+            # aceito. Reprovar todo deploy por um problema ja registrado ensina a ignorar o gate.
+            $vb = (ssh tom "cd /opt/LA-Organizer && ./scripts/verificar-bundle.sh --conferir-esperados 2>&1 | tail -8" 2>$null) | Out-String
+            $rcVb = $LASTEXITCODE
         }
-        $rcVb = $LASTEXITCODE
         Write-Output $vb.Trim()
-        if ($rcVb -eq 1) {
-            # literal novo (ou achado conhecido sumindo) no bundle PUBLICO: nao se reverte a
-            # VPS por isso — sao sistemas independentes — mas ninguem segue sem saber.
-            Set-Content -Path $holdFile -Value "CRITICO auto: gate da Vercel REPROVOU no deploy $ts -- bundle publico mudou de forma nao esperada." -Encoding utf8
-            ssh tom "cd /opt/LA-Organizer && [ -x scripts/alertar.sh ] && ./scripts/alertar.sh --chave gate-vercel --intervalo-min 60 'TOM: gate do bundle publico REPROVOU apos deploy' >/dev/null 2>&1" 2>$null
-            Write-Output "=== ATENCAO: bundle publico com achado inesperado. TOM segue no ar; investigar antes do proximo deploy. ==="
-            exit 1
+
+        # CADA CODIGO TRATADO EXPLICITAMENTE, e desconhecido FALHA FECHADO (laudo v2.4,
+        # bloqueador 3). Antes havia um `else` generico que engolia qualquer retorno nao
+        # previsto como se fosse sucesso — o formato exato de falso-verde que este gate existe
+        # para nao ter.
+        switch ($rcVb) {
+            0 { Write-Output "=== Gate Vercel aprovado ===" }
+            1 {
+                Set-Content -Path $holdFile -Value "CRITICO auto: gate da Vercel REPROVOU no deploy $ts -- bundle publico com achado inesperado." -Encoding utf8
+                ssh tom "cd /opt/LA-Organizer && [ -x scripts/alertar.sh ] && ./scripts/alertar.sh --chave gate-vercel --intervalo-min 60 'TOM: gate do bundle publico REPROVOU apos deploy' >/dev/null 2>&1" 2>$null
+                Write-Output "=== ATENCAO: bundle publico com achado inesperado. TOM segue no ar; investigar antes do proximo deploy. ==="
+                Soltar-LockDeploy; exit 1
+            }
+            2 {
+                Set-Content -Path $holdFile -Value "HOLD auto: gate da Vercel INDETERMINADO no deploy $ts -- build pode nao ter terminado." -Encoding utf8
+                Write-Output "=== Gate Vercel INDETERMINADO: nao consegui provar o deployment do commit $($tip.Substring(0,8)) em estado READY. ==="
+                Write-Output "=== Confirme no painel e rode --pos-deploy de novo. NAO estou declarando o deploy verificado. ==="
+                Soltar-LockDeploy; exit 1
+            }
+            3 {
+                Set-Content -Path $holdFile -Value "HOLD auto: gate da Vercel nao pode rodar no deploy $ts (baseline/allowlist ilegivel)." -Encoding utf8
+                Write-Output "=== Gate Vercel INDISPONIVEL (rc=3): arquivo de referencia ilegivel. ==="
+                Soltar-LockDeploy; exit 1
+            }
+            default {
+                Set-Content -Path $holdFile -Value "HOLD auto: gate da Vercel devolveu codigo DESCONHECIDO ($rcVb) no deploy $ts." -Encoding utf8
+                Write-Output "=== Gate Vercel devolveu codigo desconhecido ($rcVb) -- falhando fechado por desenho. ==="
+                Soltar-LockDeploy; exit 1
+            }
         }
-        if ($rcVb -eq 2) {
-            Set-Content -Path $holdFile -Value "HOLD auto: gate da Vercel INDETERMINADO no deploy $ts -- build pode nao ter terminado." -Encoding utf8
-            Write-Output "=== Gate Vercel INDETERMINADO: confirmar no painel se o deployment ficou READY e rodar --pos-deploy de novo. ==="
-            exit 1
-        }
-        Write-Output "=== Gate Vercel aprovado ==="
     } else {
         Set-Content -Path $holdFile -Value "HOLD auto: deploy $ts sem baseline do bundle -- gate da Vercel NAO foi executado." -Encoding utf8
         Write-Output "=== Gate Vercel NAO executado (sem baseline). Hold criado para nao passar por verificado. ==="
-        exit 1
+        Soltar-LockDeploy; exit 1
     }
 }
-exit 0
+Soltar-LockDeploy; exit 0
 
 # v2 (clone git) no ar desde 2026-07-21.

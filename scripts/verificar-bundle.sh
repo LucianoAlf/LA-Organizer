@@ -43,6 +43,12 @@ MODO=normal; ESTADO=""; ACEITA_INALTERADO=0
 case "${1:-}" in
   --baseline)   MODO=baseline;   ESTADO=${2:?uso: --baseline <arquivo> [url]}; shift 2 ;;
   --pos-deploy) MODO=pos_deploy; ESTADO=${2:?uso: --pos-deploy <arquivo> [url]}; shift 2 ;;
+  # `--conferir-esperados` responde a pergunta de SEGURANCA sem falar de deployment:
+  # "o bundle servido agora tem exatamente os achados ja aprovados?". Existe porque o modo
+  # normal sai 1 sempre que ha achado nao-allowlistado — e o P0-4 e um achado conhecido e
+  # aceito. Sem este modo, o gate reprovaria todo deploy pelo problema que ja esta registrado,
+  # que e a forma mais rapida de ensinar todo mundo a ignorar o gate.
+  --conferir-esperados) MODO=conferir; shift ;;
 esac
 if [ "${1:-}" = "--aceitar-inalterado" ]; then ACEITA_INALTERADO=1; shift; fi
 URL=${1:-https://la-organizer.vercel.app}
@@ -180,9 +186,12 @@ entropia() {
 #   tudo menos aspa/espaco   -> 2.040 candidatos (2.027 sao codigo)
 #   sem estrutura de codigo  -> 23 candidatos, PEGA o sintetico   <- este
 ALFABETO=${BUNDLE_ALFABETO:-A-Za-z0-9_.:+/=~!#$%*?@^-}
+# CRASE incluida (v2.5): template literal e string como qualquer outra e pode carregar
+# segredo. Medido: incluir a crase nao muda a contagem de candidatos neste bundle (22 -> 22),
+# entao o custo e zero e a cobertura cresce.
 cat "$TMPD/assets"/*.js 2>/dev/null \
-  | grep -oE "[\"'][$ALFABETO]{$MIN_LEN,400}[\"']" \
-  | sed -E "s/^[\"']//; s/[\"']$//" | LC_ALL=C sort -u > "$TMPD/lit.txt"
+  | grep -oE "[\"'\`][$ALFABETO]{$MIN_LEN,400}[\"'\`]" \
+  | sed -E "s/^[\"'\`]//; s/[\"'\`]$//" | LC_ALL=C sort -u > "$TMPD/lit.txt"
 
 TOTAL=$(wc -l < "$TMPD/lit.txt")
 echo "literais candidatos (>= $MIN_LEN chars): $TOTAL"
@@ -190,7 +199,7 @@ echo "literais candidatos (>= $MIN_LEN chars): $TOTAL"
 [ -r "$ALLOW" ] || { echo "AVISO: allowlist ausente em $ALLOW — todo literal sera reportado"; : > "$TMPD/allow"; }
 [ -r "$ALLOW" ] && grep -oE '^[a-f0-9]{64}' "$ALLOW" > "$TMPD/allow" 2>/dev/null || true
 
-ACHADOS=0; PERMITIDOS=0; IGNORADOS=0; SEM_DIGITO=0
+ACHADOS=0; PERMITIDOS=0; IGNORADOS=0
 while IFS= read -r lit; do
   [ -n "$lit" ] || continue
   # ORDEM INVERTIDA (laudo v2.3, bloqueador 7). Antes a heuristica de FORMA vinha primeiro e
@@ -208,9 +217,6 @@ while IFS= read -r lit; do
   # existem sem eles. LIMITE HONESTO: uma senha escolhida por humano so com letras escaparia;
   # nao e o formato de nenhum segredo deste projeto, e o custo de nao ter a regra e um
   # detector barulhento, que e como se perde a deteccao de verdade.
-  case "$lit" in *[0-9]*) : ;;
-    *) SEM_DIGITO=$((SEM_DIGITO+1)); IGNORADOS=$((IGNORADOS+1)); continue ;;
-  esac
   ENT=$(entropia "$lit")
   if awk -v e="$ENT" 'BEGIN{exit !(e<3.5)}'; then IGNORADOS=$((IGNORADOS+1)); continue; fi
   if awk -v e="$ENT" 'BEGIN{exit !(e<4.5)}'; then
@@ -237,7 +243,7 @@ for h in x-internal-secret authorization apikey x-api-key; do
   [ "$N" -gt 0 ] && echo "  $h: $N referencia(s)"
 done
 
-echo "== $ACHADOS achado(s), $PERMITIDOS permitido(s), $IGNORADOS ignorado(s) por ruido/entropia (destes, $SEM_DIGITO sem nenhum digito) =="
+echo "== $ACHADOS achado(s), $PERMITIDOS permitido(s), $IGNORADOS ignorado(s) por ruido/entropia =="
 
 # --baseline: congela o estado ANTES do push, para o pos-deploy ter contra o que comparar.
 if [ "$MODO" = baseline ]; then
@@ -271,10 +277,16 @@ if [ "$MODO" = baseline ]; then
     echo "achados=$ACHADOS"
     sed 's/^/achado=/' "$TMPD/achados.txt"
   } > "$ESTADO.parcial" 2>/dev/null
-  # gravacao atomica: baseline pela metade viraria referencia errada no pos-deploy
-  grep -q '^bundle_sha=' "$ESTADO.parcial" 2>/dev/null || { rm -f "$ESTADO.parcial"; echo "FALHA: nao consegui gravar o baseline em $ESTADO"; exit 3; }
-  chmod 0600 "$ESTADO.parcial" 2>/dev/null
-  mv -f "$ESTADO.parcial" "$ESTADO" 2>/dev/null || { rm -f "$ESTADO.parcial"; echo "FALHA: nao consegui publicar o baseline em $ESTADO"; exit 3; }
+  # mesma publicacao atomica dos outros escritores: o baseline do bundle e prova como
+  # qualquer outra, e pela metade vira referencia errada no --pos-deploy.
+  LIBPUB="$(dirname "$(readlink -f "$0")")/lib-publicar.sh"
+  if [ -r "$LIBPUB" ]; then
+    # shellcheck disable=SC1090
+    . "$LIBPUB"
+    publicar_atomico "$ESTADO" '^bundle_sha=' 0600       || { echo "FALHA ao publicar o baseline: $PUBLICAR_MOTIVO"; exit 3; }
+  else
+    rm -f "$ESTADO.parcial"; echo "FALHA: lib-publicar.sh ausente"; exit 3
+  fi
   echo "== baseline gravado em $ESTADO ($ACHADOS achado(s) conhecido(s)) =="
   exit 0
 fi
@@ -323,6 +335,30 @@ if [ "$MODO" = pos_deploy ]; then
   fi
   echo "== POS-DEPLOY APROVADO: conjunto de achados IDENTICO ao baseline ($ACHADOS), bundle mudou=$MUDOU =="
   echo "   (o P0-4 continua ABERTO — este teste prova que o deploy nao PIOROU, nao que esta resolvido)"
+  exit 0
+fi
+
+# --conferir-esperados: conjunto de achados IGUAL ao aprovado, nos dois sentidos.
+if [ "$MODO" = conferir ]; then
+  ESPERADOS="$(dirname "$(readlink -f "$0")")/bundle-esperados.txt"
+  [ -r "$ESPERADOS" ] || { echo "FALHA: $ESPERADOS ilegivel"; exit 3; }
+  grep -oE '^[a-f0-9]{64}' "$ESPERADOS" | LC_ALL=C sort -u > "$TMPD/esp.txt"
+  NOVOS_C=$(LC_ALL=C comm -13 "$TMPD/esp.txt" "$TMPD/achados.txt" | grep -c . || true)
+  SUMIU_C=$(LC_ALL=C comm -23 "$TMPD/esp.txt" "$TMPD/achados.txt" | grep -c . || true)
+  echo "-- conferencia contra os achados aprovados --"
+  echo "   aprovados: $(wc -l < "$TMPD/esp.txt")   encontrados: $ACHADOS"
+  if [ "$NOVOS_C" -gt 0 ]; then
+    echo "   $NOVOS_C achado(s) NOVO(S) no bundle publico:"
+    LC_ALL=C comm -13 "$TMPD/esp.txt" "$TMPD/achados.txt" | cut -c1-14 | sed 's/^/     /'
+    echo "== REPROVADO: literal nao aprovado no bundle publico =="; exit 1
+  fi
+  if [ "$SUMIU_C" -gt 0 ]; then
+    echo "   $SUMIU_C achado(s) aprovado(s) DESAPARECEU:"
+    LC_ALL=C comm -23 "$TMPD/esp.txt" "$TMPD/achados.txt" | cut -c1-14 | sed 's/^/     /'
+    echo "== REPROVADO: se foi corrigido, atualize bundle-esperados.txt; se nao, o detector leu outro arquivo =="
+    exit 1
+  fi
+  echo "== APROVADO: exatamente os $ACHADOS achado(s) aprovado(s), nenhum a mais nem a menos =="
   exit 0
 fi
 

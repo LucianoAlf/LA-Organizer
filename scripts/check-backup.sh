@@ -16,7 +16,8 @@
 # é backup: é arquivo.
 
 set -uo pipefail
-DEST=/opt/backups/la-organizer/db
+# DEST sobrescrevivel para os testes de linha do tempo (nunca em producao).
+DEST=${CHECK_BACKUP_DEST:-/opt/backups/la-organizer/db}
 TELEMETRY="$DEST/runs.jsonl"
 LIMITE_H=36
 
@@ -87,20 +88,66 @@ echo "[check-backup] baseline: ${#CATEGORIAS[@]}/${#CATEGORIAS[@]} categorias, v
 # so o drill responde isso, e a sentinela nunca exigia um. "Backup verde" sem drill aprovado
 # e a definicao de backup nao testado.
 # Janela de 8 dias porque o drill roda semanalmente no cron (tom-restore-drill).
-# DO DUMP DESTE RUN, nao "um drill recente qualquer" (laudo v2.3, bloqueador 6). A v2.3
-# procurava qualquer .drill aprovado nos ultimos 8 dias — entao o drill de segunda certificava
-# o backup de sexta, que pode ter nascido corrompido. Drill alheio nao prova nada sobre ESTE
-# conjunto. O atestado exigido e o do proprio artefato: <dump sem .dump>.drill.
-DRILL="$BASE.drill"
-if [ ! -f "$DRILL" ]; then
-  RECENTES=$(find "$DEST" -name '*.drill' -type f -mtime -8 2>/dev/null | wc -l)
-  grito "sem drill para ESTE backup ($(basename "$DRILL") ausente; $RECENTES drill(s) de outros dumps nos ultimos 8 dias) — integro, recuperacao NAO comprovada"
+# DOIS CONTRATOS SEPARADOS (laudo v2.4, bloqueador 6).
+#
+# A v2.4 exigia o drill DO DUMP DESTE RUN. Isso confundiu duas perguntas diferentes e criou um
+# critico diario garantido: o backup das 06:00 de segunda nunca tem drill (o drill e semanal,
+# domingo 04:30), entao a sentinela gritava CRITICO todo dia da semana — alarme que toca sempre
+# e alarme que ninguem le, e ai o dia em que ele estiver certo passa junto.
+#
+#   Contrato A — INTEGRIDADE E FRESCOR (acima): o backup MAIS RECENTE existe, esta completo,
+#                bate hash e tem idade dentro do limite. E sobre o dump de hoje.
+#   Contrato B — RESTAURABILIDADE (aqui): existe um drill APROVADO dentro da janela, e os
+#                artefatos que ele diz ter certificado continuam intactos. E sobre a capacidade
+#                de recuperar, que nao se prova todo dia — se prova periodicamente.
+#
+# O drill continua amarrado ao dump exato que testou (por hash). O que muda e que esse dump
+# NAO precisa ser o mais novo. "Tenho backup integro hoje" e "ja provei que consigo restaurar"
+# sao afirmacoes distintas, e juntar as duas quebrava a primeira sem fortalecer a segunda.
+DRILL_MAX_DIAS=${DRILL_MAX_DIAS:-8}
+ULT_DRILL=""
+while IFS= read -r d; do
+  grep -q '^veredito=aprovado' "$d" 2>/dev/null && { ULT_DRILL="$d"; break; }
+done < <(find "$DEST" -name '*.drill' -type f -mtime "-$DRILL_MAX_DIAS" 2>/dev/null | sort -r)
+
+if [ -z "$ULT_DRILL" ]; then
+  TODOS=$(find "$DEST" -name '*.drill' -type f 2>/dev/null | wc -l)
+  grito "nenhum restore drill APROVADO nos ultimos $DRILL_MAX_DIAS dias ($TODOS atestado(s) no total) — backup integro, recuperacao NAO comprovada"
 fi
-grep -q '^veredito=aprovado' "$DRILL" 2>/dev/null   || grito "o drill deste backup existe mas NAO esta aprovado: $(sed -n 's/^veredito=//p' "$DRILL" | head -1)"
-# O drill tem que ter rodado com o formato de baseline atual, senao ele comparou outra coisa.
-DV=$(sed -n 's/^baseline_versao=//p' "$DRILL" | head -1)
-[ -z "$DV" ] || [ "$DV" = "${BASELINE_VERSAO:-1}" ]   || grito "drill deste backup rodou com baseline versao $DV, atual e ${BASELINE_VERSAO:-1}"
-echo "[check-backup] drill DESTE backup: aprovado ($(basename "$DRILL"))"
+
+# ATESTADO AMARRADO AOS ARTEFATOS (bloqueador 8). "Aprovado" sem dizer aprovado sobre O QUE
+# nao vale: trocar o dump, o baseline ou o manifesto depois do drill deixaria o atestado
+# valendo para um conjunto que ja nao existe. Cada hash gravado e reconferido contra o arquivo.
+DBASE="${ULT_DRILL%.drill}"
+campo_drill() { sed -n "s/^$1=//p" "$ULT_DRILL" | head -1; }
+D_ID=$(campo_drill backup_id); D_DUMP=$(campo_drill dump_sha256)
+D_BASE=$(campo_drill baseline_sha256); D_MAN=$(campo_drill manifest_sha256)
+D_VER=$(campo_drill baseline_versao); D_TS=$(campo_drill ts)
+
+# Campos obrigatorios primeiro, e a mensagem diz QUAIS faltam — um atestado de versao antiga
+# tem alguns e nao outros, e "drill diz certificar ''" nao explica nada a quem le as 3 da manha.
+FALTANDO=""
+[ -n "$D_ID" ]   || FALTANDO="$FALTANDO backup_id"
+[ -n "$D_DUMP" ] || FALTANDO="$FALTANDO dump_sha256"
+[ -n "$D_BASE" ] || FALTANDO="$FALTANDO baseline_sha256"
+[ -n "$D_MAN" ]  || FALTANDO="$FALTANDO manifest_sha256"
+[ -n "$D_VER" ]  || FALTANDO="$FALTANDO baseline_versao"
+[ -n "$D_TS" ]   || FALTANDO="$FALTANDO ts"
+[ -z "$FALTANDO" ]   || grito "drill $(basename "$ULT_DRILL") sem o(s) campo(s):$FALTANDO — gerado por versao antiga, nao amarra o atestado a artefato nenhum. Rode restore-drill.sh de novo."
+[ "$D_ID" = "$(basename "$DBASE")" ]   || grito "drill diz certificar '$D_ID' mas esta ao lado de '$(basename "$DBASE")'"
+[ "$D_VER" = "${BASELINE_VERSAO:-1}" ]   || grito "drill rodou com baseline versao $D_VER, atual e ${BASELINE_VERSAO:-1}"
+
+for par in "dump:$D_DUMP" "baseline:$D_BASE" "manifest:$D_MAN"; do
+  ext=${par%%:*}; esp=${par#*:}
+  arq="$DBASE.$ext"
+  [ "$ext" = manifest ] && [ "$esp" = ausente ] && continue
+  [ -f "$arq" ] || grito "artefato certificado pelo drill sumiu: $(basename "$arq")"
+  real=$(sha256sum "$arq" | cut -d' ' -f1)
+  [ "$real" = "$esp" ]     || grito "$(basename "$arq") MUDOU depois do drill (sha no atestado != sha no disco) — a certificacao nao vale mais"
+done
+
+IDADE_DRILL=$(( ( $(date +%s) - $(stat -c %Y "$ULT_DRILL") ) / 86400 ))
+echo "[check-backup] restauracao comprovada: $(basename "$ULT_DRILL") (${IDADE_DRILL}d, limite ${DRILL_MAX_DIAS}d, artefatos conferidos)"
 
 # 5. checksums do conjunto
 ( cd "$(dirname "$ARQ")" && sha256sum -c --quiet "$BASE.sha256" ) 2>/dev/null \
@@ -109,7 +156,7 @@ echo "[check-backup] drill DESTE backup: aprovado ($(basename "$DRILL"))"
 # A sentinela roda de hora em hora e alguém olha para ela. Como não há MTA neste host, ela
 # é o único lugar onde a falha da varredura (que roda a cada 15 min) pode ser NOTADA.
 # Sem isto, um scanner reprovando ficava enterrado no backup.log e ninguém saberia.
-ESTADO=/opt/backups/la-organizer/varredura-status
+ESTADO=${CHECK_BACKUP_VARREDURA:-/opt/backups/la-organizer/varredura-status}
 if [ -f "$ESTADO" ]; then
   V=$(sed -n 's/^veredito=//p' "$ESTADO"); E=$(sed -n 's/^epoch=//p' "$ESTADO")
   IDADE_MIN=$(( ( $(date +%s) - ${E:-0} ) / 60 ))

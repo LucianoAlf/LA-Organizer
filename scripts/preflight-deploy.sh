@@ -28,9 +28,11 @@ SNAP=1; [ "${2:-}" = "--sem-snapshot" ] && SNAP=0
 cd "$(dirname "$(readlink -f "$0")")/.." || exit 2
 
 GUARDAS=(alertar backup-db backup-secrets check-backup conter-permissoes lib-baseline-queries
-         lib-pgconn patch-crontab pos-deploy-modos preflight-deploy restaurar-guardas
-         restaurar-modos restore-drill smoke-pos-aplicacao teste-negativo-dataapi
-         teste-negativo-permissoes verificar-bundle)
+         lib-pgconn lib-publicar lib-seq-compare patch-crontab pos-deploy-modos preflight-deploy
+         restaurar-guardas restaurar-modos restore-drill smoke-pos-aplicacao
+         teste-alertar-mock teste-bundle-mock teste-deploy-lock-sha teste-negativo-dataapi
+         teste-negativo-permissoes teste-publicar teste-sentinela-timeline teste-seq-compare
+         verificar-bundle)
 GUARDAS_ESPERADOS=$(( ${#GUARDAS[@]} + 3 ))   # +3 = allowlist, esperados, vermelhos-conhecidos
 DEST=${GUARDAS_DIR:-/opt/backups/la-organizer/guardas}
 PROBLEMAS=0

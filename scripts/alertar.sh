@@ -1,51 +1,46 @@
 #!/bin/bash
-# alertar.sh — canal de alerta EXTERNO para os guardas do safety gate. WhatsApp, via UAZAPI.
+# alertar.sh — canal de alerta EXTERNO dos guardas do safety gate. WhatsApp, via UAZAPI.
 #
-# POR QUE EXISTE: este host nao tem MTA nem MAILTO, entao tudo que o cron imprime morre dentro
-# do backup.log. A sentinela DETECTAVA a falha e ninguem era avisado — deteccao sem notificacao
-# e meia-vigilancia.
+# POR QUE EXISTE: o host nao tem MTA nem MAILTO; tudo que o cron imprime morre no backup.log.
+# A sentinela DETECTAVA a falha e ninguem era avisado — deteccao sem notificacao e meia
+# vigilancia.
 #
-# POR QUE WHATSAPP, E NAO TELEGRAM (correcao de 28/08). A primeira versao mandava para o
-# Telegram porque o HOST ja tinha um canal provado ali — o dos monitores de infra
-# (`check-agentes.py`, `check-openai-billing.py`). Foi raciocinio errado: "existe um canal
-# neste servidor" nao e o mesmo que "existe um canal que a pessoa OLHA". O TOM nao fala
-# Telegram; ele fala WhatsApp. Alerta que chega onde ninguem le e igual a nao ter alerta — com
-# o agravante de parecer que tem. A sentinela chegou a depender desse canal.
+# POR QUE WHATSAPP E NAO TELEGRAM (28/08): a primeira versao usou o Telegram dos monitores de
+# infra do host. Raciocinio errado — "existe canal neste servidor" nao e "existe canal que a
+# pessoa OLHA". O TOM fala WhatsApp. Alerta que chega onde ninguem le e igual a nao ter
+# alerta, com o agravante de parecer que tem.
 #
-# DESTINO: TOM_ALERTA_WA_JID — o espelho WhatsApp do grupo de engenharia do Alf e do Hugo
-# (o mesmo TOM_OPS_GROUP_ID onde o agente de governanca publica). E o canal de operacao,
-# isento de quiet hours por desenho. Alerta de backup/varredura no grupo financeiro da Rose
-# seria ruido para quem nao pode agir nele.
+# ---------------------------------------------------------------------------------------
+# SEGREDO FORA DO argv (v2.5). A versao anterior passava token, destino e TEXTO na linha de
+# comando do curl. `/proc/<pid>/cmdline` e legivel por qualquer usuario do host — e este host
+# tem 8 contas. Durante cada envio, o token da instancia UAZAPI e o conteudo do alerta ficavam
+# expostos a quem desse um `ps`. Agora tudo vai por `curl -K <config>`, com config e corpo em
+# arquivos 0600 dentro de um diretorio 0700 em /run, criados sob `umask 077` e apagados no
+# trap. O argv passa a conter apenas `-m N -o ... -w ... -K <caminho>`.
 #
-# ATENCAO ao configurar: TOM_OPS_GROUP_ID e um UUID de `work_groups` (grupo do APP), nao um
-# endereco de WhatsApp. Mandar esse UUID no campo `number` da UAZAPI nao da erro — da
-# TIMEOUT, tres vezes, e parece problema de rede. O que a UAZAPI quer e o JID do espelho
-# (`...@g.us`), que mora em `work_groups.wa_group_jid` e foi copiado para o .env como
-# TOM_ALERTA_WA_JID para que este script nao dependa do banco para conseguir gritar.
-#
-# NAO DEPENDE DO ENGINE. Fala direto com a UAZAPI por curl, porque este script e acionado
-# justamente quando algo esta quebrado — inclusive, possivelmente, o proprio TOM.
+# SUCESSO SEMANTICO (v2.5). HTTP 200 nao e entrega: a UAZAPI responde 200 com corpo de erro.
+# Antes isso valia como enviado, a marca anti-spam era gravada, e o proximo alerta do mesmo
+# assunto era SUPRIMIDO — falha silenciosa que se auto-perpetua. Agora exige id de mensagem no
+# corpo e ausencia de campo de erro; a marca so e gravada depois disso.
 #
 # Uso:  ./alertar.sh [--chave K] [--intervalo-min N] "texto"   envia
-#       ./alertar.sh --testar-canal                            so valida, NAO envia nada
-#
-# NADA de valor de credencial e impresso. Toda saida da API passa por `sanitizar()` antes de
-# aparecer: em 28/08 eu imprimi o token da instancia ao inspecionar /instance/status a mao, e
-# essa e a razao desta funcao existir aqui dentro em vez de virar cuidado do chamador.
+#       ./alertar.sh --testar-canal                            so valida, NAO envia
+# Env:  ALERTAR_URL_BASE  sobrescreve a URL (usado pelos testes com mock; nunca em producao)
 
 set -uo pipefail
+umask 077                      # tudo que este script criar nasce so para o dono
 ENV_TOM=${TOM_ENV_FILE:-/opt/LA-Organizer/.env}
 
-# Redige token (uuid), header `token:` e qualquer coisa com cara de credencial longa.
+# Redige o que nunca deve aparecer: uuid (token da instancia), campo "token" de JSON, literal
+# longo e JID/telefone. TODA saida da API passa por aqui antes de virar diagnostico.
 sanitizar() {
   sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<REDACTED>/g;
           s/("token"[[:space:]]*:[[:space:]]*")[^"]*/\1<REDACTED>/g;
-          s/[A-Za-z0-9_-]{40,}/<REDACTED>/g'
+          s/[A-Za-z0-9_-]{40,}/<REDACTED>/g;
+          s/[0-9]{10,}(@[a-z.]+)?/<DESTINO>/g'
 }
 
-# Le UMA variavel do .env sem `source` e sem `eval`: o .env tem dezenas de segredos e
-# carrega-lo inteiro no ambiente deste script exporia tudo a qualquer subprocesso.
-ler_env() {
+ler_env() {   # le UMA variavel, sem `source` e sem `eval`: o .env tem dezenas de segredos
   [ -r "$ENV_TOM" ] || { echo "alertar: $ENV_TOM ilegivel" >&2; return 1; }
   local v
   v=$(grep -m1 "^[[:space:]]*$1[[:space:]]*=" "$ENV_TOM" \
@@ -54,32 +49,53 @@ ler_env() {
   printf '%s' "$v"
 }
 
-URL=$(ler_env UAZAPI_URL)          || exit 2
-TOKEN=$(ler_env UAZAPI_TOKEN)      || exit 2
-GRUPO=$(ler_env TOM_ALERTA_WA_JID) || exit 2
+URL=${ALERTAR_URL_BASE:-$(ler_env UAZAPI_URL)} || exit 2
+TOKEN=$(ler_env UAZAPI_TOKEN)                  || exit 2
+GRUPO=$(ler_env TOM_ALERTA_WA_JID)             || exit 2
 case "$GRUPO" in *@g.us|*@s.whatsapp.net) : ;;
   *) echo "alertar: TOM_ALERTA_WA_JID nao parece endereco de WhatsApp (esperado ...@g.us)" >&2; exit 2 ;;
 esac
+# Mascara usada em TODO diagnostico. O JID nunca e impresso inteiro.
+DEST_MASC="...$(printf '%s' "$GRUPO" | tail -c 9)"
+
+TMPD=$(mktemp -d /run/alertar.XXXXXX 2>/dev/null || mktemp -d) || { echo "alertar: mktemp falhou" >&2; exit 2; }
+chmod 0700 "$TMPD"; trap 'rm -rf "$TMPD"' EXIT INT TERM
+
+# Config do curl: url, headers e corpo saem do argv e vao para arquivo 0600.
+escrever_config() {  # <rota> [arquivo_corpo]
+  local cfg="$TMPD/curl.cfg"
+  : > "$cfg"; chmod 0600 "$cfg"
+  {
+    printf 'url = "%s%s"\n' "${URL%/}" "$1"
+    printf 'header = "token: %s"\n' "$TOKEN"
+    printf 'silent\nshow-error\n'
+    if [ -n "${2:-}" ]; then
+      printf 'header = "Content-Type: application/json"\n'
+      printf 'data-binary = "@%s"\n' "$2"
+    fi
+  } >> "$cfg"
+  printf '%s' "$cfg"
+}
 
 if [ "${1:-}" = "--testar-canal" ]; then
-  # /instance/status e LEITURA: prova que a instancia esta conectada sem mandar mensagem.
-  RESP=$(curl -s -m 15 -H "token: $TOKEN" "$URL/instance/status")
-  ST=$(sed -E 's/.*"status"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' <<<"$RESP")
-  NOME=$(sed -E 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' <<<"$RESP")
-  if [ "$ST" = connected ]; then
+  CFG=$(escrever_config /instance/status)
+  HTTP=$(curl -m 15 -o "$TMPD/st.json" -w '%{http_code}' -K "$CFG" 2>"$TMPD/err")
+  ST=$(sed -E 's/.*"status"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' "$TMPD/st.json" 2>/dev/null)
+  NOME=$(sed -E 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/' "$TMPD/st.json" 2>/dev/null)
+  if [ "$HTTP" = 200 ] && [ "$ST" = connected ]; then
     echo "alertar: instancia CONECTADA ($NOME)"
-    echo "alertar: destino=${GRUPO:0:6}…(mascarado)"
+    echo "alertar: destino=$DEST_MASC"
     echo "alertar: NENHUMA mensagem foi enviada"
     exit 0
   fi
-  echo "alertar: instancia NAO conectada (status=${ST:-desconhecido}): $(cut -c1-160 <<<"$RESP" | sanitizar)" >&2
+  echo "alertar: canal REPROVADO (http=${HTTP:-sem-resposta} status=${ST:-?}): $(cut -c1-160 "$TMPD/st.json" 2>/dev/null | sanitizar)" >&2
   exit 1
 fi
 
-# ANTI-SPAM. A varredura roda a cada 15 min e a sentinela de hora em hora: uma falha
-# persistente viraria ~120 mensagens/dia num grupo de pessoas, e alerta que satura vira alerta
-# ignorado — o oposto do que ele existe para fazer. Com --chave, o mesmo assunto so reenvia
-# depois de --intervalo-min. O estado fica em /run: reinicio limpa e o alerta volta.
+# ANTI-SPAM por CHAVE + DESTINO. A varredura roda a cada 15 min e a sentinela de hora em hora:
+# uma falha persistente viraria ~120 mensagens/dia num grupo de pessoas, e alerta que satura
+# vira alerta ignorado. O nome da marca e o hash de (chave|destino): trocar o destino NAO
+# herda a supressao do destino antigo, e o JID nao aparece em /run para quem listar.
 CHAVE=""; INTERVALO=60
 while [ $# -gt 1 ]; do
   case "$1" in
@@ -88,8 +104,10 @@ while [ $# -gt 1 ]; do
     *) break ;;
   esac
 done
+MARCA=""
 if [ -n "$CHAVE" ]; then
-  MARCA="/run/alertar-$(printf '%s' "$CHAVE" | tr -c 'A-Za-z0-9_.-' '_')"
+  ID=$(printf '%s|%s' "$CHAVE" "$GRUPO" | sha256sum | cut -c1-16)
+  MARCA="/run/alertar-$ID"
   if [ -f "$MARCA" ]; then
     ULT=$(cat "$MARCA" 2>/dev/null || echo 0)
     MIN=$(( ( $(date +%s) - ${ULT:-0} ) / 60 ))
@@ -101,34 +119,54 @@ fi
 
 TEXTO=${1:?uso: $0 [--chave K] [--intervalo-min N] "texto" | --testar-canal}
 
-# RETRY com a MESMA regra do engine (src/services/whatsapp.js): a UAZAPI da 404 intermitente
-# no /send/text ao resolver o chat, e hiberna devolvendo 503. Transitorio (404/408/429/5xx/sem
-# resposta) merece nova tentativa; 400/401/403 e payload ou token invalido — repetir nao muda.
-# PACIENCIA MAIOR QUE A DO ENGINE (v2.4). Medido em 28/08: o /send/text para GRUPO ficou
-# ~15 min sem responder byte nenhum (6 tentativas de 20 a 60 s), enquanto GET /instance/status,
-# POST /group/info com o MESMO jid e /send/text para NUMERO respondiam em ~1 s. Depois voltou
-# sozinho, em 2,1 s. E a intermitencia conhecida da UAZAPI.
-# Para uma mensagem de conversa, desistir rapido e correto — o TOM tenta de novo no proximo
-# turno. Para ALERTA nao: a mensagem perdida e justamente a que avisaria que o backup parou.
-# 5 tentativas com backoff 3/6/12/24s (~45 s no total) cabem folgado no cron e cobrem a
-# janela curta. Se ainda assim falhar, `alerta=falhou` vai para o estado e a sentinela grita.
-TENTATIVAS=5
+# Corpo em ARQUIVO, nunca no argv. python3 escapa JSON corretamente; sem ele, fallback que
+# escapa barra, aspas e quebras de linha.
+CORPO="$TMPD/body.json"; : > "$CORPO"; chmod 0600 "$CORPO"
+if command -v python3 >/dev/null 2>&1; then
+  printf '%s' "$TEXTO" | python3 -c 'import json,sys; sys.stdout.write(json.dumps({"number": sys.argv[1], "text": sys.stdin.read(), "readchat": True}))' "$GRUPO" > "$CORPO" 2>/dev/null
+fi
+if [ ! -s "$CORPO" ]; then
+  printf '{"number":"%s","text":"%s","readchat":true}' "$GRUPO" \
+    "$(printf '%s' "$TEXTO" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s%s", (NR>1?"\\n":""), $0}')" > "$CORPO"
+fi
+
+# Sucesso SEMANTICO: id de mensagem presente E nenhum campo de erro. HTTP 200 com
+# {"error":...} reprova — era o caso que gravava a marca anti-spam por engano e silenciava os
+# alertas seguintes do mesmo assunto.
+resposta_ok() {  # <arquivo>
+  local f=$1
+  grep -qE '"(id|messageid)"[[:space:]]*:[[:space:]]*"[^"]+"' "$f" 2>/dev/null || return 1
+  grep -qiE '"(error|erro|message_error)"[[:space:]]*:' "$f" 2>/dev/null && return 1
+  return 0
+}
+
+# RETRY mais paciente que o do engine: medido em 28/08, o /send/text para grupo ficou ~15 min
+# sem responder e depois voltou em 2,1 s (intermitencia da UAZAPI). Para conversa, desistir
+# rapido e correto — o TOM tenta no proximo turno. Para alerta nao: a mensagem perdida e
+# justamente a que avisaria que o backup parou.
+TENTATIVAS=${ALERTAR_TENTATIVAS:-5}
+ESPERA_BASE=${ALERTAR_BACKOFF_SEG:-3}
+CFG=$(escrever_config /send/text "$CORPO")
 for i in $(seq 1 "$TENTATIVAS"); do
-  CORPO=$(printf '%s' "$TEXTO" | python3 -c 'import json,sys; print(json.dumps({"number": sys.argv[1], "text": sys.stdin.read(), "readchat": True}))' "$GRUPO" 2>/dev/null) \
-    || CORPO=$(printf '{"number":"%s","text":"%s","readchat":true}' "$GRUPO" "$(printf '%s' "$TEXTO" | sed 's/\\/\\\\/g; s/"/\\"/g')")
-  HTTP=$(curl -s -m 25 -o /tmp/.alertar.$$ -w '%{http_code}' \
-         -X POST -H "token: $TOKEN" -H 'Content-Type: application/json' \
-         -d "$CORPO" "$URL/send/text")
+  HTTP=$(curl -m "${ALERTAR_TIMEOUT_SEG:-25}" -o "$TMPD/resp.json" -w '%{http_code}' -K "$CFG" 2>"$TMPD/err")
   RC=$?
-  RESP=$(cat /tmp/.alertar.$$ 2>/dev/null); rm -f /tmp/.alertar.$$
   case "$HTTP" in
-    200|201) echo "alertar: enviado (destino ${GRUPO:0:6}…)"
-             [ -n "$CHAVE" ] && { date +%s > "$MARCA" 2>/dev/null; chmod 0600 "$MARCA" 2>/dev/null; }
-             exit 0 ;;
-    400|401|403) echo "alertar: FALHA definitiva HTTP $HTTP: $(cut -c1-200 <<<"$RESP" | sanitizar)" >&2; exit 1 ;;
-    *) echo "alertar: tentativa $i/$TENTATIVAS falhou (http=${HTTP:-sem-resposta} curl=$RC): $(cut -c1-160 <<<"$RESP" | sanitizar)" >&2
-       [ "$i" -lt "$TENTATIVAS" ] && sleep $(( 3 * (2 ** (i - 1)) )) ;;
+    200|201)
+      if resposta_ok "$TMPD/resp.json"; then
+        # marca SO depois da confirmacao semantica
+        [ -n "$MARCA" ] && { date +%s > "$MARCA" 2>/dev/null; chmod 0600 "$MARCA" 2>/dev/null; }
+        echo "alertar: entregue (destino $DEST_MASC)"
+        exit 0
+      fi
+      echo "alertar: HTTP $HTTP mas a resposta NAO confirma entrega: $(cut -c1-200 "$TMPD/resp.json" | sanitizar)" >&2
+      ;;
+    400|401|403)
+      echo "alertar: FALHA definitiva HTTP $HTTP: $(cut -c1-200 "$TMPD/resp.json" 2>/dev/null | sanitizar)" >&2
+      exit 1 ;;
+    *)
+      echo "alertar: tentativa $i/$TENTATIVAS (http=${HTTP:-sem-resposta} curl=$RC): $(head -c 160 "$TMPD/err" 2>/dev/null | sanitizar)" >&2 ;;
   esac
+  [ "$i" -lt "$TENTATIVAS" ] && sleep $(( ESPERA_BASE * (2 ** (i - 1)) ))
 done
-echo "alertar: FALHA no envio apos $TENTATIVAS tentativas" >&2
+echo "alertar: FALHA — $TENTATIVAS tentativas sem entrega confirmada (destino $DEST_MASC)" >&2
 exit 1

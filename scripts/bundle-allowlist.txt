@@ -44,6 +44,23 @@ f423747445e8d214a8837ddcdf83820cb30a5f1861c1e0f08b4aa863829c26b2  # code: apos "
 #    fora deste pacote. Este hash fica aqui porque a chave e publica por construcao, nao
 #    porque o projeto dela esteja provado seguro.
 
+# --- Fragmentos de CÓDIGO minificado, não literais (v2.5) ---------------------------------
+# A v2.4 filtrava estes com a regra "sem nenhum dígito = não é credencial". O laudo derrubou a
+# premissa e está certo: segredo NÃO é obrigado a ter dígito. Regra ampla que descarta uma
+# classe inteira é bypass esperando acontecer — então eles voltam a ser examinados e são
+# classificados AQUI, um a um, por hash.
+#
+# O que são: o extrator casa de uma aspa que FECHA uma string até a aspa que ABRE a seguinte.
+# Em JS minificado não há espaços entre elas, então o trecho no meio é código. O contexto de
+# cada um está anotado — foi assim que classifiquei, sem imprimir o valor.
+#
+# ⚠️ Estes hashes MUDAM quando as libs são reconstruídas (nomes minificados mudam). Quando
+#    isso acontecer eles voltam como achado não classificado — e isso é o comportamento certo:
+#    obriga a reclassificar em vez de confiar numa regra que já provou ser furada.
+c6bc5480994a0ab13ed7c25acd10ff7f5b87686f524c1051feb9256e189849e3  # index-*.js, 47 chars, 20 distintos. Contexto: `...!==t)&&(n==null?t.defaultValue=""` … `""+n&&(t.defaultVa` — React DOM, entre duas strings vazias adjacentes.
+08fd4de1d0d45eb0b4f76151c528079333f7a1f2f1eea6f0c274fcbd0422c22e  # CartesianChart-*.js, 53 chars, 19 distintos. Contexto: `return t==="axis"?r==="click"` … `"click"?e.itemInte` — ternário da lib de gráficos.
+2c4f2f7cc4c6fe14e37b7eaf2df8aaf4b7a72806dc3eef5852da39b3795e84de  # CartesianChart-*.js, 69 chars, 22 distintos. Contexto: `n=Jr(e);return t==="axis"?r==="hover"` … `"hover"?n.itemInte` — mesmo ternário, ramo hover.
+
 # =========================================================================================
 # NÃO ALLOWLISTADO — É O P0-4
 #
