@@ -236,7 +236,11 @@ else
     while IFS= read -r linha; do
       [ -n "$linha" ] || continue
       nome=${linha%%:*}
-      obt=$(q "select coalesce(last_value::text,'') || ':' || (last_value is not null)::text from pg_sequences where schemaname='public' and sequencename='$nome'" 2>/dev/null | tr -d '[:space:]')
+      # mesma correcao do baseline: is_called vem da RELATION, nao de last_value is not null.
+      obt=$(q "select coalesce((xpath('/row/last_value/text()',q.x))[1]::text,'') || ':' || "
+             "coalesce((xpath('/row/is_called/text()',q.x))[1]::text,'false') "
+             "from pg_sequences s, lateral (select query_to_xml(format('select last_value, is_called from %I.%I', s.schemaname, s.sequencename),false,true,'') as x) q "
+             "where s.schemaname='public' and s.sequencename='$nome'" 2>/dev/null | tr -d '[:space:]')
       seq_verificar "$linha" "$obt"; rc=$?
       case $rc in
         0) SEQ_OK=$((SEQ_OK+1)) ;;

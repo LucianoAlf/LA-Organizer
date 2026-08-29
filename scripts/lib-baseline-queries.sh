@@ -59,14 +59,15 @@ BASELINE_QUERIES=(
   # Mesma logica para TABELA: `grants` acima le information_schema.role_table_grants, que NAO
   # mostra PUBLIC nem o dono. relacl mostra os dois.
   "acl_tabelas|select c.relname||'|owner='||pg_get_userbyid(c.relowner)||'|acl='||coalesce(array_to_string(c.relacl,','),'DEFAULT_SEM_GRANT') from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind in ('r','v','m')"
-  # ESTADO DAS SEQUENCES (laudo v2.3): `sequences` acima compara nome e tipo — nao o VALOR.
-  # Uma sequence restaurada zerada passava. NAO entra na comparacao por identidade: entre o
-  # dump e o baseline (~15 s) o TOM pode avancar sequences, o que daria falso vermelho. E
-  # comparada com a mesma regra assimetrica das ancoras de dados: restaurado <= baseline.
-  # is_called incluido (v3): `pg_sequences.last_value` e NULO enquanto a sequence nunca foi
-  # lida — ou seja, NULO == is_called false. Distinguir isso de `0` importa: uma sequence
-  # restaurada com is_called errado entrega o MESMO numero duas vezes.
-  "sequences_estado|select sequencename||':'||coalesce(last_value::text,'0')||':called='||(last_value is not null)::text from pg_sequences where schemaname='public'"
+  # is_called REAL (laudo v2.6, bloqueador 6). A v2.6 usava `(last_value is not null)` como
+  # se fosse is_called. Nao e: `pg_sequences.last_value` e NULO so enquanto a sequence nunca
+  # foi lida, mas uma sequence PODE ter last_value preenchido e is_called=false -- e o
+  # resultado de `setval(seq, n, false)`. Nesse estado o proximo nextval devolve n de novo.
+  # Ou seja: uma restauracao com o MESMO numero e is_called invertido era declarada igual,
+  # e o primeiro insert depois dela colidiria com uma chave que ja existe.
+  # `is_called` so existe na propria relation da sequence, nao na view. `query_to_xml` com
+  # `format('%I.%I')` le a relation com o identificador citado com seguranca.
+  "sequences_estado|select s.sequencename||':'||coalesce((xpath('/row/last_value/text()',q.x))[1]::text,'0')||':called='||coalesce((xpath('/row/is_called/text()',q.x))[1]::text,'false') from pg_sequences s, lateral (select query_to_xml(format('select last_value, is_called from %I.%I', s.schemaname, s.sequencename),false,true,'') as x) q where s.schemaname='public' order by 1"
 
   "rls|select c.relname||':'||c.relrowsecurity::text||':'||c.relforcerowsecurity::text from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and c.relrowsecurity"
 

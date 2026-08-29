@@ -136,69 +136,107 @@ if [ ! -s "$CORPO" ]; then
     "$(printf '%s' "$TEXTO" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s%s", (NR>1?"\\n":""), $0}')" > "$CORPO"
 fi
 
-# SUCESSO SEMANTICO ESTRITO (laudo v2.5, bloqueador 6). A v2.5 aceitava QUALQUER corpo com um
-# campo `id` e sem campo de erro. Entao `{"id":"req_abc","status":"failed"}` -- id de
-# REQUISICAO com entrega falha -- passava como entregue, a marca anti-spam era gravada e os
-# alertas seguintes do mesmo assunto ficavam suprimidos. Falha silenciosa que se auto-perpetua,
-# que e a classe de bug que este canal existe para nao ter.
+# ACEITACAO NAO E ENTREGA (laudo v2.6, bloqueador 8). A v2.6 tratava `queued`/`pending` como
+# entregue, aceitava o booleano `true` como status e so olhava campos de erro no TOPO -- entao
+# um corpo com `id`, `status:"sent"` e `data.error` passava como enviado.
 #
-# O contrato agora e o shape documentado de mensagem da UAZAPI (o mesmo que o engine consome
-# em src/services/sent-message-id.js e uazapi-groups.js):
-#   1. corpo tem que ser JSON valido e OBJETO;
-#   2. nenhum campo de erro com valor;
-#   3. id de mensagem por uma das chaves conhecidas, string com >= 4 caracteres;
-#   4. se houver `status`, ele tem que estar na lista de entrega aceita -- DESCONHECIDO REPROVA;
-#   5. sem `status`, o corpo precisa parecer uma Message (>= 2 campos do schema), e nao um
-#      envelope com id de requisicao.
-# TROCA CONSCIENTE: um status novo e legitimo da UAZAPI passaria a reprovar. O custo disso e
-# barulho (retry + FALHA no log); o custo do inverso e silencio. A marca so e gravada no
-# sucesso, entao reprovar por engano nunca suprime o proximo alerta. Barulho se conserta.
-# Sem python3 nao da para parsear com rigor, e verificador leniente e o proprio bug: REPROVA.
-ALERTAR_STATUS_OK=${ALERTAR_STATUS_OK:-pending,sent,server_ack,delivery_ack,read,played,delivered,success,queued,ok,true}
-RESP_MOTIVO=""
-resposta_ok() {  # <arquivo>
+# Tres contratos separados agora:
+#   ENTREGUE  -> sent/delivered/delivery_ack/read/played. Mensagem saiu; marca anti-spam LONGA.
+#   ACEITO    -> pending/queued/accepted/server_ack/scheduled. A plataforma recebeu, ninguem
+#                confirmou entrega. Vale como tentativa bem-sucedida, mas a marca e CURTA
+#                (ALERTAR_INTERVALO_ACEITO min): se a mensagem morrer na fila, o proximo alerta
+#                do mesmo assunto sai logo, em vez de ficar suprimido por uma hora.
+#   qualquer outro (inclusive booleano e desconhecido) -> REPROVA.
+# Erro e procurado RECURSIVAMENTE: `data.error`, `result.errors[0]`, o que for.
+ALERTAR_STATUS_ENTREGUE=${ALERTAR_STATUS_ENTREGUE:-sent,delivered,delivery_ack,read,played}
+ALERTAR_STATUS_ACEITO=${ALERTAR_STATUS_ACEITO:-pending,queued,accepted,server_ack,scheduled}
+ALERTAR_INTERVALO_ACEITO=${ALERTAR_INTERVALO_ACEITO:-5}
+RESP_MOTIVO=""; RESP_CLASSE=""
+resposta_ok() {  # <arquivo> -> rc 0 e RESP_CLASSE em {ENTREGUE, ACEITO}
   local f=$1 saida rc
+  RESP_CLASSE=""
   if ! command -v python3 >/dev/null 2>&1; then
     RESP_MOTIVO="python3 ausente: sem parser nao ha verificacao estrita"; return 1
   fi
-  saida=$(python3 - "$f" "$ALERTAR_STATUS_OK" <<'PYFIM'
+  saida=$(python3 - "$f" "$ALERTAR_STATUS_ENTREGUE" "$ALERTAR_STATUS_ACEITO" <<'PYFIM'
 import json, sys
+
+CHAVES_ERRO = ("error", "erro", "errors", "message_error", "errormessage",
+               "error_message", "errordetail", "failure", "failed_reason")
+
+def procurar_erro(o, caminho="corpo"):
+    """Erro em QUALQUER profundidade. A v2.6 so olhava o topo, entao `data.error` passava."""
+    if isinstance(o, dict):
+        for k, v in o.items():
+            if k.lower() in CHAVES_ERRO and v not in (None, "", False, [], {}, 0):
+                return "%s.%s" % (caminho, k)
+        for k, v in o.items():
+            r = procurar_erro(v, "%s.%s" % (caminho, k))
+            if r:
+                return r
+    elif isinstance(o, list):
+        for i, v in enumerate(o):
+            r = procurar_erro(v, "%s[%d]" % (caminho, i))
+            if r:
+                return r
+    return None
+
 try:
-    with open(sys.argv[1], encoding='utf-8', errors='replace') as fh:
+    with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
         d = json.load(fh)
 except Exception as e:
-    print("corpo nao e JSON valido (%s)" % type(e).__name__); sys.exit(1)
+    print("REPROVA corpo nao e JSON valido (%s)" % type(e).__name__); raise SystemExit(1)
 if not isinstance(d, dict):
-    print("corpo JSON nao e objeto (%s)" % type(d).__name__); sys.exit(1)
-for k in ("error", "erro", "errors", "message_error", "errorMessage", "error_message"):
-    if k in d and d[k] not in (None, "", False, [], {}, 0):
-        print("campo de erro presente no corpo: %s" % k); sys.exit(1)
+    print("REPROVA corpo JSON nao e objeto (%s)" % type(d).__name__); raise SystemExit(1)
+
+onde = procurar_erro(d)
+if onde:
+    print("REPROVA campo de erro presente em %s" % onde); raise SystemExit(1)
+
 def sub(k, kk):
     v = d.get(k)
     return v.get(kk) if isinstance(v, dict) else None
+
 cands = [d.get("messageid"), d.get("id"), d.get("message_id"),
          sub("key", "id"), sub("message", "id"), sub("data", "id")]
 mid = next((c for c in cands if isinstance(c, str) and len(c) >= 4), None)
 if not mid:
-    print("sem id de mensagem no corpo"); sys.exit(1)
-aceitos = {s.strip().lower() for s in sys.argv[2].split(",") if s.strip()}
+    print("REPROVA sem id de mensagem no corpo"); raise SystemExit(1)
+
+entregue = {s.strip().lower() for s in sys.argv[2].split(",") if s.strip()}
+aceito = {s.strip().lower() for s in sys.argv[3].split(",") if s.strip()}
 st = d.get("status", d.get("Status"))
+
+if isinstance(st, bool):
+    # `true` nao diz NADA sobre entrega: e a forma mais barata de um envelope parecer sucesso.
+    print("REPROVA status booleano (%s) nao e estado de entrega" % st); raise SystemExit(1)
+
 if st is not None:
     s = str(st).strip().lower()
-    if s not in aceitos:
-        print("status '%s' nao esta na lista de entrega aceita" % s[:40]); sys.exit(1)
-    print("entrega confirmada (status=%s)" % s); sys.exit(0)
+    if s in entregue:
+        print("ENTREGUE status=%s" % s); raise SystemExit(0)
+    if s in aceito:
+        print("ACEITO status=%s (plataforma aceitou; entrega NAO confirmada)" % s); raise SystemExit(0)
+    print("REPROVA status '%s' fora das listas de entrega e de aceite" % s[:40]); raise SystemExit(1)
+
 schema = ("fromMe", "fromme", "chatid", "chatId", "messageTimestamp", "owner",
           "sender", "messageType", "type", "isGroup", "wasSentByApi")
 sinais = [k for k in schema if k in d]
 if len(sinais) < 2:
-    print("corpo sem status e sem cara de mensagem (%d campo(s) do schema) - ambiguo" % len(sinais))
-    sys.exit(1)
-print("entrega confirmada (sem status, %d campos do schema)" % len(sinais)); sys.exit(0)
+    print("REPROVA corpo sem status e sem cara de mensagem (%d campo(s) do schema)" % len(sinais))
+    raise SystemExit(1)
+# sem status explicito, o maximo honesto e ACEITO: nada no corpo afirma entrega.
+print("ACEITO sem status, %d campos do schema (entrega NAO confirmada)" % len(sinais))
+raise SystemExit(0)
 PYFIM
 )
   rc=$?
-  RESP_MOTIVO=$saida
+  RESP_MOTIVO=${saida#* }
+  case "$saida" in
+    ENTREGUE*) RESP_CLASSE=ENTREGUE ;;
+    ACEITO*)   RESP_CLASSE=ACEITO ;;
+    *)         RESP_CLASSE="" ;;
+  esac
   return $rc
 }
 
@@ -215,9 +253,24 @@ for i in $(seq 1 "$TENTATIVAS"); do
   case "$HTTP" in
     200|201)
       if resposta_ok "$TMPD/resp.json"; then
-        # marca SO depois da confirmacao semantica
-        [ -n "$MARCA" ] && { date +%s > "$MARCA" 2>/dev/null; chmod 0600 "$MARCA" 2>/dev/null; }
-        echo "alertar: entregue (destino $DEST_MASC)"
+        # MARCA CURTA PARA "ACEITO" (laudo v2.6, bloqueador 8). Gravar a marca longa apos um
+        # `queued` silencia o assunto por uma hora com base numa mensagem que ainda pode
+        # morrer na fila. Entrega confirmada -> marca longa; so aceite -> marca curta.
+        if [ -n "$MARCA" ]; then
+          if [ "$RESP_CLASSE" = ENTREGUE ]; then
+            date +%s > "$MARCA" 2>/dev/null
+          else
+            # recua o carimbo para que a supressao dure so ALERTAR_INTERVALO_ACEITO minutos
+            echo $(( $(date +%s) - (INTERVALO - ALERTAR_INTERVALO_ACEITO) * 60 )) > "$MARCA" 2>/dev/null
+          fi
+          chmod 0600 "$MARCA" 2>/dev/null
+        fi
+        if [ "$RESP_CLASSE" = ENTREGUE ]; then
+          echo "alertar: ENTREGUE (destino $DEST_MASC; $RESP_MOTIVO)"
+        else
+          echo "alertar: ACEITO pela plataforma, entrega NAO confirmada (destino $DEST_MASC; $RESP_MOTIVO)"
+          echo "alertar: supressao curta de ${ALERTAR_INTERVALO_ACEITO} min -- se nao chegar, o proximo alerta sai logo" >&2
+        fi
         exit 0
       fi
       echo "alertar: HTTP $HTTP mas a resposta NAO confirma entrega ($RESP_MOTIVO): $(cut -c1-200 "$TMPD/resp.json" | sanitizar)" >&2

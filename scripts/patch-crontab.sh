@@ -28,13 +28,67 @@ case "${1:-}" in
   *) echo "uso: $0 [--aplicar|--reverter]" >&2; exit 2 ;;
 esac
 
-ATUAL=$("$CRONTAB" -l 2>/dev/null || true)
+# LEITURA FAIL-CLOSED (laudo v2.6, bloqueador 2). Era `ATUAL=$(crontab -l 2>/dev/null || true)`:
+# QUALQUER falha de leitura virava "crontab vazio". Reproduzido com `crontab -l` saindo 42 -- o
+# script instalou so as linhas TOM, gravou um backup VAZIO e o rollback restaurou vazio. Perder
+# o crontab do host inteiro por causa de um `|| true`.
+#
+# "usuario sem crontab" e um fato legitimo (rc=1 com a mensagem conhecida). Qualquer outro rc,
+# ou rc=1 sem essa mensagem, e ERRO DE LEITURA: nao escreve, nao faz backup, nao reverte.
+CRON_ERR=$(mktemp "${TMPDIR:-/tmp}/cronread.XXXXXX") || { echo "FATAL: mktemp" >&2; exit 2; }
+trap 'rm -f "$CRON_ERR"' EXIT INT TERM
+# `set -e` mata a substituicao de comando ANTES de `RC_LER=$?` rodar -- o script saia com o
+# rc do crontab e a mensagem de diagnostico nunca era impressa. Ou seja: o proprio conserto
+# do fail-closed tinha o defeito que ele existe para impedir. errexit desligado so aqui.
+set +e
+ATUAL=$("$CRONTAB" -l 2>"$CRON_ERR"); RC_LER=$?
+set -e
+case "$RC_LER" in
+  0) : ;;
+  1)
+    # rc=1 e ambiguo: pode ser "sem crontab" (normal) ou erro. So a mensagem distingue.
+    if grep -qiE 'no crontab for|crontab: no crontab' "$CRON_ERR" 2>/dev/null || [ ! -s "$CRON_ERR" ]; then
+      ATUAL=""
+      echo "== usuario ainda nao tem crontab (rc=1, mensagem conhecida): partindo de vazio =="
+    else
+      echo "FATAL: crontab -l falhou (rc=1): $(head -1 "$CRON_ERR" | cut -c1-140)" >&2
+      echo "       leitura nao confiavel -- nao escrevo nem faco backup" >&2
+      exit 2
+    fi ;;
+  *)
+    echo "FATAL: crontab -l falhou (rc=$RC_LER): $(head -1 "$CRON_ERR" | cut -c1-140)" >&2
+    echo "       leitura nao confiavel -- nao escrevo nem faco backup" >&2
+    exit 2 ;;
+esac
 
 if [ "$REVERTER" = 1 ]; then
-  ULTIMO=$(find "$BKP_DIR" -name 'crontab-*.bak' -type f 2>/dev/null | sort | tail -1)
-  [ -n "$ULTIMO" ] || { echo "sem backup de crontab para reverter" >&2; exit 1; }
-  "$CRONTAB" "$ULTIMO"
-  echo "crontab revertido a partir de $ULTIMO"; exit 0
+  # ROLLBACK TRANSACIONAL (laudo v2.6, bloqueador 2). Antes o revert pegava "o backup mais
+  # novo do diretorio". Reproduzido: se `--aplicar` falha ANTES de criar o backup desta
+  # tentativa, o revert restaura o backup de OUTRA tentativa -- troca CURRENT por OLD e
+  # apresenta isso como rollback bem-sucedido.
+  # Agora o revert exige o caminho EXATO do backup criado por esta tentativa. Sem ele, nao
+  # restaura nada: "nao ha o que reverter" e um resultado honesto; restaurar o passado de
+  # outra tentativa nao e.
+  ALVO_BKP=${2:-}
+  if [ -z "$ALVO_BKP" ]; then
+    echo "FATAL: --reverter exige o caminho do backup desta tentativa." >&2
+    echo "       O --aplicar imprime 'backup=<caminho>'; passe exatamente esse valor." >&2
+    echo "       Sem backup desta tentativa, nada e restaurado (por desenho)." >&2
+    exit 2
+  fi
+  case "$ALVO_BKP" in
+    "$BKP_DIR"/crontab-*.bak) : ;;
+    *) echo "FATAL: caminho de backup fora de $BKP_DIR ou com nome inesperado: $ALVO_BKP" >&2; exit 2 ;;
+  esac
+  [ -f "$ALVO_BKP" ] || { echo "FATAL: backup desta tentativa nao existe: $ALVO_BKP -- nada a restaurar" >&2; exit 2; }
+  # backup vazio so e restauravel se ele PROVAR que o estado anterior era vazio
+  if [ ! -s "$ALVO_BKP" ] && ! grep -q '^# crontab-vazio-confirmado$' "$ALVO_BKP" 2>/dev/null; then
+    echo "FATAL: backup vazio e sem marca de vazio-confirmado: $ALVO_BKP" >&2
+    echo "       restaurar isso apagaria o crontab do host. Recusado." >&2
+    exit 2
+  fi
+  "$CRONTAB" "$ALVO_BKP" || { echo "FATAL: nao consegui restaurar $ALVO_BKP" >&2; exit 2; }
+  echo "crontab revertido a partir de $ALVO_BKP"; exit 0
 fi
 
 # 1) remove a linha QUEBRADA (aponta para script inexistente desde >= 20/08)
@@ -78,11 +132,27 @@ done
 # O alerta nao vai no cron, mas os dois agendados dependem dele para avisar.
 [ -x "$SCRIPTS/alertar.sh" ] || echo "AVISO: $SCRIPTS/alertar.sh sem +x — os crons vao detectar mas NAO avisar" >&2
 
-install -d -m 0700 "$BKP_DIR"
-printf '%s\n' "$ATUAL" > "$BKP_DIR/crontab-$(date -u +%Y%m%dT%H%M%SZ).bak"
-chmod 0600 "$BKP_DIR"/crontab-*.bak
+# BACKUP DESTA TENTATIVA, com identidade. O caminho e impresso como `backup=<caminho>` e e o
+# UNICO valor que o `--reverter` aceita. Assim o rollback nao pode restaurar o passado de
+# outra tentativa.
+install -d -m 0700 "$BKP_DIR" || { echo "FATAL: nao consegui criar $BKP_DIR" >&2; exit 2; }
+BKP="$BKP_DIR/crontab-$(date -u +%Y%m%dT%H%M%SZ).bak"
+if [ -n "$ATUAL" ]; then
+  printf '%s\n' "$ATUAL" > "$BKP" || { echo "FATAL: nao consegui gravar $BKP" >&2; exit 2; }
+else
+  # Vazio LEGITIMO (usuario sem crontab, ja confirmado na leitura). A marca distingue isso de
+  # "backup saiu vazio porque a leitura falhou" -- e o revert so restaura vazio com a marca.
+  printf '# crontab-vazio-confirmado\n' > "$BKP" || { echo "FATAL: nao consegui gravar $BKP" >&2; exit 2; }
+fi
+chmod 0600 "$BKP"
+# conferencia do proprio backup: backup que nao bate com o que foi lido nao serve de rollback
+if [ -n "$ATUAL" ] && ! diff -q <(printf '%s\n' "$ATUAL") "$BKP" >/dev/null 2>&1; then
+  rm -f "$BKP"; echo "FATAL: backup gravado diverge do crontab lido -- abortando sem escrever" >&2; exit 2
+fi
+echo "backup=$BKP"
 
-printf '%s\n' "$NOVO" | "$CRONTAB" -
+printf '%s\n' "$NOVO" | "$CRONTAB" - || {
+  echo "FATAL: nao consegui escrever o crontab. Reverta com: $0 --reverter $BKP" >&2; exit 1; }
 
 # Conferir de verdade: antes o `grep -E '# tom-(backup|check)'` nem casava a linha da
 # varredura (marcador `# tom-varrer-permissoes`) e, sendo so um `grep` de exibicao, nao
@@ -98,7 +168,7 @@ for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes
   fi
 done
 if [ "$FALTOU" -gt 0 ]; then
-  echo "FATAL: $FALTOU linha(s) esperada(s) nao entraram no crontab — restaure com --reverter" >&2
+  echo "FATAL: $FALTOU linha(s) esperada(s) nao entraram no crontab -- reverta com: $0 --reverter $BKP" >&2
   exit 1
 fi
 echo "=== 5/5 linhas confirmadas no crontab instalado ==="

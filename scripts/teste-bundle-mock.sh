@@ -30,6 +30,16 @@ S_LAZY='Lz8Kq3Wm5Rt7Yn2Bv4Cx6Zd9Fg1Hj0Pl3Sk5Aa8Ee2Ii4Oo6Uu7'
 S_SIBLING='Sb4Nv7Mq2Xr9Tk5Wz1Cd8Hj3Fy6Gp0Lu4Aa9Ee3Ii7Oo1Uu6Zz2'
 S_NIVEL4='N4d7Rk2Vp9Xm4Bt6Jq1Cw8Hz3Fs5Gy0Lv7Aa2Ee8Ii5Oo9Uu3Kk1'
 S_ROOTREL='Rr6Tv3Yb8Nm1Qx5Zk9Wd2Hp7Fj4Gc0Ls8Aa6Ee1Ii9Oo4Uu2Vv7'
+# BLOQUEADOR 5 (laudo v2.6): dois caminhos que a v2.6 achatava para o MESMO nome local.
+#   assets/a/b_c.js  ->  a_b_c.js
+#   assets/a_b/c.js  ->  a_b_c.js
+# O primeiro ocupava o nome; o segundo era descartado por 'ja baixei'. O segredo estava no
+# segundo e o scanner saia verde sem nunca te-lo lido.
+S_COLISAO='Cl5Qw8Zr2Nm7Tv4Bk9Xd1Hj6Fp3Gs0Ly8Aa4Ee6Ii2Oo9Uu5Vv1'
+# E a cadeia por BARE-NAME: index cita 'bare-Ee5.js' sem barra; ele resolve, e o FILHO dele
+# (referenciado normalmente) carrega o segredo. A v2.6 resolvia o bare DEPOIS do ponto fixo
+# e nunca extraia as referencias dele -- o filho ficava invisivel.
+S_FILHO_BARE='Fb7Rn3Kw9Zt5Mq1Xc8Vd4Hy6Gp2Ls0Aa3Ee7Ii9Oo1Uu4Jj8'
 
 mkdir -p "$D/www/assets"
 W="$D/www/assets"
@@ -41,6 +51,12 @@ W="$D/www/assets"
   printf 'const l=()=>import("./lazy-Xk9.js");\n'
   printf 'const s=()=>import("./sibling-Aa1.js");\n'
   printf 'const mapa={"pagina":"assets/rootrel-Bb2.js"};\n'
+  printf 'const c1=()=>import("./a/b_c.js");
+'
+  printf 'const c2=()=>import("./a_b/c.js");
+'
+  printf 'const bn="bare-Ee5.js";
+'
   for i in $(seq 1 9000); do echo "// enchimento para o bundle ter tamanho de app"; done
 } > "$W/index-mock.js"
 printf 'export const d="%s";\n' "$S_LAZY"    > "$W/lazy-Xk9.js"
@@ -50,6 +66,15 @@ printf 'export const d="%s";\n' "$S_LAZY"    > "$W/lazy-Xk9.js"
 printf 'const q=()=>import("./nivel4-Dd4.js");\nexport const x=1;\n' > "$W/nivel3-Cc3.js"
 printf 'export const segredo="%s";\n' "$S_NIVEL4" > "$W/nivel4-Dd4.js"
 printf 'export const r="%s";\n' "$S_ROOTREL"      > "$W/rootrel-Bb2.js"
+mkdir -p "$W/a" "$W/a_b"
+printf 'export const k="colisao-inocente";
+' > "$W/a/b_c.js"
+printf 'export const s="%s";
+' "$S_COLISAO"     > "$W/a_b/c.js"
+printf 'export const f=()=>import("./filho-Ff6.js");
+' > "$W/bare-Ee5.js"
+printf 'export const g="%s";
+' "$S_FILHO_BARE"  > "$W/filho-Ff6.js"
 printf '<html><script type="module" src="/assets/index-mock.js"></script></html>' > "$D/www/index.html"
 
 # bundle IRMAO com uma referencia que nao resolve
@@ -94,15 +119,17 @@ verifica "segredo em CHUNK LAZY"       "$S_LAZY"
 verifica "segredo em SIBLING ./x.js"   "$S_SIBLING"
 verifica "segredo no NIVEL 4 da cadeia" "$S_NIVEL4"
 verifica "segredo em ref root-relative" "$S_ROOTREL"
+verifica "segredo em caminho que COLIDIA (a_b/c.js)" "$S_COLISAO"
+verifica "segredo em FILHO de referencia bare-name"  "$S_FILHO_BARE"
 
-grep -q 'assets: 6 ' <<<"$SAIDA" && ok "varreu os 6 assets ate o ponto fixo" \
+grep -q 'assets: 10 ' <<<"$SAIDA" && ok "varreu os 10 assets ate o ponto fixo" \
   || falhou "nao chegou ao ponto fixo: $(grep -o 'assets: [0-9]*' <<<"$SAIDA")"
 grep -qE 'em [0-9]+ rodada' <<<"$SAIDA" && ok "relatorio diz em quantas rodadas fechou" \
   || falhou "relatorio nao informa as rodadas"
 [ "$RC" != 0 ] && ok "exit != 0 com segredo no bundle (rc=$RC)" || falhou "aprovou bundle com segredo"
 
 VAZOU=0
-for v in "$S_SEM_DIGITO" "$S_PONTUACAO" "$S_TEMPLATE" "$S_LAZY" "$S_SIBLING" "$S_NIVEL4" "$S_ROOTREL"; do
+for v in "$S_SEM_DIGITO" "$S_PONTUACAO" "$S_TEMPLATE" "$S_LAZY" "$S_SIBLING" "$S_NIVEL4" "$S_ROOTREL" "$S_COLISAO" "$S_FILHO_BARE"; do
   grep -qF "$v" <<<"$SAIDA" && VAZOU=$((VAZOU+1))
 done
 [ "$VAZOU" = 0 ] && ok "nenhum valor impresso no relatorio" || falhou "$VAZOU valor(es) vazaram na saida"

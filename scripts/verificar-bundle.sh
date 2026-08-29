@@ -84,6 +84,19 @@ chmod 0700 "$TMPD"; trap 'rm -rf "$TMPD"' EXIT INT TERM
 #      <meta name="commit" content="...">).
 # Nenhuma disponivel -> INDETERMINADO (rc 2). Nunca "aprovado".
 # `x-vercel-id` NAO serve e nao e usado: e id de REQUISICAO, nao de deployment.
+# sha do CONJUNTO de assets de uma URL arbitraria -- usado para amarrar o deployment ao que
+# a URL publica serve. Reusa a caminhada ate ponto fixo, entao mede a mesma coisa que o
+# scanner mede, e nao uma aproximacao.
+sha_do_bundle_em() {  # <url> -> imprime o sha do conjunto
+  local url=$1 salvo_url=$URL salvo_sha=$BUNDLE_SHA salvo_n=$N_ASSETS salvo_b=$BUNDLE_BYTES rc
+  URL=$url
+  baixar >/dev/null 2>&1; rc=$?
+  local novo=$BUNDLE_SHA
+  URL=$salvo_url; BUNDLE_SHA=$salvo_sha; N_ASSETS=$salvo_n; BUNDLE_BYTES=$salvo_b
+  [ "$rc" = 0 ] || return 1
+  printf '%s' "$novo"
+}
+
 provar_deployment() {  # <sha> -> 0 provado | 1 contradiz | 2 indeterminado
   local sha=$1 corpo cod achado curto
   PROVA_MOTIVO=""
@@ -110,6 +123,13 @@ provar_deployment() {  # <sha> -> 0 provado | 1 contradiz | 2 indeterminado
       PROVA_MOTIVO="API da Vercel respondeu HTTP ${cod:-sem-resposta}"
       return 2
     fi
+    # PROVA DO QUE ESTA SERVIDO, nao de deployment historico (laudo v2.6, bloqueador 7).
+    # A v2.6 aceitava QUALQUER deployment do commit com READY e target=production. Depois de
+    # um rollback esse deployment continua existindo e continua READY -- mas a URL publica
+    # serve outro. "Existe um deployment READY deste commit" nao e "este commit esta no ar".
+    # Agora a lista vem ordenada e so o deployment de producao MAIS RECENTE conta; alem
+    # disso o `url` dele e buscado e o conjunto de assets e comparado com o que a URL
+    # publica serve. Se divergir, o alias aponta para outro build: INDETERMINADO.
     achado=$(python3 - "$TMPD/vercel.json" "$sha" <<'PYFIM'
 import json, sys
 try:
@@ -117,22 +137,58 @@ try:
 except Exception as e:
     print("ERRO json:%s" % type(e).__name__); raise SystemExit(0)
 alvo = sys.argv[2].lower()
-for dep in d.get("deployments", []):
-    meta = dep.get("meta") or {}
-    sha = str(meta.get("githubCommitSha") or meta.get("gitCommitSha") or "").lower()
-    if sha and (sha.startswith(alvo) or alvo.startswith(sha)):
-        print("ACHOU %s %s %s" % (dep.get("readyState") or dep.get("state"),
-                                  dep.get("target") or "-", dep.get("uid") or "-"))
-        raise SystemExit(0)
-print("SEM %d deployment(s) READY listados, nenhum com esse commit" % len(d.get("deployments", [])))
+deps = [x for x in d.get("deployments", []) if (x.get("target") == "production")]
+if not deps:
+    print("SEM nenhum deployment de production na resposta"); raise SystemExit(0)
+# o ATUAL de producao e o mais recente por createdAt (a API ja devolve assim, mas nao
+# dependemos disso: ordenamos)
+def quando(x):
+    for k in ("createdAt", "created", "ready", "buildingAt"):
+        v = x.get(k)
+        if isinstance(v, (int, float)):
+            return v
+    return -1
+deps.sort(key=quando, reverse=True)
+atual = deps[0]
+meta = atual.get("meta") or {}
+sha_atual = str(meta.get("githubCommitSha") or meta.get("gitCommitSha") or "").lower()
+estado = atual.get("readyState") or atual.get("state")
+if not sha_atual:
+    print("SEMSHA o deployment de producao atual nao declara commit"); raise SystemExit(0)
+if not (sha_atual.startswith(alvo) or alvo.startswith(sha_atual)):
+    print("OUTRO producao atual e %s (%s), nao o commit pedido" % (sha_atual[:8], estado))
+    raise SystemExit(0)
+if estado != "READY":
+    print("NAOPRONTO producao atual e o commit pedido, mas esta %s" % estado); raise SystemExit(0)
+print("ATUAL %s %s" % (atual.get("uid") or "-", atual.get("url") or "-"))
 PYFIM
 )
     case "$achado" in
-      "ACHOU READY production"*) PROVA_MOTIVO="API da Vercel: deployment de $curto READY em production ($(printf '%s' "$achado" | awk '{print $4}'))"; return 0 ;;
-      "ACHOU READY"*)            PROVA_MOTIVO="deployment de $curto esta READY mas NAO e o de production ($achado)"; return 1 ;;
-      "ACHOU"*)                  PROVA_MOTIVO="deployment de $curto existe mas nao esta READY ($achado)"; return 1 ;;
-      "SEM"*)                    PROVA_MOTIVO="API da Vercel nao lista deployment READY do commit $curto -- $achado"; return 1 ;;
-      *)                         PROVA_MOTIVO="nao consegui interpretar a resposta da API ($achado)"; return 2 ;;
+      "ATUAL "*)
+        # O deployment de producao ATUAL e o do commit e esta READY. Falta amarrar ao que a
+        # URL publica realmente serve: se o alias apontar para outro build, o conjunto de
+        # assets difere. Sem essa amarracao, "READY" ainda seria uma afirmacao sobre o
+        # registro da Vercel, nao sobre o que o usuario recebe.
+        local durl bsha
+        durl=$(printf '%s' "$achado" | awk '{print $3}')
+        case "$durl" in
+          -|"") PROVA_MOTIVO="deployment atual de $curto esta READY, mas a API nao deu a URL dele para conferir o servido"; return 2 ;;
+        esac
+        # a API devolve `url` sem esquema; em teste o mock usa http em 127.0.0.1.
+        case "$durl" in *://*) : ;; *) durl="${VERCEL_DEP_ESQUEMA:-https}://$durl" ;; esac
+        bsha=$(sha_do_bundle_em "$durl") || {
+          PROVA_MOTIVO="nao consegui ler o bundle do deployment $durl para comparar com o publico"; return 2; }
+        if [ "$bsha" = "$BUNDLE_SHA" ]; then
+          PROVA_MOTIVO="deployment $durl (commit $curto, READY, production atual) serve o MESMO conjunto de assets que a URL publica"
+          return 0
+        fi
+        PROVA_MOTIVO="o deployment atual de $curto existe e esta READY, mas a URL publica serve OUTRO conjunto de assets (${BUNDLE_SHA:0:12} != ${bsha:0:12}) -- alias aponta para outro build"
+        return 1 ;;
+      "OUTRO "*)     PROVA_MOTIVO="o que esta em producao agora nao e $curto -- $achado"; return 1 ;;
+      "NAOPRONTO"*)  PROVA_MOTIVO="$achado"; return 1 ;;
+      "SEMSHA"*)     PROVA_MOTIVO="$achado"; return 2 ;;
+      "SEM "*)       PROVA_MOTIVO="API da Vercel: $achado"; return 1 ;;
+      *)             PROVA_MOTIVO="nao consegui interpretar a resposta da API ($achado)"; return 2 ;;
     esac
   fi
 
@@ -177,14 +233,26 @@ baixar() {
   html=$(cat "$TMPD/pagina.html")
 
   rm -rf "$TMPD/assets"; mkdir -p "$TMPD/assets"
-  : > "$TMPD/fila.txt"; : > "$TMPD/vistos.txt"; : > "$TMPD/sembarra.txt"; : > "$TMPD/dirs.txt"
+  : > "$TMPD/fila.txt"; : > "$TMPD/vistos.txt"; : > "$TMPD/sembarra.txt"; : > "$TMPD/dirs.txt"; : > "$TMPD/sembarra.resolvida"; : > "$TMPD/fila-bare.txt"; : > "$TMPD/mapa.txt"
   grep -oE '/assets/[A-Za-z0-9_.@-]+\.js' <<<"$html" | LC_ALL=C sort -u >> "$TMPD/fila.txt"
   ASSET=$(head -1 "$TMPD/fila.txt")
   [ -n "$ASSET" ] || { echo "FALHA: a pagina nao referencia nenhum /assets/*.js"; return 1; }
 
-  # Nome local = caminho inteiro com / trocado por __. `basename` colidiria entre diretorios
-  # diferentes e um chunk sobrescreveria o outro sem aviso.
-  local_de() { printf '%s/assets/%s' "$TMPD" "$(printf '%s' "${1#/}" | tr '/' '_')"; }
+  # NOME LOCAL SEM COLISAO (laudo v2.6, bloqueador 5). Antes o caminho era achatado com
+  # `tr / _`: `assets/a/b_c.js` e `assets/a_b/c.js` viravam O MESMO arquivo local. O
+  # Alfredo reproduziu com o segredo no SEGUNDO -- o primeiro ocupava o nome, o segundo era
+  # descartado por "ja baixei", e o scanner saia verde sem nunca ter lido o segredo.
+  # Agora o nome vem do sha256 do CAMINHO (injetivo por construcao) e um mapa explicito
+  # guarda quem e quem, para o relatorio continuar legivel.
+  local_de() {
+    local p=$1 h
+    h=$(printf %s "$p" | sha256sum | cut -c1-32)
+    printf '%s/assets/a%s.js' "$TMPD" "$h"
+  }
+  registrar_mapa() {   # <caminho no site>
+    printf '%s  %s
+' "$(basename "$(local_de "$1")")" "$1" >> "$TMPD/mapa.txt"
+  }
 
   baixar_um() { # <caminho absoluto no site>  -> rc 0 baixou | 1 erro duro | 2 nao existe (404)
     local a=$1 dest cod ct
@@ -202,6 +270,7 @@ baixar() {
       *) echo "  FALHA: content-type inesperado em $a: ${ct:-ausente}"; return 1 ;; esac
     head -c 200 "$dest" | grep -qiE '<!doctype|<html' && { echo "  FALHA: $a veio como HTML (pagina de erro)"; return 1; }
     printf '%s\n' "$(dirname "$a")/" >> "$TMPD/dirs.txt"
+    registrar_mapa "$a"
     return 0
   }
 
@@ -267,28 +336,53 @@ baixar() {
       extrair_refs "$(local_de "$a")" "$(dirname "$a")/" >> "$TMPD/fila.txt"
     done < "$TMPD/rodando.txt"
     LC_ALL=C sort -u -o "$TMPD/fila.txt" "$TMPD/fila.txt"
+    # BARE-NAME VOLTA PARA A CAMINHADA (laudo v2.6, bloqueador 5). Strings terminadas em
+    # .js sem barra nenhuma (`Node.js` e o caso real) nao sao caminho, mas podem ser: o
+    # bundler as vezes cita o chunk so pelo nome. A v2.6 resolvia essas DEPOIS do ponto
+    # fixo -- baixava e escaneava o arquivo, mas nunca extraia as referencias DELE. Um
+    # filho mais fundo ficava invisivel. Agora a resolucao acontece DENTRO da rodada e o
+    # que resolve entra na fila como qualquer outro asset.
+    if [ -s "$TMPD/sembarra.txt" ]; then
+      LC_ALL=C sort -u -o "$TMPD/sembarra.txt" "$TMPD/sembarra.txt"
+      LC_ALL=C sort -u -o "$TMPD/dirs.txt" "$TMPD/dirs.txt"
+      : > "$TMPD/sembarra.pendente"
+      while IFS= read -r r; do
+        [ -n "$r" ] || continue
+        LC_ALL=C grep -qxF -- "$r" "$TMPD/sembarra.resolvida" 2>/dev/null && continue
+        achou=0
+        while IFS= read -r d; do
+          [ -n "$d" ] || continue
+          LC_ALL=C grep -qxF -- "$d$r" "$TMPD/vistos.txt" && { achou=1; break; }
+          if baixar_um "$d$r"; then
+            achou=1
+            printf '%s
+' "$d$r" >> "$TMPD/vistos.txt"
+            printf '%s
+' "$d$r" >> "$TMPD/fila-bare.txt"
+            break
+          fi
+        done < "$TMPD/dirs.txt"
+        if [ "$achou" = 1 ]; then printf '%s
+' "$r" >> "$TMPD/sembarra.resolvida"
+        else printf '%s
+' "$r" >> "$TMPD/sembarra.pendente"; fi
+      done < "$TMPD/sembarra.txt"
+      mv -f "$TMPD/sembarra.pendente" "$TMPD/sembarra.txt"
+      # o que resolveu vira asset de verdade: extrai referencias e volta para a fila
+      if [ -s "$TMPD/fila-bare.txt" ]; then
+        while IFS= read -r a2; do
+          [ -n "$a2" ] || continue
+          extrair_refs "$(local_de "$a2")" "$(dirname "$a2")/" >> "$TMPD/fila.txt"
+        done < "$TMPD/fila-bare.txt"
+        : > "$TMPD/fila-bare.txt"
+        LC_ALL=C sort -u -o "$TMPD/fila.txt" "$TMPD/fila.txt"
+      fi
+    fi
     BUNDLE_BYTES=$(cat "$TMPD/assets"/*.js 2>/dev/null | wc -c)
     if [ "${BUNDLE_BYTES:-0}" -gt "$MAX_BYTES" ]; then
       echo "FALHA: bundle passou de $MAX_BYTES bytes -- recusando continuar"; return 1; fi
   done
 
-  # Strings terminadas em .js SEM barra nenhuma. Nao sao caminho (`Node.js` e o caso real),
-  # mas tambem nao dao para descartar as cegas: cada uma e tentada nos diretorios ja
-  # conhecidos. Se resolver, e asset e entra na varredura; se nao, e listada -- sem virar
-  # falha, porque prosa terminada em .js e comum e transformar isso em erro so ensinaria
-  # todo mundo a ignorar o gate.
-  if [ -s "$TMPD/sembarra.txt" ]; then
-    LC_ALL=C sort -u -o "$TMPD/sembarra.txt" "$TMPD/sembarra.txt"
-    LC_ALL=C sort -u -o "$TMPD/dirs.txt" "$TMPD/dirs.txt"
-    while IFS= read -r r; do
-      local achou=0
-      while IFS= read -r d; do
-        [ -n "$d" ] || continue
-        if baixar_um "$d$r"; then achou=1; printf '%s\n' "$d$r" >> "$TMPD/vistos.txt"; break; fi
-      done < "$TMPD/dirs.txt"
-      [ "$achou" = 0 ] && printf '%s\n' "$r" >> "$TMPD/sembarra-naoresolvida.txt"
-    done < "$TMPD/sembarra.txt"
-  fi
 
   if [ -s "$TMPD/naoresolvidas.txt" ]; then
     echo "FALHA: $(wc -l < "$TMPD/naoresolvidas.txt") referencia(s) JS citada(s) no bundle NAO resolvem (404):"
@@ -345,8 +439,8 @@ if [ "$MODO" = pos_deploy ]; then
 fi
 
 echo "assets: $N_ASSETS arquivo(s) JS em ${RODADAS:-?} rodada(s) ate ponto fixo, $BUNDLE_BYTES bytes, sha256 do conjunto=${BUNDLE_SHA:0:12}..."
-echo "        $(ls -1 "$TMPD/assets" | tr "
-" " ")"
+echo "        $(cut -d' ' -f3- "$TMPD/mapa.txt" 2>/dev/null | LC_ALL=C sort | tr '
+' ' ')"
 
 # Entropia de Shannon por caractere. Segredo real fica acima de ~3.5; texto/ids repetitivos ficam abaixo.
 entropia() {

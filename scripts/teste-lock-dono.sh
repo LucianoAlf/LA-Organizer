@@ -86,6 +86,75 @@ R=$(lock_tomar "$LK" "$B" 30); RC=$?
   || falhou "lock sem epoch nunca expira (rc=$RC r=$R) -- deploy travado para sempre"
 rm -rf "$LK"
 
+echo "== BLOQUEADOR 9a: heartbeat impede que deploy LENTO seja roubado =="
+# A v2.6 considerava orfao qualquer lock mais velho que o TTL, sem perguntar se o dono estava
+# vivo: um deploy legitimo e demorado (build da Vercel, suite completa) era roubado e passava a
+# concorrer com quem roubou. Com lease, TTL vencido significa "ninguem renova ha X min".
+rm -rf "$LK"
+lock_tomar "$LK" "$A" 30 >/dev/null
+echo $(( $(date +%s) - 3600 )) > "$LK/epoch"          # deploy longo, sem renovar: seria roubado
+lock_heartbeat "$LK" "$A"; RC=$?
+[ "$RC" = 0 ] && ok "o dono renova o lease (rc=0)" || falhou "heartbeat do dono falhou (rc=$RC)"
+R=$(lock_tomar "$LK" "$B" 30); RC=$?
+[ "$RC" = 1 ] && ok "apos o heartbeat, o lock NAO e mais orfao ($R)" \
+  || falhou "roubaram um lock que acabou de ser renovado (rc=$RC r=$R)"
+# e o inverso: sem renovar, o TTL ainda funciona
+echo $(( $(date +%s) - 3600 )) > "$LK/epoch"
+R=$(lock_tomar "$LK" "$B" 30); RC=$?
+[ "$RC" = 0 ] && ok "sem heartbeat, o TTL continua liberando orfao de verdade ($R)" \
+  || falhou "TTL parou de funcionar (rc=$RC)"
+lock_soltar "$LK" "$B" >/dev/null 2>&1
+
+echo "== heartbeat de quem NAO e dono e recusado =="
+rm -rf "$LK"; lock_tomar "$LK" "$A" 30 >/dev/null
+lock_heartbeat "$LK" "$B" 2>/dev/null; RC=$?
+[ "$RC" = 1 ] && ok "B nao consegue renovar o lease de A (rc=1)" || falhou "B renovou lease alheio (rc=$RC)"
+lock_confirmar "$LK" "$B" 2>/dev/null; RC=$?
+[ "$RC" = 1 ] && ok "lock_confirmar recusa quem nao e dono" || falhou "confirmacao de posse passou para B"
+lock_confirmar "$LK" "$A"; RC=$?
+[ "$RC" = 0 ] && ok "lock_confirmar aceita o dono" || falhou "o dono nao passou na confirmacao"
+
+echo "== BLOQUEADOR 9b: liberacao ATOMICA condicionada ao dono =="
+# Antes era "confere nonce" e depois `rm -rf`: entre as duas coisas o lock podia trocar de
+# dono, e o rm apagava o lock do novo. Agora a remocao comeca por um `mv -T` atomico e o nonce
+# e reconferido no diretorio ja fora do caminho.
+rm -rf "$LK"; lock_tomar "$LK" "$A" 30 >/dev/null
+# monta a corrida: o diretorio passa a ser de OUTRO dono no instante da liberacao
+printf '%s\n' "$B" > "$LK/nonce"
+lock_soltar "$LK" "$A" 2>/dev/null; RC=$?
+[ "$RC" = 1 ] && ok "A nao remove um lock que virou de B (rc=1)" || falhou "removeu lock alheio (rc=$RC)"
+[ -d "$LK" ] && ok "o lock de B continua de pe" || falhou "o lock de B foi apagado"
+[ "$(cat "$LK/nonce" 2>/dev/null)" = "$B" ] && ok "o conteudo do lock de B esta intacto" || falhou "o lock de B foi corrompido"
+lock_soltar "$LK" "$B" >/dev/null; [ ! -d "$LK" ] && ok "o dono verdadeiro libera" || falhou "B nao conseguiu liberar"
+# nenhum diretorio orfao de liberacao ficou para tras
+[ -z "$(ls -d "$LK".soltando.* 2>/dev/null)" ] && ok "nenhum residuo .soltando.* deixado" || falhou "sobrou diretorio de liberacao"
+
+echo "== BLOQUEADOR 9c: escopo unico cobre TODAS as saidas do auto-deploy =="
+PS1="$AQUI/auto-deploy.ps1"
+if [ -r "$PS1" ]; then
+  grep -qE '^try \{' "$PS1" && ok "existe um try de topo" || falhou "sem try de topo"
+  grep -qE '^finally \{' "$PS1" && ok "existe um finally de topo" || falhou "sem finally de topo"
+  L_TRY=$(grep -n '^try {' "$PS1" | head -1 | cut -d: -f1)
+  L_FIN=$(grep -n '^finally {' "$PS1" | head -1 | cut -d: -f1)
+  L_TOMA=$(grep -n '^\$lk = Tomar-LockDeploy' "$PS1" | head -1 | cut -d: -f1)
+  if [ -n "$L_TRY" ] && [ -n "$L_FIN" ] && [ -n "$L_TOMA" ] && [ "$L_TOMA" -lt "$L_TRY" ] && [ "$L_TRY" -lt "$L_FIN" ]; then
+    ok "aquisicao ($L_TOMA) -> try ($L_TRY) -> finally ($L_FIN)"
+  else
+    falhou "ordem errada (toma=${L_TOMA:-?} try=${L_TRY:-?} finally=${L_FIN:-?})"
+  fi
+  # nenhuma saida entre o try e o finally pode estar FORA do escopo
+  FORA=$(awk -v ini="$L_TRY" -v fim="$L_FIN" 'NR>ini && NR<fim' "$PS1" | grep -cE '^\s*exit [0-9]' || true)
+  DENTRO=$(awk -v ini="$L_TRY" -v fim="$L_FIN" 'NR>ini && NR<fim' "$PS1" | grep -cE 'exit [0-9]' || true)
+  [ "$DENTRO" -gt 0 ] && ok "$DENTRO saida(s) dentro do escopo protegido" || falhou "nenhuma saida no escopo -- o try nao cobre nada"
+  DEPOIS=$(awk -v fim="$L_FIN" 'NR>fim' "$PS1" | grep -cE '^\s*exit [0-9]' || true)
+  [ "$DEPOIS" = 0 ] && ok "nenhuma saida DEPOIS do finally" || falhou "$DEPOIS saida(s) fora do escopo"
+  grep -q 'Bater-LockDeploy' "$PS1" && ok "confirma posse antes de efeito critico (Bater-LockDeploy)" \
+    || falhou "nao ha confirmacao de posse antes dos efeitos"
+else
+  falhou "auto-deploy.ps1 nao encontrado"
+fi
+
+
 echo "== ordem no auto-deploy.ps1: adquirir ANTES de qualquer sync =="
 # Nao basta a lib estar certa: o caminho SEM COMMIT precisa adquirir antes de sincronizar, e
 # nenhuma saida pode soltar sem nonce. Isso e propriedade do chamador, entao e medido nele.

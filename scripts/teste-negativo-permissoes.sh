@@ -11,7 +11,18 @@
 # Antes da contenção: espera-se VERMELHO. Depois: exige 0 FAIL e 0 SKIP obrigatório.
 
 set -uo pipefail
-USUARIO=${1:?uso: $0 <usuario-nao-root> [--pos-aplicacao]}
+# DEFAULT DESCOBERTO (laudo v2.6, bloqueador 10). Exigir o argumento fazia o runner receber
+# um crash sem contagem -- e a v2.6 classificava isso como "exige ambiente", ou seja, um
+# teste que nao rodou saia como dispensa. Agora, sem argumento, o teste escolhe o primeiro
+# usuario nao-root real do host. Se nao houver nenhum, ele ABORTA dizendo por que, e o
+# runner reprova -- que e o resultado honesto de "nao consegui medir".
+USUARIO=${1:-}
+if [ -z "$USUARIO" ] || [ "${USUARIO#--}" != "$USUARIO" ]; then
+  [ -n "$USUARIO" ] && set -- "" "$@"
+  USUARIO=$(awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd 2>/dev/null)
+  [ -n "$USUARIO" ] || { echo "ABORTADO: nenhum usuario nao-root neste host para testar contra"; exit 2; }
+  echo "(sem argumento: usando o usuario nao-root $USUARIO)"
+fi
 # #3: `db/` so existe DEPOIS do primeiro backup. Exigi-lo no passo pos-contencao fazia o
 # teste reprovar por construcao. Tres modos: baseline (pre), --pos-aplicacao (pos-contencao,
 # ainda sem backup) e --final (tudo tem que existir).

@@ -75,14 +75,53 @@ lock_dono() {    # <dir> <nonce>
   [ -n "$gravado" ] && [ "$gravado" = "$nonce" ]
 }
 
-lock_soltar() {  # <dir> <nonce>
+# CONFIRMACAO ANTES DE EFEITO CRITICO (laudo v2.6, bloqueador 9). Entre um passo e outro do
+# deploy passam minutos; o lock pode ter sido tomado como orfao nesse meio. Todo efeito que
+# muda producao chama isto antes e aborta se o lock ja nao for nosso.
+lock_confirmar() {  # <dir> <nonce>
+  if lock_dono "$1" "$2"; then return 0; fi
+  echo "lock: o lock em $1 NAO e mais meu -- abortando antes do efeito" >&2
+  return 1
+}
+
+# LEASE COM HEARTBEAT (laudo v2.6, bloqueador 9). A v2.6 considerava orfao qualquer lock mais
+# velho que o TTL, sem perguntar se o dono estava vivo: um deploy legitimo e lento (build da
+# Vercel, suite de testes) era ROUBADO e passava a concorrer com quem roubou. Agora o dono
+# renova o lease entre os passos; TTL curto passa a significar "ninguem renova ha X min", que
+# e uma afirmacao sobre VIDA, nao sobre duracao total do deploy.
+lock_heartbeat() {  # <dir> <nonce>
   local dir=$1 nonce=$2
+  lock_confirmar "$dir" "$nonce" || return 1
+  date +%s > "$dir/epoch" || return 2
+  return 0
+}
+
+# LIBERACAO ATOMICA CONDICIONADA AO DONO (laudo v2.6, bloqueador 9). Antes era "confere nonce"
+# e depois `rm -rf`: entre as duas coisas o lock podia ter sido tomado por outro, e o rm
+# apagava o lock do novo dono. Agora a remocao comeca por um `mv -T`, que e atomico: quem
+# consegue mover e o unico que segue. So depois de mover e que o nonce e reconferido no
+# diretorio JA fora do caminho -- e, se nao for nosso, ele volta para o lugar.
+lock_soltar() {  # <dir> <nonce>
+  local dir=$1 nonce=$2 morto gravado
   [ -n "$dir" ] && [ -n "$nonce" ] || return 2
-  [ -d "$dir" ] || return 0                      # ja liberado: nada a fazer, e nao e erro
+  [ -d "$dir" ] || return 0                      # ja liberado: nao e erro
   if ! lock_dono "$dir" "$nonce"; then
-    echo "lock_soltar: RECUSADO — o lock em $dir nao e meu" >&2
+    echo "lock_soltar: RECUSADO -- o lock em $dir nao e meu" >&2
     return 1
   fi
-  rm -rf "$dir" 2>/dev/null || return 2
+  morto="$dir.soltando.$$.$(date +%s%N 2>/dev/null || date +%s)"
+  mv -T "$dir" "$morto" 2>/dev/null || {
+    # nao consegui mover: ou sumiu, ou outro processo esta mexendo. Nao removo nada.
+    [ -d "$dir" ] || return 0
+    echo "lock_soltar: nao consegui mover $dir para remocao" >&2; return 2
+  }
+  gravado=$(cat "$morto/nonce" 2>/dev/null)
+  if [ "$gravado" != "$nonce" ]; then
+    # movi o lock de OUTRO dono (janela minuscula): devolvo intacto em vez de apagar.
+    mv -T "$morto" "$dir" 2>/dev/null
+    echo "lock_soltar: o que movi nao era meu -- devolvido, nada removido" >&2
+    return 1
+  fi
+  rm -rf "$morto" 2>/dev/null || return 2
   return 0
 }

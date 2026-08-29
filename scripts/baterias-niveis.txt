@@ -1,0 +1,36 @@
+# NIVEL DE ISOLAMENTO de cada bateria (laudo v2.6, bloqueador 10).
+#
+# A v2.6 chamava 166 asseracoes de "auto-contidas" e nao eram: uma apontava para o .env e a
+# rede do runtime, outra criava arquivo no /run real. Rotulo errado e pior que rotulo nenhum,
+# porque quem le para de conferir.
+#
+#   unit                  nao toca /run, .env, crontab, backup real, rede nem docker.
+#                         So $TMPDIR e processos proprios.
+#   integration-sandbox   sobe servidor local, docker ou binario falso; tudo em diretorio
+#                         descartavel. Nao le nem escreve estado vivo.
+#   environment-read-only SO LE o estado vivo (crontab, /run, repo de producao, .env, rede).
+#                         Nunca escreve. E declarado, e a contagem sai separada.
+#
+# Bateria sem nivel declarado REPROVA o runner: classificacao esquecida vira, com o tempo,
+# um teste que toca producao sem ninguem notar.
+#
+# formato:  <arquivo>  <nivel>  <por que>
+
+teste-seq-compare.sh            unit                   funcao pura de comparacao, sem I/O externo
+teste-publicar.sh               unit                   publicacao atomica em diretorio temporario
+teste-lock-dono.sh              unit                   lock em diretorio temporario; nenhum /run real
+teste-modo-canonico.sh          unit                   repo git descartavel em $TMPDIR
+teste-deploy-lock-sha.sh        unit                   repo git descartavel; so le o .ps1 do pacote
+teste-preflight-modo.sh         unit                   repo git descartavel com core.fileMode
+
+teste-alertar-mock.sh           integration-sandbox     servidor HTTP local + marcas em diretorio injetado
+teste-bundle-mock.sh            integration-sandbox     dois servidores HTTP locais com bundle sintetico
+teste-vercel-prova.sh           integration-sandbox     API e sites falsos em portas efemeras
+teste-cron-canonico.sh          integration-sandbox     crontab falso no PATH; nunca o crontab real
+teste-bootstrap.sh              integration-sandbox     repo git descartavel; bootstrap em dir proprio
+teste-sentinela-timeline.sh     integration-sandbox     arvore de backup falsa em $TMPDIR
+teste-sequence-iscalled.sh      integration-sandbox     Postgres descartavel em docker
+
+teste-ambiente-isolamento.sh    environment-read-only   fotografa /run, crontab, backups e o repo vivo
+teste-negativo-dataapi.sh       environment-read-only   consulta a Data API com credencial do runtime
+teste-negativo-permissoes.sh    environment-read-only   le permissoes reais; exige <usuario-nao-root>

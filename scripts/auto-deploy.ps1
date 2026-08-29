@@ -72,6 +72,40 @@ $ts = Get-Date -Format "yyyy-MM-dd HH:mm"
 # janela medem uma coisa e aplicam outra. `mkdir` e atomico no POSIX — ou cria, ou falha —
 # entao serve de lock sem depender de daemon nenhum. TTL para orfao nao travar o deploy para
 # sempre; quem tomar o lock registra quem e e quando.
+# BOOTSTRAP DO CANDIDATO (laudo v2.6, bloqueador 3). A v2.6 carregava
+# /opt/LA-Organizer/scripts/lib-lock.sh -- que NAO existe no runtime v2.5 vivo -- e rodava o
+# preflight da arvore VELHA para decidir se o candidato podia entrar. O pre-requisito
+# escondido era eu ter feito `scp` a mao.
+# Agora: os objetos do candidato vao para um ref isolado, `bootstrap-candidato.sh` e mandado
+# pelo STDIN do ssh (nao precisa existir la), e ele materializa scripts/ do commit em
+# /run/tom-cand-<sha> -- fora da worktree -- conferindo cada arquivo contra o blob id.
+# Dai em diante, lock e preflight sao os DO CANDIDATO.
+$tipBoot = ((git -C $srcRoot rev-parse HEAD 2>$null) | Out-String).Trim()
+if ($tipBoot -notmatch '^[0-9a-f]{40}$') {
+    Write-Output "=== DEPLOY ABORTADO: nao resolvi o tip local para o bootstrap. ==="
+    exit 1
+}
+$bsFile = Join-Path $srcRoot "scripts\bootstrap-candidato.sh"
+if (-not (Test-Path $bsFile)) {
+    Write-Output "=== DEPLOY ABORTADO: scripts/bootstrap-candidato.sh ausente no clone local. ==="
+    exit 1
+}
+function Materializar-Candidato($sha) {
+    # transporta objetos para um ref isolado (nao move main, nao mexe em HEAD, nao dispara build)
+    git -C $srcRoot push tom:/opt/LA-Organizer "${sha}:refs/bootstrap/$sha" --force 2>$null | Out-Null
+    $out = (Get-Content -Raw $bsFile | ssh tom "bash -s -- $sha /opt/LA-Organizer" 2>$null) | Out-String
+    $dir = ""
+    foreach ($linha in ($out -split "`n")) { if ($linha -match '^candidato=(.+)$') { $dir = $Matches[1].Trim() } }
+    if ($dir -eq "") { Write-Output ($out.Trim()) }
+    return $dir
+}
+$candDir = Materializar-Candidato $tipBoot
+if ($candDir -eq "") {
+    Write-Output "=== DEPLOY ABORTADO: bootstrap do candidato falhou. Sem os guardas do candidato, nao ha gate. ==="
+    exit 1
+}
+Write-Output "=== Candidato materializado em $candDir (fora da worktree viva) ==="
+
 $lockDir = "/run/tom-deploy.lock"
 $lockTtlMin = 30
 # DONO VERIFICAVEL (laudo v2.5, bloqueador 1). O lock antigo era `mkdir` + `rm -rf` cru:
@@ -82,7 +116,7 @@ $lockTtlMin = 30
 # turno carrega um nonce: so o dono solta.
 $lockNonce = ([guid]::NewGuid()).ToString("N")
 $script:lockAdquirido = $false
-$libLock = "/opt/LA-Organizer/scripts/lib-lock.sh"
+$libLock = "$candDir/scripts/lib-lock.sh"   # do CANDIDATO, nunca da arvore viva
 function Tomar-LockDeploy {
     $r = (ssh tom ". $libLock 2>/dev/null || { echo SEM-LIB; exit 3; }; LOCK_DONO_DESC=auto-deploy-$env:COMPUTERNAME lock_tomar $lockDir $lockNonce $lockTtlMin" 2>$null) | Out-String
     $r = $r.Trim()
@@ -91,6 +125,20 @@ function Tomar-LockDeploy {
 }
 # Soltar SO solta o que este turno adquiriu. Duas barreiras: a flag local (nao chama a
 # liberacao sem ter adquirido) e o nonce remoto (a lib recusa lock de outro dono).
+# LEASE (laudo v2.6, bloqueador 9). Entre um passo e outro passam minutos. Sem renovacao,
+# TTL vencido significava "deploy demorou" e o lock era roubado de um deploy VIVO, que
+# seguia rodando em paralelo com quem roubou. Com heartbeat, TTL vencido passa a significar
+# "ninguem renova ha X min" -- afirmacao sobre vida, nao sobre duracao.
+# Devolve $false se o lock ja nao for nosso; quem chama ABORTA em vez de seguir.
+function Bater-LockDeploy {
+    if (-not $script:lockAdquirido) { return $false }
+    $r = (ssh tom ". $libLock 2>/dev/null || exit 3; lock_heartbeat $lockDir $lockNonce && echo VIVO" 2>$null) | Out-String
+    if ($r.Trim() -eq "VIVO") { return $true }
+    Write-Output "=== LOCK PERDIDO: outro processo tomou a janela. Abortando antes de qualquer efeito. ==="
+    $script:lockAdquirido = $false
+    return $false
+}
+
 function Soltar-LockDeploy {
     if (-not $script:lockAdquirido) { return }
     ssh tom ". $libLock 2>/dev/null || exit 3; lock_soltar $lockDir $lockNonce" 2>$null | Out-Null
@@ -110,6 +158,13 @@ if (-not $script:lockAdquirido) {
     exit 0
 }
 Write-Output "=== Lock de deploy: $lk (nonce $($lockNonce.Substring(0,8))) ==="
+
+# ESCOPO UNICO (laudo v2.6, bloqueador 9). Havia caminho de rollback/exit que saia sem
+# soltar o lock -- e lock nao liberado trava todo deploy seguinte ate o TTL. Daqui ate o
+# fim tudo roda dentro de um try/finally: qualquer saida, inclusive `exit` e excecao,
+# passa pelo finally. As chamadas explicitas a Soltar-LockDeploy continuam (sao
+# idempotentes) para liberar o quanto antes; o finally e a rede que pega o que escapar.
+try {
 
 $empurrou = $false
 $temBaseline = $false
@@ -167,7 +222,11 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         # SHA LITERAL, nao o nome do ref (laudo v2.4, bloqueador 4). A ref transporta o objeto;
         # a MEDICAO usa o sha ja verificado acima. Assim, mover a ref depois da conferencia nao
         # muda o que o preflight mede nem o que o reset aplica — o alvo e imutavel por natureza.
-        $pfPre = (ssh tom "cd /opt/LA-Organizer && ./scripts/preflight-deploy.sh $tip --sem-snapshot 2>&1" 2>$null) | Out-String
+        # PREFLIGHT DO CANDIDATO, medindo a worktree VIVA. `PREFLIGHT_REPO` existe para isto:
+        # medir sem precisar instalar o script dentro do repo medido.
+        $candDir = Materializar-Candidato $tip
+        if ($candDir -eq "") { Write-Output "=== PUSH ABORTADO: bootstrap do tip candidato falhou. ==="; exit 1 }
+        $pfPre = (ssh tom "PREFLIGHT_REPO=/opt/LA-Organizer $candDir/scripts/preflight-deploy.sh $tip --sem-snapshot 2>&1" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: preflight contra o TIP CANDIDATO reprovou no deploy $ts -- nada foi empurrado." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: a VPS tem trabalho que o reset para o candidato destruiria. ==="
@@ -207,10 +266,38 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
     }
 }
 
-# 8. Sincroniza a VPS pelo ESTADO DELA, nao pelo que este turno fez.
-#    O criterio antigo (`diff $beforeSha HEAD`) so via o commit do proprio turno: commit feito
-#    a mao, ou trabalho vindo do outro chat pelo rebase, nao disparavam deploy nenhum.
-$vpsAtras = (ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>/dev/null; git rev-list --count HEAD..origin/main 2>/dev/null" 2>$null) -as [int]
+# 8. SHA UNICO E IMUTAVEL PARA A TRANSACAO INTEIRA (laudo v2.6, bloqueador 4).
+#    A v2.6 media com SHA literal so no preflight do candidato; a sincronizacao voltava a
+#    falar em `origin/main` -- media A, e se outro chat empurrasse B no meio, o reset aplicava
+#    B. Reproduzido pelo Alfredo. O lock da VPS nao ajuda: ele serializa a VPS, nao impede
+#    ninguem de mover o GitHub.
+#    Agora: um `git fetch` com rc conferido, um `rev-parse` que resolve `deploy_sha` UMA vez,
+#    e esse literal em tudo -- rev-list, diff, preflight, reset, testes, health e relatorio.
+#    No fim, `origin/main` e reconferido: se moveu durante a transacao, o turno REPROVA.
+$fetchOut = (ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet && git rev-parse origin/main" 2>$null) | Out-String
+if ($LASTEXITCODE -ne 0) {
+    Write-Output "=== DEPLOY ADIADO: git fetch/rev-parse na VPS falhou (exit $LASTEXITCODE). Nada medido, nada aplicado. ==="
+    exit 1
+}
+$deploySha = $fetchOut.Trim()
+if ($deploySha -notmatch '^[0-9a-f]{40}$') {
+    Write-Output "=== DEPLOY ABORTADO: nao resolvi um sha de 40 hex para origin/main (recebi '$deploySha'). ==="
+    exit 1
+}
+Write-Output "=== deploy_sha = $($deploySha.Substring(0,8)) (literal usado em TODA a transacao) ==="
+
+# rc conferido tambem aqui: saida vazia por erro nao pode virar "0 commits atras".
+$atrasOut = (ssh tom "cd /opt/LA-Organizer && git rev-list --count HEAD..$deploySha" 2>$null) | Out-String
+if ($LASTEXITCODE -ne 0) {
+    Write-Output "=== DEPLOY ADIADO: git rev-list falhou (exit $LASTEXITCODE) -- nao sei se a VPS esta atras. ==="
+    exit 1
+}
+$atrasTxt = $atrasOut.Trim()
+if ($atrasTxt -notmatch '^\d+$') {
+    Write-Output "=== DEPLOY ABORTADO: rev-list devolveu '$atrasTxt', que nao e contagem. ==="
+    exit 1
+}
+$vpsAtras = [int]$atrasTxt
 if ($vpsAtras -gt 0) {
     # 8a. CICLO DE GOVERNANCA EM ANDAMENTO -> nao mexer no disco dele.
     #     O gov-runner trabalha DENTRO de /opt/LA-Organizer e edita src/ durante a rodada. Um
@@ -225,7 +312,19 @@ if ($vpsAtras -gt 0) {
     }
 
     # Restart so quando muda o que o processo carrega; doc/plano nao precisa derrubar o TOM.
-    $backend = (ssh tom "cd /opt/LA-Organizer && git diff --name-only HEAD origin/main 2>/dev/null | grep -cE '^(src/|skills/|migrations/)'" 2>$null) -as [int]
+    # rc conferido: `grep -c` sai 1 quando nao ha match, e saida vazia por erro nao pode
+    # virar backend=0 (que decide se o TOM e reiniciado).
+    $bkOut = (ssh tom "cd /opt/LA-Organizer && git diff --name-only HEAD $deploySha | grep -cE '^(src/|skills/|migrations/)'; exit \${PIPESTATUS[0]}" 2>$null) | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "=== DEPLOY ADIADO: git diff falhou (exit $LASTEXITCODE) -- nao sei o que mudou. ==="
+        exit 1
+    }
+    $bkTxt = $bkOut.Trim()
+    if ($bkTxt -notmatch '^\d+$') {
+        Write-Output "=== DEPLOY ABORTADO: contagem de backend veio '$bkTxt', que nao e numero. ==="
+        exit 1
+    }
+    $backend = [int]$bkTxt
     Write-Output "=== VPS estava $vpsAtras commit(s) atras -- sincronizando (backend: $backend arquivo(s)) ==="
 
     # 8-pre. PREFLIGHT + PONTO DE RETORNO (laudo v2.2, bloqueadores 1 e 3).
@@ -234,7 +333,10 @@ if ($vpsAtras -gt 0) {
     #   ponto de retorno, uma falha DEPOIS do reset deixa HEAD e disco novos com o processo
     #   antigo, e o turno seguinte ve `HEAD..origin/main = 0` e conclui que a VPS ja esta
     #   atualizada. O deploy nunca mais e retomado e ninguem percebe.
-    $preflight = (ssh tom "cd /opt/LA-Organizer && ./scripts/preflight-deploy.sh origin/main 2>&1" 2>$null) | Out-String
+    # de novo o preflight DO CANDIDATO (deploy_sha), nao o da arvore que sera substituida.
+    $candDir = Materializar-Candidato $deploySha
+    if ($candDir -eq "") { Write-Output "=== DEPLOY ABORTADO: bootstrap de $($deploySha.Substring(0,8)) falhou. ==="; exit 1 }
+    $preflight = (ssh tom "PREFLIGHT_REPO=/opt/LA-Organizer $candDir/scripts/preflight-deploy.sh $deploySha 2>&1" 2>$null) | Out-String
     if ($LASTEXITCODE -ne 0) {
         Set-Content -Path $holdFile -Value "HOLD auto: preflight reprovou no deploy $ts -- VPS NAO resetada." -Encoding utf8
         Write-Output "=== DEPLOY ABORTADO no preflight: ==="
@@ -295,7 +397,16 @@ if ($vpsAtras -gt 0) {
     }
 
     if ($backend -gt 0) {
-        ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet" 2>$null
+        # CONFIRMA POSSE antes do efeito irreversivel, e reseta para o LITERAL medido.
+        if (-not (Bater-LockDeploy)) { Set-Content -Path $holdFile -Value "HOLD auto: lock perdido antes do reset em $ts." -Encoding utf8; exit 1 }
+        $shaRemoto = ((ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet && git rev-parse origin/main" 2>$null) | Out-String).Trim()
+        if ($shaRemoto -ne $deploySha) {
+            Set-Content -Path $holdFile -Value "HOLD auto: origin/main moveu durante a transacao ($($deploySha.Substring(0,8)) -> $($shaRemoto.Substring(0,8)))." -Encoding utf8
+            Write-Output "=== DEPLOY ABORTADO: origin/main MOVEU durante a transacao. Medi $($deploySha.Substring(0,8)), agora e $($shaRemoto.Substring(0,8)). ==="
+            Write-Output "=== Nada foi resetado. O proximo turno mede o estado novo. ==="
+            exit 1
+        }
+        ssh tom "cd /opt/LA-Organizer && git reset --hard $deploySha --quiet" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Invoke-RollbackVps "o proprio reset --hard falhou"
             Soltar-LockDeploy; exit 1
@@ -390,19 +501,30 @@ if ($vpsAtras -gt 0) {
         #     "os guardas sobreviveram a este deploy?", que e a pergunta do dia.
         # CRON INSTALADO PELO CAMINHO CANONICO (laudo v2.5, bloqueador 9). O auto-deploy
         # VALIDAVA os cinco marcadores mas nunca os instalava -- eles estavam vivos porque eu
-        # rodei `patch-crontab.sh --aplicar` a mao durante a preparacao do pacote. Num host
-        # limpo, ou depois de alguem editar o crontab, o deploy reprovaria em vez de
-        # convergir. `--aplicar` e idempotente (marcador por linha), faz backup antes e
-        # confere 5/5 depois; se falhar, `--reverter` volta ao crontab anterior.
-        $cron = (ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --aplicar 2>&1 | tail -8" 2>$null) | Out-String
-        if ($LASTEXITCODE -ne 0) {
-            ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --reverter" 2>$null | Out-Null
-            Set-Content -Path $holdFile -Value "HOLD auto: patch-crontab --aplicar FALHOU no deploy $ts -- crontab revertido." -Encoding utf8
-            Write-Output "=== DEPLOY ABORTADO: nao consegui instalar os crons dos guardas. Crontab revertido. ==="
+        # ROLLBACK TRANSACIONAL (laudo v2.6, bloqueador 2). O `--reverter` nao aceita mais
+        # "o backup mais novo": ele exige o caminho do backup criado por ESTA tentativa,
+        # que o `--aplicar` imprime como `backup=<caminho>`. Se a aplicacao falhar antes de
+        # criar o backup, nao ha o que reverter -- e nao reverter e o resultado correto,
+        # porque restaurar o passado de outra tentativa troca CURRENT por OLD.
+        $cron = (ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --aplicar 2>&1 | tail -12" 2>$null) | Out-String
+        $rcCron = $LASTEXITCODE
+        $cronBackup = ""
+        foreach ($linha in ($cron -split "`n")) {
+            if ($linha -match '^backup=(.+)$') { $cronBackup = $Matches[1].Trim() }
+        }
+        if ($rcCron -ne 0) {
+            if ($cronBackup -ne "") {
+                ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --reverter $cronBackup" 2>$null | Out-Null
+                Write-Output "=== Crontab revertido para o backup desta tentativa: $cronBackup ==="
+            } else {
+                Write-Output "=== Crontab NAO foi alterado (a tentativa falhou antes do backup) -- nada a reverter. ==="
+            }
+            Set-Content -Path $holdFile -Value "HOLD auto: patch-crontab --aplicar FALHOU no deploy $ts." -Encoding utf8
+            Write-Output "=== DEPLOY ABORTADO: nao consegui instalar os crons dos guardas. ==="
             Write-Output $cron.Trim()
             Soltar-LockDeploy; exit 1
         }
-        Write-Output "=== Crons dos guardas: $((($cron -split "`n") | Select-String "linhas confirmadas") -join " ") ==="
+        Write-Output "=== Crons dos guardas instalados (backup desta tentativa: $cronBackup) ==="
         $guardas = (ssh tom "cd /opt/LA-Organizer && F=0; for s in backup-db backup-secrets check-backup conter-permissoes alertar pos-deploy-modos; do [ -x scripts/\$s.sh ] || { echo \"sem +x: \$s.sh\"; F=1; }; done; for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes tom-restore-drill; do crontab -l 2>/dev/null | grep -q -- \"# \$m\$\" || { echo \"cron faltando: \$m\"; F=1; }; done; [ \$F -eq 0 ] && echo 'guardas ok: 6 scripts executaveis, 5 crons presentes'; exit \$F" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: guardas de seguranca quebrados apos deploy $ts -- $($guardas.Trim())" -Encoding utf8
@@ -516,6 +638,11 @@ if ($vpsAtras -gt 0) {
         Soltar-LockDeploy; exit 1
     }
 }
-Soltar-LockDeploy; exit 0
+exit 0
+}
+finally {
+    # a rede: solta o lock em QUALQUER saida deste escopo.
+    Soltar-LockDeploy
+}
 
 # v2 (clone git) no ar desde 2026-07-21.

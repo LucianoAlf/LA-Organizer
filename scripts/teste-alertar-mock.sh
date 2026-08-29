@@ -6,9 +6,7 @@
 #   * /proc/<pid>/cmdline durante o envio (segredo fora do argv);
 #   * laudo v2.5, bloqueador 6 -- id de REQUISICAO com entrega falha, envelope sem status,
 #     status desconhecido, JSON que nao e objeto;
-#   * laudo v2.5, bloqueador 8 -- ISOLAMENTO: a suite nao pode tocar em /run/alertar-*, onde
 #     moram as marcas anti-spam REAIS da sentinela e da varredura. A v2.5 fazia
-#     `rm -f /run/alertar-*` sete vezes: rodar os testes zerava a supressao de producao e
 #     podia colidir com um alerta em voo.
 
 set -uo pipefail
@@ -22,19 +20,15 @@ P=0; F=0
 ok()    { P=$((P+1)); printf '  ok    %s\n' "$1"; }
 falhou(){ F=$((F+1)); printf '  FALHA %s\n' "$1"; }
 
-# SENTINELA DE ISOLAMENTO. Fotografa /run/alertar-* ANTES. Se nao houver marca nenhuma a
 # comparacao seria vacua -- entao o teste cria uma sentinela propria (nome que nao e hash de
 # chave nenhuma, logo nao suprime alerta de ninguem) e a remove no fim.
-SENT="/run/alertar-SENTINELA-DO-TESTE-$$"
-FOTO_ANTES="$D/marcas-antes.txt"
-ls -1 /run/alertar-* 2>/dev/null | LC_ALL=C sort > "$FOTO_ANTES" || true
-if date +%s > "$SENT" 2>/dev/null; then TEM_SENT=1; printf '%s\n' "$SENT" >> "$FOTO_ANTES"
-else TEM_SENT=0; fi
-LC_ALL=C sort -o "$FOTO_ANTES" "$FOTO_ANTES"
+# NIVEL: integration-sandbox PURO (laudo v2.6, bloqueador 10). A v2.6 fotografava -- e antes
+# disso CRIAVA -- arquivo no /run REAL para provar que nao mexia no /run real. Um teste que
+# toca o estado vivo para se declarar isolado nao esta isolado. A verificacao de que a suite
+# nao suja /run foi para teste-ambiente-isolamento.sh, que e environment-read-only e SO le.
 limpar() {
   [ -n "${SRV:-}" ] && kill "$SRV" 2>/dev/null
-  [ "$TEM_SENT" = 1 ] && rm -f "$SENT" 2>/dev/null
-  rm -rf "$D"                       # e SO isso: nada em /run alem da propria sentinela
+  rm -rf "$D"                       # e SO isso: este teste nao escreve nem le nada fora de $D
 }
 trap limpar EXIT INT TERM
 
@@ -89,6 +83,22 @@ class H(http.server.BaseHTTPRequestHandler):
                                 "fromMe": True, "chatid": "120363000000000001@g.us"})
         elif m == 'nao_objeto':
             corpo = json.dumps([{"id": "MOCK-MSG-1", "status": "sent"}])
+        elif m == 'erro_aninhado':
+            # id + status de sucesso NO TOPO, erro escondido em data.error. A v2.6 so olhava o topo.
+            corpo = json.dumps({"messageid": "MOCK-MSG-7", "status": "sent",
+                                "data": {"error": "number not on whatsapp"}})
+        elif m == 'erro_em_lista':
+            corpo = json.dumps({"messageid": "MOCK-MSG-8", "status": "sent",
+                                "result": {"errors": ["destino invalido"]}})
+        elif m == 'queued':
+            corpo = json.dumps({"messageid": "MOCK-MSG-Q", "status": "queued",
+                                "chatid": "120363000000000001@g.us", "fromMe": True})
+        elif m == 'status_booleano':
+            corpo = json.dumps({"messageid": "MOCK-MSG-B", "status": True,
+                                "chatid": "120363000000000001@g.us", "fromMe": True})
+        elif m == 'entregue':
+            corpo = json.dumps({"messageid": "MOCK-MSG-D", "status": "delivered",
+                                "chatid": "120363000000000001@g.us", "fromMe": True})
         elif m == 'erro_dentro_do_id':
             corpo = json.dumps({"messageid": "MOCK-MSG-1", "error": "number not on whatsapp"})
         else:
@@ -122,7 +132,7 @@ rodar()  { TOM_ENV_FILE="${2:-$D/env}" ALERTAR_MARCA_DIR="$MARCAS" ALERTAR_TENTA
 echo "== 1. sucesso semantico =="
 echo sucesso > "$D/modo"; zerar
 S=$(rodar . "$D/env" 8 --chave t1 --intervalo-min 60 "mensagem de teste"); RC=$?
-grep -q 'entregue' <<<"$S" && [ "$RC" = 0 ] && ok "entrega confirmada (rc=0)" || falhou "esperava entrega: $S"
+grep -qE 'ENTREGUE|ACEITO' <<<"$S" && [ "$RC" = 0 ] && ok "envio aceito/entregue (rc=0)" || falhou "esperava entrega: $S"
 [ "$(marcas)" = 1 ] && ok "marca anti-spam gravada apos confirmacao" || falhou "marcas=$(marcas)"
 ls "$MARCAS"/alertar-* 2>/dev/null | grep -q '120363' && falhou "nome da marca EXPOE o JID" || ok "nome da marca nao expoe o JID"
 
@@ -179,7 +189,7 @@ rodar . "$D/env" 8 --chave t10 --intervalo-min 60 "primeira" >/dev/null
 S=$(rodar . "$D/env" 8 --chave t10 --intervalo-min 60 "segunda")
 grep -q 'suprimido' <<<"$S" && ok "mesmo destino: suprimido" || falhou "deveria suprimir: $S"
 S=$(rodar . "$D/env-outro" 8 --chave t10 --intervalo-min 60 "outra caixa")
-grep -q 'entregue' <<<"$S" && ok "destino DIFERENTE: entregue (nao herdou)" || falhou "herdou supressao: $S"
+grep -qE 'ENTREGUE|ACEITO' <<<"$S" && ok "destino DIFERENTE: enviado (nao herdou)" || falhou "herdou supressao: $S"
 
 echo "== 11. /proc/<pid>/cmdline durante o envio =="
 # Usa o modo `timeout` de proposito: com o mock respondendo na hora, o curl vive ~10 ms e o
@@ -219,17 +229,61 @@ S=$(TOM_ENV_FILE="$D/env" ALERTAR_MARCA_DIR="$MARCAS" "$A" --testar-canal 2>&1);
 [ ! -f "$D/modo.ultimo-corpo" ] && ok "nenhum POST chegou ao mock" || falhou "houve POST no --testar-canal"
 grep -q '120363000000000001' <<<"$S" && falhou "destino impresso inteiro" || ok "destino mascarado na saida"
 
-echo "== 13. BLOQUEADOR 8: a suite nao tocou nas marcas REAIS de /run =="
-ls -1 /run/alertar-* 2>/dev/null | LC_ALL=C sort > "$D/marcas-depois.txt" || true
-if [ "$TEM_SENT" = 0 ]; then
-  falhou "nao consegui criar sentinela em /run -- a comparacao seria vacua, nao conte como aprovado"
-elif diff -q "$FOTO_ANTES" "$D/marcas-depois.txt" >/dev/null 2>&1; then
-  ok "as $(wc -l < "$FOTO_ANTES") marca(s) de /run continuam exatamente como antes"
+echo "== BLOQUEADOR 8a: erro ANINHADO reprova (id e status de sucesso no topo) =="
+echo erro_aninhado > "$D/modo"; zerar
+S=$(rodar . "$D/env" 8 --chave t14 --intervalo-min 60 "x"); RC=$?
+[ "$RC" != 0 ] && ok "data.error derruba o envio (rc=$RC)" || falhou "ACEITOU corpo com erro aninhado"
+grep -q "data.error" <<<"$S" && ok "diz ONDE achou o erro" || falhou "nao localiza o erro: $(head -1 <<<"$S")"
+[ "$(marcas)" = 0 ] && ok "nao gravou marca" || falhou "gravou marca com erro aninhado"
+echo erro_em_lista > "$D/modo"; zerar
+S=$(rodar . "$D/env" 8 --chave t15 --intervalo-min 60 "x"); RC=$?
+[ "$RC" != 0 ] && ok "erro dentro de lista tambem reprova (rc=$RC)" || falhou "errors[] passou"
+
+echo "== BLOQUEADOR 8b: status booleano nao e estado de entrega =="
+echo status_booleano > "$D/modo"; zerar
+S=$(rodar . "$D/env" 8 --chave t16 --intervalo-min 60 "x"); RC=$?
+[ "$RC" != 0 ] && ok "status=true reprova (rc=$RC)" || falhou "booleano generico passou como entrega"
+
+echo "== BLOQUEADOR 8c: ACEITO (queued) nao e ENTREGUE =="
+echo queued > "$D/modo"; zerar
+S=$(rodar . "$D/env" 8 --chave t17 --intervalo-min 60 "x"); RC=$?
+[ "$RC" = 0 ] && ok "queued conta como tentativa bem-sucedida (rc=0)" || falhou "rc=$RC"
+grep -q "ACEITO" <<<"$S" && ok "a saida diz ACEITO, nao entregue" || falhou "descreveu queued como entrega: $(head -1 <<<"$S")"
+grep -qi "entrega NAO confirmada" <<<"$S" && ok "declara que a entrega nao foi confirmada" || falhou "sem a ressalva"
+# a marca existe, mas com carimbo recuado: a supressao dura poucos minutos, nao uma hora
+AGORA=$(date +%s); GRAV=$(cat "$MARCAS"/alertar-* 2>/dev/null | head -1)
+IDADE=$(( (AGORA - ${GRAV:-$AGORA}) / 60 ))
+if [ "$IDADE" -ge 50 ]; then ok "marca de ACEITO ja nasce com ${IDADE}min de idade (supressao curta)"
+else falhou "marca de queued nasce nova ($IDADE min): silenciaria o assunto por uma hora"; fi
+# O contrato NAO e "nao suprime": e "suprime por ALERTAR_INTERVALO_ACEITO, nao por
+# INTERVALO". Um repique imediato DEVE ser suprimido -- senao um erro em loop vira enxurrada.
+# O que muda e a duracao. Envelhecendo a marca em 6 min (janela de 5), o alerta volta a sair;
+# se fosse a marca longa, continuaria suprimido por mais 54 min.
+S=$(rodar . "$D/env" 8 --chave t17 --intervalo-min 60 "repique imediato")
+if grep -q "suprimido" <<<"$S"; then ok "repique imediato ainda e suprimido (nao vira enxurrada)"
+else falhou "nao suprimiu nem o repique imediato"; fi
+M=$(ls "$MARCAS"/alertar-* | head -1); echo $(( $(cat "$M") - 6*60 )) > "$M"
+S=$(rodar . "$D/env" 8 --chave t17 --intervalo-min 60 "passados 6 min")
+if grep -q "suprimido" <<<"$S"; then
+  falhou "6 min depois de um ACEITO ainda esta suprimido -- a janela nao encurtou"
 else
-  falhou "a suite mexeu em /run/alertar-*: $(diff "$FOTO_ANTES" "$D/marcas-depois.txt" | head -3 | tr '\n' ' ')"
+  ok "6 min depois de um ACEITO o alerta volta a sair (janela de 5, nao de 60)"
 fi
-[ -d "$MARCAS" ] && ok "as marcas do teste ficaram no diretorio injetado, fora de /run" \
-                 || falhou "diretorio de marcas do teste sumiu"
+
+echo "== e ENTREGUE de verdade grava a marca longa =="
+echo entregue > "$D/modo"; zerar
+S=$(rodar . "$D/env" 8 --chave t18 --intervalo-min 60 "x"); RC=$?
+if [ "$RC" = 0 ] && grep -q "ENTREGUE" <<<"$S"; then ok "status=delivered -> ENTREGUE"
+else falhou "rc=$RC: $(head -1 <<<"$S")"; fi
+GRAV=$(cat "$MARCAS"/alertar-* 2>/dev/null | head -1); IDADE=$(( ($(date +%s) - ${GRAV:-0}) / 60 ))
+[ "$IDADE" -le 1 ] && ok "marca de ENTREGUE e recente (supressao cheia)" || falhou "marca de entrega nasceu velha ($IDADE min)"
+S=$(rodar . "$D/env" 8 --chave t18 --intervalo-min 60 "de novo")
+grep -q "suprimido" <<<"$S" && ok "entrega confirmada suprime o repique" || falhou "nao suprimiu apos entrega"
+M=$(ls "$MARCAS"/alertar-* | head -1); echo $(( $(cat "$M") - 6*60 )) > "$M"
+S=$(rodar . "$D/env" 8 --chave t18 --intervalo-min 60 "passados 6 min")
+if grep -q "suprimido" <<<"$S"; then ok "6 min depois de uma ENTREGA continua suprimido (janela cheia)"
+else falhou "a marca de entrega expirou em 6 min -- nao e supressao longa"; fi
+
 
 echo
 echo "== $P passaram, $F falharam =="
