@@ -940,3 +940,103 @@ e nenhum guard de honestidade jamais consertaria isso, porque não há nada de d
 Medido e **não corrigido** no mesmo lugar (fora do teto): o cabeçalho do bloco renderiza
 `Tarefas trabalho hoje (N)` com N = total da janela de 7 dias, enquanto só 8 linhas são
 renderizadas e o rótulo diz "hoje". Mesma origem, decisão de desenho.
+
+### ETAPA 3 — classe nova: o bug não está em NENHUM guard, está no ENCADEAMENTO de dois
+
+**Ocorrências:** 1 (29/08), e é a correção da rodada.
+
+`bb26cbe6` (Dudu 27/08 18:51:05 BRT): áudio pedindo pra guardar os cabos XLR do Vandinho, e o que
+chegou foram **duas notas de erro empilhadas e nada mais**. A leitura natural é "um dos guards de
+honestidade está agressivo demais" — e o reflexo é abrir o regex do guard que disparou.
+
+Nenhum dos dois guards, isolado, produz o dano. `downgradeEmptyPromise` (`engine.js:13714`)
+dropava **toda** linha em branco, inclusive o separador entre duas linhas MANTIDAS. O reply segue
+daí para `enforceNoMarkerHonesty`/`sanitizeOptimisticConfirm` (`engine.js:13946`), que remove a
+claim **junto com o parágrafo dela** — desenho correto isolado. Sem o separador, o bloco de
+conteúdo virou parte do parágrafo da claim e foi apagado com ela.
+
+Isolamento medido, e é de UM caractere: o mesmo texto **com** a linha em branco atravessa o
+`sanitizeOptimisticConfirm(...,'failed')` com os 2 bullets intactos; **sem** ela devolve `""`.
+Prova {antes, depois} do pipeline encadeado: ANTES = só as duas notas (conteúdo 0 chars, idêntico
+byte a byte ao outbound entregue); DEPOIS = os 2 bullets dos cabos + as notas. Fix em
+`promise-honesty.js`: parar de filtrar linha em branco e colapsar só as sequências (`\n{3,}` →
+`\n\n`), preservando o comportamento antigo para a linha em branco órfã (controle segue verde).
+
+Regra: **quando o sintoma é "sumiu conteúdo que não era mentira", não procure o guard culpado —
+monte o pipeline inteiro na ordem do `engine.js` e rode.** Guard testado isolado passa; o dano
+mora na composição, e nenhum teste unitário de guard jamais o veria.
+
+Proposta de virar código: um teste de contrato que rode a CADEIA real (`downgradeEmptyPromise` →
+`enforceNoMarkerHonesty` → `sanitizeOptimisticConfirm`) e falhe quando a saída final perder um
+bloco que a saída intermediária tinha preservado. Hoje cada guard tem suíte própria e ninguém
+testa a costura.
+
+### ETAPA 2 (varredura) — "mesma família" reincidiu pela 5ª vez, agora contra um achado JÁ FECHADO
+
+**Ocorrências:** 5 (13/08, 14/08, 17/08, 21/08, 29/08). Quinta vez em 16 dias.
+
+Novidade desta: o irmão não era "um achado parecido", era **um achado que uma rodada minha já
+tinha fechado com prova completa**. `771b5bc1` (Rose 11/08) foi encerrado em 24/08 medindo que
+`b29a7266` corrigiu — literal `"apaga a fatura Itaú de R$ 950,21"` → `{kind:'none'}`. Hoje
+apareceu `4bf44931`: **mesma pessoa, mesmo dia, mesma minuto-a-minuto, mesmo sintoma visível**
+(pediu pra desfazer, apagou o Canva de R$ 34,90). A tentação de fechar apontando pro fechamento
+anterior é máxima.
+
+Rodado: `"tom, desfaz esses lançamentos q vc fez agr pf"` → **`{kind:'one', Google Canva AI
+PhotoSA 34.90}`** contra o código de hoje. Sintoma VIVO. Controles válidos (`"apaga o PONTO
+CERTO"` → one:PONTO CERTO; `"apaga a de 500"` → one:MP *LUCASDONAS; `"apaga isso"` → fallback
+legítimo). Raiz separada: `resolveTxnTarget` (`src/finance/txn-target.js:37`) não tem noção de
+LOTE — pedido no PLURAL referindo o pacote recém-criado cai no fallback de item único mais
+recente. `b29a7266` fechou a porta do valor-total explícito e deixou a do plural aberta.
+
+O que isto acrescenta às quatro ocorrências anteriores: **um fechamento anterior meu, com prova,
+não cobre o irmão — a prova valia para AQUELE literal.** Fechar por herança de prova é a mesma
+falha de fechar por parecer, com um verniz de rigor. A proposta de 21/08 (exigir `prova`
+`{funcao, entrada, antes, depois}` executado, e o `gov-runner` recusar `status=corrigido` sem
+ela) segue sendo a única saída mecânica — cinco ocorrências dizem que isto não vai ser resolvido
+por disciplina.
+
+### ETAPA 2 (varredura) — 6ª rodada seguida sem NENHUM fechamento por "já corrigido"
+
+**Ocorrências:** 6 (16/08, 19/08, 23/08, 24/08, 27/08, 29/08). Contra 2 exceções (20/08, 22/08).
+
+Varredura de 29/08: 7 achados investigados até a prova. **Zero** fecharam como "já corrigido",
+**zero** como falso positivo do auditor. Os 7 se confirmaram bugs vivos, com raiz e `arquivo:linha`
+gravados no `verified_note`; 1 deles virou a correção da rodada. O lever de `marker_logs
+schema_invalid` (o melhor medido, 27/08) deu 5 candidatos e 0 fechamentos.
+
+A esta altura o padrão não é ruído: **a premissa do protocolo — "quase todos são anteriores a
+dezenas de correções e devem cair como 'já corrigido'" — está medida como falsa em 6 de 8
+rodadas.** O acervo antigo é fila de bug real, não estoque de coisa resolvida. Vale reescrever a
+expectativa na ETAPA 2, porque hoje ela empurra o agente a procurar fechamento onde não há, e
+fechamento procurado é fechamento por parecer.
+
+O produto da varredura segue sendo diagnóstico: `4bf44931`, `ab345c8f` e `4b815042` saem daqui
+corrigíveis em minutos por quem pegar. A métrica útil continua sendo quantos achados anotados
+viram correção depois — a correção de 29/08 nasceu de um candidato anotado na mesma rodada.
+
+### ETAPA 3 — o guard pode piorar a resposta: rebaixar admissão HONESTA por casar o verbo
+
+**Ocorrências:** 1 (29/08), medido no mesmo módulo da correção do dia.
+
+`ab345c8f` (Rafinha 27/08 11:09 BRT). A resposta ORIGINAL, preservada no `raw_excerpt` de
+`marker_logs ACTIONABLE_NO_MARKER`, já era honesta e útil: _"Vacilei aqui — não consegui registrar
+essa mudança de horário do Dudu agora. Me repete: hoje fechamento às 18h30, e toda terça e quinta
+também às 18h30 — é isso? Me confirma de novo que eu ajusto já."_
+
+`REPLY_PROMISE_RE` (`src/lib/promise-honesty.js:16`) casa o verbo **ignorando a negação**. Medido:
+`REPLY_PROMISE_RE.test("não consegui registrar")` = **true**. Como a resposta era uma linha só, a
+linha inteira foi classificada como promessa vazia e removida — sobrou apenas o disclaimer
+genérico. Os 18h30, a terça/quinta e a re-pergunta somem. Prova {antes, depois} com o literal:
+`fired:true`, reply final = só o `_⚠️ Na real…_`. Controles bons (promessa real dispara; saudação
+não).
+
+O ponto que isto abre, e vale além deste caso: **o guard de honestidade tem um lado ruim
+raramente medido — trocar uma admissão específica por uma genérica é ESTRITAMENTE PIOR para o
+usuário**, e passa despercebido porque a saída continua "honesta". Guard que só é avaliado por
+"impediu mentira?" nunca reprova aqui.
+
+Não corrigido (teto de 1/rodada, e é módulo diferente do fix de hoje — conferido rodando, o fix
+de 29/08 não alcança linha única). Proposta: negative-lookbehind de negação
+("não consegui/não deu/não rolou") antes do verbo, ou não rebaixar linha que já contenha admissão
+de falha.
