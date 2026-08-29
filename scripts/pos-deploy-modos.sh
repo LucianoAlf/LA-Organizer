@@ -21,21 +21,29 @@
 # Idempotente. Fail-closed: se qualquer alvo ficar fora do esperado, sai != 0.
 
 set -uo pipefail
-cd "$(dirname "$(readlink -f "$0")")/.." || exit 2
+# AQUI capturado ANTES do cd: depois dele, um $0 RELATIVO passa a resolver a partir do
+# novo diretorio e `readlink -f` devolve um caminho que nao existe. Foi assim que este
+# script disse "lib-guardas.sh ausente" com a lib ao lado dele.
+AQUI="$(dirname "$(readlink -f "$0")")"
+cd "$AQUI/.." || exit 2
 
-EXEC750=(
-  scripts/alertar.sh scripts/backup-db.sh scripts/backup-secrets.sh
-  scripts/check-backup.sh scripts/conter-permissoes.sh
-  scripts/lib-baseline-queries.sh scripts/lib-pgconn.sh scripts/patch-crontab.sh
-  scripts/preflight-deploy.sh scripts/restaurar-guardas.sh
-  scripts/restaurar-modos.sh scripts/restore-drill.sh scripts/smoke-pos-aplicacao.sh
-  scripts/teste-negativo-dataapi.sh scripts/teste-negativo-permissoes.sh
-  scripts/verificar-bundle.sh
-  # libs e testes acrescentados na v2.5 — se ficarem de fora, o proprio gate de modos
-  # passa a medir menos do que o pacote entrega, que e como a contencao decai sem ninguem ver.
-  scripts/lib-publicar.sh scripts/lib-seq-compare.sh scripts/teste-alertar-mock.sh scripts/teste-bundle-mock.sh scripts/teste-deploy-lock-sha.sh scripts/teste-publicar.sh scripts/teste-sentinela-timeline.sh scripts/teste-seq-compare.sh
-)
-DADO640=( scripts/bundle-allowlist.txt scripts/bundle-esperados.txt scripts/suite-vermelhos-conhecidos.txt )
+# MESMA FONTE do preflight (laudo v2.5, licao do bloqueador 9 aplicada aqui): a lista de
+# guardas era duplicada e ficou para tras. Os seis guardas novos da v2.6 entrariam no
+# snapshot de rollback e NAO receberiam 0750 -- voltariam 0644 no reset, legiveis pelas 8
+# contas do host, com o gate de modos dizendo "ok" por contar so os antigos.
+LIBG="$AQUI/lib-guardas.sh"
+[ -r "$LIBG" ] || { echo "pos-deploy-modos: FATAL: lib-guardas.sh ausente" >&2; exit 2; }
+# shellcheck disable=SC1090
+. "$LIBG"
+EXEC750=(); for g in "${GUARDAS[@]}"; do EXEC750+=("scripts/$g.sh"); done
+DADO640=(); for d in "${DADOS[@]}"; do DADO640+=("scripts/$d"); done
+# guarda novo que ninguem listou: reprova aqui, alto, em vez de decair em silencio.
+FORA=$(guardas_nao_listados "$(pwd)")
+if [ -n "$FORA" ]; then
+  echo "pos-deploy-modos: FATAL: guarda(s) fora do inventario de lib-guardas.sh:" >&2
+  printf %s "$FORA" | sed "s/^/    /" >&2
+  exit 1
+fi
 
 FALHAS=0
 aplicar() { # <modo> <arquivo>

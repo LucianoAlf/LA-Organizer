@@ -17,7 +17,11 @@ echo "== 1. alvo imutavel: mover a ref nao muda o SHA medido =="
 D=$(mktemp -d /tmp/lockteste.XXXXXX)
 (
   cd "$D" && git init -q -b main up && cd up && git config user.email t@t && git config user.name t
-  mkdir -p scripts && cp "$AQUI/preflight-deploy.sh" scripts/ && chmod +x scripts/preflight-deploy.sh
+  mkdir -p scripts && # lib-guardas.sh vai junto: o preflight agora tira o inventario dela e falha fechado sem
+# ela. Copiar so o preflight fazia todo caso sair rc=2 -- correto do ponto de vista do
+# guarda, mas o teste deixava de medir o que se propoe a medir.
+cp "$AQUI/lib-guardas.sh" scripts/ 2>/dev/null
+cp "$AQUI/preflight-deploy.sh" scripts/ && chmod +x scripts/preflight-deploy.sh
   echo base > base.txt && git add -A && git commit -qm c1
   echo v1 > alvo.txt && git add alvo.txt && git commit -qm "c2 (candidato bom)"
   BOM=$(git rev-parse HEAD)

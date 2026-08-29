@@ -20,6 +20,10 @@ git init -q -b main "$D/repo" 2>/dev/null
 cd "$D/repo" || exit 2
 git config user.email t@t; git config user.name t; git config core.fileMode true
 mkdir -p scripts
+# lib-guardas.sh vai junto: o preflight agora tira o inventario dela e falha fechado sem
+# ela. Copiar so o preflight fazia todo caso sair rc=2 -- correto do ponto de vista do
+# guarda, mas o teste deixava de medir o que se propoe a medir.
+cp "$AQUI/lib-guardas.sh" scripts/ 2>/dev/null
 cp "$AQUI/preflight-deploy.sh" scripts/ && chmod 0755 scripts/preflight-deploy.sh
 printf 'conteudo estavel\n' > dado.txt      && chmod 0644 dado.txt
 printf '#!/bin/sh\necho oi\n' > prog.sh     && chmod 0755 prog.sh

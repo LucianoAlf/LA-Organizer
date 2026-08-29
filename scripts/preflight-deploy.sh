@@ -25,16 +25,18 @@
 set -uo pipefail
 REF=${1:?uso: $0 <ref-alvo> [--sem-snapshot]}
 SNAP=1; [ "${2:-}" = "--sem-snapshot" ] && SNAP=0
-cd "$(dirname "$(readlink -f "$0")")/.." || exit 2
+# AQUI capturado ANTES do cd: depois dele, um $0 RELATIVO passa a resolver a partir do
+# novo diretorio e `readlink -f` devolve um caminho que nao existe. Foi assim que este
+# script disse "lib-guardas.sh ausente" com a lib ao lado dele.
+AQUI="$(dirname "$(readlink -f "$0")")"
+cd "$AQUI/.." || exit 2
 
-GUARDAS=(alertar backup-db backup-secrets check-backup conter-permissoes lib-baseline-queries
-         lib-lock lib-pgconn lib-publicar lib-seq-compare patch-crontab pos-deploy-modos
-         preflight-deploy restaurar-guardas restaurar-modos restore-drill rodar-baterias
-         smoke-pos-aplicacao teste-alertar-mock teste-bundle-mock teste-cron-canonico
-         teste-deploy-lock-sha teste-lock-dono teste-negativo-dataapi teste-negativo-permissoes
-         teste-preflight-modo teste-publicar teste-sentinela-timeline teste-seq-compare
-         teste-vercel-prova verificar-bundle)
-DADOS=(bundle-allowlist.txt bundle-esperados.txt suite-vermelhos-conhecidos.txt baterias-ambiente.txt)
+# INVENTARIO VEM DA LIB, nao de copia local: duas listas do mesmo fato divergem com o tempo,
+# e foi o que aconteceu entre este arquivo e pos-deploy-modos.sh.
+LIBG="$AQUI/lib-guardas.sh"
+[ -r "$LIBG" ] || { echo "FATAL: lib-guardas.sh ausente em $LIBG" >&2; exit 2; }
+# shellcheck disable=SC1090
+. "$LIBG"
 GUARDAS_ESPERADOS=$(( ${#GUARDAS[@]} + ${#DADOS[@]} ))
 DEST=${GUARDAS_DIR:-/opt/backups/la-organizer/guardas}
 PROBLEMAS=0
