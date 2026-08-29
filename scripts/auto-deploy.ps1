@@ -74,11 +74,42 @@ $ts = Get-Date -Format "yyyy-MM-dd HH:mm"
 # sempre; quem tomar o lock registra quem e e quando.
 $lockDir = "/run/tom-deploy.lock"
 $lockTtlMin = 30
+# DONO VERIFICAVEL (laudo v2.5, bloqueador 1). O lock antigo era `mkdir` + `rm -rf` cru:
+#   * quem recebia OCUPADO chamava a liberacao e APAGAVA o lock do dono. O segundo turno nao
+#     entrava na janela — ele destruia a protecao do primeiro, que seguia deployando sem lock;
+#   * o caminho sem commit nunca ADQUIRIA, mas soltava ao sair — apagando lock alheio.
+# Agora o protocolo mora em scripts/lib-lock.sh (testavel, e por isso o bug apareceu) e cada
+# turno carrega um nonce: so o dono solta.
+$lockNonce = ([guid]::NewGuid()).ToString("N")
+$script:lockAdquirido = $false
+$libLock = "/opt/LA-Organizer/scripts/lib-lock.sh"
 function Tomar-LockDeploy {
-    $r = (ssh tom "if mkdir $lockDir 2>/dev/null; then echo ADQUIRIDO; date +%s > $lockDir/epoch; echo `"auto-deploy $env:COMPUTERNAME`" > $lockDir/dono; else IDADE=`$(( ( `$(date +%s) - `$(cat $lockDir/epoch 2>/dev/null || echo 0) ) / 60 )); if [ `"`$IDADE`" -ge $lockTtlMin ]; then rm -rf $lockDir; mkdir $lockDir && { date +%s > $lockDir/epoch; echo ORFAO-REMOVIDO; }; else echo `"OCUPADO `$IDADE`"; fi; fi" 2>$null) | Out-String
-    return $r.Trim()
+    $r = (ssh tom ". $libLock 2>/dev/null || { echo SEM-LIB; exit 3; }; LOCK_DONO_DESC=auto-deploy-$env:COMPUTERNAME lock_tomar $lockDir $lockNonce $lockTtlMin" 2>$null) | Out-String
+    $r = $r.Trim()
+    if ($r -match 'ADQUIRIDO|ORFAO-REMOVIDO') { $script:lockAdquirido = $true }
+    return $r
 }
-function Soltar-LockDeploy { ssh tom "rm -rf $lockDir" 2>$null | Out-Null }
+# Soltar SO solta o que este turno adquiriu. Duas barreiras: a flag local (nao chama a
+# liberacao sem ter adquirido) e o nonce remoto (a lib recusa lock de outro dono).
+function Soltar-LockDeploy {
+    if (-not $script:lockAdquirido) { return }
+    ssh tom ". $libLock 2>/dev/null || exit 3; lock_soltar $lockDir $lockNonce" 2>$null | Out-Null
+    $script:lockAdquirido = $false
+}
+
+# AQUISICAO UNICA, ANTES DE QUALQUER CAMINHO. A v2.5 so tomava o lock dentro do ramo que
+# commita; o ramo que apenas SINCRONIZA a VPS (push do outro chat) media e resetava producao
+# inteiramente fora da janela protegida.
+$lk = Tomar-LockDeploy
+if (-not $script:lockAdquirido) {
+    if ($lk -eq 'SEM-LIB') {
+        Write-Output "=== DEPLOY ABORTADO: lib-lock.sh ausente na VPS -- sem protocolo de lock nao ha janela protegida. ==="
+        exit 1
+    }
+    Write-Output "=== DEPLOY ADIADO: outra reconciliacao esta em andamento ($lk). Proximo turno tenta. ==="
+    exit 0
+}
+Write-Output "=== Lock de deploy: $lk (nonce $($lockNonce.Substring(0,8))) ==="
 
 $empurrou = $false
 $temBaseline = $false
@@ -98,7 +129,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
             git -C $srcRoot rebase --abort 2>$null
             Set-Content -Path $holdFile -Value "HOLD auto: rebase-conflito no deploy $ts -- resolver a mao (git status em _remote)." -Encoding utf8
             Write-Output "=== DEPLOY ABORTADO: rebase-conflito com origin/main. Hold recriado. Resolver manualmente. ==="
-            exit 0
+            Soltar-LockDeploy; exit 0
         }
         # 6b. PREFLIGHT ANTES DO PUSH, CONTRA O TIP CANDIDATO (laudo v2.3, bloqueador 1).
         #     A v2.2 media contra `origin/main` — o alvo VELHO, que nao e o que sera resetado.
@@ -112,14 +143,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         $tip = $tip.Trim()
         if ($tip -notmatch '^[0-9a-f]{40}$') {
             Write-Output "=== DEPLOY ABORTADO: nao consegui resolver o tip local. ==="
-            exit 1
+            Soltar-LockDeploy; exit 1
         }
-        $lk = Tomar-LockDeploy
-        if ($lk -notmatch 'ADQUIRIDO|ORFAO-REMOVIDO') {
-            Write-Output "=== DEPLOY ADIADO: outra reconciliacao esta em andamento ($lk). Proximo turno tenta. ==="
-            Soltar-LockDeploy; exit 0
-        }
-        Write-Output "=== Lock de deploy: $lk ==="
         # REF IMUTAVEL (laudo v2.3, bloqueador 7). `refs/candidato/pendente` era um nome fixo
         # e mutavel: entre conferir "o ref bate com o tip" e o preflight medir contra ele,
         # outro processo podia reescrever o ref e o preflight mediria outra arvore. O nome
@@ -363,6 +388,21 @@ if ($vpsAtras -gt 0) {
         #     crontab. Nao roda o smoke completo aqui — smoke pesado no caminho quente
         #     de TODO deploy vira flaky que bloqueia entrega. Isto so responde
         #     "os guardas sobreviveram a este deploy?", que e a pergunta do dia.
+        # CRON INSTALADO PELO CAMINHO CANONICO (laudo v2.5, bloqueador 9). O auto-deploy
+        # VALIDAVA os cinco marcadores mas nunca os instalava -- eles estavam vivos porque eu
+        # rodei `patch-crontab.sh --aplicar` a mao durante a preparacao do pacote. Num host
+        # limpo, ou depois de alguem editar o crontab, o deploy reprovaria em vez de
+        # convergir. `--aplicar` e idempotente (marcador por linha), faz backup antes e
+        # confere 5/5 depois; se falhar, `--reverter` volta ao crontab anterior.
+        $cron = (ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --aplicar 2>&1 | tail -8" 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --reverter" 2>$null | Out-Null
+            Set-Content -Path $holdFile -Value "HOLD auto: patch-crontab --aplicar FALHOU no deploy $ts -- crontab revertido." -Encoding utf8
+            Write-Output "=== DEPLOY ABORTADO: nao consegui instalar os crons dos guardas. Crontab revertido. ==="
+            Write-Output $cron.Trim()
+            Soltar-LockDeploy; exit 1
+        }
+        Write-Output "=== Crons dos guardas: $((($cron -split "`n") | Select-String "linhas confirmadas") -join " ") ==="
         $guardas = (ssh tom "cd /opt/LA-Organizer && F=0; for s in backup-db backup-secrets check-backup conter-permissoes alertar pos-deploy-modos; do [ -x scripts/\$s.sh ] || { echo \"sem +x: \$s.sh\"; F=1; }; done; for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes tom-restore-drill; do crontab -l 2>/dev/null | grep -q -- \"# \$m\$\" || { echo \"cron faltando: \$m\"; F=1; }; done; [ \$F -eq 0 ] && echo 'guardas ok: 6 scripts executaveis, 5 crons presentes'; exit \$F" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: guardas de seguranca quebrados apos deploy $ts -- $($guardas.Trim())" -Encoding utf8
@@ -414,7 +454,12 @@ if ($vpsAtras -gt 0) {
             # tem credencial para chamar. Sem isso nao ha como provar "este deployment e o do
             # commit X e esta READY", entao o gate NAO declara aprovado: devolve INDETERMINADO
             # e para. `x-vercel-id` nao serve: e id de REQUISICAO, nao de deployment.
-            $vb = (ssh tom "cd /opt/LA-Organizer && BUNDLE_ESPERA_SEG=300 ./scripts/verificar-bundle.sh --pos-deploy $blFile 2>&1 | tail -12" 2>$null) | Out-String
+            # --commit <sha> (laudo v2.5, bloqueador 2). Sem o commit, o modo compara so
+            # CONTEUDO -- e conteudo igual nao diz de qual deployment o bundle veio. Com o
+            # commit, o script tenta PROVAR (API da Vercel ou carimbo servido) e devolve 2
+            # quando nao consegue. Neste host nao ha VERCEL_TOKEN, entao o resultado honesto
+            # e INDETERMINADO -- que segura o deploy em vez de carimba-lo de verificado.
+            $vb = (ssh tom "cd /opt/LA-Organizer && BUNDLE_ESPERA_SEG=300 ./scripts/verificar-bundle.sh --pos-deploy $blFile --commit $tip 2>&1 | tail -12" 2>$null) | Out-String
             $rcVb = $LASTEXITCODE
         } else {
             # web/ NAO mudou: nao ha deployment novo a esperar, e a pergunta que importa e de
@@ -432,7 +477,16 @@ if ($vpsAtras -gt 0) {
         # previsto como se fosse sucesso — o formato exato de falso-verde que este gate existe
         # para nao ter.
         switch ($rcVb) {
-            0 { Write-Output "=== Gate Vercel aprovado ===" }
+            0 {
+                if ($webMudou -gt 0) {
+                    # rc 0 aqui SO acontece com prova de deployment: o script devolve 2 sem ela.
+                    Write-Output "=== Gate Vercel APROVADO: conteudo conferido E deployment do commit $($tip.Substring(0,8)) provado READY ==="
+                } else {
+                    # web/ nao mudou: nao ha deployment novo a provar. O que foi respondido e
+                    # a pergunta de SEGURANCA, e a mensagem nao pode sugerir mais do que isso.
+                    Write-Output "=== Gate Vercel: bundle publico com exatamente os achados aprovados (web/ inalterado; nenhuma afirmacao sobre deployment) ==="
+                }
+            }
             1 {
                 Set-Content -Path $holdFile -Value "CRITICO auto: gate da Vercel REPROVOU no deploy $ts -- bundle publico com achado inesperado." -Encoding utf8
                 ssh tom "cd /opt/LA-Organizer && [ -x scripts/alertar.sh ] && ./scripts/alertar.sh --chave gate-vercel --intervalo-min 60 'TOM: gate do bundle publico REPROVOU apos deploy' >/dev/null 2>&1" 2>$null

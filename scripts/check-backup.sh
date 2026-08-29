@@ -104,15 +104,37 @@ echo "[check-backup] baseline: ${#CATEGORIAS[@]}/${#CATEGORIAS[@]} categorias, v
 # O drill continua amarrado ao dump exato que testou (por hash). O que muda e que esse dump
 # NAO precisa ser o mais novo. "Tenho backup integro hoje" e "ja provei que consigo restaurar"
 # sao afirmacoes distintas, e juntar as duas quebrava a primeira sem fortalecer a segunda.
+# VALIDADE PELO ts INTERNO, NUNCA POR mtime (laudo v2.5, bloqueador 5). A v2.5 selecionava
+# com `find -mtime` e media a idade com `stat -c %Y`: um `touch` num atestado vencido o
+# ressuscitava, embora o `ts` gravado DENTRO dele continuasse antigo. Data de arquivo e
+# metadado de filesystem - qualquer rsync, cp -p ou restore a reescreve. O que certifica e o
+# que o drill ESCREVEU. Formato invalido, ts no FUTURO ou fora da janela nao certificam nada.
 DRILL_MAX_DIAS=${DRILL_MAX_DIAS:-8}
-ULT_DRILL=""
+AGORA=$(date +%s)
+ULT_DRILL=""; ULT_EPOCH=0; IDADE_DRILL=0; VISTOS=0; RECUSADOS=""
 while IFS= read -r d; do
-  grep -q '^veredito=aprovado' "$d" 2>/dev/null && { ULT_DRILL="$d"; break; }
-done < <(find "$DEST" -name '*.drill' -type f -mtime "-$DRILL_MAX_DIAS" 2>/dev/null | sort -r)
+  [ -f "$d" ] || continue
+  VISTOS=$((VISTOS+1))
+  n=$(basename "$d")
+  grep -q '^veredito=aprovado' "$d" 2>/dev/null || { RECUSADOS="$RECUSADOS $n(nao-aprovado)"; continue; }
+  dts=$(sed -n 's/^ts=//p' "$d" | head -1)
+  case "$dts" in
+    [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]*) : ;;
+    *) RECUSADOS="$RECUSADOS $n(ts-invalido)"; continue ;;
+  esac
+  de=$(date -d "$dts" +%s 2>/dev/null)
+  case "${de:-}" in ''|*[!0-9]*) RECUSADOS="$RECUSADOS $n(ts-ilegivel)"; continue ;; esac
+  # 300s de folga cobre relogio/timezone; alem disso e atestado datado no futuro.
+  if [ "$de" -gt $((AGORA + 300)) ]; then RECUSADOS="$RECUSADOS $n(ts-no-FUTURO)"; continue; fi
+  idade=$(( (AGORA - de) / 86400 ))
+  if [ "$idade" -gt "$DRILL_MAX_DIAS" ]; then RECUSADOS="$RECUSADOS $n(vencido-${idade}d)"; continue; fi
+  if [ "$de" -gt "$ULT_EPOCH" ]; then ULT_EPOCH=$de; ULT_DRILL=$d; IDADE_DRILL=$idade; fi
+done < <(find "$DEST" -name '*.drill' -type f 2>/dev/null)
 
 if [ -z "$ULT_DRILL" ]; then
-  TODOS=$(find "$DEST" -name '*.drill' -type f 2>/dev/null | wc -l)
-  grito "nenhum restore drill APROVADO nos ultimos $DRILL_MAX_DIAS dias ($TODOS atestado(s) no total) — backup integro, recuperacao NAO comprovada"
+  # (o motivo de cada descarte vai na mensagem: sem isso, "nenhum drill" nao diz se e
+  #  ausencia, vencimento ou ts adulterado)
+  grito "nenhum restore drill APROVADO e VALIDO nos ultimos $DRILL_MAX_DIAS dias (${VISTOS} atestado(s) examinado(s); descartado(s):${RECUSADOS:- nenhum}) -- backup integro, recuperacao NAO comprovada"
 fi
 
 # ATESTADO AMARRADO AOS ARTEFATOS (bloqueador 8). "Aprovado" sem dizer aprovado sobre O QUE
@@ -140,14 +162,22 @@ FALTANDO=""
 for par in "dump:$D_DUMP" "baseline:$D_BASE" "manifest:$D_MAN"; do
   ext=${par%%:*}; esp=${par#*:}
   arq="$DBASE.$ext"
-  [ "$ext" = manifest ] && [ "$esp" = ausente ] && continue
+  # MANIFESTO OBRIGATORIO (laudo v2.5, bloqueador 7). Aqui havia uma linha que pulava a
+  # conferencia quando o drill gravava `manifest_sha256=ausente`. Ou seja: o atestado podia
+  # certificar um conjunto SEM manifesto e a sentinela aceitava. Atestado que aceita artefato
+  # ausente nao amarra nada -- e a amarracao e a razao de o atestado existir.
+  # `ausente` comeca com `a`, que e digito hex: casar por prefixo nao serve. Exige 64
+  # caracteres e NADA fora do alfabeto hex.
+  if [ "${#esp}" != 64 ] || [ -n "${esp//[0-9a-f]/}" ]; then
+    grito "drill nao certifica o $ext (gravou '$esp') -- sem os TRES artefatos com hash o atestado nao amarra nada. Rode restore-drill.sh de novo."
+  fi
   [ -f "$arq" ] || grito "artefato certificado pelo drill sumiu: $(basename "$arq")"
   real=$(sha256sum "$arq" | cut -d' ' -f1)
   [ "$real" = "$esp" ]     || grito "$(basename "$arq") MUDOU depois do drill (sha no atestado != sha no disco) — a certificacao nao vale mais"
 done
 
-IDADE_DRILL=$(( ( $(date +%s) - $(stat -c %Y "$ULT_DRILL") ) / 86400 ))
-echo "[check-backup] restauracao comprovada: $(basename "$ULT_DRILL") (${IDADE_DRILL}d, limite ${DRILL_MAX_DIAS}d, artefatos conferidos)"
+# IDADE_DRILL ja veio do `ts` interno na selecao acima -- nada de stat/mtime aqui tambem.
+echo "[check-backup] restauracao comprovada: $(basename "$ULT_DRILL") (ts interno ha ${IDADE_DRILL}d, limite ${DRILL_MAX_DIAS}d, 3 artefatos conferidos por hash)"
 
 # 5. checksums do conjunto
 ( cd "$(dirname "$ARQ")" && sha256sum -c --quiet "$BASE.sha256" ) 2>/dev/null \

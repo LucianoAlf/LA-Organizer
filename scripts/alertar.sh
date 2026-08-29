@@ -18,10 +18,10 @@
 # arquivos 0600 dentro de um diretorio 0700 em /run, criados sob `umask 077` e apagados no
 # trap. O argv passa a conter apenas `-m N -o ... -w ... -K <caminho>`.
 #
-# SUCESSO SEMANTICO (v2.5). HTTP 200 nao e entrega: a UAZAPI responde 200 com corpo de erro.
-# Antes isso valia como enviado, a marca anti-spam era gravada, e o proximo alerta do mesmo
-# assunto era SUPRIMIDO — falha silenciosa que se auto-perpetua. Agora exige id de mensagem no
-# corpo e ausencia de campo de erro; a marca so e gravada depois disso.
+# SUCESSO SEMANTICO ESTRITO (v2.6). HTTP 200 nao e entrega, e `id` sozinho tambem nao:
+# `{"id":"req_abc","status":"failed"}` era aceito como enviado. Agora o corpo e parseado como
+# JSON e precisa ter o shape documentado de mensagem, com status de entrega conhecido.
+# A marca anti-spam so e gravada depois disso, e mora em ALERTAR_MARCA_DIR (default /run).
 #
 # Uso:  ./alertar.sh [--chave K] [--intervalo-min N] "texto"   envia
 #       ./alertar.sh --testar-canal                            so valida, NAO envia
@@ -107,7 +107,13 @@ done
 MARCA=""
 if [ -n "$CHAVE" ]; then
   ID=$(printf '%s|%s' "$CHAVE" "$GRUPO" | sha256sum | cut -c1-16)
-  MARCA="/run/alertar-$ID"
+  # NAMESPACE INJETAVEL (laudo v2.5, bloqueador 8). Com o caminho fixo em /run, o teste do
+  # canal so conseguia limpar o proprio estado com `rm -f /run/alertar-*` -- que apaga TAMBEM
+  # as marcas anti-spam REAIS da sentinela e da varredura. Rodar a bateria de testes zerava a
+  # supressao de producao e podia colidir com um alerta em voo. Teste que mexe no estado vivo
+  # nao e teste: e um efeito colateral com nome de verificacao.
+  MARCA="${ALERTAR_MARCA_DIR:-/run}/alertar-$ID"
+  [ -d "${ALERTAR_MARCA_DIR:-/run}" ] || { echo "alertar: ALERTAR_MARCA_DIR inexistente" >&2; exit 2; }
   if [ -f "$MARCA" ]; then
     ULT=$(cat "$MARCA" 2>/dev/null || echo 0)
     MIN=$(( ( $(date +%s) - ${ULT:-0} ) / 60 ))
@@ -130,14 +136,70 @@ if [ ! -s "$CORPO" ]; then
     "$(printf '%s' "$TEXTO" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s%s", (NR>1?"\\n":""), $0}')" > "$CORPO"
 fi
 
-# Sucesso SEMANTICO: id de mensagem presente E nenhum campo de erro. HTTP 200 com
-# {"error":...} reprova — era o caso que gravava a marca anti-spam por engano e silenciava os
-# alertas seguintes do mesmo assunto.
+# SUCESSO SEMANTICO ESTRITO (laudo v2.5, bloqueador 6). A v2.5 aceitava QUALQUER corpo com um
+# campo `id` e sem campo de erro. Entao `{"id":"req_abc","status":"failed"}` -- id de
+# REQUISICAO com entrega falha -- passava como entregue, a marca anti-spam era gravada e os
+# alertas seguintes do mesmo assunto ficavam suprimidos. Falha silenciosa que se auto-perpetua,
+# que e a classe de bug que este canal existe para nao ter.
+#
+# O contrato agora e o shape documentado de mensagem da UAZAPI (o mesmo que o engine consome
+# em src/services/sent-message-id.js e uazapi-groups.js):
+#   1. corpo tem que ser JSON valido e OBJETO;
+#   2. nenhum campo de erro com valor;
+#   3. id de mensagem por uma das chaves conhecidas, string com >= 4 caracteres;
+#   4. se houver `status`, ele tem que estar na lista de entrega aceita -- DESCONHECIDO REPROVA;
+#   5. sem `status`, o corpo precisa parecer uma Message (>= 2 campos do schema), e nao um
+#      envelope com id de requisicao.
+# TROCA CONSCIENTE: um status novo e legitimo da UAZAPI passaria a reprovar. O custo disso e
+# barulho (retry + FALHA no log); o custo do inverso e silencio. A marca so e gravada no
+# sucesso, entao reprovar por engano nunca suprime o proximo alerta. Barulho se conserta.
+# Sem python3 nao da para parsear com rigor, e verificador leniente e o proprio bug: REPROVA.
+ALERTAR_STATUS_OK=${ALERTAR_STATUS_OK:-pending,sent,server_ack,delivery_ack,read,played,delivered,success,queued,ok,true}
+RESP_MOTIVO=""
 resposta_ok() {  # <arquivo>
-  local f=$1
-  grep -qE '"(id|messageid)"[[:space:]]*:[[:space:]]*"[^"]+"' "$f" 2>/dev/null || return 1
-  grep -qiE '"(error|erro|message_error)"[[:space:]]*:' "$f" 2>/dev/null && return 1
-  return 0
+  local f=$1 saida rc
+  if ! command -v python3 >/dev/null 2>&1; then
+    RESP_MOTIVO="python3 ausente: sem parser nao ha verificacao estrita"; return 1
+  fi
+  saida=$(python3 - "$f" "$ALERTAR_STATUS_OK" <<'PYFIM'
+import json, sys
+try:
+    with open(sys.argv[1], encoding='utf-8', errors='replace') as fh:
+        d = json.load(fh)
+except Exception as e:
+    print("corpo nao e JSON valido (%s)" % type(e).__name__); sys.exit(1)
+if not isinstance(d, dict):
+    print("corpo JSON nao e objeto (%s)" % type(d).__name__); sys.exit(1)
+for k in ("error", "erro", "errors", "message_error", "errorMessage", "error_message"):
+    if k in d and d[k] not in (None, "", False, [], {}, 0):
+        print("campo de erro presente no corpo: %s" % k); sys.exit(1)
+def sub(k, kk):
+    v = d.get(k)
+    return v.get(kk) if isinstance(v, dict) else None
+cands = [d.get("messageid"), d.get("id"), d.get("message_id"),
+         sub("key", "id"), sub("message", "id"), sub("data", "id")]
+mid = next((c for c in cands if isinstance(c, str) and len(c) >= 4), None)
+if not mid:
+    print("sem id de mensagem no corpo"); sys.exit(1)
+aceitos = {s.strip().lower() for s in sys.argv[2].split(",") if s.strip()}
+st = d.get("status", d.get("Status"))
+if st is not None:
+    s = str(st).strip().lower()
+    if s not in aceitos:
+        print("status '%s' nao esta na lista de entrega aceita" % s[:40]); sys.exit(1)
+    print("entrega confirmada (status=%s)" % s); sys.exit(0)
+schema = ("fromMe", "fromme", "chatid", "chatId", "messageTimestamp", "owner",
+          "sender", "messageType", "type", "isGroup", "wasSentByApi")
+sinais = [k for k in schema if k in d]
+if len(sinais) < 2:
+    print("corpo sem status e sem cara de mensagem (%d campo(s) do schema) - ambiguo" % len(sinais))
+    sys.exit(1)
+print("entrega confirmada (sem status, %d campos do schema)" % len(sinais)); sys.exit(0)
+PYFIM
+)
+  rc=$?
+  RESP_MOTIVO=$saida
+  return $rc
 }
 
 # RETRY mais paciente que o do engine: medido em 28/08, o /send/text para grupo ficou ~15 min
@@ -158,7 +220,7 @@ for i in $(seq 1 "$TENTATIVAS"); do
         echo "alertar: entregue (destino $DEST_MASC)"
         exit 0
       fi
-      echo "alertar: HTTP $HTTP mas a resposta NAO confirma entrega: $(cut -c1-200 "$TMPD/resp.json" | sanitizar)" >&2
+      echo "alertar: HTTP $HTTP mas a resposta NAO confirma entrega ($RESP_MOTIVO): $(cut -c1-200 "$TMPD/resp.json" | sanitizar)" >&2
       ;;
     400|401|403)
       echo "alertar: FALHA definitiva HTTP $HTTP: $(cut -c1-200 "$TMPD/resp.json" 2>/dev/null | sanitizar)" >&2

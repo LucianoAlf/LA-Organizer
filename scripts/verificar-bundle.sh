@@ -39,7 +39,7 @@
 # No modo --pos-deploy: exit 0 se o conjunto de achados for idêntico ao baseline.
 
 set -uo pipefail
-MODO=normal; ESTADO=""; ACEITA_INALTERADO=0
+MODO=normal; ESTADO=""; ACEITA_INALTERADO=0; COMMIT=""; PROVA_MOTIVO=""
 case "${1:-}" in
   --baseline)   MODO=baseline;   ESTADO=${2:?uso: --baseline <arquivo> [url]}; shift 2 ;;
   --pos-deploy) MODO=pos_deploy; ESTADO=${2:?uso: --pos-deploy <arquivo> [url]}; shift 2 ;;
@@ -49,7 +49,13 @@ case "${1:-}" in
   # aceito. Sem este modo, o gate reprovaria todo deploy pelo problema que ja esta registrado,
   # que e a forma mais rapida de ensinar todo mundo a ignorar o gate.
   --conferir-esperados) MODO=conferir; shift ;;
+  # PROVA DE DEPLOYMENT como contrato SEPARADO (laudo v2.5, bloqueador 2). Sozinho, responde
+  # so "o que esta no ar e o build do commit X, READY?" -- sem olhar conteudo nenhum.
+  --provar-deployment) MODO=provar; COMMIT=${2:?uso: --provar-deployment <sha> [url]}; shift 2 ;;
 esac
+# --commit <sha>: obrigatorio no --pos-deploy. Sem ele nao ha o que provar, e o modo passa a
+# devolver INDETERMINADO em vez de aprovar.
+if [ "${1:-}" = "--commit" ]; then COMMIT=${2:?uso: --commit <sha>}; shift 2; fi
 if [ "${1:-}" = "--aceitar-inalterado" ]; then ACEITA_INALTERADO=1; shift; fi
 URL=${1:-https://la-organizer.vercel.app}
 ALLOW="$(dirname "$(readlink -f "$0")")/bundle-allowlist.txt"
@@ -59,6 +65,104 @@ command -v curl >/dev/null || { echo "curl ausente"; exit 3; }
 TMPD=$(mktemp -d /run/tom-bundle.XXXXXX 2>/dev/null || mktemp -d) || { echo "mktemp falhou"; exit 3; }
 chmod 0700 "$TMPD"; trap 'rm -rf "$TMPD"' EXIT INT TERM
 
+# PROVA DE DEPLOYMENT (laudo v2.5, bloqueador 2). Sao DOIS contratos, e a v2.5 misturava:
+#
+#   contrato de CONTEUDO    -- "o bundle servido tem exatamente os achados aprovados?"
+#   contrato de DEPLOYMENT  -- "o bundle servido e o build do commit X, e esse deployment
+#                              esta READY?"
+#
+# A v2.5 aprovava o segundo com evidencia do primeiro: bastava o bundle ter MUDADO e os
+# achados baterem para sair "POS-DEPLOY APROVADO" e o auto-deploy escrever "Gate Vercel
+# aprovado". Mas um bundle diferente com o mesmo conjunto de achados pode ser de OUTRO
+# deployment -- rollback, promocao de preview, build de outro commit -- e a comparacao nao
+# distingue. Aprovar "o deploy do commit X" com uma medida que nao menciona X e falso-verde.
+#
+# Agora a prova precisa vir de uma FONTE que nomeie o commit:
+#   1. API da Vercel (VERCEL_TOKEN + projeto): deployment com meta.githubCommitSha == X e
+#      readyState READY;
+#   2. carimbo servido pelo proprio deployment (/version.json com {"commit":"..."} ou
+#      <meta name="commit" content="...">).
+# Nenhuma disponivel -> INDETERMINADO (rc 2). Nunca "aprovado".
+# `x-vercel-id` NAO serve e nao e usado: e id de REQUISICAO, nao de deployment.
+provar_deployment() {  # <sha> -> 0 provado | 1 contradiz | 2 indeterminado
+  local sha=$1 corpo cod achado curto
+  PROVA_MOTIVO=""
+  case "$sha" in [0-9a-f]*) : ;; *) PROVA_MOTIVO="sha invalido"; return 2 ;; esac
+  [ "${#sha}" -ge 7 ] || { PROVA_MOTIVO="sha curto demais"; return 2; }
+  curto=${sha:0:8}
+
+  # --- fonte 1: API da Vercel ---------------------------------------------------------
+  if [ -n "${VERCEL_TOKEN:-}" ] && [ -n "${VERCEL_PROJECT_ID:-}" ]; then
+    # token em arquivo de config, nunca no argv (/proc/<pid>/cmdline e legivel por todos)
+    local cfg="$TMPD/vercel.cfg"
+    : > "$cfg"; chmod 0600 "$cfg"
+    {
+      # base sobrescrevivel SO para os testes com API falsa; em producao e a Vercel.
+      printf 'url = "%s/v6/deployments?projectId=%s&state=READY&limit=%s%s"\n' \
+             "${VERCEL_API_BASE:-https://api.vercel.com}" \
+             "$VERCEL_PROJECT_ID" "${VERCEL_LIMITE:-30}" "${VERCEL_TEAM_ID:+&teamId=$VERCEL_TEAM_ID}"
+      printf 'header = "Authorization: Bearer %s"\n' "$VERCEL_TOKEN"
+      printf 'silent\nshow-error\n'
+    } >> "$cfg"
+    cod=$(curl -m 25 -o "$TMPD/vercel.json" -w '%{http_code}' -K "$cfg" 2>"$TMPD/vercel.err")
+    rm -f "$cfg"
+    if [ "$cod" != 200 ]; then
+      PROVA_MOTIVO="API da Vercel respondeu HTTP ${cod:-sem-resposta}"
+      return 2
+    fi
+    achado=$(python3 - "$TMPD/vercel.json" "$sha" <<'PYFIM'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8", errors="replace"))
+except Exception as e:
+    print("ERRO json:%s" % type(e).__name__); raise SystemExit(0)
+alvo = sys.argv[2].lower()
+for dep in d.get("deployments", []):
+    meta = dep.get("meta") or {}
+    sha = str(meta.get("githubCommitSha") or meta.get("gitCommitSha") or "").lower()
+    if sha and (sha.startswith(alvo) or alvo.startswith(sha)):
+        print("ACHOU %s %s %s" % (dep.get("readyState") or dep.get("state"),
+                                  dep.get("target") or "-", dep.get("uid") or "-"))
+        raise SystemExit(0)
+print("SEM %d deployment(s) READY listados, nenhum com esse commit" % len(d.get("deployments", [])))
+PYFIM
+)
+    case "$achado" in
+      "ACHOU READY production"*) PROVA_MOTIVO="API da Vercel: deployment de $curto READY em production ($(printf '%s' "$achado" | awk '{print $4}'))"; return 0 ;;
+      "ACHOU READY"*)            PROVA_MOTIVO="deployment de $curto esta READY mas NAO e o de production ($achado)"; return 1 ;;
+      "ACHOU"*)                  PROVA_MOTIVO="deployment de $curto existe mas nao esta READY ($achado)"; return 1 ;;
+      "SEM"*)                    PROVA_MOTIVO="API da Vercel nao lista deployment READY do commit $curto -- $achado"; return 1 ;;
+      *)                         PROVA_MOTIVO="nao consegui interpretar a resposta da API ($achado)"; return 2 ;;
+    esac
+  fi
+
+  # --- fonte 2: carimbo servido pelo proprio deployment --------------------------------
+  cod=$(curl -sS -L -m 15 -o "$TMPD/versao.json" -w '%{http_code}' "${URL%/}/version.json" 2>/dev/null)
+  if [ "$cod" = 200 ]; then
+    corpo=$(sed -E 's/.*"commit"[[:space:]]*:[[:space:]]*"([0-9a-fA-F]+)".*/\1/' "$TMPD/versao.json" | tr 'A-F' 'a-f' | head -1)
+    case "$corpo" in
+      [0-9a-f]*)
+        if [ "${corpo:0:8}" = "$curto" ]; then
+          PROVA_MOTIVO="/version.json servido pelo deployment carimba o commit $curto"; return 0
+        fi
+        PROVA_MOTIVO="/version.json carimba ${corpo:0:8}, esperado $curto -- o que esta no ar e OUTRO build"
+        return 1 ;;
+    esac
+  fi
+  corpo=$(grep -oiE '<meta[^>]+name="commit"[^>]*content="[0-9a-fA-F]+"' "$TMPD/pagina.html" 2>/dev/null \
+          | sed -E 's/.*content="([0-9a-fA-F]+)".*/\1/' | tr 'A-F' 'a-f' | head -1)
+  case "$corpo" in
+    [0-9a-f]*)
+      if [ "${corpo:0:8}" = "$curto" ]; then
+        PROVA_MOTIVO="<meta name=commit> na pagina carimba $curto"; return 0
+      fi
+      PROVA_MOTIVO="<meta name=commit> carimba ${corpo:0:8}, esperado $curto"; return 1 ;;
+  esac
+
+  PROVA_MOTIVO="sem fonte de prova: VERCEL_TOKEN/VERCEL_PROJECT_ID nao configurados neste host e o deployment nao carimba o commit (nem /version.json nem <meta name=commit>)"
+  return 2
+}
+
 echo "== $URL =="
 # Baixar virou funcao porque o modo --pos-deploy precisa reconsultar ate o bundle mudar.
 # v2.2 (laudo bloqueador 6): o download nao exigia HTTP 200 nem verificava o que voltou.
@@ -66,63 +170,157 @@ echo "== $URL =="
 # e um "bundle" que nao contem literal nenhum sairia com ZERO achados, ou seja: verde.
 # Agora: --fail, codigo 200 obrigatorio nas duas requisicoes, e o corpo tem que parecer JS.
 baixar() {
-  local html cod ct nome url_asset rodada novos
-  cod=$(curl --fail -sS -L -m 20 -o "$TMPD/pagina.html" -w '%{http_code}' "$URL" 2>"$TMPD/curl.err")     || { echo "FALHA: pagina nao respondeu (curl: $(head -1 "$TMPD/curl.err" | cut -c1-120))"; return 1; }
+  local html cod rodada inicio novos
+  cod=$(curl --fail -sS -L -m 20 -o "$TMPD/pagina.html" -w '%{http_code}' "$URL" 2>"$TMPD/curl.err") \
+    || { echo "FALHA: pagina nao respondeu (curl: $(head -1 "$TMPD/curl.err" | cut -c1-120))"; return 1; }
   [ "$cod" = 200 ] || { echo "FALHA: pagina respondeu HTTP $cod (esperado 200)"; return 1; }
   html=$(cat "$TMPD/pagina.html")
 
   rm -rf "$TMPD/assets"; mkdir -p "$TMPD/assets"
-  : > "$TMPD/lista-assets.txt"
-  # TODOS os assets JS da pagina, nao so o primeiro (laudo v2.3, bloqueador 7). Ler so
-  # `index-*.js` deixava os chunks lazy inteiros fora da varredura — e e exatamente neles que
-  # mora codigo de rota que carrega sob demanda.
-  grep -oE '/assets/[A-Za-z0-9_.-]+\.js' <<<"$html" | LC_ALL=C sort -u >> "$TMPD/lista-assets.txt"
-  ASSET=$(head -1 "$TMPD/lista-assets.txt")
+  : > "$TMPD/fila.txt"; : > "$TMPD/vistos.txt"; : > "$TMPD/sembarra.txt"; : > "$TMPD/dirs.txt"
+  grep -oE '/assets/[A-Za-z0-9_.@-]+\.js' <<<"$html" | LC_ALL=C sort -u >> "$TMPD/fila.txt"
+  ASSET=$(head -1 "$TMPD/fila.txt")
   [ -n "$ASSET" ] || { echo "FALHA: a pagina nao referencia nenhum /assets/*.js"; return 1; }
 
-  baixar_um() { # <caminho-do-asset>
+  # Nome local = caminho inteiro com / trocado por __. `basename` colidiria entre diretorios
+  # diferentes e um chunk sobrescreveria o outro sem aviso.
+  local_de() { printf '%s/assets/%s' "$TMPD" "$(printf '%s' "${1#/}" | tr '/' '_')"; }
+
+  baixar_um() { # <caminho absoluto no site>  -> rc 0 baixou | 1 erro duro | 2 nao existe (404)
     local a=$1 dest cod ct
-    dest="$TMPD/assets/$(basename "$a")"
+    dest=$(local_de "$a")
     [ -s "$dest" ] && return 0
-    cod=$(curl --fail -sS -L -m 90 -o "$dest" -D "$TMPD/hdr.txt" -w '%{http_code}' "${URL%/}$a" 2>"$TMPD/curl.err") || return 1
-    [ "$cod" = 200 ] || { echo "  FALHA: $a respondeu HTTP $cod"; return 1; }
+    cod=$(curl -sS -L -m 90 -o "$dest" -D "$TMPD/hdr.txt" -w '%{http_code}' "${URL%/}$a" 2>"$TMPD/curl.err")
+    case "$cod" in
+      200) : ;;
+      404) rm -f "$dest"; return 2 ;;
+      '' ) rm -f "$dest"; echo "  FALHA: $a sem resposta (curl: $(head -1 "$TMPD/curl.err" | cut -c1-90))"; return 1 ;;
+      *  ) rm -f "$dest"; echo "  FALHA: $a respondeu HTTP $cod"; return 1 ;;
+    esac
     ct=$(grep -i '^content-type:' "$TMPD/hdr.txt" | tail -1 | tr -d "\r")
     case "$ct" in *javascript*|*ecmascript*) : ;;
       *) echo "  FALHA: content-type inesperado em $a: ${ct:-ausente}"; return 1 ;; esac
     head -c 200 "$dest" | grep -qiE '<!doctype|<html' && { echo "  FALHA: $a veio como HTML (pagina de erro)"; return 1; }
+    printf '%s\n' "$(dirname "$a")/" >> "$TMPD/dirs.txt"
     return 0
   }
 
-  # Rodadas: um chunk pode referenciar outro. Limite alto o suficiente para o app e baixo o
-  # suficiente para nao virar crawler.
-  for rodada in 1 2 3; do
+  # EXTRACAO DE REFERENCIAS (laudo v2.5, bloqueador 3).
+  # A v2.5 casava `(\./|/)?assets/<nome>.js` -- exigia o literal `assets/` no meio. Medido no
+  # bundle de producao em 29/08: a pagina referencia UM asset (o index) e ele carrega os
+  # outros como `./XxxPage-hash.js`, sibling, SEM `assets/` no caminho. Resultado: o scanner
+  # varria 1 arquivo de 76 referencias e chamava isso de "bundle varrido".
+  # Agora extrai QUALQUER string entre aspas terminada em .js e resolve por regra de caminho:
+  #   /x.js        -> absoluto
+  #   ./x.js       -> relativo ao diretorio de QUEM referenciou
+  #   ../x.js      -> um nivel acima
+  #   assets/x.js  -> relativo a raiz do site (e o formato do mapa de preload do Vite)
+  #   x.js         -> nao e caminho; vai para a lista SEM BARRA (ver adiante)
+  # Medido: 75 referencias com barra, 75 resolvem 200; 1 sem barra (`Node.js`, prosa).
+  extrair_refs() { # <arquivo local> <dir do referrer, com / no fim>
+    grep -oE "[\"'\`][^\"'\`]{1,200}\.js[\"'\`]" "$1" 2>/dev/null \
+      | sed -E "s/^.//; s/.\$//" | LC_ALL=C sort -u | while IFS= read -r r; do
+      case "$r" in
+        *://*|*' '*|'') continue ;;                 # URL de outro host ou prosa com espaco
+        /*)    printf '%s\n' "$r" ;;
+        ./*)   printf '%s%s\n' "$2" "${r#./}" ;;
+        ../*)  printf '/%s\n' "${r#../}" ;;
+        */*)   printf '/%s\n' "$r" ;;
+        *)     printf '%s\n' "$r" >> "$TMPD/sembarra.txt" ;;
+      esac
+    done
+  }
+
+  # PONTO FIXO com limites EXPLICITOS. A v2.5 parava em 3 rodadas: a rodada 3 baixava o
+  # nivel 3 e ENFILEIRAVA o nivel 4 sem nunca baixa-lo -- segredo no quarto chunk passava
+  # verde, e o relatorio nao dizia que havia parado no meio. Aqui a unica saida normal e a
+  # fila esvaziar; qualquer limite atingido e FALHA declarada, nunca silencio.
+  MAX_ASSETS=${BUNDLE_MAX_ASSETS:-300}
+  MAX_BYTES=${BUNDLE_MAX_BYTES:-83886080}
+  MAX_SEG=${BUNDLE_MAX_SEG:-600}
+  MAX_RODADAS=${BUNDLE_MAX_RODADAS:-60}
+  inicio=$(date +%s); rodada=0
+  : > "$TMPD/naoresolvidas.txt"
+  while [ -s "$TMPD/fila.txt" ]; do
+    rodada=$((rodada+1))
+    if [ "$rodada" -gt "$MAX_RODADAS" ]; then
+      echo "FALHA: limite de $MAX_RODADAS rodadas atingido com $(wc -l < "$TMPD/fila.txt") referencia(s) na fila"; return 1; fi
+    if [ $(( $(date +%s) - inicio )) -gt "$MAX_SEG" ]; then
+      echo "FALHA: limite de ${MAX_SEG}s atingido com $(wc -l < "$TMPD/fila.txt") referencia(s) na fila"; return 1; fi
+    mv "$TMPD/fila.txt" "$TMPD/rodando.txt"; : > "$TMPD/fila.txt"
     novos=0
     while IFS= read -r a; do
       [ -n "$a" ] || continue
-      [ -s "$TMPD/assets/$(basename "$a")" ] && continue
-      baixar_um "$a" || return 1
-      novos=$((novos+1))
-    done < "$TMPD/lista-assets.txt"
-    # nomes de chunk citados DENTRO dos assets ja baixados
-    cat "$TMPD/assets"/*.js 2>/dev/null       | grep -oE '(\./|/)?assets/[A-Za-z0-9_.-]+\.js'       | sed -E 's#^\./#/#; s#^assets/#/assets/#' | LC_ALL=C sort -u > "$TMPD/refs.txt"
-    LC_ALL=C sort -u "$TMPD/lista-assets.txt" "$TMPD/refs.txt" -o "$TMPD/lista-assets.txt"
-    [ "$novos" -eq 0 ] && break
-    [ "$(wc -l < "$TMPD/lista-assets.txt")" -gt 60 ] && { echo "FALHA: mais de 60 assets — recusando varrer isso como bundle"; return 1; }
+      LC_ALL=C grep -qxF -- "$a" "$TMPD/vistos.txt" && continue
+      printf '%s\n' "$a" >> "$TMPD/vistos.txt"
+      if [ "$(wc -l < "$TMPD/vistos.txt")" -gt "$MAX_ASSETS" ]; then
+        echo "FALHA: mais de $MAX_ASSETS assets -- recusando varrer isso como bundle"; return 1; fi
+      baixar_um "$a"; rc=$?
+      case $rc in
+        0) novos=$((novos+1)) ;;
+        # REFERENCIA NAO RESOLVIDA REPROVA. Um 404 num caminho citado pelo proprio bundle
+        # significa que ha codigo que o scanner nao leu -- e "nao li" nunca pode sair como
+        # "nao tem segredo". Vai para a lista e o scan termina reprovado.
+        2) printf '%s\n' "$a" >> "$TMPD/naoresolvidas.txt" ;;
+        *) return 1 ;;
+      esac
+      extrair_refs "$(local_de "$a")" "$(dirname "$a")/" >> "$TMPD/fila.txt"
+    done < "$TMPD/rodando.txt"
+    LC_ALL=C sort -u -o "$TMPD/fila.txt" "$TMPD/fila.txt"
+    BUNDLE_BYTES=$(cat "$TMPD/assets"/*.js 2>/dev/null | wc -c)
+    if [ "${BUNDLE_BYTES:-0}" -gt "$MAX_BYTES" ]; then
+      echo "FALHA: bundle passou de $MAX_BYTES bytes -- recusando continuar"; return 1; fi
   done
+
+  # Strings terminadas em .js SEM barra nenhuma. Nao sao caminho (`Node.js` e o caso real),
+  # mas tambem nao dao para descartar as cegas: cada uma e tentada nos diretorios ja
+  # conhecidos. Se resolver, e asset e entra na varredura; se nao, e listada -- sem virar
+  # falha, porque prosa terminada em .js e comum e transformar isso em erro so ensinaria
+  # todo mundo a ignorar o gate.
+  if [ -s "$TMPD/sembarra.txt" ]; then
+    LC_ALL=C sort -u -o "$TMPD/sembarra.txt" "$TMPD/sembarra.txt"
+    LC_ALL=C sort -u -o "$TMPD/dirs.txt" "$TMPD/dirs.txt"
+    while IFS= read -r r; do
+      local achou=0
+      while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        if baixar_um "$d$r"; then achou=1; printf '%s\n' "$d$r" >> "$TMPD/vistos.txt"; break; fi
+      done < "$TMPD/dirs.txt"
+      [ "$achou" = 0 ] && printf '%s\n' "$r" >> "$TMPD/sembarra-naoresolvida.txt"
+    done < "$TMPD/sembarra.txt"
+  fi
+
+  if [ -s "$TMPD/naoresolvidas.txt" ]; then
+    echo "FALHA: $(wc -l < "$TMPD/naoresolvidas.txt") referencia(s) JS citada(s) no bundle NAO resolvem (404):"
+    sed 's/^/    /' "$TMPD/naoresolvidas.txt" | head -20
+    echo "       ha codigo publico que o scanner nao conseguiu ler; nao da para afirmar nada sobre ele"
+    return 1
+  fi
 
   N_ASSETS=$(ls -1 "$TMPD/assets"/*.js 2>/dev/null | wc -l)
   [ "$N_ASSETS" -ge 1 ] || { echo "FALHA: nenhum asset baixado"; return 1; }
   BUNDLE_BYTES=$(cat "$TMPD/assets"/*.js | wc -c)
-  [ "${BUNDLE_BYTES:-0}" -gt 100000 ] || { echo "FALHA: $BUNDLE_BYTES bytes no total — pequeno demais para ser o app"; return 1; }
+  [ "${BUNDLE_BYTES:-0}" -gt 100000 ] || { echo "FALHA: $BUNDLE_BYTES bytes no total - pequeno demais para ser o app"; return 1; }
   # sha do CONJUNTO (nome+hash de cada asset, ordenado): assim "o bundle mudou" cobre
   # qualquer chunk, nao so o principal.
   BUNDLE_SHA=$(for f in "$TMPD/assets"/*.js; do printf '%s %s\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d" " -f1)"; done | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
+  RODADAS=$rodada
   VERCEL_ID=$(grep -i '^x-vercel-id:' "$TMPD/hdr.txt" | tail -1 | tr -d "\r" | cut -c1-80)
   SERVIDO_EM=$(grep -i '^date:' "$TMPD/hdr.txt" | tail -1 | tr -d "\r")
   return 0
 }
 
 baixar || exit 1
+
+# --provar-deployment: SO o contrato de deployment. Nao olha literal nenhum.
+if [ "$MODO" = provar ]; then
+  provar_deployment "$COMMIT"; RCP=$?
+  case $RCP in
+    0) echo "== DEPLOYMENT PROVADO: $PROVA_MOTIVO =="; exit 0 ;;
+    1) echo "== DEPLOYMENT CONTRADIZ O COMMIT: $PROVA_MOTIVO =="; exit 1 ;;
+    *) echo "== DEPLOYMENT INDETERMINADO: $PROVA_MOTIVO =="; exit 2 ;;
+  esac
+fi
 
 # --pos-deploy: espera o rebuild da Vercel chegar. Se o bundle NAO mudar dentro da janela,
 # isso nao e erro — e a prova empirica de que o rebuild de fonte inalterada saiu identico.
@@ -146,7 +344,7 @@ if [ "$MODO" = pos_deploy ]; then
   fi
 fi
 
-echo "assets: $N_ASSETS arquivo(s) JS, $BUNDLE_BYTES bytes no total, sha256 do conjunto=${BUNDLE_SHA:0:12}…"
+echo "assets: $N_ASSETS arquivo(s) JS em ${RODADAS:-?} rodada(s) ate ponto fixo, $BUNDLE_BYTES bytes, sha256 do conjunto=${BUNDLE_SHA:0:12}..."
 echo "        $(ls -1 "$TMPD/assets" | tr "
 " " ")"
 
@@ -333,9 +531,28 @@ if [ "$MODO" = pos_deploy ]; then
     echo "   outro arquivo. Nos dois casos o resultado nao pode ser lido como aprovacao."
     exit 1
   fi
-  echo "== POS-DEPLOY APROVADO: conjunto de achados IDENTICO ao baseline ($ACHADOS), bundle mudou=$MUDOU =="
-  echo "   (o P0-4 continua ABERTO — este teste prova que o deploy nao PIOROU, nao que esta resolvido)"
-  exit 0
+  # CONTEUDO OK -- e so isso. A pergunta do deployment ainda nao foi respondida.
+  echo "-- conteudo: conjunto de achados IDENTICO ao aprovado ($ACHADOS), bundle mudou=$MUDOU --"
+  echo "   (o P0-4 continua ABERTO -- este teste prova que o deploy nao PIOROU, nao que esta resolvido)"
+  # E AQUI a v2.5 saia 0. Bundle diferente com os mesmos achados pode ser de OUTRO
+  # deployment (rollback, promocao de preview, build de outro commit): a comparacao de
+  # conteudo nao menciona commit nenhum, entao nao pode responder por ele.
+  if [ -z "$COMMIT" ]; then
+    echo "== POS-DEPLOY INDETERMINADO: conteudo aprovado, mas nenhum commit foi informado =="
+    echo "   rode com --commit <sha> para que o gate tenha o que provar."
+    exit 2
+  fi
+  provar_deployment "$COMMIT"; RCP=$?
+  case $RCP in
+    0) echo "== POS-DEPLOY APROVADO: conteudo conferido E deployment provado -- $PROVA_MOTIVO =="; exit 0 ;;
+    1) echo "== POS-DEPLOY REPROVADO: o que esta no ar nao e o deployment do commit pedido =="
+       echo "   $PROVA_MOTIVO"; exit 1 ;;
+    *) echo "== POS-DEPLOY INDETERMINADO: conteudo aprovado, deployment NAO PROVADO =="
+       echo "   $PROVA_MOTIVO"
+       echo "   Nao estou declarando o deploy verificado. Confirme no painel da Vercel que o"
+       echo "   deployment do commit ${COMMIT:0:8} esta READY, ou configure VERCEL_TOKEN/VERCEL_PROJECT_ID."
+       exit 2 ;;
+  esac
 fi
 
 # --conferir-esperados: conjunto de achados IGUAL ao aprovado, nos dois sentidos.

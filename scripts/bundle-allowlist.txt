@@ -75,3 +75,28 @@ c6bc5480994a0ab13ed7c25acd10ff7f5b87686f524c1051feb9256e189849e3  # index-*.js, 
 #   mecanismo (JWT do Supabase ou proxy server-side), rotacionando e rebuildando.
 #   Enquanto ele aparecer, o verificar-bundle.sh reprova, e deve reprovar.
 # =========================================================================================
+
+# --- Achados revelados pelo caminhamento ate PONTO FIXO (v2.6, laudo v2.5 bloqueador 3) ----
+# A v2.5 casava referencia de chunk so no formato `assets/<nome>.js`. Medido em 29/08: o
+# bundle de producao referencia UM asset na pagina (o index) e ele carrega os outros como
+# `./XxxPage-hash.js` -- sibling, sem `assets/` no caminho. O scanner lia 1 arquivo de 53.
+# Com o ponto fixo, 53 assets / 3,6 MB, e apareceram 11 literais que nunca tinham sido vistos.
+#
+# TODOS os 11 vem do MESMO chunk (GovernancaPage-*.js, que carrega CodeMirror e
+# react-markdown) e foram identificados pelo CONTEXTO, com o valor substituido por
+# <VALOR len=N> -- nenhum caractere impresso. Nao ha credencial entre eles:
+#   * tabelas LR serializadas do parser do CodeMirror (`$TX!d$TX$Y...`, `!ta#r!ta#s...`);
+#   * chaves de CSS-in-JS do autocomplete (`.cm-completionInfo.cm-completionInfo-*`);
+#   * ids do mapa de deprecacao do react-markdown (`remove-...`, `allowNode`, `linkTarget`);
+#   * um nome de propriedade do highlighter e uma URL de documentacao concatenada.
+11ac5e4201cf4871cc106e1022b2ec19be416c5dfa3e418a4b28353b296a62d2  # tabela LR do parser CodeMirror (78 chars, entropia 4.31)
+ac27df9ac29020edf90370a5b63d953879bc6c4134fb5ded3608d2c4bd61c55f  # nome de propriedade do highlighter (44 chars) em `PrivatePropertyName:x.special(...)`
+543f6208e5c7c95f366c6161a14eebf86a743304956bc2dcd8f3ea01a6f3341f  # tabela LR do parser CodeMirror (94 chars, entropia 3.97)
+4cc6f34df19f9b83035a0e97ea0084a16b541cb6dff8b531499844928760a05c  # seletor CSS do autocomplete do CodeMirror (`.cm-completionInfo-*-narrow`)
+025e2fd329f437989d7e4e6ed313146c44c93f9f82da776002b5b9505fbe23e3  # URL de doc concatenada em `t.url=Yp+<valor>` (hast-util-to-jsx-runtime)
+01ea9475a0a5abc66ade18795aa2dea6bc549a996f9c953933c64cf9ea534ee7  # seletor CSS do autocomplete do CodeMirror (`-left`)
+d7932aa83509ed93a3b5ec57cd46b75a308d97340b50b487a83c51adce075d03  # seletor CSS do autocomplete do CodeMirror (`-right`)
+c32755fc5987770c43f4bb9bd7e0496bbcc51cb0920c57f55ef41f1c4753c447  # id do mapa de deprecacao do react-markdown (`allowNode` -> `allowElement`)
+139069a8e39042c6b8339e7aabe8c8f1afa8dc640d466c6e045d8fa52ebd7314  # seletor CSS do autocomplete do CodeMirror (whiteSpace/pre-line)
+564d44b4f3359bfb7c398c5664a5c45f3483d7980919c50c79da02383441364e  # tabela LR do parser CodeMirror (49 chars)
+68571f580d7e5330286b45ca0266a4fdb3e395ca16a4f8587b6119083164c13d  # id do mapa de deprecacao do react-markdown (`includeNodeIndex`)

@@ -52,17 +52,16 @@ else
 fi
 rm -rf "$D"
 
-echo "== 2. lock de deploy (mkdir atomico) =="
-LK=/run/teste-deploy.lock; rm -rf "$LK"
-mkdir "$LK" 2>/dev/null && ok "primeiro tomador adquire" || falhou "nao adquiriu"
-mkdir "$LK" 2>/dev/null && falhou "segundo tomador TAMBEM adquiriu (lock nao serializa)" || ok "segundo tomador e recusado"
-date +%s > "$LK/epoch"
-IDADE=$(( ( $(date +%s) - $(cat "$LK/epoch") ) / 60 ))
-[ "$IDADE" -lt 30 ] && ok "lock recente nao e removido (idade ${IDADE}min < 30)" || falhou "idade inesperada"
-echo $(( $(date +%s) - 3600 )) > "$LK/epoch"
-IDADE=$(( ( $(date +%s) - $(cat "$LK/epoch") ) / 60 ))
-[ "$IDADE" -ge 30 ] && { rm -rf "$LK"; mkdir "$LK" 2>/dev/null && ok "lock orfao (${IDADE}min) e recuperado" || falhou "nao recuperou orfao"; } || falhou "idade nao envelheceu"
-rm -rf "$LK"
+echo "== 2. lock de deploy =="
+# O protocolo do lock saiu daqui: virou scripts/lib-lock.sh e tem bateria propria em
+# teste-lock-dono.sh, que cobre o que este bloco nao cobria -- o perdedor apagando o lock do
+# dono. Manter uma segunda versao do mesmo teste, mais fraca, so criaria a chance de as duas
+# discordarem. Aqui fica so a conferencia de que a lib existe e e a fonte do protocolo.
+if [ -r "$AQUI/lib-lock.sh" ]; then
+  ok "lib-lock.sh presente (protocolo testado em teste-lock-dono.sh)"
+else
+  falhou "lib-lock.sh ausente -- o lock voltaria a ser mkdir/rm -rf inline"
+fi
 
 echo "== 3. auto-deploy.ps1 sem nao-ASCII em codigo =="
 # PowerShell 5.1 le .ps1 sem BOM como ANSI: um travessao dentro de STRING vira bytes que

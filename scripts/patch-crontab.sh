@@ -11,9 +11,14 @@
 
 set -euo pipefail
 
-BKP_DIR=/opt/backups/la-organizer/crontab
-SCRIPTS=/opt/LA-Organizer/scripts
-LOG=/opt/LA-Organizer/logs/backup.log
+# Caminhos sobrescreviveis SO para teste (laudo v2.5, bloqueador 9): sem isso nao havia como
+# exercitar a instalacao sem mexer no crontab REAL do root -- e o resultado disso foi que o
+# quinto cron so existia porque eu o instalei a mao, fora do caminho canonico. Em producao
+# os defaults valem e nada muda.
+BKP_DIR=${PATCH_CRONTAB_BKP_DIR:-/opt/backups/la-organizer/crontab}
+SCRIPTS=${PATCH_CRONTAB_SCRIPTS:-/opt/LA-Organizer/scripts}
+LOG=${PATCH_CRONTAB_LOG:-/opt/LA-Organizer/logs/backup.log}
+CRONTAB=${PATCH_CRONTAB_CMD:-crontab}
 
 APLICAR=0; REVERTER=0
 case "${1:-}" in
@@ -23,12 +28,12 @@ case "${1:-}" in
   *) echo "uso: $0 [--aplicar|--reverter]" >&2; exit 2 ;;
 esac
 
-ATUAL=$(crontab -l 2>/dev/null || true)
+ATUAL=$("$CRONTAB" -l 2>/dev/null || true)
 
 if [ "$REVERTER" = 1 ]; then
   ULTIMO=$(find "$BKP_DIR" -name 'crontab-*.bak' -type f 2>/dev/null | sort | tail -1)
   [ -n "$ULTIMO" ] || { echo "sem backup de crontab para reverter" >&2; exit 1; }
-  crontab "$ULTIMO"
+  "$CRONTAB" "$ULTIMO"
   echo "crontab revertido a partir de $ULTIMO"; exit 0
 fi
 
@@ -77,13 +82,13 @@ install -d -m 0700 "$BKP_DIR"
 printf '%s\n' "$ATUAL" > "$BKP_DIR/crontab-$(date -u +%Y%m%dT%H%M%SZ).bak"
 chmod 0600 "$BKP_DIR"/crontab-*.bak
 
-printf '%s\n' "$NOVO" | crontab -
+printf '%s\n' "$NOVO" | "$CRONTAB" -
 
 # Conferir de verdade: antes o `grep -E '# tom-(backup|check)'` nem casava a linha da
 # varredura (marcador `# tom-varrer-permissoes`) e, sendo so um `grep` de exibicao, nao
 # reprovava nada. Agora cada marcador esperado e exigido de volta do crontab instalado.
 echo "=== crontab aplicado. conferindo: ==="
-INSTALADO=$(crontab -l 2>/dev/null)
+INSTALADO=$("$CRONTAB" -l 2>/dev/null)
 FALTOU=0
 for m in tom-backup-db tom-backup-secrets tom-check-backup tom-varrer-permissoes tom-restore-drill; do
   if printf '%s\n' "$INSTALADO" | grep -q -- "# $m\$"; then

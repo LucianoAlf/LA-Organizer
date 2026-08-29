@@ -23,6 +23,13 @@ DUMP=${1:?uso: $0 <caminho-do-dump>}
 [ -r "$DUMP" ] || { echo "dump ilegivel: $DUMP" >&2; exit 2; }
 BASELINE="${DUMP%.dump}.baseline"
 [ -r "$BASELINE" ] || { echo "baseline ausente: $BASELINE" >&2; exit 2; }
+# MANIFESTO OBRIGATORIO (laudo v2.5, bloqueador 7). Antes o drill rodava sem manifesto e
+# gravava `manifest_sha256=ausente` no atestado -- e a sentinela aceitava esse valor. O
+# atestado existe para AMARRAR o veredito aos artefatos; com um deles fora, ele certifica
+# um conjunto que ninguem conferiu. Falha fechada, e antes do docker: assim a recusa e
+# reproduzivel em qualquer host.
+MANIFESTO="${DUMP%.dump}.manifest"
+[ -s "$MANIFESTO" ] || { echo "manifesto ausente ou vazio: $MANIFESTO -- o drill nao certifica conjunto incompleto" >&2; exit 2; }
 command -v docker >/dev/null || { echo "docker ausente" >&2; exit 2; }
 # As consultas do baseline vem da MESMA lib que o backup-db usa para grava-las. Duplicar
 # aqui significaria, mais cedo ou mais tarde, conferir contra pergunta diferente da que
@@ -280,7 +287,7 @@ ATESTADO="${DUMP%.dump}.drill"
   # deixava o atestado valendo para um conjunto que ja nao existia. Agora ele carrega o hash
   # de cada artefato que afirma certificar, e a sentinela reconfere.
   echo "backup_id=$(basename "${DUMP%.dump}")"
-  echo "manifest_sha256=$( [ -f "${DUMP%.dump}.manifest" ] && sha256sum "${DUMP%.dump}.manifest" | cut -d" " -f1 || echo ausente)"
+  echo "manifest_sha256=$(sha256sum "$MANIFESTO" | cut -d' ' -f1)"
   echo "baseline_versao=${BASELINE_VERSAO:-1}"
   echo "pg_restore_rc=${RC:-0}"
   echo "pg_restore_erros_total=${TOTAL_ERR:-0}"

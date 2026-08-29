@@ -93,6 +93,64 @@ espera ok "estado coerente de novo"
 printf 'dump ADULTERADO\n' >> "$D/db/dia/velho.dump"
 espera critico "dump alterado apos o drill invalida a certificacao"
 
+echo "== BLOQUEADOR 5: mtime nao ressuscita atestado vencido =="
+# A v2.5 selecionava por `find -mtime` e media idade por `stat -c %Y`. Um `touch` bastava
+# para um drill de 10 dias voltar a certificar - sem que uma linha do atestado mudasse.
+rm -f "$D/db/dia"/*.drill
+criar_backup t 0; criar_drill t 10 aprovado
+espera critico "drill de 10d (ts interno) reprova"
+touch "$D/db/dia/t.drill"                      # mtime = agora; ts interno segue 10 dias atras
+espera critico "touch NAO ressuscita: a validade vem do ts interno"
+grep -q '^ts=' "$D/db/dia/t.drill" && ok "o atestado continua intacto (nada foi reescrito)" \
+  || falhou "o teste corrompeu o atestado e nao mediu o que queria"
+
+echo "== ts no FUTURO e ts ilegivel nao certificam =="
+rm -f "$D/db/dia"/*.drill; criar_drill t 0 aprovado
+sed -i "s/^ts=.*/ts=$(date -d '+3 days' -Iseconds)/" "$D/db/dia/t.drill"
+espera critico "ts no futuro reprova"
+sed -i 's/^ts=.*/ts=ontem de manha/' "$D/db/dia/t.drill"
+espera critico "ts fora do formato reprova"
+sed -i 's/^ts=.*/ts=/' "$D/db/dia/t.drill"
+espera critico "ts vazio reprova"
+
+echo "== BLOQUEADOR 7: manifesto obrigatorio no atestado =="
+rm -f "$D/db/dia"/*.drill; criar_drill t 0 aprovado
+espera ok "atestado completo (3 hashes) certifica"
+sed -i 's/^manifest_sha256=.*/manifest_sha256=ausente/' "$D/db/dia/t.drill"
+espera critico "manifest_sha256=ausente reprova (a v2.5 aceitava com um continue)"
+sed -i 's/^manifest_sha256=.*/manifest_sha256=deadbeef/' "$D/db/dia/t.drill"
+espera critico "hash de manifesto truncado reprova"
+
+echo "== selecao pelo ts, nao pelo nome nem pela data do arquivo =="
+rm -f "$D/db/dia"/*.drill
+criar_drill t 7 aprovado                        # dentro da janela, mas velho
+cp "$D/db/dia/t.drill" "$D/db/dia/t.drill.bkp" 2>/dev/null
+espera ok "o unico valido dentro da janela certifica"
+rm -f "$D/db/dia/t.drill.bkp"
+
+echo "== o proprio restore-drill recusa conjunto sem manifesto =="
+# Sem isto, a sentinela so trataria o sintoma: quem GRAVA `ausente` e o drill. A checagem
+# fica ANTES do docker de proposito, para ser reproduzivel em qualquer host.
+RD="$AQUI/restore-drill.sh"
+if [ -x "$RD" ]; then
+  mkdir -p "$D/semman"
+  printf 'DUMP FALSO\n' > "$D/semman/x.dump"
+  printf 'baseline_versao=3\n' > "$D/semman/x.baseline"
+  SAIDA=$("$RD" "$D/semman/x.dump" 2>&1); RC=$?
+  if [ "$RC" = 2 ] && grep -qi 'manifesto ausente' <<<"$SAIDA"; then
+    ok "drill recusa dump sem .manifest (rc=2)"
+  else
+    falhou "drill nao recusou conjunto sem manifesto (rc=$RC): $(head -1 <<<"$SAIDA" | cut -c1-70)"
+  fi
+  [ -f "$D/semman/x.drill" ] && falhou "gravou atestado mesmo recusando" || ok "nenhum atestado gravado na recusa"
+  printf 'manifesto\n' > "$D/semman/x.manifest"
+  SAIDA=$("$RD" "$D/semman/x.dump" 2>&1); RC=$?
+  grep -qi 'manifesto ausente' <<<"$SAIDA" && falhou "ainda reclama de manifesto existente" \
+    || ok "com manifesto presente, a recusa passa a ser outra (docker/restore), nao o manifesto"
+else
+  falhou "restore-drill.sh nao encontrado em $RD"
+fi
+
 echo
 echo "== $P passaram, $F falharam =="
 [ "$F" -eq 0 ]

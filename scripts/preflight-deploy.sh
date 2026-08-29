@@ -28,12 +28,14 @@ SNAP=1; [ "${2:-}" = "--sem-snapshot" ] && SNAP=0
 cd "$(dirname "$(readlink -f "$0")")/.." || exit 2
 
 GUARDAS=(alertar backup-db backup-secrets check-backup conter-permissoes lib-baseline-queries
-         lib-pgconn lib-publicar lib-seq-compare patch-crontab pos-deploy-modos preflight-deploy
-         restaurar-guardas restaurar-modos restore-drill smoke-pos-aplicacao
-         teste-alertar-mock teste-bundle-mock teste-deploy-lock-sha teste-negativo-dataapi
-         teste-negativo-permissoes teste-publicar teste-sentinela-timeline teste-seq-compare
-         verificar-bundle)
-GUARDAS_ESPERADOS=$(( ${#GUARDAS[@]} + 3 ))   # +3 = allowlist, esperados, vermelhos-conhecidos
+         lib-lock lib-pgconn lib-publicar lib-seq-compare patch-crontab pos-deploy-modos
+         preflight-deploy restaurar-guardas restaurar-modos restore-drill rodar-baterias
+         smoke-pos-aplicacao teste-alertar-mock teste-bundle-mock teste-cron-canonico
+         teste-deploy-lock-sha teste-lock-dono teste-negativo-dataapi teste-negativo-permissoes
+         teste-preflight-modo teste-publicar teste-sentinela-timeline teste-seq-compare
+         teste-vercel-prova verificar-bundle)
+DADOS=(bundle-allowlist.txt bundle-esperados.txt suite-vermelhos-conhecidos.txt baterias-ambiente.txt)
+GUARDAS_ESPERADOS=$(( ${#GUARDAS[@]} + ${#DADOS[@]} ))
 DEST=${GUARDAS_DIR:-/opt/backups/la-organizer/guardas}
 PROBLEMAS=0
 T=$(mktemp -d /run/preflight.XXXXXX 2>/dev/null || mktemp -d) || { echo "FATAL: mktemp" >&2; exit 2; }
@@ -45,19 +47,102 @@ echo "== preflight para $REF =="
 git rev-parse --verify "$REF^{commit}" >/dev/null 2>&1 || { echo "FATAL: ref $REF nao existe (fez fetch?)" >&2; exit 2; }
 echo "  alvo: $(git rev-parse --short "$REF")  atual: $(git rev-parse --short HEAD)"
 
-# Arvore alvo inteira, ordenada — e o conjunto do que o reset vai escrever.
-git ls-tree -r "$REF" --name-only -z 2>/dev/null | tr '\0' '\n' | LC_ALL=C sort > "$T/alvo.txt" \
+# Arvore alvo inteira - com MODO, nao so nome. O reset --hard escreve conteudo E modo E tipo.
+# `git ls-tree -r -z` da "<modo> <tipo> <sha>\t<caminho>" por entrada.
+git ls-tree -r "$REF" -z 2>/dev/null > "$T/alvo.z" \
   || { echo "FATAL: nao consegui listar a arvore de $REF" >&2; exit 2; }
-[ -s "$T/alvo.txt" ] || { echo "FATAL: arvore de $REF veio vazia" >&2; exit 2; }
-echo "  arvore alvo: $(wc -l < "$T/alvo.txt") arquivo(s)"
+[ -s "$T/alvo.z" ] || { echo "FATAL: arvore de $REF veio vazia" >&2; exit 2; }
+declare -A ALVO_MODO ALVO_SHA
+while IFS= read -r -d '' linha; do
+  meta=${linha%%$'\t'*}; cam=${linha#*$'\t'}
+  # shellcheck disable=SC2086
+  set -- $meta
+  ALVO_MODO["$cam"]=$1; ALVO_SHA["$cam"]=$3
+  printf '%s\n' "$cam" >> "$T/alvo.raw"
+# SEM PIPELINE. `done < ... | sort` poe o while inteiro num SUBSHELL e os arrays
+# associativos morrem com ele: ALVO_MODO voltaria VAZIA e igual_alvo cairia no rc=2 de
+# todo caminho. E a mesma armadilha do contador em subshell que ja deu falso-verde aqui.
+done < "$T/alvo.z"
+LC_ALL=C sort "$T/alvo.raw" -o "$T/alvo.txt" 2>/dev/null
+[ -s "$T/alvo.txt" ] || { echo "FATAL: nao consegui indexar a arvore de $REF" >&2; exit 2; }
+echo "  arvore alvo: $(wc -l < "$T/alvo.txt") arquivo(s), com modo e tipo"
 
-no_alvo()   { LC_ALL=C grep -qxF -- "$1" "$T/alvo.txt"; }
-igual_alvo(){ # <path> — disco byte-identico ao blob do alvo?
-  local d a
-  d=$(sha256sum -- "$1" 2>/dev/null | cut -d' ' -f1) || return 2
-  [ -n "$d" ] || return 2
-  a=$(git cat-file blob "$REF:$1" 2>/dev/null | sha256sum | cut -d' ' -f1) || return 2
-  [ "$d" = "$a" ]
+no_alvo() { LC_ALL=C grep -qxF -- "$1" "$T/alvo.txt"; }
+
+# MODO E TIPO DO DISCO no vocabulario do git (laudo v2.5, bloqueador 4). A v2.5 comparava so
+# BYTES: um arquivo 0644 que virou 0755 no disco era declarado "identico ao alvo; reset e
+# no-op" e o `git reset --hard` desfazia a mudanca de modo em silencio. O mesmo valia para
+# arquivo trocado por symlink apontando para conteudo igual.
+# 100644 arquivo | 100755 executavel | 120000 symlink | 040000 diretorio | ? nao mede
+modo_disco() { # <path>
+  local p=$1 perm
+  [ -L "$p" ] && { echo 120000; return 0; }
+  [ -d "$p" ] && { echo 040000; return 0; }
+  [ -f "$p" ] || { echo '?'; return 1; }
+  perm=$(stat -c%a -- "$p" 2>/dev/null) || { echo '?'; return 1; }
+  # git so guarda 100644 ou 100755: o que importa e o bit de execucao do DONO.
+  case "$perm" in
+    ?[0-7][0-7]) case "${perm:0:1}" in 1|3|5|7) echo 100755 ;; *) echo 100644 ;; esac ;;
+    [0-7][0-7])  echo 100644 ;;
+    *)           case "$perm" in *7??|*5??|*3??|*1??) echo 100755 ;; *) echo 100644 ;; esac ;;
+  esac
+}
+# CONTEUDO no vocabulario do git: para symlink, o blob e o ALVO do link (sem \n final).
+sha_disco() { # <path>
+  local p=$1
+  if [ -L "$p" ]; then readlink -- "$p" 2>/dev/null | tr -d '\n' | sha256sum | cut -d' ' -f1
+  elif [ -f "$p" ]; then sha256sum -- "$p" 2>/dev/null | cut -d' ' -f1
+  else return 1; fi
+}
+sha_alvo() { git cat-file blob "$REF:$1" 2>/dev/null | sha256sum | cut -d' ' -f1; }
+
+# DISCO x ALVO em conteudo, tipo E modo.
+#   rc 0 = identico nos tres (o reset e no-op de verdade)
+#   rc 1 = diverge, e MOTIVO diz em que
+#   rc 2 = nao consegui medir
+MOTIVO=""
+igual_alvo(){ # <path>
+  local p=$1 md ms ma sa
+  MOTIVO=""
+  md=$(modo_disco "$p") || return 2
+  ma=${ALVO_MODO[$p]:-}
+  [ -n "$ma" ] || return 2
+  if [ "$md" != "$ma" ]; then
+    case "$md$ma" in
+      *120000*|*040000*) MOTIVO="TIPO diferente (disco $md, alvo $ma)" ;;
+      *)                 MOTIVO="MODO diferente (disco $md, alvo $ma)" ;;
+    esac
+    return 1
+  fi
+  ms=$(sha_disco "$p") || return 2
+  [ -n "$ms" ] || return 2
+  sa=$(sha_alvo "$p")  || return 2
+  [ -n "$sa" ] || return 2
+  [ "$ms" = "$sa" ] || { MOTIVO="CONTEUDO diferente"; return 1; }
+  return 0
+}
+
+# INDICE. O reset --hard tambem reescreve o index, entao trabalho que existe SO la (staged e
+# depois desfeito no disco) some sem rastro. Comparar index x alvo em TODO caminho reprovaria
+# qualquer deploy normal - o index deve mesmo virar o alvo. O que nao pode sumir e o que o
+# index guarda e nao existe nem no disco nem no alvo.
+declare -A IDX_MODO IDX_SHA
+while IFS= read -r -d '' linha; do
+  meta=${linha%%$'\t'*}; cam=${linha#*$'\t'}
+  # shellcheck disable=SC2086
+  set -- $meta
+  IDX_MODO["$cam"]=$1; IDX_SHA["$cam"]=$2
+done < <(git ls-files -s -z 2>/dev/null)
+indice_orfao() { # <path> -- rc 0 se o index guarda versao ausente do disco E do alvo
+  local p=$1 im is md s1
+  im=${IDX_MODO[$p]:-}; is=${IDX_SHA[$p]:-}
+  [ -n "$im" ] || return 1
+  [ "$im" = "${ALVO_MODO[$p]:-}" ] && [ "$is" = "${ALVO_SHA[$p]:-}" ] && return 1
+  md=$(modo_disco "$p" 2>/dev/null) || return 1
+  if [ -L "$p" ]; then s1=$(readlink -- "$p" | tr -d '\n' | git hash-object --stdin 2>/dev/null)
+  else s1=$(git hash-object -- "$p" 2>/dev/null); fi
+  [ "$im" = "$md" ] && [ "$is" = "$s1" ] && return 1
+  return 0
 }
 
 # --- 1. RASTREADOS em qualquer estado != limpo -------------------------------------------
@@ -85,8 +170,12 @@ while IFS= read -r -d '' entrada; do
   fi
   igual_alvo "$CAM"; rc=$?
   case $rc in
-    0) echo "    ok        $CAM ($XY, identico ao alvo; reset e no-op)" ;;
-    1) recusa "$CAM — DIVERGE do alvo ($XY); ha trabalho local que o reset descartaria
+    0) if indice_orfao "$CAM"; then
+         recusa "$CAM - o INDICE guarda versao ausente do disco E do alvo ($XY); o reset a apaga"
+       else
+         echo "    ok        $CAM ($XY, conteudo+tipo+modo identicos ao alvo; reset e no-op)"
+       fi ;;
+    1) recusa "$CAM - $MOTIVO em relacao ao alvo ($XY); o reset descartaria essa mudanca
               veja com: git diff $REF -- $CAM" ;;
     *) recusa "$CAM — nao consegui medir ($XY)" ;;
   esac
@@ -119,8 +208,8 @@ if [ "$NCOL" -gt 0 ]; then
     [ -n "$c" ] || continue
     igual_alvo "$c"; rc=$?
     case $rc in
-      0) echo "    ok        $c (untracked identico ao alvo; reset e no-op)" ;;
-      1) recusa "$c — untracked que o reset VAI SOBRESCREVER com conteudo diferente" ;;
+      0) echo "    ok        $c (untracked com conteudo+tipo+modo identicos ao alvo; reset e no-op)" ;;
+      1) recusa "$c - untracked que o reset VAI SOBRESCREVER ($MOTIVO)" ;;
       *) recusa "$c — untracked que colide e nao consegui medir" ;;
     esac
   done < "$T/colide.txt"
@@ -134,7 +223,7 @@ if [ "$SNAP" = 1 ]; then
     for g in "${GUARDAS[@]}"; do
       if [ -f "scripts/$g.sh" ]; then PRESENTES+=("scripts/$g.sh"); else AUSENTES+=("$g.sh"); fi
     done
-    for d in bundle-allowlist.txt bundle-esperados.txt suite-vermelhos-conhecidos.txt; do
+    for d in "${DADOS[@]}"; do
       if [ -f "scripts/$d" ]; then PRESENTES+=("scripts/$d"); else AUSENTES+=("$d"); fi
     done
     # v2.1 aceitava snapshot parcial (bastava >=1 arquivo). Rollback com snapshot incompleto
