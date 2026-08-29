@@ -150,7 +150,8 @@ git commit -qm "alvo com a versao nova" >/dev/null 2>&1
 ALVO_N=$(git rev-parse HEAD)
 git reset -q --soft HEAD~1          # volta HEAD, mantendo o index na versao nova
 S=$(./scripts/preflight-deploy.sh "$ALVO_N" --sem-snapshot 2>&1); RC=$?
-if [ "$RC" = 0 ] && grep -q 'staged, mas ja identico ao alvo' <<<"$S"; then
+# duas formas legitimas de aprovar: o atalho de arvore inteira (v2.10) ou o loop por caminho
+if [ "$RC" = 0 ] && grep -qE 'INDICE INTEIRO ja e igual ao alvo|ja e igual ao alvo' <<<"$S"; then
   ok "staged igual ao alvo passa e e declarado como no-op do indice"
 else
   falhou "rc=$RC: staged igual ao alvo deveria passar"
@@ -166,6 +167,50 @@ S=$(./scripts/preflight-deploy.sh "$ALVO" --sem-snapshot 2>&1); RC=$?
   || falhou "adicao staged passou (rc=$RC)"
 git rm -q --cached novo-staged.txt >/dev/null 2>&1; rm -f novo-staged.txt
 limpar_estado
+
+echo "== BLOQUEADOR 1 (laudo v2.9): rename staged nao pode ser escondido pela deteccao =="
+# `git diff --cached --name-only HEAD` com rename detection devolve so o DESTINO do par:
+# `old -> new` vira `new`, o lado removido some do inventario, e o preflight v2.9 aprovava um
+# rename staged que o reset apaga. O inventario agora usa --no-renames (origem E destino), e
+# o caso de aprovacao vem da comparacao de ARVORE inteira, que nao tem lado para esconder.
+limpar_estado
+printf 'mesmo-conteudo\n' > old.txt; chmod 0644 old.txt
+git add old.txt >/dev/null 2>&1; git commit -qm "head com old"
+cp old.txt new.txt; git add new.txt >/dev/null 2>&1; git commit -qm "alvo com old e new identicos"
+ALVO_R=$(git rev-parse HEAD)
+git reset -q --hard HEAD~1
+git mv old.txt new.txt
+
+S=$(./scripts/preflight-deploy.sh "$ALVO_R" --sem-snapshot 2>&1); RC=$?
+if [ "$RC" != 0 ] && grep -q 'old.txt - intencao STAGED' <<<"$S"; then
+  ok "rename staged (old->new, alvo tem ambos) REPROVA nomeando o lado removido"
+else
+  falhou "rename staged passou (rc=$RC) -- a deteccao escondeu old.txt de novo"
+  grep -E 'RECUSADO|intencao' <<<"$S" | head -3 | sed 's/^/        /'
+fi
+git reset -q --hard "$ALVO_R" 2>/dev/null; git clean -qfd >/dev/null 2>&1
+
+echo "-- rename staged JA identico ao alvo inteiro: pode passar --"
+# HEAD tem old; o ALVO tem SO new; o indice tem exatamente o rename aplicado. O indice
+# inteiro e igual ao alvo, entao o reset e no-op para o indice.
+git reset -q --hard HEAD~1 2>/dev/null   # volta para "head com old"
+git rm -q new.txt 2>/dev/null || true
+printf 'mesmo-conteudo\n' > old.txt; git add -A >/dev/null 2>&1
+git commit -qm "head so com old" >/dev/null 2>&1 || true
+git mv old.txt new.txt
+git commit -qm "alvo so com new"
+ALVO_N=$(git rev-parse HEAD)
+git reset -q --soft HEAD~1               # HEAD volta; o indice mantem o rename staged
+S=$(./scripts/preflight-deploy.sh "$ALVO_N" --sem-snapshot 2>&1); RC=$?
+if [ "$RC" = 0 ] && grep -q 'INDICE INTEIRO ja e igual ao alvo' <<<"$S"; then
+  ok "rename staged identico ao alvo inteiro passa (atalho de arvore)"
+else
+  falhou "rc=$RC: rename ja aplicado no indice deveria passar"
+  grep -E 'RECUSADO|intencao' <<<"$S" | head -3 | sed 's/^/        /'
+fi
+git reset -q --hard "$ALVO_N" 2>/dev/null; git clean -qfd >/dev/null 2>&1
+git checkout -q -f "$ALVO" 2>/dev/null
+
 
 echo
 echo "== $P passaram, $F falharam =="

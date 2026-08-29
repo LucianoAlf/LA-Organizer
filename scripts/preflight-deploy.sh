@@ -228,37 +228,66 @@ done < "$T/tracked.z"
 echo "  rastreados nao-limpos: $NTRACK"
 
 # --- 1b. INTENCAO STAGED -------------------------------------------------------------------
-# LAUDO v2.8, BLOQUEADOR 1. `git rm --cached x.txt` seguido de recriar o arquivo deixa
-# `D  x.txt` + `?? x.txt`. A v2.8 olhava so o DISCO, via que era identico ao alvo, e aprovava.
-# Mas o `reset --hard` reescreve o INDICE: a entrada volta, e a delecao staged desaparece.
-# Conteudo igual no disco nao transforma alteracao staged em no-op.
+# LAUDO v2.8, BLOQUEADOR 1: `git rm --cached x` + recriar o arquivo deixava `D  x` + `?? x`,
+# o disco era identico ao alvo e o preflight aprovava -- mas o reset reescreve o INDICE e a
+# delecao staged sumia.
 #
-# A regra correta nao e sobre "orfao no index": e sobre INTENCAO. Tudo que o index guarda
-# DIFERENTE de HEAD e intencao staged -- inclusive a AUSENCIA de uma entrada, que e o que
-# uma delecao staged e. Essa intencao so sobrevive ao reset se ja for igual ao ALVO.
+# LAUDO v2.9, BLOQUEADOR 1: a correcao usava `git diff --cached --name-only HEAD`, e com a
+# DETECCAO DE RENAME ligada isso devolve so o DESTINO do par -- `old.txt -> new.txt` aparece
+# como `new.txt`, o lado removido some do inventario, e um rename staged era apagado pelo
+# reset com o preflight verde. Reproduzido: HEAD com old, alvo com old+new identicos, rename
+# staged, rc=0.
 #
-#   index != HEAD  e  index == alvo  -> o reset e no-op para ela: passa
-#   index != HEAD  e  index != alvo  -> o reset a apaga: RECUSA
+# O VEREDITO agora vem de comparacoes de ARVORE INTEIRA, que nao passam por parser de nomes
+# nem por deteccao de rename -- nao ha lado a esconder:
+#   indice == HEAD                        -> nao ha intencao staged; nada a proteger
+#   indice != HEAD  e  indice == ALVO     -> o reset e no-op para o indice: passa
+#   indice != HEAD  e  indice != ALVO     -> o reset apaga intencao: RECUSA
+# O inventario por caminho continua existindo, mas so para DIAGNOSTICO, e com --no-renames,
+# que lista origem E destino.
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
-  git diff --cached --name-only -z HEAD > "$T/staged.z" 2>/dev/null; RC_SG=$?
-  if [ "$RC_SG" -ne 0 ]; then
-    echo "FATAL: git diff --cached falhou (rc=$RC_SG) -- sem inventario de intencao staged, o reset nao pode ser liberado" >&2
-    exit 2
-  fi
-  NSTAGED=0
-  while IFS= read -r -d '' cam; do
-    [ -n "$cam" ] || continue
-    NSTAGED=$((NSTAGED+1))
-    im=${IDX_MODO[$cam]:-}; is=${IDX_SHA[$cam]:-}
-    am=${ALVO_MODO[$cam]:-}; as=${ALVO_SHA[$cam]:-}
-    if [ "$im" = "$am" ] && [ "$is" = "$as" ]; then
-      echo "    ok        $cam (staged, mas ja identico ao alvo; o reset e no-op para o indice)"
-    else
-      recusa "$cam - intencao STAGED que o reset apaga (indice: ${im:-AUSENTE} ${is:0:7}; alvo: ${am:-AUSENTE} ${as:0:7})
+  git diff --cached --quiet --no-renames HEAD 2>/dev/null; RC_SG=$?
+  case "$RC_SG" in
+    0) echo "  intencao staged: nenhuma (indice identico a HEAD)" ;;
+    1)
+      git diff --cached --quiet --no-renames "$REF" 2>/dev/null; RC_SA=$?
+      case "$RC_SA" in
+        0) echo "  intencao staged: presente, mas o INDICE INTEIRO ja e igual ao alvo (reset e no-op para o indice)" ;;
+        1)
+          # diagnostico por caminho: origem e destino, sem deteccao de rename
+          git diff --cached --name-only -z --no-renames HEAD > "$T/staged.z" 2>/dev/null; RC_LS=$?
+          if [ "$RC_LS" -ne 0 ]; then
+            echo "FATAL: git diff --cached --no-renames falhou (rc=$RC_LS) -- sem inventario, o reset nao pode ser liberado" >&2
+            exit 2
+          fi
+          NSTAGED=0
+          while IFS= read -r -d '' cam; do
+            [ -n "$cam" ] || continue
+            NSTAGED=$((NSTAGED+1))
+            im=${IDX_MODO[$cam]:-}; is=${IDX_SHA[$cam]:-}
+            am=${ALVO_MODO[$cam]:-}; as=${ALVO_SHA[$cam]:-}
+            if [ "$im" = "$am" ] && [ "$is" = "$as" ]; then
+              echo "    ok        $cam (staged, mas este caminho ja e igual ao alvo)"
+            else
+              recusa "$cam - intencao STAGED que o reset apaga (indice: ${im:-AUSENTE} ${is:0:7}; alvo: ${am:-AUSENTE} ${as:0:7})
               se a intencao e boa, commite-a; se nao e, desfaca com: git restore --staged -- $cam"
-    fi
-  done < "$T/staged.z"
-  echo "  intencao staged: $NSTAGED caminho(s) com indice != HEAD"
+            fi
+          done < "$T/staged.z"
+          echo "  intencao staged: $NSTAGED caminho(s) com indice != HEAD (inventario --no-renames)"
+          # SANIDADE CORRETA: com indice != HEAD (RC_SG=1), o inventario --no-renames tem
+          # que listar pelo menos um caminho. Vazio aqui = inventario cego, e cego reprova.
+          # (Comparar indice vs ALVO inteiro NAO serve como recusa: num deploy normal o
+          #  indice difere do alvo em todos os arquivos que o deploy muda -- por isso a
+          #  comparacao de arvore e so o ATALHO de aprovacao do caso RC_SA=0.)
+          if [ "$NSTAGED" -eq 0 ]; then
+            recusa "indice difere de HEAD mas o inventario staged voltou vazio -- inventario cego; fail-closed"
+          fi
+          ;;
+        *) echo "FATAL: git diff --cached contra o alvo falhou (rc=$RC_SA)" >&2; exit 2 ;;
+      esac
+      ;;
+    *) echo "FATAL: git diff --cached contra HEAD falhou (rc=$RC_SG)" >&2; exit 2 ;;
+  esac
 else
   echo "  intencao staged: repo sem HEAD, nada a comparar"
 fi

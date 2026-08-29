@@ -90,6 +90,21 @@ if (-not (Test-Path $bsFile)) {
     Write-Output "=== DEPLOY ABORTADO: scripts/bootstrap-candidato.sh ausente no clone local. ==="
     exit 1
 }
+# NONCE ANTES DE QUALQUER MATERIALIZACAO (laudo v2.9, bloqueador 3). Na v2.9 o nonce so
+# nascia DEPOIS da primeira Materializar-Candidato -- que o usa no BOOTSTRAP_NONCE. A
+# primeira materializacao saia com nonce vazio e o bootstrap inventava um proprio, fora do
+# controle do turno.
+$lockDir = "/run/tom-deploy.lock"
+$lockTtlMin = 30
+# DONO VERIFICAVEL (laudo v2.5, bloqueador 1). O lock antigo era `mkdir` + `rm -rf` cru:
+#   * quem recebia OCUPADO chamava a liberacao e APAGAVA o lock do dono. O segundo turno nao
+#     entrava na janela — ele destruia a protecao do primeiro, que seguia deployando sem lock;
+#   * o caminho sem commit nunca ADQUIRIA, mas soltava ao sair — apagando lock alheio.
+# Agora o protocolo mora em scripts/lib-lock.sh (testavel, e por isso o bug apareceu) e cada
+# turno carrega um nonce: so o dono solta.
+$lockNonce = ([guid]::NewGuid()).ToString("N")
+$script:lockAdquirido = $false
+
 # REGISTRO DE RECURSOS DO TURNO (laudo v2.8, bloqueador 4). O dossie dizia que o diretorio
 # de bootstrap era limpo no `finally`, mas o `finally` so soltava o lock. O fluxo cria ate
 # tres diretorios (tipBoot, tip pos-rebase, deploy_sha) e deixa refs de bootstrap/candidato.
@@ -103,8 +118,11 @@ $script:recursosRef = New-Object System.Collections.ArrayList
 # continuavam usando a lib antiga. Como so esta funcao atribui os dois, eles nao tem como
 # divergir: nao existe um lugar onde um mude sem o outro.
 function Materializar-Candidato($sha) {
-    git -C $srcRoot push tom:/opt/LA-Organizer "${sha}:refs/bootstrap/$sha" --force 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { [void]$script:recursosRef.Add("refs/bootstrap/$sha") }
+    # REF POR TURNO (laudo v2.9, bloqueador 5). refs/bootstrap/<sha> era compartilhada por
+    # dois turnos do MESMO sha: o cleanup de um apagava a ref de que o outro dependia. Com o
+    # nonce no nome, a ref e recurso exclusivo do turno, igual ao diretorio.
+    git -C $srcRoot push tom:/opt/LA-Organizer "${sha}:refs/bootstrap/$sha-$lockNonce" --force 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { [void]$script:recursosRef.Add("refs/bootstrap/$sha-$lockNonce") }
     $out = (Get-Content -Raw $bsFile | ssh tom "BOOTSTRAP_NONCE=$lockNonce bash -s -- $sha /opt/LA-Organizer" 2>$null) | Out-String
     $dir = ""
     foreach ($linha in ($out -split "`n")) { if ($linha -match '^candidato=(.+)$') { $dir = $Matches[1].Trim() } }
@@ -115,23 +133,6 @@ function Materializar-Candidato($sha) {
     Write-Output "=== Candidato $($sha.Substring(0,8)) materializado em $dir; libLock aponta para ele ==="
     return $dir
 }
-$candDir = Materializar-Candidato $tipBoot
-if ($candDir -eq "") {
-    Write-Output "=== DEPLOY ABORTADO: bootstrap do candidato falhou. Sem os guardas do candidato, nao ha gate. ==="
-    exit 1
-}
-Write-Output "=== Candidato materializado em $candDir (fora da worktree viva) ==="
-
-$lockDir = "/run/tom-deploy.lock"
-$lockTtlMin = 30
-# DONO VERIFICAVEL (laudo v2.5, bloqueador 1). O lock antigo era `mkdir` + `rm -rf` cru:
-#   * quem recebia OCUPADO chamava a liberacao e APAGAVA o lock do dono. O segundo turno nao
-#     entrava na janela — ele destruia a protecao do primeiro, que seguia deployando sem lock;
-#   * o caminho sem commit nunca ADQUIRIA, mas soltava ao sair — apagando lock alheio.
-# Agora o protocolo mora em scripts/lib-lock.sh (testavel, e por isso o bug apareceu) e cada
-# turno carrega um nonce: so o dono solta.
-$lockNonce = ([guid]::NewGuid()).ToString("N")
-$script:lockAdquirido = $false
 # $libLock e $candDir sao atribuidos SO dentro de Materializar-Candidato, para nao divergirem.
 function Tomar-LockDeploy {
     $r = (ssh tom ". $script:libLock 2>/dev/null || { echo SEM-LIB; exit 3; }; LOCK_DONO_DESC=auto-deploy-$env:COMPUTERNAME lock_tomar $lockDir $lockNonce $lockTtlMin" 2>$null) | Out-String
@@ -192,6 +193,19 @@ function Soltar-LockDeploy {
     $script:lockAdquirido = $false
 }
 
+# ESCOPO UNICO DESDE O PRIMEIRO RECURSO (laudo v2.9, bloqueador 3). Na v2.9 a primeira
+# materializacao e a aquisicao do lock aconteciam ANTES do try: lock ocupado ou bootstrap
+# falho saiam sem passar pelo finally e deixavam diretorio e ref para tras. Daqui ate o fim,
+# TODA saida -- exit, excecao, sucesso -- passa pelo finally.
+try {
+$candDir = Materializar-Candidato $tipBoot
+if ($candDir -eq "") {
+    Write-Output "=== DEPLOY ABORTADO: bootstrap do candidato falhou. Sem os guardas do candidato, nao ha gate. ==="
+    exit 1
+}
+Write-Output "=== Candidato materializado em $candDir (fora da worktree viva) ==="
+
+
 # AQUISICAO UNICA, ANTES DE QUALQUER CAMINHO. A v2.5 so tomava o lock dentro do ramo que
 # commita; o ramo que apenas SINCRONIZA a VPS (push do outro chat) media e resetava producao
 # inteiramente fora da janela protegida.
@@ -206,12 +220,6 @@ if (-not $script:lockAdquirido) {
 }
 Write-Output "=== Lock de deploy: $lk (nonce $($lockNonce.Substring(0,8))) ==="
 
-# ESCOPO UNICO (laudo v2.6, bloqueador 9). Havia caminho de rollback/exit que saia sem
-# soltar o lock -- e lock nao liberado trava todo deploy seguinte ate o TTL. Daqui ate o
-# fim tudo roda dentro de um try/finally: qualquer saida, inclusive `exit` e excecao,
-# passa pelo finally. As chamadas explicitas a Soltar-LockDeploy continuam (sao
-# idempotentes) para liberar o quanto antes; o finally e a rede que pega o que escapar.
-try {
 
 $empurrou = $false
 $temBaseline = $false
@@ -253,7 +261,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         # agora CONTEM o sha, entao e enderecado por conteudo: nao existe "o mesmo ref com
         # outro conteudo". Sem --force de proposito — se ja existe com esse nome, e o mesmo
         # objeto. E o ref e apagado no fim, para nao virar lixo acumulado.
-        $refCand = "refs/candidato/$tip"
+        $refCand = "refs/candidato/$tip-$lockNonce"
         git -C $srcRoot push tom:/opt/LA-Organizer "HEAD:$refCand" 2>$null
         if ($LASTEXITCODE -eq 0) { [void]$script:recursosRef.Add($refCand) }
         if ($LASTEXITCODE -ne 0) {
@@ -701,6 +709,12 @@ finally {
     # Falha de limpeza e REPORTADA, mas nao mascara o veredito principal: o deploy ja
     # aconteceu (ou nao) antes disto, e trocar esse veredito por "erro de limpeza" seria
     # apagar a informacao que importa.
+    # SOLTAR ANTES DE APAGAR A PROPRIA LIB (laudo v2.9, bloqueador 3). A v2.9 removia
+    # recursosDir primeiro e so depois chamava Soltar-LockDeploy -- que carrega
+    # $script:libLock de DENTRO de um diretorio ja removido. No caminho feliz, a lib nao
+    # existia mais e o lock ficava preso ate o TTL. A ordem aqui e a unica correta:
+    # primeiro solta (a lib ainda existe), depois apaga.
+    Soltar-LockDeploy
     $limpezaFalhou = @()
     foreach ($d in $script:recursosDir) {
         if ($d -notmatch '^/run/tom-cand-[0-9a-f]{40}-[A-Za-z0-9._-]+$') {
@@ -710,7 +724,7 @@ finally {
         if ($LASTEXITCODE -ne 0) { $limpezaFalhou += "nao removi $d" }
     }
     foreach ($r in $script:recursosRef) {
-        if ($r -notmatch '^refs/(bootstrap|candidato)/[0-9a-f]{40}$') {
+        if ($r -notmatch '^refs/(bootstrap|candidato)/[0-9a-f]{40}-[A-Za-z0-9._-]+$') {
             $limpezaFalhou += "ref com nome inesperado, NAO removida: $r"; continue
         }
         ssh tom "cd /opt/LA-Organizer && git update-ref -d '$r'" 2>$null | Out-Null
@@ -723,8 +737,6 @@ finally {
     } elseif (($nD + $nR) -gt 0) {
         Write-Output "=== Limpeza do turno: $nD diretorio(s) e $nR ref(s) removidos (nonce $($lockNonce.Substring(0,8))) ==="
     }
-    # a rede do lock: solta em QUALQUER saida deste escopo.
-    Soltar-LockDeploy
 }
 
 # v2 (clone git) no ar desde 2026-07-21.

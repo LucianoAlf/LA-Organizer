@@ -52,18 +52,28 @@ echo "== concorrencia real: N processos, exatamente 1 vencedor =="
 # aparecia de vez em quando -- e teste que pega o bug "as vezes" deixa o bug passar. Aqui
 # ela apareceu: dois vencedores, porque quem chegava na fresta lia epoch vazio, calculava
 # idade infinita e tratava um lock recem-criado como orfao, roubando-o.
-RAJADAS_RUINS=0
+RAJADAS_RUINS=0; : > "$D/rajadas.err"
 for rajada in 1 2 3; do
-  rm -rf "$LK"; : > "$D/placar"
+  rm -rf "$LK" "$LK".mutex "$LK".mutex.* "$LK".orfao.* 2>/dev/null; : > "$D/placar"
   for i in $(seq 1 16); do
-    ( r=$(lock_tomar "$LK" "nonce-$rajada-$i" 30) && printf 'VENCEU %s\n' "$i" >> "$D/placar" ) &
+    ( r=$(lock_tomar "$LK" "nonce-$rajada-$i" 30 2>>"$D/rajadas.err") && printf 'VENCEU %s
+' "$i" >> "$D/placar" ) &
   done
   wait
   V=$(grep -c '^VENCEU' "$D/placar" 2>/dev/null || true)
   [ "$V" = 1 ] || { RAJADAS_RUINS=$((RAJADAS_RUINS+1)); echo "        rajada $rajada: $V vencedores"; }
 done
-[ "$RAJADAS_RUINS" = 0 ] && ok "3 rajadas de 16 processos simultaneos, 1 vencedor em cada" \
-  || falhou "$RAJADAS_RUINS de 3 rajadas com numero de vencedores != 1"
+if [ "$RAJADAS_RUINS" = 0 ]; then ok "3 rajadas de 16 processos simultaneos, 1 vencedor em cada"
+else falhou "$RAJADAS_RUINS de 3 rajadas com numero de vencedores != 1"; fi
+# STDERR E EVIDENCIA (laudo v2.9): a bateria terminava 66/0 com "epoch: No such file or
+# directory" no stderr -- prova de posse perdida que a contagem nao via. Agora qualquer
+# stderr inesperado nas rajadas REPROVA, mesmo com o placar perfeito.
+if [ -s "$D/rajadas.err" ]; then
+  falhou "stderr inesperado nas rajadas ($(wc -l < "$D/rajadas.err") linha(s)):"
+  head -4 "$D/rajadas.err" | sed 's/^/        /'
+else
+  ok "rajadas com stderr LIMPO (posse nunca foi perdida em silencio)"
+fi
 rm -rf "$LK"
 
 echo "== a fresta entre mkdir e epoch (deterministico) =="
@@ -134,13 +144,17 @@ PS1="$AQUI/auto-deploy.ps1"
 if [ -r "$PS1" ]; then
   grep -qE '^try \{' "$PS1" && ok "existe um try de topo" || falhou "sem try de topo"
   grep -qE '^finally \{' "$PS1" && ok "existe um finally de topo" || falhou "sem finally de topo"
+  # ORDEM NOVA (laudo v2.9, bloqueador 3): o try abre ANTES da primeira materializacao e da
+  # aquisicao -- lock ocupado ou bootstrap falho tambem passam pelo finally. A v2.9 exigia
+  # toma < try, e era exatamente o furo: saidas antes do try nao limpavam nada.
   L_TRY=$(grep -n '^try {' "$PS1" | head -1 | cut -d: -f1)
   L_FIN=$(grep -n '^finally {' "$PS1" | head -1 | cut -d: -f1)
   L_TOMA=$(grep -n '^\$lk = Tomar-LockDeploy' "$PS1" | head -1 | cut -d: -f1)
-  if [ -n "$L_TRY" ] && [ -n "$L_FIN" ] && [ -n "$L_TOMA" ] && [ "$L_TOMA" -lt "$L_TRY" ] && [ "$L_TRY" -lt "$L_FIN" ]; then
-    ok "aquisicao ($L_TOMA) -> try ($L_TRY) -> finally ($L_FIN)"
+  L_MAT=$(grep -n '^\$candDir = Materializar-Candidato' "$PS1" | head -1 | cut -d: -f1)
+  if [ -n "$L_TRY" ] && [ -n "$L_FIN" ] && [ -n "$L_TOMA" ] && [ -n "$L_MAT" ]      && [ "$L_TRY" -lt "$L_MAT" ] && [ "$L_MAT" -lt "$L_TOMA" ] && [ "$L_TOMA" -lt "$L_FIN" ]; then
+    ok "try ($L_TRY) -> materializa ($L_MAT) -> adquire ($L_TOMA) -> finally ($L_FIN)"
   else
-    falhou "ordem errada (toma=${L_TOMA:-?} try=${L_TRY:-?} finally=${L_FIN:-?})"
+    falhou "ordem errada (try=${L_TRY:-?} mat=${L_MAT:-?} toma=${L_TOMA:-?} finally=${L_FIN:-?})"
   fi
   # nenhuma saida entre o try e o finally pode estar FORA do escopo
   FORA=$(awk -v ini="$L_TRY" -v fim="$L_FIN" 'NR>ini && NR<fim' "$PS1" | grep -cE '^\s*exit [0-9]' || true)
@@ -153,6 +167,77 @@ if [ -r "$PS1" ]; then
 else
   falhou "auto-deploy.ps1 nao encontrado"
 fi
+
+
+echo "== BLOQUEADOR 2 (laudo v2.9): o mutex tem dono verificavel =="
+# O stderr da propria bateria entregou o furo: "mutex/epoch: No such file or directory" com a
+# contagem 66/0 -- um processo perdeu o mutex depois do mkdir e seguiu como dono. Tres provas:
+#   a. posse so com nonce gravado E relido; sabotagem na fresta -> rc=2, sem secao critica;
+#   b. liberacao TARDIA de A nao remove o mutex fresco de C;
+#   c. rajadas com stderr capturado: qualquer stderr inesperado reprova, mesmo verde.
+
+C=nonce-processo-C
+echo "-- a. releitura sabotada: rc=2, nunca posse fingida --"
+rm -rf "$LK" "$LK".mutex "$LK".mutex.* "$LK".orfao.* 2>/dev/null
+mkdir -p "$D/bin2"
+# o `date` sabotado troca o nonce do mutex ENTRE a gravacao e a releitura -- exatamente a
+# janela em que a v2.9 seguia como dona sem conferir.
+cat > "$D/bin2/date" <<EOF
+#!/bin/bash
+if [ -n "\${MUTEX_SABOTAR:-}" ] && [ -f "$LK.mutex/nonce" ]; then
+  printf 'intruso\n' > "$LK.mutex/nonce" 2>/dev/null
+fi
+exec /bin/date "\$@"
+EOF
+chmod +x "$D/bin2/date"
+R=$(PATH="$D/bin2:$PATH" MUTEX_SABOTAR=1 lock_tomar "$LK" "$A" 30 2>"$D/mx.err"); RC=$?
+if [ "$RC" = 2 ] && [ "$R" = FALHA-MUTEX ]; then
+  ok "posse sabotada na fresta -> rc=2 FALHA-MUTEX (nao entra na secao critica)"
+else
+  falhou "seguiu sem posse provada (rc=$RC r=$R)"
+fi
+grep -q 'nao e meu apos a gravacao' "$D/mx.err" && ok "o motivo diz que a releitura nao bateu" \
+  || falhou "sem diagnostico da releitura: $(head -1 "$D/mx.err")"
+[ ! -d "$LK" ] && ok "nenhum lock canonico foi criado sem posse do mutex" || falhou "criou lock sem mutex"
+rm -rf "$LK".mutex 2>/dev/null
+
+echo "-- b. liberacao tardia de A nao remove o mutex de C --"
+rm -rf "$LK" "$LK".mutex "$LK".mutex.* 2>/dev/null
+lock_mutex_tomar "$LK" "$A" >/dev/null 2>&1 || falhou "A nao tomou o mutex"
+echo $(( $(date +%s) - 3600 )) > "$LK.mutex/epoch"      # A ficou para tras; mutex expira
+lock_mutex_tomar "$LK" "$C" >/dev/null 2>&1; RC=$?
+[ "$RC" = 0 ] && ok "C recupera o mutex orfao de A" || falhou "C nao recuperou (rc=$RC)"
+[ "$(cat "$LK.mutex/nonce" 2>/dev/null)" = "$C" ] && ok "o mutex atual e de C" || falhou "nonce atual: $(cat "$LK.mutex/nonce" 2>/dev/null)"
+lock_mutex_soltar "$LK" "$A" 2>/dev/null; RC=$?
+[ "$RC" = 1 ] && ok "a liberacao TARDIA de A e recusada (rc=1)" || falhou "A soltou o mutex de C (rc=$RC)"
+[ -d "$LK.mutex" ] && [ "$(cat "$LK.mutex/nonce" 2>/dev/null)" = "$C" ] && ok "o mutex de C sobreviveu intacto" \
+  || falhou "o mutex de C foi removido ou corrompido pela liberacao tardia"
+lock_mutex_soltar "$LK" "$C" >/dev/null 2>&1; RC=$?
+[ "$RC" = 0 ] && [ ! -d "$LK.mutex" ] && ok "C libera o proprio mutex" || falhou "C nao liberou (rc=$RC)"
+[ -z "$(ls -d "$LK".mutex.solto.* "$LK".mutex.morto.* 2>/dev/null)" ] && ok "zero residuo de mutex" \
+  || falhou "residuo: $(ls -d "$LK".mutex.* 2>/dev/null | tr '\n' ' ')"
+
+echo "-- c. mutex FRESCO nao e roubado pela recuperacao --"
+rm -rf "$LK" "$LK".mutex 2>/dev/null
+lock_mutex_tomar "$LK" "$A" >/dev/null 2>&1
+# parece velho para quem le AGORA, mas o dono grava o epoch na fresta (via date sabotado que
+# renova em vez de trocar): a recuperacao move, reconfere, ve fresco e DEVOLVE.
+echo $(( $(date +%s) - 3600 )) > "$LK.mutex/epoch"
+cat > "$D/bin2/mv" <<EOF
+#!/bin/bash
+case "\$*" in *".mutex "*".mutex.morto."*) date +%s > "$LK.mutex/epoch" 2>/dev/null ;; esac
+exec /bin/mv "\$@"
+EOF
+chmod +x "$D/bin2/mv"
+# B roda ate desistir sozinho (~5s): matar no meio deixava o mutex de A movido e .morto
+# residual -- intermitencia criada pelo proprio teste, nao pelo produto.
+( PATH="$D/bin2:$PATH" lock_mutex_tomar "$LK" "$B" >/dev/null 2>&1 ) & MXPID=$!
+wait "$MXPID" 2>/dev/null
+rm -f "$D/bin2/mv"
+[ -d "$LK.mutex" ] && [ "$(cat "$LK.mutex/nonce" 2>/dev/null)" = "$A" ] \
+  && ok "mutex renovado na fresta foi DEVOLVIDO (continua de A)" \
+  || falhou "mutex fresco foi roubado (dono: $(cat "$LK.mutex/nonce" 2>/dev/null))"
+lock_mutex_soltar "$LK" "$A" >/dev/null 2>&1; rm -rf "$LK" "$LK".mutex 2>/dev/null
 
 
 echo "== BLOQUEADOR 4: heartbeat ENTRE a leitura da idade e o rename =="
@@ -196,7 +281,7 @@ echo "== BLOQUEADOR 2 (laudo v2.8): tres concorrentes, A/B/C =="
 # `mv` de volta falhava em silencio. Resultado: C dono, A abandonado em .orfao.
 # Agora toda aquisicao passa por um mutex, entao C nao observa o caminho no meio da transicao.
 C=nonce-processo-C
-residuos() { ls -d "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null | wc -l; }
+residuos() { ls -d "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* "$LK".mutex.solto.* 2>/dev/null | wc -l; }
 
 echo "-- A renova na fresta: A continua dono, B e C nao vencem --"
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
@@ -209,7 +294,7 @@ cat > "$D/bin/mv" <<EOF
 #!/bin/bash
 if [ -d "$LK" ]; then
   date +%s > "$LK/epoch" 2>/dev/null
-  ( . "$AQUI/lib-lock.sh"; lock_tomar "$LK" "$C" 30 >"$D/c.out" 2>&1 ) &
+  ( . "$AQUI/lib-lock.sh"; lock_tomar "$LK" "$C" 30 >"$D/c.out" 2>&1 ) & echo \$! > "$D/c.pid"
   sleep 0.2
 fi
 exec /bin/mv "\$@"
@@ -218,6 +303,16 @@ chmod +x "$D/bin/mv"
 R=$(PATH="$D/bin:$PATH" lock_tomar "$LK" "$B" 30); RC=$?
 wait 2>/dev/null
 rm -f "$D/bin/mv"
+# O C foi disparado DENTRO do subshell do mv falso: ele NAO e filho deste shell, entao o
+# `wait` acima nao o espera. Sem esta sincronizacao, C continuava disputando o mutex por
+# ate 5s e contaminava os blocos seguintes -- foi exatamente a intermitencia que o
+# stderr-strict pegou. Espera pelo pidfile, com timeout.
+if [ -f "$D/c.pid" ]; then
+  CPID=$(cat "$D/c.pid" 2>/dev/null)
+  for _ in $(seq 1 80); do kill -0 "$CPID" 2>/dev/null || break; sleep 0.1; done
+  kill -0 "$CPID" 2>/dev/null && falhou "C orfao nao terminou em 8s"
+  rm -f "$D/c.pid"
+fi
 if [ "$RC" != 0 ]; then ok "B nao vence com A vivo ($R)"; else falhou "B venceu contra dono vivo (rc=$RC r=$R)"; fi
 DONO=$(cat "$LK/nonce" 2>/dev/null)
 if [ "$DONO" = "$A" ]; then ok "A continua dono depois da disputa de tres"
@@ -282,96 +377,85 @@ if [ "$(residuos)" = 0 ]; then ok "zero residuo apos as rajadas"; else falhou "$
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
 
 
-echo "== BLOQUEADOR 7: guarda ADJACENTE a cada efeito critico =="
+echo "== BLOQUEADOR 7 + BLOQUEADOR 4 (laudo v2.9): efeitos medidos NA OCORRENCIA, com mutation =="
 PS1="$AQUI/auto-deploy.ps1"
-if [ -r "$PS1" ]; then
-  # cada efeito critico e sua assinatura no .ps1
-  efeitos=(
-    'git -C \$srcRoot push origin main'
-    'git reset --hard \$script:deploySha --quiet'
-    'pm2 restart tom --no-color 2>&1 | tail -2'
-    'patch-crontab.sh --aplicar 2>&1'
-  )
-  for e in "${efeitos[@]}"; do
-    LN=$(grep -nE "$e" "$PS1" | head -1 | cut -d: -f1)
-    if [ -z "$LN" ]; then falhou "efeito nao encontrado no ps1: $e"; continue; fi
-    # a guarda tem que estar nas 3 linhas ANTES do efeito -- adjacencia, nao "existe em algum lugar"
-    if sed -n "$((LN-3)),$((LN-1))p" "$PS1" | grep -q 'Confirmar-AntesDoEfeito'; then
-      ok "guarda adjacente antes de: $(printf '%s' "$e" | cut -c1-42)"
-    else
-      falhou "SEM guarda adjacente antes de: $(printf '%s' "$e" | cut -c1-42) (linha $LN)"
-    fi
-  done
-  # quantidade: uma guarda por efeito, no minimo
-  N_G=$(grep -c 'if (-not (Confirmar-AntesDoEfeito' "$PS1" || true)
-  [ "$N_G" -ge "${#efeitos[@]}" ] && ok "$N_G guarda(s) para ${#efeitos[@]} efeito(s) criticos" \
-    || falhou "so $N_G guarda(s) para ${#efeitos[@]} efeitos"
-  # a guarda confirma posse E alvo
-  if grep -A12 'function Confirmar-AntesDoEfeito' "$PS1" | grep -q 'Bater-LockDeploy' \
-     && grep -A18 'function Confirmar-AntesDoEfeito' "$PS1" | grep -q 'rev-parse origin/main'; then
-    ok "a guarda confirma posse do lock E que origin/main nao moveu"
-  else
-    falhou "a guarda nao cobre as duas coisas"
-  fi
-
-  echo "== BLOQUEADOR 2: nenhum reset em ref MUTAVEL =="
-  MUT=0
-  while IFS= read -r linha; do
-    case "$linha" in
-      *'reset --hard $script:deploySha'*|*'reset --hard $prev'*|*'reset --hard $CAND'*) : ;;
-      *'reset --hard'*)
-        case "$linha" in *'#'*) : ;; *) MUT=$((MUT+1)); echo "        ref mutavel: $(printf '%s' "$linha" | sed 's/^ *//' | cut -c1-72)" ;; esac ;;
-    esac
-  # so INVOCACOES de verdade: linhas com `git reset --hard`. Mensagem de erro que MENCIONA
-  # "reset --hard" nao e chamada -- contar texto como codigo e a forma mais facil de um
-  # teste estrutural virar ruido e ser ignorado.
-  done < <(grep -E 'ssh tom .*git reset --hard|git -C .*reset --hard' "$PS1" | grep -v '^\s*#')
-  [ "$MUT" = 0 ] && ok "todas as chamadas a reset --hard usam SHA literal ou ponto de retorno" \
-    || falhou "$MUT chamada(s) a reset --hard em referencia mutavel"
-  grep -q 'reset --hard origin/main' "$PS1" && falhou "ainda ha 'reset --hard origin/main'" \
-    || ok "nenhum 'reset --hard origin/main' no caminho canonico"
-else
-  falhou "auto-deploy.ps1 nao encontrado"
-fi
-
-
-PS1="$AQUI/auto-deploy.ps1"
-echo "== BLOQUEADOR 5 (laudo v2.8): TODAS as invocacoes, nao a primeira =="
-# Os testes anteriores usavam `head -1`: mediam a primeira ocorrencia de cada efeito e
-# chamavam isso de "todos". Rollback e recuperacao ficavam fora -- e sao justamente os que
-# rodam quando algo ja deu errado. Aqui cada invocacao REAL e confrontada com
-# efeitos-criticos.txt: nao declarada reprova, classe errada reprova.
 DECL="$AQUI/efeitos-criticos.txt"
-if [ -r "$DECL" ] && [ -r "$PS1" ]; then
-  ok "declaracao de efeitos presente ($(grep -c '^[a-z]' "$DECL") efeito(s))"
-  # todas as invocacoes reais, ignorando comentarios
-  grep -vE '^\s*#' "$PS1" | grep -nE 'git -C \$srcRoot push origin main|ssh tom "cd /opt/LA-Organizer && git reset --hard|ssh tom "pm2 restart|pm2 restart tom --no-color|patch-crontab\.sh --(aplicar|reverter)' \
-    | grep -vE 'Confirmar-AntesDoEfeito|HOLD auto|Write-Output|\$problemas|Invoke-RollbackVps "' > "$D/efeitos.txt" || true
-  N_REAIS=$(wc -l < "$D/efeitos.txt")
-  [ "$N_REAIS" -ge 8 ] && ok "$N_REAIS invocacao(oes) real(is) encontradas no ps1" \
-    || falhou "so $N_REAIS invocacoes -- o enumerador esta perdendo efeito"
 
-  NAO_DECL=0; CLASSE_RUIM=0
+# VERIFICADOR UNICO (laudo v2.9, bloqueador 4). A versao anterior enumerava `linha:corpo`,
+# DESCARTAVA o numero e refazia `grep -nF | head -1`: duas invocacoes com corpo identico eram
+# sempre avaliadas pela PRIMEIRA -- remover a guarda da segunda continuava verde. E o numero
+# vinha de um arquivo filtrado, entao nem correspondia ao ps1 real. Agora o grep -n roda
+# DIRETO no arquivo (numeros reais), o filtro examina o corpo, e a adjacencia usa o numero
+# QUE JA VEIO -- cada ocorrencia e medida onde ela esta.
+verificar_efeitos() {  # <arquivo-ps1>  ->  EF_PROBLEMAS, EF_INVOCACOES; rc 0 se tudo coberto
+  local arq=$1 num corpo classe tem
+  EF_PROBLEMAS=0; EF_INVOCACOES=0
+  grep -nE 'git -C \$srcRoot push origin main|ssh tom "cd /opt/LA-Organizer && git reset --hard|ssh tom "pm2 restart|pm2 restart tom --no-color|patch-crontab\.sh --(aplicar|reverter)' "$arq" \
+    > "$D/efeitos-brutos.txt" || true
+  : > "$D/efeitos.txt"
   while IFS= read -r linha; do
-    corpo=$(sed 's/^[0-9]*://' <<<"$linha" | sed 's/^[[:space:]]*//')
+    num=${linha%%:*}; corpo=${linha#*:}
+    corpo=$(sed 's/^[[:space:]]*//' <<<"$corpo")
+    case "$corpo" in \#*) continue ;; esac
+    case "$corpo" in
+      *Confirmar-AntesDoEfeito*|*'HOLD auto'*|*Write-Output*|*'$problemas'*|*'Invoke-RollbackVps "'*) continue ;;
+    esac
+    printf '%s:%s\n' "$num" "$corpo" >> "$D/efeitos.txt"
+    EF_INVOCACOES=$((EF_INVOCACOES+1))
     classe=$(grep -F -- "$corpo" "$DECL" 2>/dev/null | awk '{print $1}' | head -1)
     if [ -z "$classe" ]; then
-      NAO_DECL=$((NAO_DECL+1)); echo "        NAO DECLARADA: $(cut -c1-70 <<<"$corpo")"; continue
+      EF_PROBLEMAS=$((EF_PROBLEMAS+1)); echo "        NAO DECLARADA (linha $num): $(cut -c1-64 <<<"$corpo")"; continue
     fi
-    # a linha no arquivo real, para medir adjacencia da guarda
-    LN=$(grep -nF -- "$corpo" "$PS1" | head -1 | cut -d: -f1)
-    TEM_GUARDA=nao
-    [ -n "$LN" ] && sed -n "$((LN-3)),$((LN-1))p" "$PS1" | grep -q 'Confirmar-AntesDoEfeito' && TEM_GUARDA=sim
     case "$classe" in
-      guardado)   [ "$TEM_GUARDA" = sim ] || { CLASSE_RUIM=$((CLASSE_RUIM+1)); echo "        declarada 'guardado' mas SEM guarda adjacente: $(cut -c1-56 <<<"$corpo")"; } ;;
-      recuperacao) : ;;   # por desenho nao tem guarda; a prova equivalente e o alvo
-      *)          CLASSE_RUIM=$((CLASSE_RUIM+1)); echo "        classe desconhecida '$classe'" ;;
+      guardado)
+        # adjacencia medida NESTA ocorrencia: as 3 linhas anteriores ao numero real
+        # SO CODIGO conta como guarda: um COMENTARIO que cita a funcao dentro da janela
+        # mascarava o mutante -- o proprio mutation test pegou isso na primeira rodada.
+        tem=nao
+        sed -n "$((num-3)),$((num-1))p" "$arq" | grep -vE '^[[:space:]]*#' | grep -q 'Confirmar-AntesDoEfeito' && tem=sim
+        [ "$tem" = sim ] || { EF_PROBLEMAS=$((EF_PROBLEMAS+1)); echo "        SEM guarda adjacente (linha $num): $(cut -c1-56 <<<"$corpo")"; } ;;
+      recuperacao) : ;;   # por desenho nao tem guarda; a prova equivalente e o alvo (conferido adiante)
+      *) EF_PROBLEMAS=$((EF_PROBLEMAS+1)); echo "        classe desconhecida '$classe' (linha $num)" ;;
     esac
+  done < "$D/efeitos-brutos.txt"
+  [ "$EF_PROBLEMAS" -eq 0 ]
+}
+
+if [ -r "$DECL" ] && [ -r "$PS1" ]; then
+  ok "declaracao de efeitos presente ($(grep -c '^[a-z]' "$DECL") efeito(s))"
+  if verificar_efeitos "$PS1"; then
+    ok "$EF_INVOCACOES invocacao(oes) real(is), TODAS declaradas e cobertas na propria ocorrencia"
+  else
+    falhou "$EF_PROBLEMAS problema(s) de cobertura em $EF_INVOCACOES invocacao(oes)"
+  fi
+  [ "$EF_INVOCACOES" -ge 8 ] && ok "enumerador encontrou $EF_INVOCACOES invocacoes (>= 8)" \
+    || falhou "so $EF_INVOCACOES invocacoes -- o enumerador esta perdendo efeito"
+
+  echo "-- mutation: remover a guarda de CADA ocorrencia guardada, uma por vez --"
+  # O laudo reproduziu: sem a guarda do SEGUNDO reset docs/script-only, a bateria seguia
+  # verde. Aqui cada ocorrencia 'guardado' e mutada individualmente -- a linha da guarda vira
+  # linha em branco (numeracao preservada) -- e o verificador PRECISA reprovar cada mutante.
+  MUT_TOTAL=0; MUT_PEGOS=0
+  while IFS= read -r linha; do
+    num=${linha%%:*}; corpo=${linha#*:}
+    classe=$(grep -F -- "$corpo" "$DECL" 2>/dev/null | awk '{print $1}' | head -1)
+    [ "$classe" = guardado ] || continue
+    G=$(awk -v a=$((num-3)) -v b=$((num-1)) 'NR>=a && NR<=b && !/^[[:space:]]*#/ && /Confirmar-AntesDoEfeito/ {print NR; exit}' "$PS1")
+    [ -n "$G" ] || continue
+    MUT_TOTAL=$((MUT_TOTAL+1))
+    awk -v g="$G" 'NR==g {print ""; next} {print}' "$PS1" > "$D/mutante.ps1"
+    if verificar_efeitos "$D/mutante.ps1" >/dev/null 2>&1; then
+      falhou "mutante linha $G (guarda da ocorrencia $num) passou DESPERCEBIDO"
+    else
+      MUT_PEGOS=$((MUT_PEGOS+1))
+    fi
   done < "$D/efeitos.txt"
-  [ "$NAO_DECL" = 0 ] && ok "toda invocacao real esta declarada em efeitos-criticos.txt" \
-    || falhou "$NAO_DECL invocacao(oes) fora da declaracao"
-  [ "$CLASSE_RUIM" = 0 ] && ok "toda declarada como 'guardado' tem guarda adjacente" \
-    || falhou "$CLASSE_RUIM efeito(s) com classe que nao bate com o codigo"
+  if [ "$MUT_TOTAL" -ge 4 ] && [ "$MUT_PEGOS" = "$MUT_TOTAL" ]; then
+    ok "mutation: $MUT_PEGOS/$MUT_TOTAL guardas removidas individualmente, todas detectadas"
+  else
+    falhou "mutation: $MUT_PEGOS de $MUT_TOTAL mutantes detectados"
+  fi
+  rm -f "$D/mutante.ps1"
 
   # e a declaracao nao pode citar efeito que nao existe mais
   ORFAS=0
@@ -392,9 +476,32 @@ if [ -r "$DECL" ] && [ -r "$PS1" ]; then
   done < <(grep '^[a-z]' "$DECL" | sed 's/^\([a-z-]*\)[[:space:]]*/\1 /')
   [ "$REC_RUIM" = 0 ] && ok "os efeitos de recuperacao usam alvo literal ou backup desta tentativa" \
     || falhou "$REC_RUIM efeito(s) de recuperacao com alvo mutavel"
+
+  # a guarda cobre posse E alvo (permanece da v2.9)
+  if grep -A12 'function Confirmar-AntesDoEfeito' "$PS1" | grep -q 'Bater-LockDeploy' \
+     && grep -A20 'function Confirmar-AntesDoEfeito' "$PS1" | grep -q 'rev-parse origin/main'; then
+    ok "a guarda confirma posse do lock E que origin/main nao moveu"
+  else
+    falhou "a guarda nao cobre as duas coisas"
+  fi
+
+  echo "== BLOQUEADOR 2 (laudo v2.7): nenhum reset em ref MUTAVEL =="
+  MUT=0
+  while IFS= read -r linha; do
+    case "$linha" in
+      *'reset --hard $script:deploySha'*|*'reset --hard $prev'*|*'reset --hard $CAND'*) : ;;
+      *'reset --hard'*)
+        case "$linha" in *'#'*) : ;; *) MUT=$((MUT+1)); echo "        ref mutavel: $(printf '%s' "$linha" | sed 's/^ *//' | cut -c1-72)" ;; esac ;;
+    esac
+  done < <(grep -E 'ssh tom .*git reset --hard|git -C .*reset --hard' "$PS1" | grep -v '^\s*#')
+  [ "$MUT" = 0 ] && ok "todas as chamadas a reset --hard usam SHA literal ou ponto de retorno" \
+    || falhou "$MUT chamada(s) a reset --hard em referencia mutavel"
+  grep -q 'reset --hard origin/main' "$PS1" && falhou "ainda ha 'reset --hard origin/main'" \
+    || ok "nenhum 'reset --hard origin/main' no caminho canonico"
 else
   falhou "efeitos-criticos.txt ou auto-deploy.ps1 ausente"
 fi
+
 
 echo "== a guarda nao afirma o que nao provou (antes do push) =="
 # Antes do push, `$script:deploySha` ainda e nulo: nao ha alvo medido para comparar. Dizer

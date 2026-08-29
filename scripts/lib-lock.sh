@@ -37,39 +37,103 @@
 # mutex velho e residuo de processo morto, nao contencao legitima.
 LOCK_MUTEX_TTL_SEG=${LOCK_MUTEX_TTL_SEG:-60}
 
-lock_mutex_tomar() {   # <dir-do-lock> -> rc 0 tenho o mutex | 1 nao consegui
-  local mx="$1.mutex" i ep morto
+# MUTEX COM DONO VERIFICAVEL (laudo v2.9, bloqueador 2). A versao anterior tinha tres furos,
+# e um deles APARECEU no stderr da propria bateria ("mutex/epoch: No such file or directory")
+# enquanto a contagem terminava 66/0 -- ou seja, um processo perdeu o mutex depois do mkdir e
+# seguiu como se tivesse exclusividade, e o teste nao leu o stderr:
+#   1. a escrita do epoch falhando era ignorada: o processo entrava na secao critica sem a
+#      prova de posse que os outros iam consultar;
+#   2. a liberacao era `rm -rf` cru, sem conferir dono: uma liberacao TARDIA (processo lento)
+#      apagava o mutex FRESCO que outro acabara de criar;
+#   3. a recuperacao de orfao movia e removia sem reconferir o que moveu.
+# Agora o mutex carrega um nonce proprio; quem nao consegue gravar (e RELER) nonce+epoch nao
+# entra na secao critica (rc=2); a liberacao e por rename atomico condicionada ao nonce; e a
+# recuperacao reconfere o movido e DEVOLVE se ele estiver fresco ou for de outro dono.
+
+lock_mutex_tomar() {   # <dir-do-lock> <nonce> -> rc 0 tenho | 1 nao consegui | 2 erro
+  local mx="$1.mutex" nonce=$2 i ep morto relido
+  [ -n "$nonce" ] || { echo "lock_mutex_tomar: nonce obrigatorio" >&2; return 2; }
   for i in $(seq 1 50); do
-    # o `2>/dev/null` no epoch e proposital: se o mutex sumir entre o mkdir e a escrita, a
-    # idade cai para o mtime do diretorio -- que e o mesmo instante. Nao ha o que reportar.
-    if mkdir "$mx" 2>/dev/null; then date +%s > "$mx/epoch" 2>/dev/null; return 0; fi
+    if mkdir "$mx" 2>/dev/null; then
+      # POSSE SO COM PROVA GRAVADA E RELIDA. Se qualquer escrita falhar -- ou se o que foi
+      # relido nao for o nosso nonce (alguem removeu e recriou o mutex no meio) -- este
+      # processo NAO tem exclusividade e nao pode fingir que tem.
+      if ! printf '%s\n' "$nonce" > "$mx/nonce" 2>/dev/null; then
+        echo "lock_mutex_tomar: nao consegui gravar o nonce em $mx" >&2; return 2
+      fi
+      if ! date +%s > "$mx/epoch" 2>/dev/null; then
+        echo "lock_mutex_tomar: nao consegui gravar o epoch em $mx" >&2; return 2
+      fi
+      relido=$(cat "$mx/nonce" 2>/dev/null)
+      if [ "$relido" != "$nonce" ]; then
+        echo "lock_mutex_tomar: o mutex nao e meu apos a gravacao (relido: '${relido:-nada}')" >&2
+        return 2
+      fi
+      return 0
+    fi
     ep=$(cat "$mx/epoch" 2>/dev/null)
     case "$ep" in ''|*[!0-9]*) ep=$(stat -c %Y "$mx" 2>/dev/null) ;; esac
-    case "$ep" in ''|*[!0-9]*) ep=0 ;; esac
+    # NAO-MENSURAVEL != EXPIRADO (achado do stderr-strict): se cat e stat falham juntos, o
+    # mutex sumiu NESTE instante (alguem soltou). Tratar isso como idade infinita fazia o
+    # processo mover um mutex FRESCO recem-criado por outro. Volta ao mkdir e disputa de novo.
+    case "$ep" in ''|*[!0-9]*) sleep 0.05 2>/dev/null || sleep 1; continue ;; esac
     if [ $(( $(date +%s) - ep )) -ge "$LOCK_MUTEX_TTL_SEG" ]; then
-      # RECUPERACAO POR RENAME, nao por `rm -rf`: com remocao crua, dois processos podem
-      # passar pelo teste de idade, os dois removerem -- e o segundo apagar o mutex FRESCO
-      # que o primeiro acabou de criar. `mv` para nome unico e atomico: so um move.
+      # RECUPERACAO POR RENAME + RECONFERENCIA. `mv` para nome unico e atomico: so um move.
+      # Depois de mover, o epoch do MOVIDO e relido -- se ficou fresco (o dono escreveu o
+      # epoch na fresta), devolve intacto em vez de apagar um mutex vivo.
       morto="$mx.morto.$$.$(date +%s%N 2>/dev/null || date +%s)"
-      if mv -T "$mx" "$morto" 2>/dev/null; then rm -rf "$morto" 2>/dev/null; fi
+      if mv -T "$mx" "$morto" 2>/dev/null; then
+        ep=$(cat "$morto/epoch" 2>/dev/null)
+        case "$ep" in ''|*[!0-9]*) ep=$(stat -c %Y "$morto" 2>/dev/null) ;; esac
+        # pos-move: nao-mensuravel tambem NAO e expirado -- devolve, fail-closed
+        case "$ep" in ''|*[!0-9]*) mv -T "$morto" "$mx" 2>/dev/null; continue ;; esac
+        if [ $(( $(date +%s) - ep )) -lt "$LOCK_MUTEX_TTL_SEG" ]; then
+          mv -T "$morto" "$mx" 2>/dev/null || rm -rf "$morto" 2>/dev/null   # devolve; se o caminho ja foi ocupado, o dono detecta pela releitura e o residuo e removido
+        else
+          rm -rf "$morto" 2>/dev/null
+        fi
+      fi
       continue
     fi
     sleep 0.1 2>/dev/null || sleep 1
   done
   return 1
 }
-lock_mutex_soltar() { rm -rf "$1.mutex" 2>/dev/null; }
+
+lock_mutex_soltar() {  # <dir-do-lock> <nonce> -> 0 liberado | 1 nao era meu | 2 erro
+  local mx="$1.mutex" nonce=$2 gravado solto
+  [ -n "$nonce" ] || return 2
+  [ -d "$mx" ] || return 0                       # ja liberado: nao e erro
+  gravado=$(cat "$mx/nonce" 2>/dev/null)
+  if [ "$gravado" != "$nonce" ]; then
+    # LIBERACAO TARDIA DE OUTRA ERA: o mutex atual e de outro processo. Nao tocar.
+    return 1
+  fi
+  solto="$mx.solto.$$.$(date +%s%N 2>/dev/null || date +%s)"
+  mv -T "$mx" "$solto" 2>/dev/null || { [ -d "$mx" ] || return 0; return 2; }
+  gravado=$(cat "$solto/nonce" 2>/dev/null)
+  if [ "$gravado" != "$nonce" ]; then
+    mv -T "$solto" "$mx" 2>/dev/null            # movi o de outro (janela minuscula): devolve
+    return 1
+  fi
+  rm -rf "$solto" 2>/dev/null
+  return 0
+}
 
 lock_tomar() {   # <dir> <nonce> <ttl_min>
-  local dir=$1 nonce=$2 ttl=${3:-30} idade epoch rc
+  local dir=$1 nonce=$2 ttl=${3:-30} rc mrc
   [ -n "$dir" ] && [ -n "$nonce" ] || { echo "lock_tomar: dir e nonce obrigatorios" >&2; return 2; }
   case "$nonce" in *[!A-Za-z0-9._-]*|'') echo "lock_tomar: nonce invalido" >&2; return 2 ;; esac
 
-  if ! lock_mutex_tomar "$dir"; then
-    echo "OCUPADO mutex"; return 1
-  fi
+  # o mutex usa o MESMO nonce do turno: quem serializa e quem adquire sao o mesmo dono.
+  lock_mutex_tomar "$dir" "$nonce"; mrc=$?
+  case "$mrc" in
+    0) : ;;
+    2) echo "FALHA-MUTEX"; return 2 ;;   # nao provei posse do mutex: nao entro na secao critica
+    *) echo "OCUPADO mutex"; return 1 ;;
+  esac
   _lock_tomar_serializado "$dir" "$nonce" "$ttl"; rc=$?
-  lock_mutex_soltar "$dir"
+  lock_mutex_soltar "$dir" "$nonce"
   return $rc
 }
 
