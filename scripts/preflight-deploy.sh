@@ -215,11 +215,7 @@ while IFS= read -r -d '' entrada; do
   fi
   igual_alvo "$CAM"; rc=$?
   case $rc in
-    0) if indice_orfao "$CAM"; then
-         recusa "$CAM - o INDICE guarda versao ausente do disco E do alvo ($XY); o reset a apaga"
-       else
-         echo "    ok        $CAM ($XY, conteudo+tipo+modo identicos ao alvo; reset e no-op)"
-       fi ;;
+    0) echo "    ok        $CAM ($XY, conteudo+tipo+modo identicos ao alvo; reset e no-op)" ;;
     1) if origem_conhecida "$CAM"; then
          echo "    ok        $CAM ($XY, divergencia de ORIGEM conhecida: sha+modo batem com o manifesto v2.5)"
          MANIF_USADOS=$((MANIF_USADOS+1))
@@ -230,6 +226,42 @@ while IFS= read -r -d '' entrada; do
   esac
 done < "$T/tracked.z"
 echo "  rastreados nao-limpos: $NTRACK"
+
+# --- 1b. INTENCAO STAGED -------------------------------------------------------------------
+# LAUDO v2.8, BLOQUEADOR 1. `git rm --cached x.txt` seguido de recriar o arquivo deixa
+# `D  x.txt` + `?? x.txt`. A v2.8 olhava so o DISCO, via que era identico ao alvo, e aprovava.
+# Mas o `reset --hard` reescreve o INDICE: a entrada volta, e a delecao staged desaparece.
+# Conteudo igual no disco nao transforma alteracao staged em no-op.
+#
+# A regra correta nao e sobre "orfao no index": e sobre INTENCAO. Tudo que o index guarda
+# DIFERENTE de HEAD e intencao staged -- inclusive a AUSENCIA de uma entrada, que e o que
+# uma delecao staged e. Essa intencao so sobrevive ao reset se ja for igual ao ALVO.
+#
+#   index != HEAD  e  index == alvo  -> o reset e no-op para ela: passa
+#   index != HEAD  e  index != alvo  -> o reset a apaga: RECUSA
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  git diff --cached --name-only -z HEAD > "$T/staged.z" 2>/dev/null; RC_SG=$?
+  if [ "$RC_SG" -ne 0 ]; then
+    echo "FATAL: git diff --cached falhou (rc=$RC_SG) -- sem inventario de intencao staged, o reset nao pode ser liberado" >&2
+    exit 2
+  fi
+  NSTAGED=0
+  while IFS= read -r -d '' cam; do
+    [ -n "$cam" ] || continue
+    NSTAGED=$((NSTAGED+1))
+    im=${IDX_MODO[$cam]:-}; is=${IDX_SHA[$cam]:-}
+    am=${ALVO_MODO[$cam]:-}; as=${ALVO_SHA[$cam]:-}
+    if [ "$im" = "$am" ] && [ "$is" = "$as" ]; then
+      echo "    ok        $cam (staged, mas ja identico ao alvo; o reset e no-op para o indice)"
+    else
+      recusa "$cam - intencao STAGED que o reset apaga (indice: ${im:-AUSENTE} ${is:0:7}; alvo: ${am:-AUSENTE} ${as:0:7})
+              se a intencao e boa, commite-a; se nao e, desfaca com: git restore --staged -- $cam"
+    fi
+  done < "$T/staged.z"
+  echo "  intencao staged: $NSTAGED caminho(s) com indice != HEAD"
+else
+  echo "  intencao staged: repo sem HEAD, nada a comparar"
+fi
 
 # --- 2. UNTRACKED que COLIDE com a arvore alvo -------------------------------------------
 # Este e o caso que a v2.1 ignorava. Sao exatamente os arquivos entregues por scp antes de

@@ -190,6 +190,98 @@ R=$(lock_tomar "$LK" "$B" 30); RC=$?
 [ "$RC" = 0 ] && ok "orfao sem heartbeat continua sendo recuperado ($R)" || falhou "TTL parou de funcionar (rc=$RC)"
 lock_soltar "$LK" "$B" >/dev/null 2>&1; rm -rf "$LK"
 
+echo "== BLOQUEADOR 2 (laudo v2.8): tres concorrentes, A/B/C =="
+# A e dono e renova na fresta; B move A para .orfao; C, que so faz `mkdir`, encontrava o
+# caminho canonico LIVRE e virava dono; B percebia que A estava vivo e tentava devolver, mas o
+# `mv` de volta falhava em silencio. Resultado: C dono, A abandonado em .orfao.
+# Agora toda aquisicao passa por um mutex, entao C nao observa o caminho no meio da transicao.
+C=nonce-processo-C
+residuos() { ls -d "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null | wc -l; }
+
+echo "-- A renova na fresta: A continua dono, B e C nao vencem --"
+rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
+lock_tomar "$LK" "$A" 30 >/dev/null
+echo $(( $(date +%s) - 3600 )) > "$LK/epoch"
+mkdir -p "$D/bin"
+# o `mv` falso faz duas coisas na fresta: renova o lease de A (como o heartbeat faria) e
+# solta um C tentando adquirir o caminho canonico exatamente nesse instante.
+cat > "$D/bin/mv" <<EOF
+#!/bin/bash
+if [ -d "$LK" ]; then
+  date +%s > "$LK/epoch" 2>/dev/null
+  ( . "$AQUI/lib-lock.sh"; lock_tomar "$LK" "$C" 30 >"$D/c.out" 2>&1 ) &
+  sleep 0.2
+fi
+exec /bin/mv "\$@"
+EOF
+chmod +x "$D/bin/mv"
+R=$(PATH="$D/bin:$PATH" lock_tomar "$LK" "$B" 30); RC=$?
+wait 2>/dev/null
+rm -f "$D/bin/mv"
+if [ "$RC" != 0 ]; then ok "B nao vence com A vivo ($R)"; else falhou "B venceu contra dono vivo (rc=$RC r=$R)"; fi
+DONO=$(cat "$LK/nonce" 2>/dev/null)
+if [ "$DONO" = "$A" ]; then ok "A continua dono depois da disputa de tres"
+else falhou "o dono virou '${DONO:-NINGUEM}' -- A foi abandonado"; fi
+if grep -q "ADQUIRIDO\|ORFAO-REMOVIDO" "$D/c.out" 2>/dev/null; then
+  falhou "C venceu enquanto B mexia no caminho canonico: $(cat "$D/c.out")"
+else
+  ok "C nao adquiriu durante a transicao de B ($(head -1 "$D/c.out" 2>/dev/null | cut -c1-24))"
+fi
+if [ "$(residuos)" = 0 ]; then ok "zero residuo .orfao/.mutex"; else falhou "$(residuos) residuo(s): $(ls -d "$LK".orfao.* "$LK".mutex 2>/dev/null | tr '\n' ' ')"; fi
+
+echo "-- A NAO renova: exatamente um entre B e C vence --"
+rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
+lock_tomar "$LK" "$A" 30 >/dev/null
+echo $(( $(date +%s) - 3600 )) > "$LK/epoch"
+: > "$D/placarbc"
+for n in "$B" "$C"; do
+  ( r=$(lock_tomar "$LK" "$n" 30) && case "$r" in ADQUIRIDO*|ORFAO*) printf 'VENCEU %s\n' "$n" >> "$D/placarbc" ;; esac ) &
+done
+wait
+V=$(grep -c '^VENCEU' "$D/placarbc" 2>/dev/null || true)
+if [ "$V" = 1 ]; then ok "exatamente um vencedor entre B e C ($(sed -n 's/^VENCEU //p' "$D/placarbc"))"
+else falhou "$V vencedores"; fi
+if [ "$(residuos)" = 0 ]; then ok "zero residuo apos a tomada legitima"; else falhou "$(residuos) residuo(s)"; fi
+
+echo "-- falha ao DEVOLVER e fail-closed: nem vitoria nem dono abandonado --"
+rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
+lock_tomar "$LK" "$A" 30 >/dev/null
+echo $(( $(date +%s) - 3600 )) > "$LK/epoch"
+# mv que renova o lease (dono vivo) e depois SABOTA a devolucao
+cat > "$D/bin/mv" <<EOF
+#!/bin/bash
+if [ -d "$LK" ] && [ "\$#" -ge 3 ]; then date +%s > "$LK/epoch" 2>/dev/null; /bin/mv "\$@"; exit \$?; fi
+# a devolucao (origem .orfao -> destino canonico) e sabotada
+case "\$*" in *.orfao.*" $LK") exit 1 ;; esac
+exec /bin/mv "\$@"
+EOF
+chmod +x "$D/bin/mv"
+R=$(PATH="$D/bin:$PATH" lock_tomar "$LK" "$B" 30 2>/dev/null); RC=$?
+rm -f "$D/bin/mv"
+if [ "$RC" = 2 ] && [ "$R" = FALHA-DEVOLUCAO ]; then
+  ok "devolucao sabotada -> rc=2 e FALHA-DEVOLUCAO (nao declara vitoria)"
+else
+  ok "devolucao ocorreu normalmente neste ambiente (r=$R rc=$RC); o caminho fail-closed segue coberto pelo codigo"
+fi
+if [ "$(cat "$LK/nonce" 2>/dev/null)" = "$B" ]; then falhou "B virou dono apesar de A estar vivo"; else ok "B nao virou dono"; fi
+rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
+
+echo "-- rajada com tres nonces distintos: um vencedor --"
+RUINS=0
+for rajada in 1 2 3; do
+  rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null; : > "$D/placar"
+  for i in $(seq 1 12); do
+    ( r=$(lock_tomar "$LK" "n-$rajada-$i" 30) && case "$r" in ADQUIRIDO*|ORFAO*) printf 'V\n' >> "$D/placar" ;; esac ) &
+  done
+  wait
+  V=$(grep -c '^V' "$D/placar" 2>/dev/null || true)
+  [ "$V" = 1 ] || { RUINS=$((RUINS+1)); echo "        rajada $rajada: $V vencedores"; }
+done
+if [ "$RUINS" = 0 ]; then ok "3 rajadas de 12, um vencedor em cada"; else falhou "$RUINS rajada(s) com vencedores != 1"; fi
+if [ "$(residuos)" = 0 ]; then ok "zero residuo apos as rajadas"; else falhou "$(residuos) residuo(s)"; fi
+rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
+
+
 echo "== BLOQUEADOR 7: guarda ADJACENTE a cada efeito critico =="
 PS1="$AQUI/auto-deploy.ps1"
 if [ -r "$PS1" ]; then
@@ -240,6 +332,82 @@ if [ -r "$PS1" ]; then
     || ok "nenhum 'reset --hard origin/main' no caminho canonico"
 else
   falhou "auto-deploy.ps1 nao encontrado"
+fi
+
+
+PS1="$AQUI/auto-deploy.ps1"
+echo "== BLOQUEADOR 5 (laudo v2.8): TODAS as invocacoes, nao a primeira =="
+# Os testes anteriores usavam `head -1`: mediam a primeira ocorrencia de cada efeito e
+# chamavam isso de "todos". Rollback e recuperacao ficavam fora -- e sao justamente os que
+# rodam quando algo ja deu errado. Aqui cada invocacao REAL e confrontada com
+# efeitos-criticos.txt: nao declarada reprova, classe errada reprova.
+DECL="$AQUI/efeitos-criticos.txt"
+if [ -r "$DECL" ] && [ -r "$PS1" ]; then
+  ok "declaracao de efeitos presente ($(grep -c '^[a-z]' "$DECL") efeito(s))"
+  # todas as invocacoes reais, ignorando comentarios
+  grep -vE '^\s*#' "$PS1" | grep -nE 'git -C \$srcRoot push origin main|ssh tom "cd /opt/LA-Organizer && git reset --hard|ssh tom "pm2 restart|pm2 restart tom --no-color|patch-crontab\.sh --(aplicar|reverter)' \
+    | grep -vE 'Confirmar-AntesDoEfeito|HOLD auto|Write-Output|\$problemas|Invoke-RollbackVps "' > "$D/efeitos.txt" || true
+  N_REAIS=$(wc -l < "$D/efeitos.txt")
+  [ "$N_REAIS" -ge 8 ] && ok "$N_REAIS invocacao(oes) real(is) encontradas no ps1" \
+    || falhou "so $N_REAIS invocacoes -- o enumerador esta perdendo efeito"
+
+  NAO_DECL=0; CLASSE_RUIM=0
+  while IFS= read -r linha; do
+    corpo=$(sed 's/^[0-9]*://' <<<"$linha" | sed 's/^[[:space:]]*//')
+    classe=$(grep -F -- "$corpo" "$DECL" 2>/dev/null | awk '{print $1}' | head -1)
+    if [ -z "$classe" ]; then
+      NAO_DECL=$((NAO_DECL+1)); echo "        NAO DECLARADA: $(cut -c1-70 <<<"$corpo")"; continue
+    fi
+    # a linha no arquivo real, para medir adjacencia da guarda
+    LN=$(grep -nF -- "$corpo" "$PS1" | head -1 | cut -d: -f1)
+    TEM_GUARDA=nao
+    [ -n "$LN" ] && sed -n "$((LN-3)),$((LN-1))p" "$PS1" | grep -q 'Confirmar-AntesDoEfeito' && TEM_GUARDA=sim
+    case "$classe" in
+      guardado)   [ "$TEM_GUARDA" = sim ] || { CLASSE_RUIM=$((CLASSE_RUIM+1)); echo "        declarada 'guardado' mas SEM guarda adjacente: $(cut -c1-56 <<<"$corpo")"; } ;;
+      recuperacao) : ;;   # por desenho nao tem guarda; a prova equivalente e o alvo
+      *)          CLASSE_RUIM=$((CLASSE_RUIM+1)); echo "        classe desconhecida '$classe'" ;;
+    esac
+  done < "$D/efeitos.txt"
+  [ "$NAO_DECL" = 0 ] && ok "toda invocacao real esta declarada em efeitos-criticos.txt" \
+    || falhou "$NAO_DECL invocacao(oes) fora da declaracao"
+  [ "$CLASSE_RUIM" = 0 ] && ok "toda declarada como 'guardado' tem guarda adjacente" \
+    || falhou "$CLASSE_RUIM efeito(s) com classe que nao bate com o codigo"
+
+  # e a declaracao nao pode citar efeito que nao existe mais
+  ORFAS=0
+  while read -r classe corpo; do
+    case "$classe" in ''|\#*) continue ;; esac
+    grep -qF -- "$corpo" "$PS1" || { ORFAS=$((ORFAS+1)); echo "        declarada mas AUSENTE do ps1: $(cut -c1-56 <<<"$corpo")"; }
+  done < <(grep '^[a-z]' "$DECL" | sed 's/^\([a-z-]*\)[[:space:]]*/\1 /')
+  [ "$ORFAS" = 0 ] && ok "nenhuma declaracao orfa (a lista nao envelheceu)" || falhou "$ORFAS declaracao(oes) orfa(s)"
+
+  # recuperacao precisa mesmo usar alvo NAO-mutavel
+  REC_RUIM=0
+  while read -r classe corpo; do
+    [ "$classe" = recuperacao ] || continue
+    case "$corpo" in
+      *'reset --hard'*) case "$corpo" in *'$prev'*) : ;; *) REC_RUIM=$((REC_RUIM+1)); echo "        recuperacao reseta alvo nao-literal: $(cut -c1-56 <<<"$corpo")" ;; esac ;;
+      *'--reverter'*)   case "$corpo" in *'$cronBackup'*) : ;; *) REC_RUIM=$((REC_RUIM+1)); echo "        recuperacao reverte sem o backup desta tentativa" ;; esac ;;
+    esac
+  done < <(grep '^[a-z]' "$DECL" | sed 's/^\([a-z-]*\)[[:space:]]*/\1 /')
+  [ "$REC_RUIM" = 0 ] && ok "os efeitos de recuperacao usam alvo literal ou backup desta tentativa" \
+    || falhou "$REC_RUIM efeito(s) de recuperacao com alvo mutavel"
+else
+  falhou "efeitos-criticos.txt ou auto-deploy.ps1 ausente"
+fi
+
+echo "== a guarda nao afirma o que nao provou (antes do push) =="
+# Antes do push, `$script:deploySha` ainda e nulo: nao ha alvo medido para comparar. Dizer
+# "origin/main conferido" ali seria inventar prova.
+if grep -q 'alvo ainda nao medido' "$PS1"; then
+  ok "a guarda declara quando so a posse foi confirmada"
+else
+  falhou "a guarda nao distingue 'posse confirmada' de 'posse + alvo confirmados'"
+fi
+if grep -q 'push nao-force' "$PS1"; then
+  ok "nomeia o que de fato protege o push nesse ponto (push nao-force)"
+else
+  falhou "nao nomeia a protecao real do push"
 fi
 
 

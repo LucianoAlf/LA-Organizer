@@ -22,48 +22,82 @@
 # O nonce e gravado DENTRO do diretorio, depois do mkdir atomico. Quem nao criou o diretorio
 # nunca escreve nele.
 
+# MUTEX DE TAKEOVER (laudo v2.8, bloqueador 2). O desenho anterior serializava so o RENAME.
+# Com tres concorrentes a janela reaparecia: A dono renovando; B move A para .orfao; C, que
+# so faz `mkdir`, encontra o caminho canonico LIVRE e vira dono; B percebe que A estava vivo
+# e tenta devolver, mas o `mv` de volta falha porque o caminho ja esta ocupado -- e o erro
+# era engolido. Resultado: C dono, A abandonado dentro de .orfao.
+#
+# A correcao e serializar a AQUISICAO INTEIRA, nao so o rename: todo caminho que possa criar
+# ou mover o lock canonico passa antes por um mutex proprio. `mkdir` continua sendo a
+# primitiva atomica, o dono continua sendo o nonce, o heartbeat e a recuperacao de orfao
+# continuam iguais -- o que muda e que ninguem observa o caminho canonico no meio de uma
+# transicao alheia.
+# O mutex tem TTL proprio e CURTO: as operacoes dentro dele levam milissegundos, entao um
+# mutex velho e residuo de processo morto, nao contencao legitima.
+LOCK_MUTEX_TTL_SEG=${LOCK_MUTEX_TTL_SEG:-60}
+
+lock_mutex_tomar() {   # <dir-do-lock> -> rc 0 tenho o mutex | 1 nao consegui
+  local mx="$1.mutex" i ep morto
+  for i in $(seq 1 50); do
+    # o `2>/dev/null` no epoch e proposital: se o mutex sumir entre o mkdir e a escrita, a
+    # idade cai para o mtime do diretorio -- que e o mesmo instante. Nao ha o que reportar.
+    if mkdir "$mx" 2>/dev/null; then date +%s > "$mx/epoch" 2>/dev/null; return 0; fi
+    ep=$(cat "$mx/epoch" 2>/dev/null)
+    case "$ep" in ''|*[!0-9]*) ep=$(stat -c %Y "$mx" 2>/dev/null) ;; esac
+    case "$ep" in ''|*[!0-9]*) ep=0 ;; esac
+    if [ $(( $(date +%s) - ep )) -ge "$LOCK_MUTEX_TTL_SEG" ]; then
+      # RECUPERACAO POR RENAME, nao por `rm -rf`: com remocao crua, dois processos podem
+      # passar pelo teste de idade, os dois removerem -- e o segundo apagar o mutex FRESCO
+      # que o primeiro acabou de criar. `mv` para nome unico e atomico: so um move.
+      morto="$mx.morto.$$.$(date +%s%N 2>/dev/null || date +%s)"
+      if mv -T "$mx" "$morto" 2>/dev/null; then rm -rf "$morto" 2>/dev/null; fi
+      continue
+    fi
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+  return 1
+}
+lock_mutex_soltar() { rm -rf "$1.mutex" 2>/dev/null; }
+
 lock_tomar() {   # <dir> <nonce> <ttl_min>
-  local dir=$1 nonce=$2 ttl=${3:-30} idade epoch
+  local dir=$1 nonce=$2 ttl=${3:-30} idade epoch rc
   [ -n "$dir" ] && [ -n "$nonce" ] || { echo "lock_tomar: dir e nonce obrigatorios" >&2; return 2; }
   case "$nonce" in *[!A-Za-z0-9._-]*|'') echo "lock_tomar: nonce invalido" >&2; return 2 ;; esac
 
+  if ! lock_mutex_tomar "$dir"; then
+    echo "OCUPADO mutex"; return 1
+  fi
+  _lock_tomar_serializado "$dir" "$nonce" "$ttl"; rc=$?
+  lock_mutex_soltar "$dir"
+  return $rc
+}
+
+# Corpo da aquisicao. So roda com o mutex na mao, entao ninguem cria nem move o caminho
+# canonico enquanto isto acontece.
+_lock_tomar_serializado() {
+  local dir=$1 nonce=$2 ttl=$3 idade epoch nonce_antes morto ep2 idade2 nonce_depois
+
   if mkdir "$dir" 2>/dev/null; then
-    printf '%s\n' "$nonce" > "$dir/nonce" || return 2
+    printf '%s
+' "$nonce" > "$dir/nonce" || return 2
     date +%s > "$dir/epoch"
-    printf '%s\n' "${LOCK_DONO_DESC:-desconhecido}" > "$dir/dono"
+    printf '%s
+' "${LOCK_DONO_DESC:-desconhecido}" > "$dir/dono"
     echo ADQUIRIDO; return 0
   fi
 
   # Ocupado: so o TEMPO pode liberar, nunca a vontade de quem chegou depois.
-  # JANELA ENTRE mkdir E epoch. `mkdir` e atomico, mas o dono ainda leva alguns microsegundos
-  # para escrever `epoch`. Quem chegasse nessa fresta lia epoch VAZIO; a versao anterior
-  # assumia epoch=0, calculava idade astronomica e ROUBAVA um lock recem-criado. Com 8
-  # processos simultaneos isso deu DOIS vencedores -- a propria bateria pegou.
-  # Sem epoch legivel, a idade vem do mtime do DIRETORIO, que o mkdir ja carimbou. Assim um
-  # lock novo aparece novo (OCUPADO) e um lock abandonado sem epoch ainda envelhece e expira.
+  # Sem epoch legivel, a idade vem do mtime do DIRETORIO, que o mkdir ja carimbou: assim um
+  # lock criado ha microsegundos (ainda sem epoch) aparece NOVO, e nao como orfao.
   epoch=$(cat "$dir/epoch" 2>/dev/null)
-  case "$epoch" in
-    ''|*[!0-9]*) epoch=$(stat -c %Y "$dir" 2>/dev/null) ;;
-  esac
-  case "$epoch" in
-    ''|*[!0-9]*) echo "OCUPADO ?"; return 1 ;;   # nao consegui medir: fail-closed
-  esac
+  case "$epoch" in ''|*[!0-9]*) epoch=$(stat -c %Y "$dir" 2>/dev/null) ;; esac
+  case "$epoch" in ''|*[!0-9]*) echo "OCUPADO ?"; return 1 ;; esac
   idade=$(( ( $(date +%s) - epoch ) / 60 ))
-  if [ "$idade" -lt "$ttl" ]; then
-    echo "OCUPADO $idade"; return 1
-  fi
+  if [ "$idade" -lt "$ttl" ]; then echo "OCUPADO $idade"; return 1; fi
 
-  # TOMADA DE ORFAO POR RENAME. `rm -rf` seguido de `mkdir` tem janela: dois processos podem
-  # remover e os dois criarem. `mv` de diretorio para nome inexistente e atomico e a origem
-  # deixa de existir — entao so UM processo consegue mover, e so ele segue para o mkdir.
-  # TOMADA DE ORFAO POR RENAME, com RECONFERENCIA (laudo v2.7, bloqueador 4).
-  # `mv` de diretorio para nome inexistente e atomico, entao so um processo move. Mas entre
-  # LER a idade e MOVER passa tempo: se o dono fizer heartbeat nessa fresta, o invasor ainda
-  # move e substitui um lock RECEM-RENOVADO -- reproduzido com um wrapper de `mv` que renova
-  # o epoch imediatamente antes do rename. Mover primeiro e perguntar depois nao basta:
-  # e preciso PERGUNTAR DE NOVO, ja com o diretorio fora do caminho, e DESFAZER se o dono
-  # estava vivo. O rename e reversivel; roubar o lock de um deploy vivo nao e.
-  local nonce_antes morto ep2 idade2 nonce_depois
+  # Candidato a orfao. Move para fora do caminho e RECONFERE ali: o dono pode ter renovado
+  # entre a leitura da idade e o rename.
   nonce_antes=$(cat "$dir/nonce" 2>/dev/null)
   morto="$dir.orfao.$$.$(date +%s%N 2>/dev/null || date +%s)"
   mv -T "$dir" "$morto" 2>/dev/null || { echo "OCUPADO $idade"; return 1; }
@@ -73,15 +107,21 @@ lock_tomar() {   # <dir> <nonce> <ttl_min>
   idade2=$(( ( $(date +%s) - ep2 ) / 60 ))
   nonce_depois=$(cat "$morto/nonce" 2>/dev/null)
   if [ "$idade2" -lt "$ttl" ] || [ "$nonce_depois" != "$nonce_antes" ]; then
-    # o dono renovou (ou trocou) na fresta: devolve intacto e desiste.
-    mv -T "$morto" "$dir" 2>/dev/null
-    echo "OCUPADO $idade2"; return 1
+    # o dono estava vivo. Devolver e OBRIGATORIO -- e se falhar, e falha FECHADA: nao
+    # declaro vitoria e nao deixo o dono abandonado em silencio.
+    if mv -T "$morto" "$dir" 2>/dev/null; then
+      echo "OCUPADO $idade2"; return 1
+    fi
+    echo "lock_tomar: FALHA CRITICA -- nao consegui devolver o lock do dono vivo; ele esta em $morto" >&2
+    echo "FALHA-DEVOLUCAO"; return 2
   fi
   rm -rf "$morto" 2>/dev/null
   if mkdir "$dir" 2>/dev/null; then
-    printf '%s\n' "$nonce" > "$dir/nonce" || return 2
+    printf '%s
+' "$nonce" > "$dir/nonce" || return 2
     date +%s > "$dir/epoch"
-    printf '%s\n' "${LOCK_DONO_DESC:-desconhecido}" > "$dir/dono"
+    printf '%s
+' "${LOCK_DONO_DESC:-desconhecido}" > "$dir/dono"
     echo ORFAO-REMOVIDO; return 0
   fi
   echo "OCUPADO $idade"; return 1

@@ -106,10 +106,65 @@ else
 fi
 git reset --hard -q "$ALVO" >/dev/null 2>&1; git clean -qfd >/dev/null 2>&1
 
-echo "== indice orfao: staged e desfeito no disco =="
-printf 'versao staged\n' > dado.txt; git add dado.txt
-printf 'conteudo estavel\n' > dado.txt; chmod 0644 dado.txt   # disco volta a ser o alvo
-espera recusa "versao que so existe no INDICE reprova" "INDICE"
+echo "== BLOQUEADOR 1 (laudo v2.8): intencao STAGED nao pode ser apagada =="
+# `git rm --cached x` + recriar o arquivo deixa `D  x` + `?? x`. A v2.8 olhava so o DISCO,
+# via conteudo identico ao alvo e aprovava -- mas o `reset --hard` reescreve o INDICE: a
+# entrada volta e a delecao staged some. Conteudo igual no disco nao transforma alteracao
+# staged em no-op.
+limpar_estado
+printf 'conteudo estavel\n' > staged.txt; chmod 0644 staged.txt
+git add staged.txt >/dev/null 2>&1; git commit -qm "arquivo para os casos staged"
+ALVO_S=$(git rev-parse HEAD)
+
+echo "-- caso a: delecao staged com o arquivo RECRIADO identico ao alvo --"
+git rm --cached -q staged.txt
+git show "$ALVO_S:staged.txt" > staged.txt
+S=$(./scripts/preflight-deploy.sh "$ALVO_S" --sem-snapshot 2>&1); RC=$?
+if [ "$RC" != 0 ] && grep -q 'intencao STAGED' <<<"$S"; then
+  ok "delecao staged + arquivo identico ao alvo REPROVA (rc=$RC)"
+else
+  falhou "delecao staged passou (rc=$RC) -- o reset apagaria a intencao"
+fi
+grep -q 'git restore --staged' <<<"$S" && ok "diz como desfazer a intencao, se ela nao for boa" \
+  || falhou "recusa sem dizer o caminho de saida"
+
+echo "-- caso b: delecao staged SEM o arquivo no disco --"
+rm -f staged.txt
+S=$(./scripts/preflight-deploy.sh "$ALVO_S" --sem-snapshot 2>&1); RC=$?
+[ "$RC" != 0 ] && ok "delecao staged sem arquivo no disco REPROVA (rc=$RC)" \
+  || falhou "passou sem o arquivo (rc=$RC)"
+git reset -q HEAD -- staged.txt 2>/dev/null; git checkout -q -- staged.txt 2>/dev/null
+
+echo "-- caso c: modificado SO no disco e identico ao candidato --"
+# aqui nao ha estado staged: o index e igual a HEAD. O reset atualiza o index para o alvo e
+# nada se perde -- recusar isso e o que travava a transicao.
+limpar_estado
+git checkout -q -f "$ALVO_S" 2>/dev/null
+S=$(./scripts/preflight-deploy.sh "$ALVO_S" --sem-snapshot 2>&1); RC=$?
+[ "$RC" = 0 ] && ok "indice limpo + disco identico ao alvo passa (rc=0)" || { falhou "rc=$RC"; grep RECUSADO <<<"$S" | head -2 | sed 's/^/        /'; }
+
+echo "-- caso d: alteracao staged que JA e igual ao alvo --"
+# staged, mas o index ja carrega exatamente o que o alvo tem: o reset e no-op para ele.
+printf 'versao nova\n' > staged.txt; git add staged.txt >/dev/null 2>&1
+git commit -qm "alvo com a versao nova" >/dev/null 2>&1
+ALVO_N=$(git rev-parse HEAD)
+git reset -q --soft HEAD~1          # volta HEAD, mantendo o index na versao nova
+S=$(./scripts/preflight-deploy.sh "$ALVO_N" --sem-snapshot 2>&1); RC=$?
+if [ "$RC" = 0 ] && grep -q 'staged, mas ja identico ao alvo' <<<"$S"; then
+  ok "staged igual ao alvo passa e e declarado como no-op do indice"
+else
+  falhou "rc=$RC: staged igual ao alvo deveria passar"
+  grep RECUSADO <<<"$S" | head -2 | sed 's/^/        /'
+fi
+git reset -q --hard "$ALVO_N" 2>/dev/null
+
+echo "-- caso e: adicao staged de arquivo que NAO existe no alvo --"
+limpar_estado
+printf 'trabalho novo\n' > novo-staged.txt; git add novo-staged.txt >/dev/null 2>&1
+S=$(./scripts/preflight-deploy.sh "$ALVO" --sem-snapshot 2>&1); RC=$?
+[ "$RC" != 0 ] && grep -q 'novo-staged.txt' <<<"$S" && ok "adicao staged ausente do alvo REPROVA (o reset a descarta)" \
+  || falhou "adicao staged passou (rc=$RC)"
+git rm -q --cached novo-staged.txt >/dev/null 2>&1; rm -f novo-staged.txt
 limpar_estado
 
 echo

@@ -35,6 +35,7 @@ teste-bootstrap.sh              integration-sandbox     repo git descartavel; bo
 teste-e2e-transicao.sh          integration-sandbox     transicao v2.5->candidato inteira em repo descartavel
 teste-sentinela-timeline.sh     integration-sandbox     arvore de backup falsa em $TMPDIR
 teste-sequence-iscalled.sh      integration-sandbox     Postgres descartavel em docker
+teste-turno-recursos.sh         integration-sandbox     repo e diretorios descartaveis; libLock por SHA e limpeza do turno
 
 teste-ambiente-isolamento.sh    environment-read-only   fotografa /run, crontab, backups e o repo vivo
 teste-negativo-dataapi.sh       environment-read-only   consulta a Data API com credencial do runtime

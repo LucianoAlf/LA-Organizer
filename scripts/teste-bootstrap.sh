@@ -112,9 +112,20 @@ if [ -r "$PS1" ]; then
     || falhou "o bootstrap depende de o arquivo ja estar na VPS"
   grep -qE '\$candDir' "$PS1" && ok "usa o diretorio do candidato nas etapas seguintes" \
     || falhou "nao usa o diretorio materializado"
-  L_LIB=$(grep -n 'libLock = ' "$PS1" | head -1 | cut -d: -f1)
-  grep -qE 'libLock *= *"\$candDir' "$PS1" && ok "a lib de lock vem do candidato, nao de /opt" \
-    || falhou "libLock ainda aponta para a arvore viva (linha ${L_LIB:-?})"
+  # libLock nao e mais atribuido fora da funcao: quem fixa candDir fixa libLock, no mesmo
+  # lugar, para nao divergirem quando o tip muda. A prova COMPORTAMENTAL (tres SHAs, tres
+  # libs, cada fase usando a certa) mora em teste-turno-recursos.sh -- aqui basta conferir
+  # que a lib vem do diretorio materializado, e nao de /opt.
+  if grep -qE '\$script:libLock\s*=\s*"\$dir/scripts/lib-lock\.sh"' "$PS1"; then
+    ok "a lib de lock vem do diretorio materializado, nao de /opt"
+  else
+    falhou "libLock nao aponta para o diretorio do candidato"
+  fi
+  if grep -qE '^\s*\$(script:)?libLock\s*=\s*"/opt' "$PS1"; then
+    falhou "ha libLock apontando para a arvore viva"
+  else
+    ok "nenhum libLock apontando para /opt"
+  fi
 else
   falhou "auto-deploy.ps1 nao encontrado"
 fi

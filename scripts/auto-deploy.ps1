@@ -90,13 +90,29 @@ if (-not (Test-Path $bsFile)) {
     Write-Output "=== DEPLOY ABORTADO: scripts/bootstrap-candidato.sh ausente no clone local. ==="
     exit 1
 }
+# REGISTRO DE RECURSOS DO TURNO (laudo v2.8, bloqueador 4). O dossie dizia que o diretorio
+# de bootstrap era limpo no `finally`, mas o `finally` so soltava o lock. O fluxo cria ate
+# tres diretorios (tipBoot, tip pos-rebase, deploy_sha) e deixa refs de bootstrap/candidato.
+# Aqui cada recurso criado por ESTE turno e anotado com sha e nonce exatos; o `finally`
+# remove exatamente esses, um a um. Nenhum glob, nenhum recurso de outro turno.
+$script:recursosDir = New-Object System.Collections.ArrayList
+$script:recursosRef = New-Object System.Collections.ArrayList
+
+# candDir e libLock SEMPRE andam juntos (laudo v2.8, bloqueador 3). Na v2.8 o candDir era
+# refeito quando o tip mudava, mas $libLock ficava no tip INICIAL -- heartbeat e liberacao
+# continuavam usando a lib antiga. Como so esta funcao atribui os dois, eles nao tem como
+# divergir: nao existe um lugar onde um mude sem o outro.
 function Materializar-Candidato($sha) {
-    # transporta objetos para um ref isolado (nao move main, nao mexe em HEAD, nao dispara build)
     git -C $srcRoot push tom:/opt/LA-Organizer "${sha}:refs/bootstrap/$sha" --force 2>$null | Out-Null
-    $out = (Get-Content -Raw $bsFile | ssh tom "bash -s -- $sha /opt/LA-Organizer" 2>$null) | Out-String
+    if ($LASTEXITCODE -eq 0) { [void]$script:recursosRef.Add("refs/bootstrap/$sha") }
+    $out = (Get-Content -Raw $bsFile | ssh tom "BOOTSTRAP_NONCE=$lockNonce bash -s -- $sha /opt/LA-Organizer" 2>$null) | Out-String
     $dir = ""
     foreach ($linha in ($out -split "`n")) { if ($linha -match '^candidato=(.+)$') { $dir = $Matches[1].Trim() } }
-    if ($dir -eq "") { Write-Output ($out.Trim()) }
+    if ($dir -eq "") { Write-Output ($out.Trim()); return "" }
+    [void]$script:recursosDir.Add($dir)
+    $script:candDir = $dir
+    $script:libLock = "$dir/scripts/lib-lock.sh"
+    Write-Output "=== Candidato $($sha.Substring(0,8)) materializado em $dir; libLock aponta para ele ==="
     return $dir
 }
 $candDir = Materializar-Candidato $tipBoot
@@ -116,9 +132,9 @@ $lockTtlMin = 30
 # turno carrega um nonce: so o dono solta.
 $lockNonce = ([guid]::NewGuid()).ToString("N")
 $script:lockAdquirido = $false
-$libLock = "$candDir/scripts/lib-lock.sh"   # do CANDIDATO, nunca da arvore viva
+# $libLock e $candDir sao atribuidos SO dentro de Materializar-Candidato, para nao divergirem.
 function Tomar-LockDeploy {
-    $r = (ssh tom ". $libLock 2>/dev/null || { echo SEM-LIB; exit 3; }; LOCK_DONO_DESC=auto-deploy-$env:COMPUTERNAME lock_tomar $lockDir $lockNonce $lockTtlMin" 2>$null) | Out-String
+    $r = (ssh tom ". $script:libLock 2>/dev/null || { echo SEM-LIB; exit 3; }; LOCK_DONO_DESC=auto-deploy-$env:COMPUTERNAME lock_tomar $lockDir $lockNonce $lockTtlMin" 2>$null) | Out-String
     $r = $r.Trim()
     if ($r -match 'ADQUIRIDO|ORFAO-REMOVIDO') { $script:lockAdquirido = $true }
     return $r
@@ -132,7 +148,7 @@ function Tomar-LockDeploy {
 # Devolve $false se o lock ja nao for nosso; quem chama ABORTA em vez de seguir.
 function Bater-LockDeploy {
     if (-not $script:lockAdquirido) { return $false }
-    $r = (ssh tom ". $libLock 2>/dev/null || exit 3; lock_heartbeat $lockDir $lockNonce && echo VIVO" 2>$null) | Out-String
+    $r = (ssh tom ". $script:libLock 2>/dev/null || exit 3; lock_heartbeat $lockDir $lockNonce && echo VIVO" 2>$null) | Out-String
     if ($r.Trim() -eq "VIVO") { return $true }
     Write-Output "=== LOCK PERDIDO: outro processo tomou a janela. Abortando antes de qualquer efeito. ==="
     $script:lockAdquirido = $false
@@ -151,20 +167,28 @@ function Confirmar-AntesDoEfeito($efeito) {
         Write-Output "=== ABORTADO antes de $efeito : o lock nao e mais nosso. ==="
         return $false
     }
-    if ($script:deploySha -ne $null -and $script:deploySha -ne "") {
-        $agora = ((ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet && git rev-parse origin/main" 2>$null) | Out-String).Trim()
-        if ($agora -ne $script:deploySha) {
-            Set-Content -Path $holdFile -Value "HOLD auto: origin/main moveu antes de $efeito em $ts." -Encoding utf8
-            Write-Output "=== ABORTADO antes de $efeito : origin/main moveu ($($script:deploySha.Substring(0,8)) -> $($agora.Substring(0,8))). ==="
-            return $false
-        }
+    # HONESTIDADE SOBRE O QUE FOI PROVADO (laudo v2.8, bloqueador 5). Antes do push,
+    # `$script:deploySha` ainda e nulo: nao existe alvo medido para comparar, e afirmar
+    # "origin/main conferido" ali seria inventar uma prova. O que protege o push nesse
+    # ponto e outra coisa, e ela e nomeada: o push NAO e --force, entao ele falha se o
+    # remoto tiver avancado. A guarda diz exatamente qual das duas coisas checou.
+    if ([string]::IsNullOrEmpty($script:deploySha)) {
+        Write-Output "    guarda antes de $efeito : posse do lock CONFIRMADA; alvo ainda nao medido (deploy_sha nulo) -- a protecao aqui e o push nao-force"
+        return $true
     }
+    $agora = ((ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet && git rev-parse origin/main" 2>$null) | Out-String).Trim()
+    if ($agora -ne $script:deploySha) {
+        Set-Content -Path $holdFile -Value "HOLD auto: origin/main moveu antes de $efeito em $ts." -Encoding utf8
+        Write-Output "=== ABORTADO antes de $efeito : origin/main moveu ($($script:deploySha.Substring(0,8)) -> $($agora.Substring(0,8))). ==="
+        return $false
+    }
+    Write-Output "    guarda antes de $efeito : posse do lock e alvo $($script:deploySha.Substring(0,8)) CONFIRMADOS"
     return $true
 }
 
 function Soltar-LockDeploy {
     if (-not $script:lockAdquirido) { return }
-    ssh tom ". $libLock 2>/dev/null || exit 3; lock_soltar $lockDir $lockNonce" 2>$null | Out-Null
+    ssh tom ". $script:libLock 2>/dev/null || exit 3; lock_soltar $lockDir $lockNonce" 2>$null | Out-Null
     $script:lockAdquirido = $false
 }
 
@@ -231,6 +255,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         # objeto. E o ref e apagado no fim, para nao virar lixo acumulado.
         $refCand = "refs/candidato/$tip"
         git -C $srcRoot push tom:/opt/LA-Organizer "HEAD:$refCand" 2>$null
+        if ($LASTEXITCODE -eq 0) { [void]$script:recursosRef.Add($refCand) }
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: nao consegui publicar o tip candidato na VPS no deploy $ts -- nada empurrado." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: nao consegui enviar o candidato para a VPS medir. Nada empurrado. ==="
@@ -249,7 +274,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
         # medir sem precisar instalar o script dentro do repo medido.
         $candDir = Materializar-Candidato $tip
         if ($candDir -eq "") { Write-Output "=== PUSH ABORTADO: bootstrap do tip candidato falhou. ==="; exit 1 }
-        $pfPre = (ssh tom "PREFLIGHT_REPO=/opt/LA-Organizer $candDir/scripts/preflight-deploy.sh $tip --sem-snapshot 2>&1" 2>$null) | Out-String
+        $pfPre = (ssh tom "PREFLIGHT_REPO=/opt/LA-Organizer $script:candDir/scripts/preflight-deploy.sh $tip --sem-snapshot 2>&1" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: preflight contra o TIP CANDIDATO reprovou no deploy $ts -- nada foi empurrado." -Encoding utf8
             Write-Output "=== PUSH ABORTADO: a VPS tem trabalho que o reset para o candidato destruiria. ==="
@@ -361,7 +386,7 @@ if ($vpsAtras -gt 0) {
     # de novo o preflight DO CANDIDATO (deploy_sha), nao o da arvore que sera substituida.
     $candDir = Materializar-Candidato $script:deploySha
     if ($candDir -eq "") { Write-Output "=== DEPLOY ABORTADO: bootstrap de $($script:deploySha.Substring(0,8)) falhou. ==="; exit 1 }
-    $preflight = (ssh tom "PREFLIGHT_REPO=/opt/LA-Organizer $candDir/scripts/preflight-deploy.sh $script:deploySha 2>&1" 2>$null) | Out-String
+    $preflight = (ssh tom "PREFLIGHT_REPO=/opt/LA-Organizer $script:candDir/scripts/preflight-deploy.sh $script:deploySha 2>&1" 2>$null) | Out-String
     if ($LASTEXITCODE -ne 0) {
         Set-Content -Path $holdFile -Value "HOLD auto: preflight reprovou no deploy $ts -- VPS NAO resetada." -Encoding utf8
         Write-Output "=== DEPLOY ABORTADO no preflight: ==="
@@ -668,7 +693,37 @@ if ($vpsAtras -gt 0) {
 exit 0
 }
 finally {
-    # a rede: solta o lock em QUALQUER saida deste escopo.
+    # CLEANUP REAL (laudo v2.8, bloqueador 4). A v2.8 prometia limpar o diretorio de
+    # bootstrap aqui e so soltava o lock. Agora sao removidos EXATAMENTE os recursos que
+    # este turno registrou -- caminho completo com sha e nonce -- e nada mais. Nenhum glob:
+    # `rm -rf /run/tom-cand-*` apagaria a lib que OUTRO turno usa nos heartbeats.
+    # Roda em qualquer saida: sucesso, falha antes do push, falha pos-reset e excecao.
+    # Falha de limpeza e REPORTADA, mas nao mascara o veredito principal: o deploy ja
+    # aconteceu (ou nao) antes disto, e trocar esse veredito por "erro de limpeza" seria
+    # apagar a informacao que importa.
+    $limpezaFalhou = @()
+    foreach ($d in $script:recursosDir) {
+        if ($d -notmatch '^/run/tom-cand-[0-9a-f]{40}-[A-Za-z0-9._-]+$') {
+            $limpezaFalhou += "diretorio com nome inesperado, NAO removido: $d"; continue
+        }
+        ssh tom "rm -rf -- '$d'" 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { $limpezaFalhou += "nao removi $d" }
+    }
+    foreach ($r in $script:recursosRef) {
+        if ($r -notmatch '^refs/(bootstrap|candidato)/[0-9a-f]{40}$') {
+            $limpezaFalhou += "ref com nome inesperado, NAO removida: $r"; continue
+        }
+        ssh tom "cd /opt/LA-Organizer && git update-ref -d '$r'" 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { $limpezaFalhou += "nao removi $r" }
+    }
+    $nD = $script:recursosDir.Count; $nR = $script:recursosRef.Count
+    if ($limpezaFalhou.Count -gt 0) {
+        Write-Output "=== LIMPEZA INCOMPLETA ($($limpezaFalhou.Count) de $($nD + $nR) recurso(s)) -- o veredito acima continua valendo: ==="
+        foreach ($m in $limpezaFalhou) { Write-Output "    $m" }
+    } elseif (($nD + $nR) -gt 0) {
+        Write-Output "=== Limpeza do turno: $nD diretorio(s) e $nR ref(s) removidos (nonce $($lockNonce.Substring(0,8))) ==="
+    }
+    # a rede do lock: solta em QUALQUER saida deste escopo.
     Soltar-LockDeploy
 }
 

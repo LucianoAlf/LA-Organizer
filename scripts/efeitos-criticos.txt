@@ -1,0 +1,30 @@
+# EFEITOS CRITICOS do auto-deploy.ps1 e como cada um e coberto.
+#
+# LAUDO v2.8, BLOQUEADOR 5. Os testes estruturais procuravam a PRIMEIRA ocorrencia de cada
+# efeito (`head -1`) e chamavam isso de "todos". Efeito de rollback e de recuperacao ficava
+# fora da conta -- e sao justamente os que rodam quando algo ja deu errado.
+#
+# Toda invocacao real precisa cair em uma destas classes. Invocacao que nao esta aqui REPROVA
+# o teste; classe errada tambem. Esta lista e a fonte, e o teste confere o codigo contra ela.
+#
+#   guardado   -- precedido por `Confirmar-AntesDoEfeito` nas 3 linhas anteriores. Avanca o
+#                 estado: so acontece com posse do lock confirmada (e, quando ja existe alvo
+#                 medido, com origin/main reconferido).
+#   recuperacao-- roda DENTRO de Invoke-RollbackVps ou do caminho de falha, DEPOIS de algo ter
+#                 dado errado. NAO exige posse: exigir a confirmacao aqui poderia impedir o
+#                 proprio rollback, que e pior do que o risco que ela evitaria. A prova
+#                 equivalente e o ALVO: o reset usa `$prev` (sha literal capturado antes do
+#                 avanco) e o crontab usa o caminho do backup DESTA tentativa -- nenhum dos
+#                 dois avanca o estado, os dois so voltam para onde ja estivemos.
+#
+# formato:  <classe>  <assinatura da linha, sem espacos iniciais>
+
+guardado      git -C $srcRoot push origin main 2>$null
+guardado      ssh tom "cd /opt/LA-Organizer && git reset --hard $script:deploySha --quiet" 2>$null
+guardado      ssh tom "cd /opt/LA-Organizer && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
+guardado      $cron = (ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --aplicar 2>&1 | tail -12" 2>$null) | Out-String
+
+recuperacao   ssh tom "cd /opt/LA-Organizer && git reset --hard $prev --quiet" 2>$null
+recuperacao   ssh tom "pm2 restart tom --no-color >/dev/null 2>&1" 2>$null
+recuperacao   ssh tom "pm2 restart tom --no-color 2>&1 | tail -1" 2>$null
+recuperacao   ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --reverter $cronBackup" 2>$null | Out-Null
