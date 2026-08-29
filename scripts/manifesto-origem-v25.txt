@@ -1,0 +1,33 @@
+# MANIFESTO DE ORIGEM v2.5 -- divergencias operacionais CONHECIDAS da arvore viva.
+#
+# LAUDO v2.7, BLOQUEADOR 1. A VPS tem guardas da v2.5 que foram entregues por `scp` nas
+# rodadas anteriores: sao rastreados, divergem do candidato, e a reconciliacao existe
+# justamente para substitui-los. O preflight os tratava como "trabalho desconhecido" e
+# recusava -- entao o deploy que os substituiria nunca acontecia.
+#
+# A saida NAO e relaxar o gate. E enumerar, por CAMINHO + SHA256 + MODO exatos, o estado de
+# origem que a reconciliacao esta autorizada a sobrescrever. Um byte diferente, um modo
+# diferente, um caminho a mais: continua recusado, porque deixa de ser este estado.
+#
+# Cada linha vale UMA VEZ, para UMA transicao. Depois do primeiro deploy bem-sucedido estes
+# caminhos passam a bater com a arvore e o manifesto deixa de ser consultado -- e a linha
+# correspondente deve ser removida na proxima rodada.
+#
+# Medido em 2026-08-29 por leitura da VPS (nenhuma escrita), com o candidato em 5c547c82.
+#
+# formato:  <sha256-do-conteudo-vivo>  <modo-octal-vivo>  <caminho>
+d0c5473b1c65f170b99ed6e41fe93fb56e2f6d0234bd54522c1048b12357aced  750  scripts/alertar.sh
+969a7ed206600de4fa61d088d095c334b48e566de9739406e6dcd7202b6afd47  644  scripts/auto-deploy.ps1
+afe42f82ba0e07af1c23b574aea07c075680fe9d8f37568e7e3dac26c3eba6b8  640  scripts/bundle-allowlist.txt
+5e917daa555cadf880248577cd5e60cbdb8942480f1ab515ba824a6be390a132  750  scripts/check-backup.sh
+b2b29bff83254ee673f60adaec7fd959bb32fec1be93f85c1bdf0cb6aebca887  750  scripts/lib-baseline-queries.sh
+b747f8418608be3e6385a197c52a81b1ec30aa72850c8b2eb13e88bcb7d0b3ef  750  scripts/patch-crontab.sh
+81f2642de903d994c95dc0d405d34e6d8bf57a702196d50342ab2ad1c2d921d8  750  scripts/pos-deploy-modos.sh
+317c7ad9fccce872990dc139ca471c47c9abd1f4be9000edc28f5d090ebddab3  750  scripts/preflight-deploy.sh
+51970f36bac960af658f87b65f9c139cf6ae225579dcd03c81b4a9b5b1ae8081  750  scripts/restore-drill.sh
+d0b95af069a7e3b77957133cedce9d75406e3198a174c256cba7406c6f5ab337  750  scripts/teste-alertar-mock.sh
+b8e45e9e44387ecbeaf02449ad3027698e2ce763dc19046d13c5f833b45c00f7  750  scripts/teste-bundle-mock.sh
+728c4607a3dddcfd851c3497989c94518d12e8d80707743cf8480776de6c081c  750  scripts/teste-deploy-lock-sha.sh
+05d8a80798475174ff4c5fef2c1254678e43008595f69903851c9bb2563cb1b7  750  scripts/teste-negativo-permissoes.sh
+6f59b37650fcc50e9c39f3a5f3f7068e948579a9a5b72a380654cfd88738a255  750  scripts/teste-sentinela-timeline.sh
+92cc1457e44b3a604839950e60d23f9fe8a20edc52be80b2566d6f1ecf4d03ad  750  scripts/verificar-bundle.sh

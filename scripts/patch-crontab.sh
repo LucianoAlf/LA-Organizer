@@ -47,12 +47,16 @@ case "$RC_LER" in
   0) : ;;
   1)
     # rc=1 e ambiguo: pode ser "sem crontab" (normal) ou erro. So a mensagem distingue.
-    if grep -qiE 'no crontab for|crontab: no crontab' "$CRON_ERR" 2>/dev/null || [ ! -s "$CRON_ERR" ]; then
+    # SO a mensagem conhecida (laudo v2.7, bloqueador 3). A v2.7 tambem aceitava stderr
+    # VAZIO como "sem crontab" -- com `PATCH_CRONTAB_CMD=/bin/false` (rc=1, sem stderr) o
+    # script declarou "mensagem conhecida", gravou backup marcado como vazio e tentou
+    # instalar os cinco crons. Silencio nao e evidencia de ausencia.
+    if grep -qiE 'no crontab for|crontab: no crontab' "$CRON_ERR" 2>/dev/null; then
       ATUAL=""
       echo "== usuario ainda nao tem crontab (rc=1, mensagem conhecida): partindo de vazio =="
     else
-      echo "FATAL: crontab -l falhou (rc=1): $(head -1 "$CRON_ERR" | cut -c1-140)" >&2
-      echo "       leitura nao confiavel -- nao escrevo nem faco backup" >&2
+      echo "FATAL: crontab -l saiu 1 SEM a mensagem conhecida de ausencia: $(head -1 "$CRON_ERR" | cut -c1-140)" >&2
+      echo "       (stderr vazio tambem cai aqui) leitura nao confiavel -- nao escrevo nem faco backup" >&2
       exit 2
     fi ;;
   *)
@@ -82,10 +86,16 @@ if [ "$REVERTER" = 1 ]; then
   esac
   [ -f "$ALVO_BKP" ] || { echo "FATAL: backup desta tentativa nao existe: $ALVO_BKP -- nada a restaurar" >&2; exit 2; }
   # backup vazio so e restauravel se ele PROVAR que o estado anterior era vazio
-  if [ ! -s "$ALVO_BKP" ] && ! grep -q '^# crontab-vazio-confirmado$' "$ALVO_BKP" 2>/dev/null; then
-    echo "FATAL: backup vazio e sem marca de vazio-confirmado: $ALVO_BKP" >&2
-    echo "       restaurar isso apagaria o crontab do host. Recusado." >&2
-    exit 2
+  if [ ! -s "$ALVO_BKP" ]; then
+    # backup vazio so e restauravel se o .meta provar que o estado anterior era vazio.
+    if [ ! -f "$ALVO_BKP.meta" ] || ! grep -q '^vazio-confirmado' "$ALVO_BKP.meta" 2>/dev/null; then
+      echo "FATAL: backup vazio sem $ALVO_BKP.meta com vazio-confirmado" >&2
+      echo "       restaurar isso apagaria o crontab do host. Recusado." >&2
+      exit 2
+    fi
+    # restaurar vazio = ZERO linhas, nunca uma linha de marca.
+    printf '' | "$CRONTAB" - || { echo "FATAL: nao consegui restaurar crontab vazio" >&2; exit 2; }
+    echo "crontab revertido para VAZIO (0 linhas), conforme $ALVO_BKP.meta"; exit 0
   fi
   "$CRONTAB" "$ALVO_BKP" || { echo "FATAL: nao consegui restaurar $ALVO_BKP" >&2; exit 2; }
   echo "crontab revertido a partir de $ALVO_BKP"; exit 0
@@ -140,9 +150,13 @@ BKP="$BKP_DIR/crontab-$(date -u +%Y%m%dT%H%M%SZ).bak"
 if [ -n "$ATUAL" ]; then
   printf '%s\n' "$ATUAL" > "$BKP" || { echo "FATAL: nao consegui gravar $BKP" >&2; exit 2; }
 else
-  # Vazio LEGITIMO (usuario sem crontab, ja confirmado na leitura). A marca distingue isso de
-  # "backup saiu vazio porque a leitura falhou" -- e o revert so restaura vazio com a marca.
-  printf '# crontab-vazio-confirmado\n' > "$BKP" || { echo "FATAL: nao consegui gravar $BKP" >&2; exit 2; }
+  # BACKUP DE VAZIO (laudo v2.7, bloqueador 3). A marca ficava DENTRO do arquivo, e o
+  # `--reverter` instalava essa linha como se fosse crontab: restaurar "vazio" produzia um
+  # crontab com uma linha de comentario. Marca e METADADO do backup, nao conteudo do alvo.
+  # Agora o backup tem ZERO bytes e a marca mora num arquivo ao lado.
+  : > "$BKP" || { echo "FATAL: nao consegui gravar $BKP" >&2; exit 2; }
+  printf 'vazio-confirmado ts=%s\n' "$(date -Iseconds)" > "$BKP.meta" || { echo "FATAL: nao consegui gravar $BKP.meta" >&2; exit 2; }
+  chmod 0600 "$BKP.meta"
 fi
 chmod 0600 "$BKP"
 # conferencia do proprio backup: backup que nao bate com o que foi lido nao serve de rollback

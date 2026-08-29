@@ -139,6 +139,29 @@ function Bater-LockDeploy {
     return $false
 }
 
+# GUARDA UNICA ANTES DE CADA EFEITO CRITICO (laudo v2.7, bloqueador 7). A v2.7 so confirmava
+# posse antes do reset backend -- push, reset de docs, restart e patch-crontab entravam sem
+# perguntar se o lock ainda era nosso. E o alvo so era reconferido no reset backend, entao o
+# ramo docs ainda resetava `origin/main`, uma ref MUTAVEL (bloqueador 2).
+# Esta funcao junta as duas coisas: renova/confirma o lease E reconfere que origin/main
+# continua sendo o deploy_sha medido. Qualquer uma falhando, o efeito nao acontece.
+function Confirmar-AntesDoEfeito($efeito) {
+    if (-not (Bater-LockDeploy)) {
+        Set-Content -Path $holdFile -Value "HOLD auto: lock perdido antes de $efeito em $ts." -Encoding utf8
+        Write-Output "=== ABORTADO antes de $efeito : o lock nao e mais nosso. ==="
+        return $false
+    }
+    if ($script:deploySha -ne $null -and $script:deploySha -ne "") {
+        $agora = ((ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet && git rev-parse origin/main" 2>$null) | Out-String).Trim()
+        if ($agora -ne $script:deploySha) {
+            Set-Content -Path $holdFile -Value "HOLD auto: origin/main moveu antes de $efeito em $ts." -Encoding utf8
+            Write-Output "=== ABORTADO antes de $efeito : origin/main moveu ($($script:deploySha.Substring(0,8)) -> $($agora.Substring(0,8))). ==="
+            return $false
+        }
+    }
+    return $true
+}
+
 function Soltar-LockDeploy {
     if (-not $script:lockAdquirido) { return }
     ssh tom ". $libLock 2>/dev/null || exit 3; lock_soltar $lockDir $lockNonce" 2>$null | Out-Null
@@ -256,6 +279,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
 
         # 7. Push — com retorno conferido. Push que falha calado deixava o resto do script
         #    agindo como se main tivesse movido.
+        # guarda adjacente (laudo v2.7, bloqueadores 2 e 7)
+        if (-not (Confirmar-AntesDoEfeito "git push origin main")) { exit 1 }
         git -C $srcRoot push origin main 2>$null
         if ($LASTEXITCODE -ne 0) {
             Set-Content -Path $holdFile -Value "HOLD auto: git push origin main FALHOU no deploy $ts." -Encoding utf8
@@ -279,15 +304,15 @@ if ($LASTEXITCODE -ne 0) {
     Write-Output "=== DEPLOY ADIADO: git fetch/rev-parse na VPS falhou (exit $LASTEXITCODE). Nada medido, nada aplicado. ==="
     exit 1
 }
-$deploySha = $fetchOut.Trim()
-if ($deploySha -notmatch '^[0-9a-f]{40}$') {
-    Write-Output "=== DEPLOY ABORTADO: nao resolvi um sha de 40 hex para origin/main (recebi '$deploySha'). ==="
+$script:deploySha = $fetchOut.Trim()
+if ($script:deploySha -notmatch '^[0-9a-f]{40}$') {
+    Write-Output "=== DEPLOY ABORTADO: nao resolvi um sha de 40 hex para origin/main (recebi '$script:deploySha'). ==="
     exit 1
 }
-Write-Output "=== deploy_sha = $($deploySha.Substring(0,8)) (literal usado em TODA a transacao) ==="
+Write-Output "=== deploy_sha = $($script:deploySha.Substring(0,8)) (literal usado em TODA a transacao) ==="
 
 # rc conferido tambem aqui: saida vazia por erro nao pode virar "0 commits atras".
-$atrasOut = (ssh tom "cd /opt/LA-Organizer && git rev-list --count HEAD..$deploySha" 2>$null) | Out-String
+$atrasOut = (ssh tom "cd /opt/LA-Organizer && git rev-list --count HEAD..$script:deploySha" 2>$null) | Out-String
 if ($LASTEXITCODE -ne 0) {
     Write-Output "=== DEPLOY ADIADO: git rev-list falhou (exit $LASTEXITCODE) -- nao sei se a VPS esta atras. ==="
     exit 1
@@ -314,7 +339,7 @@ if ($vpsAtras -gt 0) {
     # Restart so quando muda o que o processo carrega; doc/plano nao precisa derrubar o TOM.
     # rc conferido: `grep -c` sai 1 quando nao ha match, e saida vazia por erro nao pode
     # virar backend=0 (que decide se o TOM e reiniciado).
-    $bkOut = (ssh tom "cd /opt/LA-Organizer && git diff --name-only HEAD $deploySha | grep -cE '^(src/|skills/|migrations/)'; exit \${PIPESTATUS[0]}" 2>$null) | Out-String
+    $bkOut = (ssh tom "cd /opt/LA-Organizer && git diff --name-only HEAD $script:deploySha | grep -cE '^(src/|skills/|migrations/)'; exit \${PIPESTATUS[0]}" 2>$null) | Out-String
     if ($LASTEXITCODE -ne 0) {
         Write-Output "=== DEPLOY ADIADO: git diff falhou (exit $LASTEXITCODE) -- nao sei o que mudou. ==="
         exit 1
@@ -334,9 +359,9 @@ if ($vpsAtras -gt 0) {
     #   antigo, e o turno seguinte ve `HEAD..origin/main = 0` e conclui que a VPS ja esta
     #   atualizada. O deploy nunca mais e retomado e ninguem percebe.
     # de novo o preflight DO CANDIDATO (deploy_sha), nao o da arvore que sera substituida.
-    $candDir = Materializar-Candidato $deploySha
-    if ($candDir -eq "") { Write-Output "=== DEPLOY ABORTADO: bootstrap de $($deploySha.Substring(0,8)) falhou. ==="; exit 1 }
-    $preflight = (ssh tom "PREFLIGHT_REPO=/opt/LA-Organizer $candDir/scripts/preflight-deploy.sh $deploySha 2>&1" 2>$null) | Out-String
+    $candDir = Materializar-Candidato $script:deploySha
+    if ($candDir -eq "") { Write-Output "=== DEPLOY ABORTADO: bootstrap de $($script:deploySha.Substring(0,8)) falhou. ==="; exit 1 }
+    $preflight = (ssh tom "PREFLIGHT_REPO=/opt/LA-Organizer $candDir/scripts/preflight-deploy.sh $script:deploySha 2>&1" 2>$null) | Out-String
     if ($LASTEXITCODE -ne 0) {
         Set-Content -Path $holdFile -Value "HOLD auto: preflight reprovou no deploy $ts -- VPS NAO resetada." -Encoding utf8
         Write-Output "=== DEPLOY ABORTADO no preflight: ==="
@@ -398,15 +423,11 @@ if ($vpsAtras -gt 0) {
 
     if ($backend -gt 0) {
         # CONFIRMA POSSE antes do efeito irreversivel, e reseta para o LITERAL medido.
-        if (-not (Bater-LockDeploy)) { Set-Content -Path $holdFile -Value "HOLD auto: lock perdido antes do reset em $ts." -Encoding utf8; exit 1 }
-        $shaRemoto = ((ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet && git rev-parse origin/main" 2>$null) | Out-String).Trim()
-        if ($shaRemoto -ne $deploySha) {
-            Set-Content -Path $holdFile -Value "HOLD auto: origin/main moveu durante a transacao ($($deploySha.Substring(0,8)) -> $($shaRemoto.Substring(0,8)))." -Encoding utf8
-            Write-Output "=== DEPLOY ABORTADO: origin/main MOVEU durante a transacao. Medi $($deploySha.Substring(0,8)), agora e $($shaRemoto.Substring(0,8)). ==="
-            Write-Output "=== Nada foi resetado. O proximo turno mede o estado novo. ==="
-            exit 1
-        }
-        ssh tom "cd /opt/LA-Organizer && git reset --hard $deploySha --quiet" 2>$null
+        # guarda adjacente (laudo v2.7, bloqueadores 2 e 7)
+        if (-not (Confirmar-AntesDoEfeito "reset backend")) { exit 1 }
+        # (a reconferencia de origin/main mora dentro de Confirmar-AntesDoEfeito, para que a
+        #  guarda fique ADJACENTE ao efeito e nao haja codigo entre uma e outro)
+        ssh tom "cd /opt/LA-Organizer && git reset --hard $script:deploySha --quiet" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Invoke-RollbackVps "o proprio reset --hard falhou"
             Soltar-LockDeploy; exit 1
@@ -466,6 +487,8 @@ if ($vpsAtras -gt 0) {
             Soltar-LockDeploy; exit 1
         }
         Write-Output "=== Suite OK ($total testes; $falhas vermelho(s), todos reconhecidos pelo nome) -- reiniciando ==="
+        # guarda adjacente (laudo v2.7, bloqueadores 2 e 7)
+        if (-not (Confirmar-AntesDoEfeito "pm2 restart")) { exit 1 }
         ssh tom "cd /opt/LA-Organizer && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
         if ($LASTEXITCODE -ne 0) {
             Invoke-RollbackVps "pm2 restart retornou erro"
@@ -506,6 +529,8 @@ if ($vpsAtras -gt 0) {
         # que o `--aplicar` imprime como `backup=<caminho>`. Se a aplicacao falhar antes de
         # criar o backup, nao ha o que reverter -- e nao reverter e o resultado correto,
         # porque restaurar o passado de outra tentativa troca CURRENT por OLD.
+        # guarda adjacente (laudo v2.7, bloqueadores 2 e 7)
+        if (-not (Confirmar-AntesDoEfeito "patch-crontab --aplicar")) { exit 1 }
         $cron = (ssh tom "cd /opt/LA-Organizer && ./scripts/patch-crontab.sh --aplicar 2>&1 | tail -12" 2>$null) | Out-String
         $rcCron = $LASTEXITCODE
         $cronBackup = ""
@@ -538,7 +563,9 @@ if ($vpsAtras -gt 0) {
         # Caminho de docs: tambem passa pelo preflight (8-pre, acima) e tambem reseta — logo
         # tambem derruba os modos. Nao ha restart aqui, mas ha o mesmo estado hibrido possivel,
         # entao usa o mesmo ponto de retorno.
-        ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet" 2>$null
+        # guarda adjacente (laudo v2.7, bloqueadores 2 e 7)
+        if (-not (Confirmar-AntesDoEfeito "reset de docs/script-only")) { exit 1 }
+        ssh tom "cd /opt/LA-Organizer && git reset --hard $script:deploySha --quiet" 2>$null
         if ($LASTEXITCODE -ne 0) { Invoke-RollbackVps "reset --hard de docs falhou"; exit 1 }
         $modosDoc = (ssh tom "cd /opt/LA-Organizer && ./scripts/pos-deploy-modos.sh 2>&1" 2>$null) | Out-String
         if ($LASTEXITCODE -ne 0) {

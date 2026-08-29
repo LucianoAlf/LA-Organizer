@@ -10,6 +10,10 @@
 #                         descartavel. Nao le nem escreve estado vivo.
 #   environment-read-only SO LE o estado vivo (crontab, /run, repo de producao, .env, rede).
 #                         Nunca escreve. E declarado, e a contagem sai separada.
+#   environment-controlled-write-probe
+#                         TENTA escrever em alvos de producao para provar que a permissao
+#                         nega. Fora do total padrao; so roda sob gate explicito. Existe
+#                         porque "read-only" com syscall de escrita e rotulo falso.
 #
 # Bateria sem nivel declarado REPROVA o runner: classificacao esquecida vira, com o tempo,
 # um teste que toca producao sem ninguem notar.
@@ -28,9 +32,10 @@ teste-bundle-mock.sh            integration-sandbox     dois servidores HTTP loc
 teste-vercel-prova.sh           integration-sandbox     API e sites falsos em portas efemeras
 teste-cron-canonico.sh          integration-sandbox     crontab falso no PATH; nunca o crontab real
 teste-bootstrap.sh              integration-sandbox     repo git descartavel; bootstrap em dir proprio
+teste-e2e-transicao.sh          integration-sandbox     transicao v2.5->candidato inteira em repo descartavel
 teste-sentinela-timeline.sh     integration-sandbox     arvore de backup falsa em $TMPDIR
 teste-sequence-iscalled.sh      integration-sandbox     Postgres descartavel em docker
 
 teste-ambiente-isolamento.sh    environment-read-only   fotografa /run, crontab, backups e o repo vivo
 teste-negativo-dataapi.sh       environment-read-only   consulta a Data API com credencial do runtime
-teste-negativo-permissoes.sh    environment-read-only   le permissoes reais; exige <usuario-nao-root>
+teste-negativo-permissoes.sh    environment-controlled-write-probe  TENTA escrever em alvos de producao para provar que nao consegue; fora do total padrao, so com PERMITIR_SONDA_ESCRITA=1

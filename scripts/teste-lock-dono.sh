@@ -155,6 +155,94 @@ else
 fi
 
 
+echo "== BLOQUEADOR 4: heartbeat ENTRE a leitura da idade e o rename =="
+# `lock_tomar` lia epoch vencido e so entao fazia `mv -T`. Se o dono renovasse nessa fresta, o
+# invasor ainda movia e substituia um lock RECEM-RENOVADO. Reproducao independente do Alfredo:
+# um wrapper de `mv` renovava o epoch imediatamente antes do rename e mesmo assim saia
+# ORFAO-REMOVIDO, rc=0, com o invasor virando dono.
+# Aqui a fresta e montada de forma DETERMINISTICA: um `mv` falso que renova o epoch antes de
+# chamar o mv de verdade. Se o takeover ainda vencer, o lock foi roubado de um dono vivo.
+rm -rf "$LK"; lock_tomar "$LK" "$A" 30 >/dev/null
+echo $(( $(date +%s) - 3600 )) > "$LK/epoch"      # parece orfao para quem le agora
+mkdir -p "$D/bin"
+cat > "$D/bin/mv" <<EOF
+#!/bin/bash
+# renova o lease do dono EXATAMENTE na fresta entre a leitura da idade e o rename
+[ -d "$LK" ] && date +%s > "$LK/epoch" 2>/dev/null
+exec /bin/mv "\$@"
+EOF
+chmod +x "$D/bin/mv"
+R=$(PATH="$D/bin:$PATH" lock_tomar "$LK" "$B" 30); RC=$?
+if [ "$RC" = 1 ]; then
+  ok "heartbeat na fresta impede o takeover ($R)"
+else
+  falhou "roubou lock renovado na fresta (rc=$RC r=$R)"
+fi
+[ -d "$LK" ] && ok "o lock do dono continua existindo" || falhou "o lock do dono sumiu"
+[ "$(cat "$LK/nonce" 2>/dev/null)" = "$A" ] && ok "o dono continua sendo A (nao virou invasor)" \
+  || falhou "o dono virou $(cat "$LK/nonce" 2>/dev/null)"
+IDADE=$(( ( $(date +%s) - $(cat "$LK/epoch" 2>/dev/null || echo 0) ) / 60 ))
+[ "$IDADE" -lt 2 ] && ok "o lease renovado foi preservado (idade ${IDADE}min)" || falhou "lease perdido (${IDADE}min)"
+rm -f "$D/bin/mv"
+# e o orfao DE VERDADE (sem heartbeat) continua sendo recuperado
+echo $(( $(date +%s) - 3600 )) > "$LK/epoch"
+R=$(lock_tomar "$LK" "$B" 30); RC=$?
+[ "$RC" = 0 ] && ok "orfao sem heartbeat continua sendo recuperado ($R)" || falhou "TTL parou de funcionar (rc=$RC)"
+lock_soltar "$LK" "$B" >/dev/null 2>&1; rm -rf "$LK"
+
+echo "== BLOQUEADOR 7: guarda ADJACENTE a cada efeito critico =="
+PS1="$AQUI/auto-deploy.ps1"
+if [ -r "$PS1" ]; then
+  # cada efeito critico e sua assinatura no .ps1
+  efeitos=(
+    'git -C \$srcRoot push origin main'
+    'git reset --hard \$script:deploySha --quiet'
+    'pm2 restart tom --no-color 2>&1 | tail -2'
+    'patch-crontab.sh --aplicar 2>&1'
+  )
+  for e in "${efeitos[@]}"; do
+    LN=$(grep -nE "$e" "$PS1" | head -1 | cut -d: -f1)
+    if [ -z "$LN" ]; then falhou "efeito nao encontrado no ps1: $e"; continue; fi
+    # a guarda tem que estar nas 3 linhas ANTES do efeito -- adjacencia, nao "existe em algum lugar"
+    if sed -n "$((LN-3)),$((LN-1))p" "$PS1" | grep -q 'Confirmar-AntesDoEfeito'; then
+      ok "guarda adjacente antes de: $(printf '%s' "$e" | cut -c1-42)"
+    else
+      falhou "SEM guarda adjacente antes de: $(printf '%s' "$e" | cut -c1-42) (linha $LN)"
+    fi
+  done
+  # quantidade: uma guarda por efeito, no minimo
+  N_G=$(grep -c 'if (-not (Confirmar-AntesDoEfeito' "$PS1" || true)
+  [ "$N_G" -ge "${#efeitos[@]}" ] && ok "$N_G guarda(s) para ${#efeitos[@]} efeito(s) criticos" \
+    || falhou "so $N_G guarda(s) para ${#efeitos[@]} efeitos"
+  # a guarda confirma posse E alvo
+  if grep -A12 'function Confirmar-AntesDoEfeito' "$PS1" | grep -q 'Bater-LockDeploy' \
+     && grep -A18 'function Confirmar-AntesDoEfeito' "$PS1" | grep -q 'rev-parse origin/main'; then
+    ok "a guarda confirma posse do lock E que origin/main nao moveu"
+  else
+    falhou "a guarda nao cobre as duas coisas"
+  fi
+
+  echo "== BLOQUEADOR 2: nenhum reset em ref MUTAVEL =="
+  MUT=0
+  while IFS= read -r linha; do
+    case "$linha" in
+      *'reset --hard $script:deploySha'*|*'reset --hard $prev'*|*'reset --hard $CAND'*) : ;;
+      *'reset --hard'*)
+        case "$linha" in *'#'*) : ;; *) MUT=$((MUT+1)); echo "        ref mutavel: $(printf '%s' "$linha" | sed 's/^ *//' | cut -c1-72)" ;; esac ;;
+    esac
+  # so INVOCACOES de verdade: linhas com `git reset --hard`. Mensagem de erro que MENCIONA
+  # "reset --hard" nao e chamada -- contar texto como codigo e a forma mais facil de um
+  # teste estrutural virar ruido e ser ignorado.
+  done < <(grep -E 'ssh tom .*git reset --hard|git -C .*reset --hard' "$PS1" | grep -v '^\s*#')
+  [ "$MUT" = 0 ] && ok "todas as chamadas a reset --hard usam SHA literal ou ponto de retorno" \
+    || falhou "$MUT chamada(s) a reset --hard em referencia mutavel"
+  grep -q 'reset --hard origin/main' "$PS1" && falhou "ainda ha 'reset --hard origin/main'" \
+    || ok "nenhum 'reset --hard origin/main' no caminho canonico"
+else
+  falhou "auto-deploy.ps1 nao encontrado"
+fi
+
+
 echo "== ordem no auto-deploy.ps1: adquirir ANTES de qualquer sync =="
 # Nao basta a lib estar certa: o caminho SEM COMMIT precisa adquirir antes de sincronizar, e
 # nenhuma saida pode soltar sem nonce. Isso e propriedade do chamador, entao e medido nele.

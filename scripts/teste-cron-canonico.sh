@@ -34,6 +34,7 @@ case "${1:-}" in
       42)     echo "crontab: temporary file /tmp/crontab.XXXX: Permission denied" >&2; exit 42 ;;
       vazio)  echo "no crontab for root" >&2; exit 1 ;;
       erro1)  echo "crontab: cannot read /var/spool/cron/root: I/O error" >&2; exit 1 ;;
+      silencioso) exit 1 ;;   # rc=1 SEM stderr: o caso do /bin/false
     esac
     [ -s "$TAB" ] && cat "$TAB" || { echo "no crontab for root" >&2; exit 1; } ;;
   -)  cat > "$TAB" ;;
@@ -108,14 +109,37 @@ S=$(CRONTAB_FALSO_RC=erro1 rodar --aplicar); RC=$?
 [ "$RC" != 0 ] && ok "rc=1 com mensagem de ERRO tambem aborta" || falhou "confundiu erro de I/O com 'sem crontab'"
 [ "$ANTES" = "$(cat "$CRONTAB_FALSO")" ] && ok "crontab intacto no rc=1 de erro" || falhou "escreveu apesar do erro"
 
+echo "== BLOQUEADOR 3a: rc=1 SILENCIOSO (sem stderr) tambem falha fechado =="
+# A v2.7 aceitava `|| [ ! -s "$CRON_ERR" ]`: stderr vazio virava "sem crontab". Com
+# PATCH_CRONTAB_CMD=/bin/false o script declarava ausencia, gravava backup marcado como
+# vazio e instalava os cinco crons. Silencio nao e evidencia de ausencia.
+ANTES=$(cat "$CRONTAB_FALSO"); N_ANTES=$(nbkp)
+S=$(CRONTAB_FALSO_RC=silencioso rodar --aplicar); RC=$?
+if [ "$RC" != 0 ]; then ok "rc=1 sem stderr aborta (rc=$RC)"; else falhou "instalou com leitura silenciosamente falha"; fi
+if grep -qi "SEM a mensagem conhecida" <<<"$S"; then ok "diz que faltou a mensagem conhecida"; else falhou "motivo errado: $(head -1 <<<"$S")"; fi
+if [ "$ANTES" = "$(cat "$CRONTAB_FALSO")" ]; then ok "crontab intacto no rc=1 silencioso"; else falhou "reescreveu o crontab"; fi
+if [ "$(nbkp)" = "$N_ANTES" ]; then ok "nenhum backup criado no rc=1 silencioso"; else falhou "gravou backup"; fi
+
 echo "== 'usuario sem crontab' e legitimo e NAO e erro =="
 cp "$CRONTAB_FALSO" "$D/guardado"; : > "$CRONTAB_FALSO"
 S=$(rodar --aplicar); RC=$?
 [ "$RC" = 0 ] && ok "crontab vazio de verdade: aplica normalmente (rc=0)" || falhou "rc=$RC: $(head -2 <<<"$S")"
 [ "$(marcadores)" = 5 ] && ok "instalou os 5 num host sem crontab" || falhou "$(marcadores)/5 no host limpo"
 BKP_VAZIO=$(sed -n 's/^backup=//p' <<<"$S" | head -1)
-grep -q '^# crontab-vazio-confirmado$' "$BKP_VAZIO" 2>/dev/null && ok "backup de vazio carrega marca de vazio-CONFIRMADO" \
-  || falhou "backup vazio sem marca: nao da para distinguir de leitura falha"
+if grep -q "^vazio-confirmado" "$BKP_VAZIO.meta" 2>/dev/null; then
+  ok "a marca de vazio mora no .meta, nao dentro do backup"
+else falhou "backup vazio sem .meta: nao da para distinguir de leitura falha"; fi
+if [ ! -s "$BKP_VAZIO" ]; then ok "o backup de vazio tem ZERO bytes"
+else falhou "backup de vazio tem conteudo: $(wc -c < "$BKP_VAZIO") byte(s)"; fi
+# BLOQUEADOR 3b: restaurar vazio tem que produzir ZERO linhas, nao a linha da marca.
+S=$(rodar --reverter "$BKP_VAZIO"); RC=$?
+if [ "$RC" = 0 ]; then ok "revert do backup vazio aceito (rc=0)"; else falhou "rc=$RC: $(head -1 <<<"$S")"; fi
+N_LINHAS=$(wc -l < "$CRONTAB_FALSO")
+if [ "$N_LINHAS" = 0 ]; then ok "crontab restaurado com ZERO linhas"
+else falhou "restaurou $N_LINHAS linha(s) -- a marca virou conteudo"; fi
+if grep -q "vazio-confirmado" "$CRONTAB_FALSO" 2>/dev/null; then
+  falhou "a marca foi instalada como linha de crontab"
+else ok "a marca nao virou linha do crontab"; fi
 cp "$D/guardado" "$CRONTAB_FALSO"
 
 echo "== BLOQUEADOR 2b: rollback transacional =="

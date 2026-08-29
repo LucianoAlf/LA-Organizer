@@ -11,6 +11,22 @@
 # Antes da contenção: espera-se VERMELHO. Depois: exige 0 FAIL e 0 SKIP obrigatório.
 
 set -uo pipefail
+
+# NIVEL: environment-controlled-write-probe (laudo v2.7, bloqueador 5).
+# Esta bateria NAO e read-only: ela cria controle em /tmp, tenta `touch` dentro de
+# /opt/backups/la-organizer e do diretorio vivo do CLI, e abre arquivos para sobrescrita.
+# Se a permissao estiver errada, ela ESCREVE e depois remove -- e escrever em producao para
+# provar que nao se pode escrever em producao e uma contradicao. Chamar isso de read-only,
+# como a v2.7 fazia, era rotulo falso: quem le o total para de conferir.
+# Ela continua valiosa (e o unico teste que mede a contencao no host de verdade), entao nao
+# some -- sai do total padrao e passa a exigir gate explicito.
+if [ "${PERMITIR_SONDA_ESCRITA:-0}" != "1" ]; then
+  echo "== SONDA DE ESCRITA NAO AUTORIZADA =="
+  echo "Esta bateria TENTA escrever em alvos de producao para provar que nao consegue."
+  echo "Ela nao entra no total padrao. Para rodar conscientemente:"
+  echo "   PERMITIR_SONDA_ESCRITA=1 $0 [usuario] [--pos-aplicacao|--final]"
+  exit 3
+fi
 # DEFAULT DESCOBERTO (laudo v2.6, bloqueador 10). Exigir o argumento fazia o runner receber
 # um crash sem contagem -- e a v2.6 classificava isso como "exige ambiente", ou seja, um
 # teste que nao rodou saia como dispensa. Agora, sem argumento, o teste escolhe o primeiro
@@ -123,5 +139,11 @@ nega_sobrescrita  "copia .bak de credencial"  "$BAK_CRED"                       
 nega_sobrescrita  "transcript de sessao"      "$TRANSCRIPT"                                  0
 
 echo "== $PASSOU pass, $FALHAS falha(s), $((SKIP_OK+SKIP_RUIM)) skip =="
-[ "$SKIP_RUIM" -gt 0 ] && echo "   ATENCAO: $SKIP_RUIM skip em alvo OBRIGATORIO"
+# ALVO OBRIGATORIO AUSENTE NUNCA TERMINA VERDE (laudo v2.7, bloqueador 5). SKIP_RUIM era so
+# um AVISO impresso: a bateria saia 0 e o runner a contava como aprovada. "Nao consegui
+# medir o alvo obrigatorio" e inconclusivo, e inconclusivo nao e verde.
+if [ "$SKIP_RUIM" -gt 0 ]; then
+  echo "   INCONCLUSIVO: $SKIP_RUIM skip em alvo OBRIGATORIO -- nao da para afirmar contencao" >&2
+  exit 1
+fi
 exit $(( FALHAS > 0 ? 1 : 0 ))

@@ -28,6 +28,19 @@ if [ "${1:-}" = "--verificar" ]; then MODO=verificar; VERIF_DIR=${2:?uso: --veri
 SHA=${1:?uso: $0 <sha-de-40> [repo]}
 REPO=${2:-/opt/LA-Organizer}
 DEST_BASE=${BOOTSTRAP_DEST:-/run}
+# DIRETORIO POR TURNO (laudo v2.7, bloqueador 6). Era /run/tom-cand-<sha> e o script fazia
+# `rm -rf` nele ANTES da aquisicao do lock. Dois turnos do mesmo SHA apagavam e
+# materializavam o diretorio um do outro -- e o segundo podia remover, no meio do caminho,
+# a lib que o primeiro (ja com o lock) usa nos heartbeats. Compartilhar estado antes do
+# lock e exatamente o que o lock existe para impedir.
+# Agora o nonce do turno entra no nome. Sem nonce, um e gerado aqui -- assim mesmo uma
+# invocacao manual nao colide com um turno em andamento.
+NONCE=${BOOTSTRAP_NONCE:-}
+if [ -z "$NONCE" ]; then
+  NONCE=$(head -c 12 /dev/urandom 2>/dev/null | od -An -tx1 | tr -dc "0-9a-f")
+  [ -n "$NONCE" ] || NONCE="$$-$(date +%s)"
+fi
+case "$NONCE" in *[!A-Za-z0-9._-]*|'') echo "FATAL: nonce invalido" >&2; exit 2 ;; esac
 
 case "$SHA" in
   [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) : ;;
@@ -43,7 +56,7 @@ git cat-file -e "$SHA^{commit}" 2>/dev/null || {
   echo "FATAL: o commit $SHA nao existe no repo local -- transporte o candidato antes" >&2; exit 3; }
 
 if [ "$MODO" = materializar ]; then
-DEST="$DEST_BASE/tom-cand-$SHA"
+DEST="$DEST_BASE/tom-cand-$SHA-$NONCE"
 rm -rf "$DEST"
 mkdir -p "$DEST" || { echo "FATAL: nao consegui criar $DEST" >&2; exit 2; }
 chmod 0700 "$DEST"
@@ -101,4 +114,5 @@ while IFS= read -r linha; do
 done < "$ESP"
 
 echo "bootstrap: $N arquivo(s) de scripts/ conferidos contra a arvore de ${SHA:0:8}"
+echo "nonce=$NONCE"
 echo "candidato=$DEST"

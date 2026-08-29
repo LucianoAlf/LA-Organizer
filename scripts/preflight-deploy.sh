@@ -42,7 +42,7 @@ LIBG="$AQUI/lib-guardas.sh"
 . "$LIBG"
 GUARDAS_ESPERADOS=$(( ${#GUARDAS[@]} + ${#DADOS[@]} ))
 DEST=${GUARDAS_DIR:-/opt/backups/la-organizer/guardas}
-PROBLEMAS=0
+PROBLEMAS=0; MANIF_USADOS=0
 T=$(mktemp -d /run/preflight.XXXXXX 2>/dev/null || mktemp -d) || { echo "FATAL: mktemp" >&2; exit 2; }
 chmod 0700 "$T"; trap 'rm -rf "$T"' EXIT INT TERM
 
@@ -105,6 +105,34 @@ sha_alvo() { git cat-file blob "$REF:$1" 2>/dev/null | sha256sum | cut -d' ' -f1
 #   rc 0 = identico nos tres (o reset e no-op de verdade)
 #   rc 1 = diverge, e MOTIVO diz em que
 #   rc 2 = nao consegui medir
+# MANIFESTO DE ORIGEM (laudo v2.7, bloqueador 1). Divergencia operacional CONHECIDA e aceita
+# so por caminho + sha256 + modo EXATOS. Um byte fora, um modo fora, um caminho a mais: recusa.
+# Sem manifesto legivel, nada e aceito por esta via -- a ausencia do arquivo nao afrouxa nada.
+MANIFESTO_ORIGEM=${PREFLIGHT_MANIFESTO:-$AQUI/manifesto-origem-v25.txt}
+MANIF_MOTIVO=""
+declare -A ORIG_SHA ORIG_MODO
+if [ -r "$MANIFESTO_ORIGEM" ]; then
+  while read -r h m c; do
+    case "$h" in ''|\#*) continue ;; esac
+    [ -n "$c" ] || continue
+    ORIG_SHA["$c"]=$h; ORIG_MODO["$c"]=$m
+  done < "$MANIFESTO_ORIGEM"
+fi
+origem_conhecida() {  # <path> -> rc 0 se o disco bate EXATAMENTE com uma linha do manifesto
+  # `local p=$1 esp_h=${ORIG_SHA[$p]...}` usa $p no MESMO `local` que o declara: com `set -u`
+  # isso e "unbound variable". Ja me pegou antes; por isso as declaracoes vao separadas.
+  local p=$1 esp_h esp_m h m
+  esp_h=${ORIG_SHA[$p]:-}; esp_m=${ORIG_MODO[$p]:-}
+  MANIF_MOTIVO=""
+  [ -n "$esp_h" ] || return 1
+  [ -f "$p" ] || { MANIF_MOTIVO="manifesto cita $p, mas o disco nao tem arquivo regular"; return 1; }
+  h=$(sha256sum -- "$p" 2>/dev/null | cut -d' ' -f1)
+  m=$(stat -c%a -- "$p" 2>/dev/null)
+  if [ "$h" != "$esp_h" ]; then MANIF_MOTIVO="conteudo difere do manifesto de origem"; return 1; fi
+  if [ "$m" != "$esp_m" ]; then MANIF_MOTIVO="modo $m difere do manifesto de origem ($esp_m)"; return 1; fi
+  return 0
+}
+
 MOTIVO=""
 igual_alvo(){ # <path>
   local p=$1 md ms ma sa
@@ -138,15 +166,27 @@ while IFS= read -r -d '' linha; do
   set -- $meta
   IDX_MODO["$cam"]=$1; IDX_SHA["$cam"]=$2
 done < <(git ls-files -s -z 2>/dev/null)
-indice_orfao() { # <path> -- rc 0 se o index guarda versao ausente do disco E do alvo
-  local p=$1 im is md s1
+indice_orfao() { # <path> -- rc 0 so quando o INDICE guarda TRABALHO que some no reset
+  # REGRA CORRIGIDA (laudo v2.7, bloqueador 1). A versao anterior perguntava "o index difere
+  # do disco E do alvo?" e com isso acusava dois casos inocentes:
+  #   * indice desatualizado por MODO (legado 0750 no disco, 100644 no index): nada se perde,
+  #     o conteudo e o mesmo nas tres pontas e o reset so atualiza o index;
+  #   * arquivo modificado no disco (` M`): o index guarda a versao de HEAD, que e justamente
+  #     a que o reset deve substituir. Chamar isso de "trabalho que some" trava a transicao.
+  # Trabalho staged de verdade tem index DIFERENTE de HEAD. E so isso que pode sumir.
+  local p=$1 im is hs s1
   im=${IDX_MODO[$p]:-}; is=${IDX_SHA[$p]:-}
-  [ -n "$im" ] || return 1
-  [ "$im" = "${ALVO_MODO[$p]:-}" ] && [ "$is" = "${ALVO_SHA[$p]:-}" ] && return 1
-  md=$(modo_disco "$p" 2>/dev/null) || return 1
-  if [ -L "$p" ]; then s1=$(readlink -- "$p" | tr -d '\n' | git hash-object --stdin 2>/dev/null)
+  [ -n "$is" ] || return 1
+  # index igual ao alvo: o reset e no-op para ele
+  [ "$is" = "${ALVO_SHA[$p]:-}" ] && return 1
+  # index igual a HEAD: nada foi staged; e so index desatualizado
+  hs=$(git rev-parse "HEAD:$p" 2>/dev/null)
+  [ -n "$hs" ] && [ "$is" = "$hs" ] && return 1
+  # index igual ao disco: o conteudo existe fora do index, entao nao some
+  if [ -L "$p" ]; then s1=$(readlink -- "$p" | tr -d '
+' | git hash-object --stdin 2>/dev/null)
   else s1=$(git hash-object -- "$p" 2>/dev/null); fi
-  [ "$im" = "$md" ] && [ "$is" = "$s1" ] && return 1
+  [ -n "$s1" ] && [ "$is" = "$s1" ] && return 1
   return 0
 }
 
@@ -180,8 +220,12 @@ while IFS= read -r -d '' entrada; do
        else
          echo "    ok        $CAM ($XY, conteudo+tipo+modo identicos ao alvo; reset e no-op)"
        fi ;;
-    1) recusa "$CAM - $MOTIVO em relacao ao alvo ($XY); o reset descartaria essa mudanca
-              veja com: git diff $REF -- $CAM" ;;
+    1) if origem_conhecida "$CAM"; then
+         echo "    ok        $CAM ($XY, divergencia de ORIGEM conhecida: sha+modo batem com o manifesto v2.5)"
+         MANIF_USADOS=$((MANIF_USADOS+1))
+       else
+         recusa "$CAM - $MOTIVO em relacao ao alvo ($XY)${MANIF_MOTIVO:+; manifesto: $MANIF_MOTIVO}; o reset descartaria essa mudanca"
+       fi ;;
     *) recusa "$CAM — nao consegui medir ($XY)" ;;
   esac
 done < "$T/tracked.z"
@@ -214,40 +258,48 @@ if [ "$NCOL" -gt 0 ]; then
     igual_alvo "$c"; rc=$?
     case $rc in
       0) echo "    ok        $c (untracked com conteudo+tipo+modo identicos ao alvo; reset e no-op)" ;;
-      1) recusa "$c - untracked que o reset VAI SOBRESCREVER ($MOTIVO)" ;;
+      1) if origem_conhecida "$c"; then
+           echo "    ok        $c (untracked, divergencia de ORIGEM conhecida pelo manifesto v2.5)"
+           MANIF_USADOS=$((MANIF_USADOS+1))
+         else
+           recusa "$c - untracked que o reset VAI SOBRESCREVER ($MOTIVO)${MANIF_MOTIVO:+; manifesto: $MANIF_MOTIVO}"
+         fi ;;
       *) recusa "$c — untracked que colide e nao consegui medir" ;;
     esac
   done < "$T/colide.txt"
 fi
 echo "  untracked fora do alvo: $(( NUNT - NCOL )) — sobrevivem ao reset (medido)"
 
-# --- 3. snapshot dos guardas: 18/18 ou nada ----------------------------------------------
+# --- 3. snapshot dos guardas: o que EXISTE AGORA, integralmente -----------------------------
+# LAUDO v2.7, BLOQUEADOR 1. O snapshot exigia o inventario do CANDIDATO na worktree VELHA:
+#   snapshot incompleto: 28/41 guardas -> PREFLIGHT REPROVADO
+# Ou seja, o primeiro deploy nunca chegava ao reset, porque 13 arquivos so nascem DEPOIS dele.
+# O snapshot serve para RESTAURAR o estado atual num rollback. Logo o conjunto correto e o que
+# existe agora -- exigir arquivo que ainda nao existe nao protege nada, so trava a transicao.
+# O rigor continua: tudo que EXISTE tem que entrar, e o tar e reconferido item a item. O que
+# ainda nao existe e listado como "nasce no reset", que e informacao, nao falha.
 if [ "$SNAP" = 1 ]; then
   if install -d -m 0700 "$DEST" 2>/dev/null; then
-    PRESENTES=(); AUSENTES=()
+    PRESENTES=(); NASCEM=()
     for g in "${GUARDAS[@]}"; do
-      if [ -f "scripts/$g.sh" ]; then PRESENTES+=("scripts/$g.sh"); else AUSENTES+=("$g.sh"); fi
+      if [ -f "scripts/$g.sh" ]; then PRESENTES+=("scripts/$g.sh"); else NASCEM+=("$g.sh"); fi
     done
     for d in "${DADOS[@]}"; do
-      if [ -f "scripts/$d" ]; then PRESENTES+=("scripts/$d"); else AUSENTES+=("$d"); fi
+      if [ -f "scripts/$d" ]; then PRESENTES+=("scripts/$d"); else NASCEM+=("$d"); fi
     done
-    # v2.1 aceitava snapshot parcial (bastava >=1 arquivo). Rollback com snapshot incompleto
-    # restaura uma parte dos guardas e deixa o resto ausente — pior que nao restaurar, porque
-    # PARECE que restaurou. Agora e 18/18 ou recusa.
-    if [ "${#PRESENTES[@]}" -ne "$GUARDAS_ESPERADOS" ]; then
-      recusa "snapshot incompleto: ${#PRESENTES[@]}/$GUARDAS_ESPERADOS guardas (faltam: ${AUSENTES[*]})"
+    if [ "${#PRESENTES[@]}" -eq 0 ]; then
+      recusa "nenhum guarda presente na arvore viva -- nao ha o que preservar, e isso nao e normal"
     else
       TAR="$DEST/guardas-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
       if ( umask 0177; tar -czf "$TAR" --owner=0 --group=0 -- "${PRESENTES[@]}" 2>/dev/null ) \
          && [ -s "$TAR" ] && tar -tzf "$TAR" >/dev/null 2>&1 \
-         && [ "$(tar -tzf "$TAR" | wc -l)" -eq "$GUARDAS_ESPERADOS" ]; then
+         && [ "$(tar -tzf "$TAR" | wc -l)" -eq "${#PRESENTES[@]}" ]; then
         chmod 0600 "$TAR"
-        echo "  snapshot: $TAR ($GUARDAS_ESPERADOS/$GUARDAS_ESPERADOS guardas)"
+        echo "  snapshot: $TAR (${#PRESENTES[@]}/${#PRESENTES[@]} guardas existentes preservados)"
+        [ "${#NASCEM[@]}" -gt 0 ] && echo "  nascem no reset (nao ha o que preservar): ${#NASCEM[@]} -- ${NASCEM[*]}"
         if cp -f scripts/restaurar-guardas.sh "$DEST/restaurar-guardas.sh" 2>/dev/null; then
           # 0700, nao 0750: este arquivo mora DENTRO de /opt/backups, e a regra de contencao
-          # daquela arvore e "nada legivel/executavel por grupo ou outros". Com 0750 ele
-          # aparecia como artefato exposto — o proprio smoke pegou a contradicao. So root
-          # roda isto, entao 0700 atende as duas coisas.
+          # daquela arvore e "nada legivel/executavel por grupo ou outros".
           chmod 0700 "$DEST/restaurar-guardas.sh"
           echo "  restaurador fora do repo: $DEST/restaurar-guardas.sh"
         else
@@ -268,4 +320,5 @@ if [ "$PROBLEMAS" -gt 0 ]; then
   echo "== PREFLIGHT REPROVADO ($PROBLEMAS problema(s)) — NAO rode o reset =="
   exit 1
 fi
+[ "$MANIF_USADOS" -gt 0 ] && echo "  $MANIF_USADOS caminho(s) aceito(s) pelo manifesto de origem v2.5 (sha+modo exatos)"
 echo "== PREFLIGHT OK — reset liberado; rode pos-deploy-modos.sh logo depois =="

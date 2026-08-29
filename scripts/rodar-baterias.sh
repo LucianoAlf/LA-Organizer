@@ -37,7 +37,7 @@ nivel_de() { sed -nE "s/^$1[[:space:]]+([a-z-]+)[[:space:]].*/\1/p" "$NIVEIS_ARQ
 motivo_de() { sed -nE "s/^$1[[:space:]]+[a-z-]+[[:space:]]+(.*)/\1/p" "$NIVEIS_ARQ" | head -1; }
 
 declare -A P_NIVEL F_NIVEL N_NIVEL
-for k in unit integration-sandbox environment-read-only; do P_NIVEL[$k]=0; F_NIVEL[$k]=0; N_NIVEL[$k]=0; done
+for k in unit integration-sandbox environment-read-only environment-controlled-write-probe; do P_NIVEL[$k]=0; F_NIVEL[$k]=0; N_NIVEL[$k]=0; done
 PROBLEMAS=0; TOT_ARQ=0
 
 printf '%-32s %-22s %7s %7s  %s\n' "bateria" "nivel" "passou" "falhou" "veredito"
@@ -50,6 +50,12 @@ for t in "$AQUI"/teste-*.sh; do
   if [ -z "$nivel" ]; then
     printf '%-32s %-22s %7s %7s  %s\n' "$n" "SEM NIVEL" "?" "?" "REPROVA: declare em $(basename "$NIVEIS_ARQ")"
     PROBLEMAS=$((PROBLEMAS+1)); continue
+  fi
+  # SONDA DE ESCRITA fora do total padrao (laudo v2.7, bloqueador 5): ela TENTA escrever em
+  # producao. So entra quando pedida explicitamente por --nivel.
+  if [ "$nivel" = environment-controlled-write-probe ] && [ "$SO_NIVEL" != environment-controlled-write-probe ]; then
+    printf '%-32s %-22s %7s %7s  %s\n' "$n" "$nivel" "-" "-" "FORA DO PADRAO: rode --nivel environment-controlled-write-probe"
+    continue
   fi
   [ -n "$SO_NIVEL" ] && [ "$nivel" != "$SO_NIVEL" ] && continue
   TOT_ARQ=$((TOT_ARQ+1))
@@ -88,6 +94,7 @@ done
 # baterias declaradas que nao existem no disco tambem reprovam
 while read -r arq nivel _; do
   case "$arq" in ''|\#*) continue ;; esac
+  [ "$nivel" = environment-controlled-write-probe ] && [ "$SO_NIVEL" != environment-controlled-write-probe ] && continue
   [ -n "$SO_NIVEL" ] && [ "$nivel" != "$SO_NIVEL" ] && continue
   [ -n "$FILTRO" ] && case "$arq" in *"$FILTRO"*) : ;; *) continue ;; esac
   if [ ! -f "$AQUI/$arq" ]; then
@@ -98,7 +105,7 @@ done < "$NIVEIS_ARQ"
 
 echo
 TOT_P=0; TOT_F=0
-for k in unit integration-sandbox environment-read-only; do
+for k in unit integration-sandbox environment-read-only environment-controlled-write-probe; do
   [ -n "$SO_NIVEL" ] && [ "$k" != "$SO_NIVEL" ] && continue
   printf '%-22s %2d bateria(s)  %4d asseracao(oes)  %d falha(s)\n' \
     "$k" "${N_NIVEL[$k]}" "$(( ${P_NIVEL[$k]} + ${F_NIVEL[$k]} ))" "${F_NIVEL[$k]}"

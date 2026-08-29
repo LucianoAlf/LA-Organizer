@@ -56,8 +56,27 @@ lock_tomar() {   # <dir> <nonce> <ttl_min>
   # TOMADA DE ORFAO POR RENAME. `rm -rf` seguido de `mkdir` tem janela: dois processos podem
   # remover e os dois criarem. `mv` de diretorio para nome inexistente e atomico e a origem
   # deixa de existir — entao so UM processo consegue mover, e so ele segue para o mkdir.
-  local morto="$dir.orfao.$$.$(date +%s)"
+  # TOMADA DE ORFAO POR RENAME, com RECONFERENCIA (laudo v2.7, bloqueador 4).
+  # `mv` de diretorio para nome inexistente e atomico, entao so um processo move. Mas entre
+  # LER a idade e MOVER passa tempo: se o dono fizer heartbeat nessa fresta, o invasor ainda
+  # move e substitui um lock RECEM-RENOVADO -- reproduzido com um wrapper de `mv` que renova
+  # o epoch imediatamente antes do rename. Mover primeiro e perguntar depois nao basta:
+  # e preciso PERGUNTAR DE NOVO, ja com o diretorio fora do caminho, e DESFAZER se o dono
+  # estava vivo. O rename e reversivel; roubar o lock de um deploy vivo nao e.
+  local nonce_antes morto ep2 idade2 nonce_depois
+  nonce_antes=$(cat "$dir/nonce" 2>/dev/null)
+  morto="$dir.orfao.$$.$(date +%s%N 2>/dev/null || date +%s)"
   mv -T "$dir" "$morto" 2>/dev/null || { echo "OCUPADO $idade"; return 1; }
+  ep2=$(cat "$morto/epoch" 2>/dev/null)
+  case "$ep2" in ''|*[!0-9]*) ep2=$(stat -c %Y "$morto" 2>/dev/null) ;; esac
+  case "$ep2" in ''|*[!0-9]*) ep2=0 ;; esac
+  idade2=$(( ( $(date +%s) - ep2 ) / 60 ))
+  nonce_depois=$(cat "$morto/nonce" 2>/dev/null)
+  if [ "$idade2" -lt "$ttl" ] || [ "$nonce_depois" != "$nonce_antes" ]; then
+    # o dono renovou (ou trocou) na fresta: devolve intacto e desiste.
+    mv -T "$morto" "$dir" 2>/dev/null
+    echo "OCUPADO $idade2"; return 1
+  fi
   rm -rf "$morto" 2>/dev/null
   if mkdir "$dir" 2>/dev/null; then
     printf '%s\n' "$nonce" > "$dir/nonce" || return 2
