@@ -6352,20 +6352,32 @@ const HABIT_TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 // Parse <<HABIT_ACTION>>[...]<<END>> — array (ou objeto) de ações.
 function parseHabitMarker(text) {
   if (!text) return null;
-  const re = /<<HABIT_ACTION>>\s*([\s\S]*?)\s*<<END>>/i;
-  const m = text.match(re);
-  if (!m) return null;
-  const cleanText = text.replace(re, '').trim();
-  let parsed = null;
-  try {
-    parsed = JSON.parse(m[1].trim());
-  } catch (err) {
-    logSchemaErr('HABIT_ACTION', ['invalid_json: ' + err.message], m[1]);
-    return { malformed: true, cleanText };
-  }
-  const rawActions = Array.isArray(parsed) ? parsed : [parsed];
-  const valid = [];
+  // HABIT-MULTI-BLOCO-SILENT-DROP (Matheus 25/08): "ontem e hoje CHECK" → o LLM emite um
+  // <<HABIT_ACTION>> POR dia. Com regex não-global só o 1º era consumido; o resto sobrava no
+  // texto e o catch-all stripper o removia em silêncio. Mesmo defeito de parseFinanceMarkers
+  // (Luciano 03/06). Agora todos os blocos entram no mesmo lote.
+  const re = /<<HABIT_ACTION>>\s*([\s\S]*?)\s*<<END>>/gi;
+  const blocos = [...text.matchAll(re)];
+  if (!blocos.length) return null;
+  const cleanText = text.replace(/<<HABIT_ACTION>>\s*[\s\S]*?\s*<<END>>/gi, '').trim();
+  const rawActions = [];
   const dropped = [];
+  // Erro de JSON já é logado por bloco (com o texto cru); fica fora de `dropped` pra não
+  // relogar agregado no fim e duplicar o sinal que o auditor caça.
+  const jsonErrs = [];
+  for (const b of blocos) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(b[1].trim());
+    } catch (err) {
+      logSchemaErr('HABIT_ACTION', ['invalid_json: ' + err.message], b[1]);
+      jsonErrs.push('invalid_json: ' + err.message);
+      continue;
+    }
+    if (Array.isArray(parsed)) rawActions.push(...parsed);
+    else rawActions.push(parsed);
+  }
+  const valid = [];
   for (let i = 0; i < rawActions.length; i++) {
     const a = rawActions[i];
     // Sprint 31.6 (B3) — normaliza aliases que TOM emite (consistente com tasks/events).
@@ -6383,7 +6395,10 @@ function parseHabitMarker(text) {
     if (why) { dropped.push(`action[${i}]:${why}`); continue; }
     valid.push(a);
   }
-  if (dropped.length) logSchemaErr('HABIT_ACTION', dropped, parsed);
+  if (dropped.length) logSchemaErr('HABIT_ACTION', dropped, rawActions);
+  // Depois do log agregado: o erro de JSON já foi logado por bloco, e reentrar aqui duplicaria
+  // o sinal que o auditor caça. Ele conta como motivo, não como segunda linha de log.
+  dropped.push(...jsonErrs);
   // `motivos` sobe junto (HABIT-EDIT-SEM-CAMINHO): quem trata o malformed precisa distinguir
   // "schema torto numa ação que existe" (vale pedir de novo) de "ação que não existe" (pedir de
   // novo nunca vai funcionar — o caminho é o app). Sem isso os dois casos viram a mesma fala.
