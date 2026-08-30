@@ -1040,3 +1040,101 @@ Não corrigido (teto de 1/rodada, e é módulo diferente do fix de hoje — conf
 de 29/08 não alcança linha única). Proposta: negative-lookbehind de negação
 ("não consegui/não deu/não rolou") antes do verbo, ou não rebaixar linha que já contenha admissão
 de falha.
+
+### ETAPA 3 — o resíduo entregue PROVA o guard, mesmo sem o original: controle byte-a-byte
+
+**Ocorrências:** 1 (30/08). **Reabre parte do cluster que 19/08 declarou improvável.**
+
+Em 19/08 medi que o cluster "não consegui registrar" é improvável por construção: o `raw_excerpt`
+do `CHOKEPOINT` até 19/08 guarda a nota JÁ rebaixada, ou seja o guard apagou a entrada que o teste
+precisaria. Em 25/08 refinei: quando o achado alega contradição INTRA-mensagem, o resíduo basta.
+Hoje apareceu um terceiro caminho, mais forte, e ele vale para achados que alegam o CONTRÁRIO
+(que o TOM deixou de responder).
+
+Caso: `cfdf9bdb`/`ded67aeb` (Rose 04/07 02:47 e 02:52 BRT). Ela pediu LEITURA/CÁLCULO — "qual o
+total de contas ai?" — e recebeu uma frase que começa em **"Mas ainda faltam 4 valores…"**. Frase
+começando em "Mas" é fragmento: algo foi removido antes dela. O original não existe em lugar nenhum.
+
+O que funcionou: em vez de tentar recuperar o original, **construir um controle que DEVE disparar e
+comparar a SAÍDA dele com o outbound entregue**. `enforceNoMarkerHonesty("Adicionei o total na
+lista: R$ 9.914,32.\n\nMas ainda faltam 4 valores (…)", {nothingPersisted:true})` devolve
+`fired:true` e uma saída **idêntica byte a byte** ao que o WhatsApp recebeu às 02:47 (resíduo +
+`_⚠️ Na real não consegui registrar isso agora…_`). Se a saída de um controle reproduz o entregue
+caractere por caractere, o caminho está provado — o original vira redundante.
+
+O que salvou a medição foi a disciplina do neutro (15/08 e 17/08). Minha PRIMEIRA reconstrução
+("Somei aqui: o total confirmado é R$ 9.914,32.") deu `fired:false` — e o controle negativo
+`{nothingPersisted:false}` deu `fired:false` também. **Dois neutros ⇒ controle malformado, não
+veredito.** `hasCompletionClaim` não casa "Somei aqui"/"o total confirmado é"; casa
+"Adicionei…"/"✅ Total adicionado…". Trocado o controle, a comparação passou a valer.
+
+Regra: **quando o original foi destruído pelo guard, o par (resíduo entregue + controle que dispara
+e reproduz o resíduo) é prova suficiente.** O que NÃO vale é reconstruir o original "no espírito" e
+ler o resultado — aí o neutro é indistinguível de "o guard não pega".
+
+Raiz que isto expôs, e é de população: o chokepoint tem veto para `infoGathering`,
+`contentSolicitation`, `userProgressStatus`, `restatesRecentWrite` e `awaitingConfirm`, mas
+**nenhum para "o turno pediu leitura/cálculo, nunca houve o que gravar"**. Em pedido de leitura
+`nothingPersisted` é trivialmente `true`, e verbo de COMPOSIÇÃO ("adicionei o total na lista" =
+escrevi no texto da resposta) é indistinguível de verbo de PERSISTÊNCIA para o `hasCompletionClaim`.
+Deixado aberto — teto de 1/rodada.
+
+### ETAPA 3 — o resumo do auditor inverte a DIREÇÃO CAUSAL, e a inversão empurra pra refutação
+
+**Ocorrências:** 2 achados na mesma rodada (30/08). Vale como classe, não como caso.
+
+Os dois achados investigados hoje cujo resumo fala em "TOM afirmou e depois se desmentiu" tinham a
+direção trocada:
+
+- `b94f7465` (Matheus 25/08) — resumo: "TOM disse que parte do check-in não entrou, mas em seguida
+  admitiu que não houve falha real". Lido assim, é falso-positivo de guard e fecha na hora. **A
+  medição diz o oposto:** o aviso de perda parcial estava CERTO (só 1 dos 2 `habit_logs` gravou);
+  o que era falso foi o TOM DEPOIS negar a perda. Virou a correção da rodada.
+- `bf25d692` (Alf 06/07) — resumo: "TOM afirmou ter reagendado, mas logo depois disse que não
+  conseguiu registrar". Também invertido: o reagendamento foi REAL, e o que veio depois foi o
+  chokepoint rebaixando uma reafirmação VERDADEIRA (o Alf tinha mandado um reply-quote vazio, só ".").
+
+Nos dois, a leitura do resumo aponta para "o guard é agressivo demais" e a leitura dos dados aponta
+para "o guard estava certo / o guard negou uma verdade" — vereditos opostos, com consertos opostos.
+
+Regra: **a direção causal do `summary` é uma AFIRMAÇÃO A VERIFICAR, não a premissa da investigação.**
+Quando o resumo disser "afirmou X e depois admitiu não-X", vá ao banco descobrir qual das duas falas
+é a verdadeira ANTES de escolher o alvo. Ordenar as duas falas no tempo não basta — a segunda fala
+ser uma negação não a torna a correta.
+
+### ETAPA 1/2 — o acervo é contado em ACHADOS e o trabalho é por TURNO: inflação de 1,22x
+
+**Ocorrências:** 1 (30/08), medição de população sobre os 132 abertos.
+
+O auditor emite tipicamente um PAR por incidente — um `frustration` (a fala irritada do usuário) e
+um `dropped_request` (a fala do TOM) — com o mesmo `occurred_at` ao microssegundo e evidências
+diferentes. Medido: **132 achados abertos = 108 turnos distintos, inflação 1,22x**; 19 grupos
+compartilham `occurred_at`+colaborador (um deles com 3 achados).
+
+Correção de rota sobre a proposta de 16/08, que pedia deduplicação por `occurred_at`+colaborador na
+abertura: **isso apagaria informação.** Duplicatas byte-a-byte (mesma evidência) são **0** — os
+pares não são o mesmo achado contado duas vezes, são dois ângulos do mesmo turno, e às vezes só um
+dos dois é procedente (hoje: `806b1537` é bug vivo e `de6a1feb` é consequência dele, não causa).
+
+O que a medição sugere de fato: **não deduplicar, mas AGRUPAR** — o achado deveria carregar um
+`turn_id`, e o placar da ETAPA 1 deveria reportar turnos além de achados. Hoje "133 abertos" soa 22%
+pior do que o trabalho realmente é, e investigar um dos pares já responde o outro (foi o que
+aconteceu com `cfdf9bdb`/`ded67aeb` e com `806b1537`/`de6a1feb`).
+
+### ETAPA 1 — o briefing contou `severidade='alto'` numa coluna que grava `'high'`
+
+**Ocorrências:** 1 (30/08).
+
+O briefing da rodada informava "0 de severidade alta". A tabela tem **1 achado com
+`severity='high'`** (`bad1c55e`) — a contagem a montante quase certamente filtrou por `'alto'`
+(português), enquanto `tom_audit_findings.severity` grava em **inglês**. Os outros valores no acervo
+são `medio`/`baixo`, em português: a coluna é MISTA, e é isso que faz o erro passar despercebido —
+um filtro em português devolve a maioria das linhas e some só com as altas.
+
+O custo é direto na ETAPA 2: o protocolo manda pegar o de maior severidade quando não há sinal
+fresco, e o agente foi informado de que não havia nenhum. Só apareceu porque a varredura leu a
+coluna crua.
+
+Proposta de virar código: normalizar `severity` na escrita (um valor por conceito) ou, mais barato e
+imediato, o `gov-runner` contar por `in ('alto','high')` e falhar ruidosamente se encontrar as duas
+grafias na mesma tabela.
