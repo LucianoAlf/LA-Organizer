@@ -68,7 +68,14 @@ async function judgeShadow({ finding, fixIntent, transcript }, deps = {}) {
     }
     return v;
   } catch (e) {
-    return { verdict: 'inconclusivo', reason: `judge falhou: ${String(e.message).slice(0, 80)}` };
+    // O judge NÃO decidiu — o instrumento quebrou. Antes isso virava um `inconclusivo` igual a
+    // todos os outros e ia parar no verified_note como se fosse veredito; quem lia a tabela
+    // depois não tinha como distinguir "rodou e não deu pra concluir" de "nem rodou".
+    // `infraError` existe pra o runner poder gritar (tom-error.log) em vez de engolir.
+    // O slice(0,80) cortava a mensagem EXATAMENTE onde ela começava a ser útil: em 31/08 a nota
+    // gravada terminava em "ERROR codex_models_" e escondia o motivo real (401, refresh token
+    // revogado). 300 chars é o mesmo teto que o irmão logo acima já usa.
+    return { verdict: 'inconclusivo', infraError: true, reason: `judge NÃO rodou (falha de infra): ${String(e.message).slice(0, 300)}` };
   }
 }
 

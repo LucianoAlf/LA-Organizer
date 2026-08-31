@@ -180,6 +180,44 @@ test('CONTROLE: negação de UMA ação não blinda a claim de OUTRA na mesma li
   assert.strictEqual(r.fired, true, 'a claim não-negada ainda tem que ser pega');
 });
 
+// Vizinhos do fix de 31/08 (Alf, rodada 31/08): a exceção cobria só a negação do verbo de
+// CAPACIDADE no passado. A mesma admissão honesta, negada pelo próprio verbo ("não registrei")
+// ou no futuro ("não vou conseguir registrar"), continuava sendo apagada — a uma palavra de
+// distância do caso Rafinha.
+test('admissão negando o PRÓPRIO verbo não dispara', () => {
+  for (const s of [
+    'não registrei ainda porque o sistema recusou',
+    'não anotei isso, deu erro aqui',
+    'Não criei o evento — o app devolveu erro.',
+    'Ainda não adicionei na lista, deu pau aqui.',
+  ]) {
+    assert.strictEqual(downgradeEmptyPromise(s).fired, false, s);
+  }
+});
+
+test('admissão de incapacidade FUTURA não dispara', () => {
+  for (const s of [
+    'não vou conseguir registrar agora',
+    'Não vou conseguir anotar isso hoje, me cobra amanhã.',
+    'Não vou dar conta de criar tudo isso agora.',
+    'Não vou poder registrar por aqui.',
+  ]) {
+    assert.strictEqual(downgradeEmptyPromise(s).fired, false, s);
+  }
+});
+
+test('CONTROLE: negar o verbo não blinda a claim seguinte na mesma linha', () => {
+  // O par do controle de sempre, agora pelo lado da negação direta: quem escapa da exceção é
+  // o verbo que tem "já" na frente, não "não".
+  const r = downgradeEmptyPromise('Não registrei o horário, mas já criei a tarefa do Dudu.');
+  assert.strictEqual(r.fired, true, 'a claim não-negada ainda tem que ser pega');
+});
+
+test('CONTROLE: admitir agora e prometer depois continua caindo', () => {
+  const r = downgradeEmptyPromise('Não registrei ainda, mas vou registrar assim que voltar.');
+  assert.strictEqual(r.fired, true, 'a promessa futura é vazia e tem que cair');
+});
+
 test('CONTROLE: promessa real continua sendo rebaixada mesmo com negação em outra frase', () => {
   const r = downgradeEmptyPromise('Não consigo mexer no app. Vou criar na agenda pros 8 confirmarem.');
   assert.strictEqual(r.fired, true, 'a promessa da 2ª frase é vazia e tem que cair');

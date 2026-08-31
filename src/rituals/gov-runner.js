@@ -244,6 +244,13 @@ async function main() {
           const aprovados = res.filter((x) => x.verdict === 'aprovado').length;
           const incon = res.filter((x) => x.verdict === 'inconclusivo').length;
           console.log(`[Shadow] ${res.length} no passe: ${aprovados} aprovados, ${barrados.length} reprovados (reabertos), ${incon} inconclusivos (NÃO provados)`);
+          // Judge que nem rodou não é resultado — é o instrumento quebrado. Sai no tom-error.log
+          // porque um passe inteiro de infra caída, contado como "inconclusivo", parece rodada
+          // normal no out.log e a tabela fica com nota de veredito que ninguém emitiu.
+          const infra = res.filter((x) => x.infraError);
+          if (infra.length) {
+            console.error(`[Shadow] INFRA CAÍDA: ${infra.length}/${res.length} sem veredito — o judge não rodou. Motivo: ${infra[0].reason}`);
+          }
         } else {
           console.log('[Shadow] nenhum finding corrigido neste ciclo pra verificar ao vivo');
         }

@@ -38,8 +38,17 @@ const OFERTA_CONDICIONAL_RE =
 // vírgula/conjunção. Em "não consegui criar o evento, mas já registrei a tarefa" o "registrei"
 // NÃO está negado — blindar a linha inteira deixaria passar exatamente a mentira que o guard
 // existe pra pegar. Por isso a exceção é por OCORRÊNCIA, não por linha.
+//
+// São três formas de negar a mesma admissão, e o fix de 31/08 só cobria a primeira:
+//   1. capacidade no passado — "não consegui registrar", "não deu pra anotar"
+//   2. capacidade no futuro  — "não vou conseguir registrar", "não vou dar conta de anotar"
+//   3. o PRÓPRIO verbo       — "não registrei ainda", "não anotei isso"
+// A (3) é a mais direta e era a que mais escapava: sem auxiliar nenhum, a negação encosta no
+// verbo, e o slice anterior é literalmente "não ". Por isso o branch dela exige o fim de
+// string logo após o advérbio — "não consegui criar o evento, mas já registrei" continua
+// caindo, porque ali o que encosta em "registrei" é "já", não "não".
 const NEGACAO_ANTES_RE =
-  /\b(?:n[ãa]o|nunca|nem)\s+(?:consigo|consegui|consegue|conseguimos|posso|pude|podia|d[áa]|deu|dava|rola|rolou|tem\s+como|tenho\s+como|tinha\s+como)\s+(?:pra|para|de|que|a)?\s*$/i;
+  /\b(?:n[ãa]o|nunca|nem)\s+(?:(?:vou|vai|vamos|v[ãa]o)\s+)?(?:consigo|consegui|consegue|conseguimos|conseguir|posso|pude|podia|poder|d[áa]|deu|dava|dar\s+conta\s+de|rola|rolou|rolar|tem\s+como|tenho\s+como|tinha\s+como)\s+(?:pra|para|de|que|a)?\s*$|\b(?:n[ãa]o|nunca|nem)\s+$/i;
 
 // Rebaixa promessa comprovadamente vazia: remove a(s) linha(s) de promessa e anexa o aviso
 // honesto (lição Ana 30/06: anexar SEM remover = contradição intra-mensagem). Puro; o engine

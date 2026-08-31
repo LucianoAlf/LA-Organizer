@@ -14,7 +14,7 @@ async function shadowPass(findings, deps = {}) {
   const out = [];
   for (const f of (findings || [])) {
     try {
-      let verdict = 'inconclusivo'; let reason = ''; let evidencia = '';
+      let verdict = 'inconclusivo'; let reason = ''; let evidencia = ''; let infraError = false;
       const rep = isReproducible(f);
       if (!rep.ok) {
         reason = `não reproduzível: ${rep.motivo}`;
@@ -23,7 +23,7 @@ async function shadowPass(findings, deps = {}) {
         if (erro) { reason = `runner: ${erro}`; }
         else {
           const j = await judgeShadow({ finding: f, fixIntent: f.fix_intent, transcript }, deps);
-          verdict = j.verdict; reason = j.reason || '';
+          verdict = j.verdict; reason = j.reason || ''; infraError = !!j.infraError;
           evidencia = (transcript.turns || []).map((t) => `«${t.userText}» → «${t.reply}» [${(t.markers || []).join(',')}]`).join(' ; ').slice(0, 500);
         }
       }
@@ -32,12 +32,17 @@ async function shadowPass(findings, deps = {}) {
       try {
         if (barrou) {
           await supabase.from('tom_audit_findings').update({ status: 'novo', verified_result: null, verified_note: nota }).eq('id', f.id);
-        } else {
+        } else if (!infraError) {
           await supabase.from('tom_audit_findings').update({ verified_note: nota }).eq('id', f.id);
         }
+        // infraError: o judge não rodou, então NADA foi aprendido sobre o achado — e o
+        // verified_note é onde mora a prova do fechamento. Sobrescrever aqui apaga a prova e
+        // deixa "inconclusivo" num achado corrigido: quem abre a tabela reabre o achado, ou
+        // para de confiar nela. Foi o que aconteceu com 1193b03b/db8ff165/725c940e em 31/08.
+        // A falha continua visível — no marker_logs abaixo e no console.error do gov-runner.
         await supabase.from('marker_logs').insert({ marker_type: 'SHADOW', result: VERDICT_TO_RESULT[verdict] || 'skipped', reason: `${verdict}: ${reason}`.slice(0, 120) });
       } catch (_) { /* persistência best-effort; nunca derruba o ciclo */ }
-      out.push({ id: f.id, verdict, barrou });
+      out.push({ id: f.id, verdict, barrou, infraError, reason });
     } catch (e) {
       console.warn('[Shadow] finding pulado:', f.id, e.message);
       out.push({ id: f.id, verdict: 'inconclusivo', barrou: false });

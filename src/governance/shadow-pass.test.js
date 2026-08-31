@@ -78,3 +78,29 @@ test('finding cujo runShadow rejeita não impede o próximo de ser processado', 
   assert.strictEqual(out[0].barrou, false);
   assert.strictEqual(out[1].verdict, 'aprovado');
 });
+
+// INFRA CAÍDA ≠ VEREDITO (rodada 31/08). O judge que aborta (Codex exit 1: refresh token
+// revogado) devolvia `inconclusivo` igual a qualquer outro, e a linha de update sobrescrevia o
+// verified_note — que é justamente onde mora a prova do fechamento. Resultado real: 1193b03b,
+// db8ff165 e 725c940e ficaram `status=corrigido` carregando "inconclusivo: judge falhou".
+test('judge que NÃO rodou (infra) não sobrescreve o verified_note', async () => {
+  const d = deps({ judgeShadow: async () => ({ verdict: 'inconclusivo', infraError: true, reason: 'judge NÃO rodou (falha de infra): Codex saiu com código 1' }) });
+  const out = await shadowPass([{ id: 'f1', summary: 'x', fix_intent: 'y', verified_note: 'PROVA: antes=X depois=Y' }], d);
+  assert.strictEqual(out[0].infraError, true, 'o runner precisa conseguir gritar');
+  const clobber = d._updates.find((u) => u.tbl === 'tom_audit_findings' && 'verified_note' in u.patch);
+  assert.strictEqual(clobber, undefined, 'a prova do fechamento não pode ser apagada por um passe que não rodou');
+});
+
+test('CONTROLE: inconclusivo LEGÍTIMO (judge rodou e não concluiu) segue gravando a nota', async () => {
+  const d = deps({ judgeShadow: async () => ({ verdict: 'inconclusivo', reason: 'cenário não reproduz o contexto' }) });
+  await shadowPass([{ id: 'f1', summary: 'x', fix_intent: 'y' }], d);
+  const nota = d._updates.find((u) => u.tbl === 'tom_audit_findings' && 'verified_note' in u.patch);
+  assert.ok(nota, 'veredito de verdade continua sendo registrado');
+  assert.match(nota.patch.verified_note, /inconclusivo: cenário não reproduz/);
+});
+
+test('CONTROLE: infra caída ainda deixa rastro no marker_logs', async () => {
+  const d = deps({ judgeShadow: async () => ({ verdict: 'inconclusivo', infraError: true, reason: 'falha de infra' }) });
+  await shadowPass([{ id: 'f1', summary: 'x', fix_intent: 'y' }], d);
+  assert.strictEqual(d._markers.length, 1, 'a falha não pode sumir de todo lugar');
+});
