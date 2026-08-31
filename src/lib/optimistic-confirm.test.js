@@ -596,3 +596,22 @@ test('override explícito includeWeak:false é respeitado (enforceNoMarkerHonest
   // caminho FORTE-only do enforceNoMarkerHonesty quando o gate de estado não autorizou o fraco)
   assert.strictEqual(sanitizeOptimisticConfirm('Fechou!', 'failed', { includeWeak: false }), 'Fechou!');
 });
+
+// ── Delegação: o módulo SEMPRE soube casar; quem estava cego era a consulta ──
+// Caso Dudu 28/08 19:34 e 19:36 (verificado no banco): a tarefa "Pele da caixa rasgada —
+// Estúdio 1" foi criada POR Dudu PARA Rafinha. O engine consultava só `assigned_to`, então
+// ela não entrava na lista e o guard negou duas vezes uma afirmação VERDADEIRA. Estes testes
+// prendem o comportamento do módulo: dada a tarefa na lista, a reafirmação é reconhecida.
+// Se alguém apertar o casamento de tokens no futuro, isto quebra antes do usuário sentir.
+test('reafirmação de tarefa DELEGADA é reconhecida quando ela está na lista', () => {
+  const itens = [{ title: 'Pele da caixa rasgada — Estúdio 1', remind_at: null }];
+  assert.strictEqual(restatesRecentWrite('✅ Registrado! Pele da caixa rasgada — Estúdio 1, prioridade alta, tá na mão do Rafinha.', itens), true);
+  assert.strictEqual(restatesRecentWrite('Boa notícia — já tá registrado, Dudu! A *Pele da caixa rasgada — Estúdio 1* tá na lista delegada pro Rafinha, vence hoje.', itens), true);
+});
+test('lista VAZIA (o que a consulta cega devolvia) faz o guard negar a verdade', () => {
+  assert.strictEqual(restatesRecentWrite('✅ Registrado! Pele da caixa rasgada — Estúdio 1, prioridade alta.', []), false);
+});
+test('CONTROLE: título que a fala NÃO reafirma continua não casando', () => {
+  const itens = [{ title: 'Pele da caixa rasgada — Estúdio 1', remind_at: null }];
+  assert.strictEqual(restatesRecentWrite('✅ Registrado! Comprei as cordas do violão ontem.', itens), false);
+});

@@ -13948,11 +13948,23 @@ Output AGORA, apenas o marker:`;
   try {
     const _npW = !_metrics.marker_emitted && !_metrics.auto_retry_succeeded && !_metrics.deterministic_complete_ok;
     if (_npW && !_metrics.marker_attempted && (hasCompletionClaim(reply) || hasWeakCompletionClaim(reply))) {
-      const _sinceIso = new Date(_t0 - 180_000).toISOString();
+      // CHOKEPOINT-CEGO-PRA-DELEGACAO (31/08, Dudu 28/08 19:34 e 19:36): a consulta olhava só
+      // `assigned_to`, então TODA escrita DELEGADA era invisível — quem cria a tarefa pra outra
+      // pessoa não aparece em `assigned_to`. A tarefa "Pele da caixa rasgada — Estúdio 1" foi
+      // criada POR Dudu PARA Rafinha; o guard não a viu e chamou de mentira a fala verdadeira do
+      // TOM, duas vezes em 90 segundos ("✅ Registrado!" → "não consegui registrar"). Delegar é o
+      // caso mais comum do TOM, então o furo não era de borda: era o caminho principal.
+      // Janela 3min → 10min pelo mesmo motivo do caso "Compras pra lojinha" (27/08 22:23): a
+      // tarefa tinha sido criada 4min37s antes e ficava fora por pouco. 10min é onde a curva
+      // ESTABILIZA — medido no acervo de 18 disparos, 10min/30min/1h/24h dão todos 6/18, porque
+      // quem filtra é o casamento estrito de título, não o tempo. Esticar mais não compra nada
+      // e só aumenta a chance de casar por coincidência.
+      const _sinceIso = new Date(_t0 - 600_000).toISOString();
       const { data: _rw } = await supabase.from('tasks')
-        .select('title,remind_at').eq('assigned_to', collab.id)
+        .select('title,remind_at')
+        .or(`assigned_to.eq.${collab.id},created_by.eq.${collab.id}`)
         .gte('updated_at', _sinceIso)
-        .order('updated_at', { ascending: false }).limit(5);
+        .order('updated_at', { ascending: false }).limit(20);
       // remind_at junto do título (Rafinha 24/08): reafirmar lembrete cita data/hora, não o nome.
       _restatesRecentWrite = restatesRecentWrite(reply, _rw || []);
     }
