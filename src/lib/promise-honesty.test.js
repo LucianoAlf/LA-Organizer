@@ -137,3 +137,51 @@ test('CONTROLE: linha em branco órfã (sobra da promessa removida) continua col
   assert.ok(!/\n\n\n/.test(r.reply), 'não sobra buraco triplo onde a promessa foi removida');
   assert.match(r.reply, /^Beleza, Alf!\n\n_⚠️/, 'a nota honesta encosta direto na linha neutra');
 });
+
+// PROMISE-DOWNGRADE-REBAIXA-ADMISSAO (achados ab345c8f / ac7517b8).
+// O engine já sabe desde 01/06 que RECUSA não é promessa: `_replyIsDecline` (engine.js ~13543)
+// zera `replyHasPromise` quando a reply nega o verbo. Mas aquele flag só governa a MÉTRICA —
+// o strip aqui re-testa a RE crua, não enxerga a negação, e apaga a linha assim mesmo. Como
+// nesses casos a admissão é a ÚNICA linha, o usuário recebe só o disclaimer genérico: uma
+// troca ESTRITAMENTE PIOR, porque a mensagem original já era honesta E trazia os detalhes.
+//
+// Literais do banco (marker_logs ACTIONABLE_NO_MARKER, raw_excerpt), medidos contra o
+// conversation_history: nos dois turnos o outbound entregue foi só o disclaimer.
+const RAFINHA_ADMISSAO =
+  'Vacilei aqui — não consegui registrar essa mudança de horário do Dudu agora. ' +
+  'Me repete: hoje fechamento às 18h30, e toda terça e quinta também às 18h30 — é isso? ' +
+  'Me confirma de novo que eu ajusto já.';
+
+test('caso real (Rafinha, 27/08 11:09): admissão de falha não pode ser rebaixada', () => {
+  const r = downgradeEmptyPromise(RAFINHA_ADMISSAO);
+  assert.strictEqual(r.fired, false, 'quem já admitiu que NÃO registrou não está prometendo nada');
+  assert.strictEqual(r.reply, RAFINHA_ADMISSAO, 'a reply sai intacta');
+  assert.match(r.reply, /18h30/, 'o horário que o usuário precisa confirmar permanece');
+  assert.match(r.reply, /é isso\?/i, 'a re-pergunta permanece — sem ela o fluxo morre');
+});
+
+test('variantes de admissão de falha não disparam', () => {
+  for (const s of [
+    'Pô, tive um problema aqui e não consegui registrar. Pode repetir o pedido?',
+    'Não deu pra anotar isso agora — me manda de novo?',
+    'Não rolou criar a tarefa aqui, tenta de novo?',
+    'Não tenho como registrar isso por aqui.',
+  ]) {
+    assert.strictEqual(downgradeEmptyPromise(s).fired, false, s);
+  }
+});
+
+test('CONTROLE: negação de UMA ação não blinda a claim de OUTRA na mesma linha', () => {
+  // "não consegui criar o evento" é admissão, mas "já registrei a tarefa" é afirmação de
+  // persistência — e nada persistiu. A exceção é por OCORRÊNCIA do verbo, não por linha:
+  // blindar a linha inteira aqui deixaria passar exatamente a mentira que o guard existe
+  // pra pegar.
+  const r = downgradeEmptyPromise('Não consegui criar o evento, mas já registrei a tarefa.');
+  assert.strictEqual(r.fired, true, 'a claim não-negada ainda tem que ser pega');
+});
+
+test('CONTROLE: promessa real continua sendo rebaixada mesmo com negação em outra frase', () => {
+  const r = downgradeEmptyPromise('Não consigo mexer no app. Vou criar na agenda pros 8 confirmarem.');
+  assert.strictEqual(r.fired, true, 'a promessa da 2ª frase é vazia e tem que cair');
+  assert.ok(!/vou criar na agenda/i.test(r.reply), 'a promessa vazia some');
+});

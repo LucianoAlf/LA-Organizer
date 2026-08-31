@@ -27,12 +27,35 @@ const PROMISE_NOMARKER_DISCLAIMER =
 const OFERTA_CONDICIONAL_RE =
   /(?:\b(?:se|quando)\s+(?:voc[êe]\s+)?(?:precisar|quiser|surgir|aparecer)\b|\bqualquer\s+coisa\b|(?:[ée]\s+)?\bs[óo]\s+(?:me\s+)?(?:mandar?|chamar?|falar?|avisar?|pedir?)\b|\bme\s+(?:manda|chama|fala|avisa)\b)[^.!?]*\bque\s+eu\b/i;
 
+// ADMISSÃO DE FALHA não é promessa (bug 01/06, revivido em 27/08 — Rafinha). O engine já sabe
+// disso: `_replyIsDecline` (engine.js ~13543) zera `replyHasPromise` quando a reply nega o
+// verbo. Só que aquele flag governa a MÉTRICA — o strip daqui re-testava a RE crua, não via a
+// negação, e apagava a linha do mesmo jeito. Como a admissão costuma ser a ÚNICA linha, o user
+// recebia só o disclaimer genérico: troca ESTRITAMENTE PIOR, porque o original já era honesto
+// e ainda trazia o detalhe e a re-pergunta ("hoje 18h30, terça e quinta 18h30 — é isso?").
+//
+// A negação precisa colar no verbo: vale a que está IMEDIATAMENTE antes, sem atravessar
+// vírgula/conjunção. Em "não consegui criar o evento, mas já registrei a tarefa" o "registrei"
+// NÃO está negado — blindar a linha inteira deixaria passar exatamente a mentira que o guard
+// existe pra pegar. Por isso a exceção é por OCORRÊNCIA, não por linha.
+const NEGACAO_ANTES_RE =
+  /\b(?:n[ãa]o|nunca|nem)\s+(?:consigo|consegui|consegue|conseguimos|posso|pude|podia|d[áa]|deu|dava|rola|rolou|tem\s+como|tenho\s+como|tinha\s+como)\s+(?:pra|para|de|que|a)?\s*$/i;
+
 // Rebaixa promessa comprovadamente vazia: remove a(s) linha(s) de promessa e anexa o aviso
 // honesto (lição Ana 30/06: anexar SEM remover = contradição intra-mensagem). Puro; o engine
 // só chama quando JÁ PROVOU o vazio (actionable + zero markers + retry não persistiu).
 function downgradeEmptyPromise(text) {
   const s = String(text || '');
-  const ehPromessa = (t) => REPLY_PROMISE_RE.test(t) && !OFERTA_CONDICIONAL_RE.test(t);
+  const ehPromessa = (t) => {
+    if (OFERTA_CONDICIONAL_RE.test(t)) return false;
+    const re = new RegExp(REPLY_PROMISE_RE.source, 'gi');
+    let m;
+    while ((m = re.exec(t)) !== null) {
+      if (m[0].length === 0) { re.lastIndex += 1; continue; }
+      if (!NEGACAO_ANTES_RE.test(t.slice(0, m.index))) return true;
+    }
+    return false;
+  };
   const linhas = s.split('\n');
   if (!linhas.some(ehPromessa)) return { reply: s, fired: false };
   // Dropar TODA linha em branco (como era) colapsa também o separador entre duas linhas
