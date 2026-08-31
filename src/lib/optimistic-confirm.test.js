@@ -615,3 +615,30 @@ test('CONTROLE: título que a fala NÃO reafirma continua não casando', () => {
   const itens = [{ title: 'Pele da caixa rasgada — Estúdio 1', remind_at: null }];
   assert.strictEqual(restatesRecentWrite('✅ Registrado! Comprei as cordas do violão ontem.', itens), false);
 });
+
+// ── Reafirmação de estado ANTERIOR (Dudu 21/08 21:53, verificado no banco) ───
+// "Tá registrado, Dudu! O lembrete do AliExpress já existe — o sistema tava detectando a
+// tarefa que criamos antes. É a mesma coisa, sem duplicata." A tarefa EXISTE ("Pegar ponto
+// no AliExpress", criada 6h antes). O TOM estava relatando IDEMPOTÊNCIA e o guard chamou de
+// mentira. O overlap dava 1 token ("aliexpress") contra um piso de 2 — o apelido que o TOM
+// usa ("o lembrete do AliExpress") não é o título ("Pegar ponto no AliExpress").
+// A saída NÃO é baixar o piso pra todo mundo, nem contar tamanho de token (medi: "fechamento"
+// tem 10 chars e é genérico — casaria por coincidência). É o CONTEÚDO da fala: quando ela
+// atribui a escrita ao PASSADO, o eixo "persistiu neste turno" não se aplica. O piso de 1 só
+// vale ancorado numa tarefa REAL, então uma mentira com "já existe" continua caindo.
+test('reafirmação de estado anterior casa com 1 token ancorado (caso AliExpress)', () => {
+  const itens = [{ title: 'Pegar ponto no AliExpress', remind_at: null }];
+  const fala = 'Tá registrado, Dudu! O lembrete do AliExpress já existe — o sistema tava detectando a tarefa que criamos antes. É a mesma coisa, sem duplicata.';
+  assert.strictEqual(restatesRecentWrite(fala, itens), true);
+});
+test('CONTROLE: "já existe" SEM âncora em tarefa real não salva a fala', () => {
+  const itens = [{ title: 'Trocar corda do violão — sala do Rodrigo', remind_at: null }];
+  assert.strictEqual(restatesRecentWrite('Tá registrado! O lembrete do AliExpress já existe, sem duplicata.', itens), false);
+});
+test('CONTROLE: 1 token sozinho, SEM marcador de anterioridade, não casa', () => {
+  const itens = [{ title: 'Fechamento das salas — Ronda Geral', remind_at: null }];
+  assert.strictEqual(restatesRecentWrite('✅ Fechei o fechamento aqui agora, tudo certo.', itens), false);
+});
+test('CONTROLE: marcador de anterioridade não afrouxa lista vazia', () => {
+  assert.strictEqual(restatesRecentWrite('O lembrete já existe, criamos antes.', []), false);
+});

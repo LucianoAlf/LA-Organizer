@@ -377,10 +377,25 @@ function _citaLembrete(reply, remindAt) {
     : new RegExp(`\\b${hh}\\s*[h:]\\s*${String(min).padStart(2, '0')}\\b`, 'i');
   return re.test(reply);
 }
+// CHOKEPOINT-NEGA-ESTADO-ANTERIOR (Dudu 21/08 21:53, conferido no banco): "Ta registrado,
+// Dudu! O lembrete do AliExpress ja existe -- o sistema tava detectando a tarefa que criamos
+// antes. E a mesma coisa, sem duplicata." A tarefa EXISTE ("Pegar ponto no AliExpress", criada
+// 6h antes); o TOM relatava IDEMPOTENCIA e o guard chamou de mentira.
+// O overlap dava 1 token ("aliexpress") contra piso 2, porque o APELIDO que o TOM usa nao e o
+// TITULO. Duas saidas foram MEDIDAS no acervo de 18 disparos e descartadas: baixar o piso pra
+// todo mundo, e contar tamanho de token -- "fechamento" tem 10 chars, e generico, e casava por
+// coincidencia. O que discrimina e o CONTEUDO: quando a fala atribui a escrita ao PASSADO, o
+// eixo "persistiu NESTE turno" simplesmente nao se aplica a ela.
+// O freio nao reabre: o piso de 1 so vale ANCORADO num titulo real, entao uma mentira com "ja
+// existe" sobre coisa que nao existe continua caindo. Medido: vira exatamente 1 caso em 18, e
+// a RE casa com uma unica fala do acervo inteiro.
+const REAFIRMA_ANTERIOR_RE =
+  /\b(?:j[áa]\s+(?:existe|existia|tinha|estava|havia|era)|(?:que\s+)?(?:criamos|fizemos|voc[êe]\s+criou|eu\s+criei|marcamos)\s+(?:antes|ontem|outro\s+dia)|de\s+antes|sem\s+duplicata|n[ãa]o\s+(?:vai\s+)?duplica)/i;
 function restatesRecentWrite(reply, itens) {
   const lista = Array.isArray(itens) ? itens : [];
   if (!reply || !lista.length) return false;
   const hay = new Set(_restateTokens(reply));
+  const anterior = REAFIRMA_ANTERIOR_RE.test(String(reply));
   return lista.some((it) => {
     const item = it && typeof it === 'object' ? it : { title: it, remind_at: null };
     if (_citaLembrete(reply, item.remind_at)) return true;
@@ -388,7 +403,8 @@ function restatesRecentWrite(reply, itens) {
     const toks = _restateTokens(item.title);
     if (toks.length < 2) return false;
     const hits = toks.filter((tk) => hay.has(tk)).length;
-    return hits >= 2 && hits / toks.length >= 0.6;
+    if (hits >= 2 && hits / toks.length >= 0.6) return true;
+    return anterior && hits >= 1;
   });
 }
 
