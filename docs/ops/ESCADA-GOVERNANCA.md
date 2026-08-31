@@ -1138,3 +1138,107 @@ coluna crua.
 Proposta de virar código: normalizar `severity` na escrita (um valor por conceito) ou, mais barato e
 imediato, o `gov-runner` contar por `in ('alto','high')` e falhar ruidosamente se encontrar as duas
 grafias na mesma tabela.
+
+### ETAPA 2 (varredura) — o lever que drenou 3: RESPOSTA DETERMINÍSTICA (gap ≤ 2s)
+
+**Ocorrências:** 1 (31/08). **Quebra a sequência de 6 rodadas sem nenhum fechamento por "já corrigido".**
+
+Os levers anteriores geram candidato por proximidade textual (regex casa, data bate, comentário cita
+o nome) e pagam ~50% de falso. Este gera por **cronometragem**, e o critério é físico: se o outbound
+saiu **1–2 segundos** depois do inbound, a resposta **não passou pelo LLM** — foi um guard
+determinístico. Duas consequências que nenhum outro lever dá de graça:
+
+1. o achado é **reproduzível sem LLM** — é chamar a função com o literal;
+2. o texto entregue **identifica o guard** (basta grepar a frase no `src/`).
+
+Como: para cada achado aberto, pegar as mensagens da janela e procurar o par
+`inbound → outbound` com `gap ≤ 3s`. Deu **20 candidatos em 127** abertos não-altos. Precisão bruta
+é baixa (a maioria dos 20 é confirmação determinística LEGÍTIMA — "📨 Recado enviado!", "Lançado na
+fatura!"), mas o subconjunto em que o texto entregue **não tem relação com o pedido** é ouro puro:
+os 2 fechamentos do dia vieram dali.
+
+Fechados com prova por este lever, ambos por `detectFinanceEditIntent` sequestrando texto longo:
+
+- `db8ff165` (Alf 23/07 19:11:35→19:11:36 BRT, **+1s**): colou 3477 chars sobre um debate de IA nas
+  escolas de música e recebeu _"Esse lançamento já tá fora das ~2h que eu consigo editar pelo chat"_.
+  Rodado nas duas versões: **ANTES (`41eab967^`) `{op:'delete'}` → HOJE `null`.**
+- `1193b03b` (Alf 28/07 20:11:00→20:11:01 BRT, **+1s**): áudio de 1113 chars sobre a iluminação do
+  Sonoramente, mesmo redirect literal. **ANTES `{op:'edit'}` → HOJE `null`.**
+
+Controles válidos nas DUAS versões (regra 25/08): `"muda a categoria daquela compra"` → `{op:edit}`
+nos dois lados; `"apaga aquele lancamento"` → `{op:delete}` nos dois; saudação → `null` nos dois.
+Fix `41eab967` (29/07, FINEDIT-TRANSCRIPT-HIJACK) é posterior aos dois incidentes.
+
+⚠️ O mesmo lever devolveu 4 outros que **não fecharam**, e a razão é a regra de 18/08: mudar de
+veredito não basta. `2a03e384`/`251f6362` (21/07) mudam no detector, mas o outbound seguinte veio
+**+15s e 330 chars** e não casa o texto do redirect — o veredito mudou e o sintoma não é aquele.
+`8efa7be0` a escada de 14/08 já mediu que não passa por esta função (a raiz é o `pickSkill`).
+
+Proposta de virar código: o `gov-runner` entrega no início da rodada os achados com
+`gap(inbound→outbound) ≤ 3s`, com o texto do outbound anexado. É uma query só, e é o único gerador
+medido até hoje que entrega candidato **já provável sem LLM**.
+
+### ETAPA 3 — o FINGERPRINT numérico: quando o TOM cita onde cortou, rode o `slice`
+
+**Ocorrências:** 1 (31/08), e produziu o terceiro fechamento do dia.
+
+`725c940e` (Alf 02/07): o TOM numerou 57 dos 71 nomes de uma lista e avisou
+_"a lista cortou a partir de **"Ram..."** — manda o restante"_. O inbound no banco está **inteiro**
+(1238 chars, termina em "Adriana Vilas"). Duas leituras possíveis e opostas: (a) o LLM ficou
+preguiçoso na saída longa e racionalizou o corte — confabulação; (b) a entrada chegou truncada.
+
+O desempate é aritmético e custa uma linha: `content.slice(0, 1000)` termina exatamente em
+**`"• Ram"`**. O TOM não estava inventando — estava **lendo em voz alta a borda do próprio buffer**.
+Isso é assinatura, não coincidência, e aponta o `HIST_MSG_MAX = 1000` do
+`src/utils/history-truncate.js`.
+
+Rodado nas duas versões com o literal: **ANTES (`27b603d9^`) 1040 chars, cauda
+`"us Sterque (G)\n• Ram …[mensagem longa truncada no histórico]"`, perde "Adriana Vilas";
+HOJE 1238 chars, íntegro.** Controles válidos nos dois lados: prosa longa de 1400 chars sem quebras
+→ 1040 em ambos; texto curto → intacto em ambos. Fix `27b603d9` (24/08, branch de lista
+item-bearing até `HIST_LIST_MAX=4000`), **posterior** ao incidente.
+
+Regra: **quando o TOM cita o PONTO onde algo cortou, trate a citação como coordenada.** Rode os
+`slice` dos tetos que existem no caminho (`HIST_MSG_MAX`, `HIST_LIST_MAX`, limites de prompt) e veja
+qual deles cai naquele caractere. Se algum cair, a hipótese de confabulação está morta — e o alvo é
+o teto, não o guard de honestidade. É prima da regra de 27/08 ("reconstrua a JANELA de contexto
+antes de tratar negação de fato como confabulação"), com um teste bem mais barato.
+
+Subproduto do mesmo lever, e é o aviso de calibragem: cruzar "o histórico do turno tinha mensagem
+que a versão antiga decapitava" contra os abertos deu **21 achados em 125** — e a presença da
+decapitação **não** prova causa. Foi assim que `db8ff165` entrou na lista pelo motivo errado (a
+mensagem de 3477 chars era a ATUAL do turno, e a atual **nunca** passa pelo truncador — está
+escrito no cabeçalho do módulo, linha 7). O que derrubou a hipótese foi a cronometragem.
+**Filtrar pela janela real importa:** o histórico é `limit(30)` (`system.js:1611`), então contar
+"decapitou em ±8h" infla o candidato — com a janela certa o conjunto caiu de 23 para 21, e vários
+dos restantes têm a mensagem decapitada a 4–80 horas de distância do turno.
+
+### ETAPA 3 — `occurred_at` errado 2× na mesma rodada, e um dos desvios é positivo
+
+**Ocorrências:** 3 rodadas (19/08, 22/08, 31/08). A regra de 19/08 segue pagando.
+
+Hoje, dois dos três turnos investigados a fundo estavam no lugar errado: `725c940e` marcava
+02/07 **19:18** BRT e o turno real é **14:15:20** (−5h03); `3b37b568` marcava 01/07 **21:28:26** e o
+turno real é **19:12:21** (+2h16). O segundo é o caso perigoso descrito em 19/08: às 21:28 o mesmo
+fluxo, com a mesma pessoa, **FUNCIONOU** ("Vou" → "✅ Presença confirmada" em 2s). Quem conferisse
+pelo `occurred_at` mediria o sucesso e fecharia como falso positivo.
+
+Novidade: o desvio de `3b37b568` é **positivo** (+2h16). A tabela de 19/08 só tinha desvios
+negativos, o que sugeria "o `occurred_at` atrasa". Não atrasa — **erra para os dois lados**, então
+nem "procure antes" serve como heurística. Só a agulha resolve.
+
+### ETAPA 2 — buraco vivo deixado com raiz: RSVP por reply-quote nunca é reconhecido
+
+Achado `3b37b568`, medido hoje contra o código de HOJE, **não corrigido** (teto de 1/rodada).
+Ana Paula respondeu ao convite do Alf **por reply-quote** com "Confirma por favor" e recebeu
+_"não consegui registrar"_. São **dois** bloqueios independentes em `src/events/detect-rsvp-reply.js`:
+
+1. o gate da linha 48 (`n.split(' ').length > 4`) mata o literal, porque o bloco de quote entra no
+   texto e leva a mensagem a **38 palavras** — e responder por quote é justamente o caminho natural
+   de responder a um convite;
+2. mesmo sem o quote (3 palavras), `"confirma por favor"` dá `null`: o `Set` CONFIRMED tem
+   `confirmo`/`confirmar`/`confirmado`/`pode confirmar` e **não tem `confirma`**.
+
+Controles válidos: `"Vou"` e `"Confirmo"` → `confirmed`; `"Não vou poder"` → `declined`; frase longa
+→ `null`. Logo os dois `null` são comportamento, não instrumento (regra 15/08). Corrigível em
+minutos por quem pegar — o gate deveria rodar sobre o texto **sem** o bloco de quote.
