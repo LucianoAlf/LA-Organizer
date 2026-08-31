@@ -13572,6 +13572,16 @@ async function processMessage(phone, text, raw = {}) {
     // do nothingPersisted (que só olha executed): rejeitado deixa nothingPersisted=true mas
     // markerAttempted=true → guard dispara. Ver optimistic-confirm.js (enforceNoMarkerHonesty).
     _metrics.marker_attempted = (recentMarkers || []).some(r => _isDomainMarker(r.marker_type));
+    // CONFAB-UNKNOWN-NAO-E-DESCONHECIDO (31/08): `_domainOf` (~13914) deriva o dominio de
+    // `marker_emitted` -- mas o chokepoint SO roda quando nada persistiu, ou seja, naquele ramo
+    // `marker_emitted` e vazio POR CONSTRUCAO. Resultado: 9 dos 18 disparos do acervo saíram como
+    // `confab:unknown`, o que parecia "dominio desconhecido" e na verdade era "li o campo errado".
+    // Isso cega a triagem do agente de governanca. Os tipos TENTADOS existem em `recentMarkers`,
+    // mas ler de la no ponto do chokepoint atravessaria escopo de outro try -- exatamente o
+    // ReferenceError que deixou a trava morta e calada por 106 turnos. Guardo aqui, onde esta
+    // em escopo, e o _domainOf le do _metrics.
+    _metrics.marker_attempted_types = (recentMarkers || [])
+      .filter(r => _isDomainMarker(r.marker_type)).map(r => r.marker_type).join(',').slice(0, 100);
     if (fired.length > 0) {
       _metrics.marker_emitted = fired.join(',').slice(0, 100);
       _metrics.marker_result = 'executed';
@@ -13912,7 +13922,9 @@ Output AGORA, apenas o marker:`;
   // result∈CHECK('executed','rejected','skipped','redirected','fallback') → 'redirected' (a
   // trava redirecionou a fala falsa pra honesta); marker_type='CHOKEPOINT'; reason='confab:<dom>'.
   const _domainOf = (m) => {
-    const em = String((m && m.marker_emitted) || '');
+    // marker_emitted primeiro (caminho geral); no ramo do chokepoint ele e vazio por construcao,
+    // e ai vale o que foi TENTADO-e-rejeitado -- que e justamente o dominio da acao que falhou.
+    const em = String((m && m.marker_emitted) || (m && m.marker_attempted_types) || '');
     if (/FINANCE/i.test(em)) return 'finance';
     if (/INVENTORY|SHOP/i.test(em)) return 'inventory';
     if (/TASK|CHECKLIST/i.test(em)) return 'task';
