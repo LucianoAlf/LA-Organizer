@@ -13,6 +13,8 @@
 // curta. "sim, mas remarca pra sexta" → null (cai no LLM). A decisão de short-circuitar
 // fica no engine, que só age se ALÉM disso houver UM convite pendente recente.
 
+const { stripReplyScaffold } = require('./detect-approval-reply');
+
 function norm(s) {
   return String(s || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
@@ -28,6 +30,10 @@ const CONFIRMED = new Set([
   'confirmo', 'confirmado', 'confirmada', 'confirmar', 'confirmadissimo',
   'bora', 'presente', 'estarei', 'estarei presente', 'estou dentro', 'to dentro',
   'pode confirmar', 'pode marcar', 'confirmo presenca', 'sim confirmo',
+  // 3a pessoa do imperativo (finding 3b37b568): o Set tinha confirmo/confirmar/
+  // confirmado/pode confirmar e NAO tinha "confirma" -- a forma que a Ana Paula usou.
+  'confirma', 'confirma sim', 'confirma por favor', 'confirmo por favor',
+  'confirma pra mim', 'pode confirmar por favor',
 ]);
 const DECLINED = new Set([
   'nao', 'naoo', 'nao vou', 'vou nao', 'nao posso', 'nao consigo', 'nao da',
@@ -43,7 +49,14 @@ const TENTATIVE = new Set([
  * @returns {{status:'confirmed'|'declined'|'tentative'}|null}
  */
 function detectBareRsvpReply(text) {
-  const n = norm(text);
+  // A MEDIDA E A FALA DA PESSOA, NAO A CITACAO (finding 3b37b568, Ana Paula 01/07).
+  // Responder o convite por reply-quote e o caminho NATURAL -- e era justamente o que
+  // quebrava: o bloco citado entrava no texto, a mensagem chegava a 38 palavras e o gate
+  // abaixo matava. O convite CITADO ainda por cima carrega "vou / nao vou / talvez", entao
+  // medir o texto inteiro nao era so ruido, era ler as palavras do TOM como se fossem dela.
+  // Mesmo helper que os irmaos detect-approval-reply e detect-project-status-intent usam.
+  const { userText } = stripReplyScaffold(String(text || ''));
+  const n = norm(userText);
   if (!n) return null;
   if (n.split(' ').length > 4) return null; // frase longa → não é RSVP cru → LLM
   if (CONFIRMED.has(n)) return { status: 'confirmed' };
