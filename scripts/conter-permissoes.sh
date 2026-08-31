@@ -53,9 +53,19 @@ if [ "$VARRER" = 1 ]; then
   # "nada exposto aqui". Num scanner de segurança, erro engolido é a pior resposta possível:
   # parece saúde. Agora o stderr do find é capturado e qualquer linha vira `problemas`.
   ERR_FIND=""
+  # `! -type l` NAO e cosmetico: symlink no Linux e SEMPRE `lrwxrwxrwx` e o kernel IGNORA
+  # esses bits (quem governa o acesso e o ALVO), e `chmod` num symlink segue o link e mexe no
+  # alvo -- o link em si e inchmodavel. Sem isto a varredura contava symlink como exposto,
+  # tentava as 3 passadas, nunca convergia, e gritava `restante=N` a cada 15 min PARA SEMPRE,
+  # derrubando a sentinela de backup pra CRITICO de hora em hora. Aconteceu em 31/08: o Codex
+  # CLI do canal de ops deixou 4 symlinks em .claude-tom/.codex/tmp/arg0/ (pais todos
+  # `drwx------ root`, exposicao real ZERO). O ramo do /tmp ja tinha `-type f` e por isso nunca
+  # sofreu -- a blindagem foi aplicada num ramo e esquecida no outro.
+  # `! -type l` em vez de `-type f`: diretorio aberto E exposicao de verdade e tem que continuar
+  # no escopo; so o symlink sai.
   contar() {
     local saida rc
-    saida=$(find "$1" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$TMPERR")
+    saida=$(find "$1" ! -type l \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$TMPERR")
     rc=$?
     if [ "$rc" -ne 0 ] || [ -s "$TMPERR" ]; then
       ERR_FIND="$(head -1 "$TMPERR")"
@@ -76,7 +86,7 @@ if [ "$VARRER" = 1 ]; then
     fi
     if ! n=$(contar "$real"); then problemas=$((problemas+1)); continue; fi
     if [ "$n" -gt 0 ]; then
-      if ! find "$real" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} +; then
+      if ! find "$real" ! -type l \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} +; then
         echo "[varrer] chmod retornou erro em $real" >&2; problemas=$((problemas+1))
       fi
       total=$((total + n))
@@ -128,7 +138,7 @@ if [ "$VARRER" = 1 ]; then
     # ainda há exposto: corrige e mede de novo
     for r in "${TODAS[@]}"; do
       [ -d "$r" ] || continue
-      find "$r" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} + 2>"$TMPERR"         || { echo "[varrer] chmod da passada falhou em $r: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); }
+      find "$r" ! -type l \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} + 2>"$TMPERR"         || { echo "[varrer] chmod da passada falhou em $r: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); }
     done
     find /tmp -maxdepth 1 -name 'tom-*' -type f -user root -exec chmod go-rwx {} + 2>"$TMPERR"       || { echo "[varrer] chmod da passada falhou em /tmp: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); }
     total=$((total + restante))
@@ -248,7 +258,7 @@ medidas_falhas() { wc -l < "$FALHASF" 2>/dev/null || echo 9999; }
 
 expostos() {
   local saida rc
-  saida=$(find "$1" \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$ERRTMP")
+  saida=$(find "$1" ! -type l \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$ERRTMP")
   rc=$?
   if [ "$rc" -ne 0 ] || [ -s "$ERRTMP" ]; then
     echo "[conter] MEDIDA FALHOU em $1 (rc=$rc): $(head -1 "$ERRTMP" | cut -c1-120)" >&2
