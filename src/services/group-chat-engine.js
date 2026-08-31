@@ -212,7 +212,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       .finally(pararTyping);
 
     console.log(`[OpsAgent] pedido de ${quem}: "${String(text).slice(0, 80)}"`);
-    return await postTomText(supabase, groupId, '👽 Tô nisso — já te falo.');
+    return await postTomText(supabase, groupId, opsAgent.ackDoPedido(text, quem));
   }
 
   // ── PRÉ-PASSO: confirmação determinística de ação destrutiva pendente (roda ANTES do LLM) ──

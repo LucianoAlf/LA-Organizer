@@ -232,3 +232,62 @@ test('linhaDeCusto devolve null quando o CLI não mandou custo', () => {
   assert.strictEqual(m.linhaDeCusto('Alf', undefined), null);
   assert.strictEqual(m.linhaDeCusto('Alf', NaN), null);
 });
+
+// ── ACK DO PEDIDO ───────────────────────────────────────────────────────────────────────────
+// Bug do Alf, 31/08: o ack era constante, então "👀" e um pedido de 40 linhas recebiam a MESMA
+// frase. O contrato que estes testes prendem é o que faltava: o ack tem que PROVAR leitura.
+
+test('ack: pedido curto ganha aceno curto, sem citar', () => {
+  const m = carregar(LIGADO);
+  const a = m.ackDoPedido('👀', 'Alf');
+  assert.ok(a.includes('Alf'), a);
+  assert.ok(!a.includes('"'), `curto não cita: ${a}`);
+});
+
+test('ack: pedido com itens enumerados devolve a CONTA', () => {
+  const m = carregar(LIGADO);
+  const pedido = 'Tom, tres coisas:\n1. o vizinho do regex\n2. a regra do verified_note\n3. a decisao de desenho';
+  assert.ok(m.ackDoPedido(pedido, 'Alf').includes('3'), m.ackDoPedido(pedido, 'Alf'));
+});
+
+test('ack: pedido longo de uma linha cita o trecho — é a prova de que leu', () => {
+  const m = carregar(LIGADO);
+  const a = m.ackDoPedido('Tom, conta quantos arquivos tem em src/services e me diz o numero', 'Alf');
+  assert.ok(a.includes('"'), a);
+  assert.ok(a.includes('quantos arquivos'), a);
+});
+
+test('ack: pedidos DIFERENTES não podem receber a mesma frase (a regressão de 31/08)', () => {
+  const m = carregar(LIGADO);
+  const curto = m.ackDoPedido('👀', 'Alf');
+  const longo = m.ackDoPedido('Le os ultimos 3000 registros do tom-out.log e cruza com marker_logs', 'Alf');
+  const lista = m.ackDoPedido('Tom:\n1. um\n2. dois', 'Alf');
+  assert.notStrictEqual(curto, longo);
+  assert.notStrictEqual(longo, lista);
+  assert.notStrictEqual(curto, lista);
+});
+
+test('ack: CONTRATO — sempre string não-vazia, inclusive no vazio/null', () => {
+  const m = carregar(LIGADO);
+  // Devolver vazio faria o postTomText entregar nada e o watcher ler o turno como não-atendido.
+  for (const entrada of ['', null, undefined, '   ', '\n\n']) {
+    const a = m.ackDoPedido(entrada, 'Alf');
+    assert.strictEqual(typeof a, 'string');
+    assert.ok(a.trim().length > 0, JSON.stringify(entrada));
+  }
+});
+
+test('ack: remetente desconhecido não vira nome falso', () => {
+  const m = carregar(LIGADO);
+  assert.ok(!m.ackDoPedido('👀', 'alguém do grupo').includes('alguém do grupo'));
+  assert.ok(!m.ackDoPedido('👀', null).includes('null'));
+});
+
+test('contarItensDoPedido: só conta marcador que ABRE a linha', () => {
+  const m = carregar(LIGADO);
+  assert.strictEqual(m.contarItensDoPedido('1. um\n2. dois\n3) tres'), 3);
+  assert.strictEqual(m.contarItensDoPedido('- um\n• dois\n* tres'), 3);
+  // "1998" no meio da prosa não é item — senão qualquer texto com número vira "lista".
+  assert.strictEqual(m.contarItensDoPedido('em 1998 foram 2 casos e 3 alertas'), 0);
+  assert.strictEqual(m.contarItensDoPedido(''), 0);
+});

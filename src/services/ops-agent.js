@@ -172,6 +172,42 @@ try {
   console.warn('[OpsAgent] sem drain hook de shutdown:', e.message);
 }
 
+// ── ACK DO PEDIDO ──────────────────────────────────────────────────────────────────────────
+// Era a constante "Tô nisso — já te falo.": a MESMA frase pra um "👀" e pra 40 linhas de
+// análise técnica. Quem manda coisa densa lê aquilo como recusa automática de robô — foi a
+// queixa do Alf em 31/08, e ele estava certo: o ack não provava que alguém tinha LIDO.
+//
+// É determinístico DE PROPÓSITO, e isso não é preguiça. O ack é o único retorno que a pessoa
+// tem durante uma rodada de até 30 min; gerar por LLM colocaria uma chamada de rede — e uma
+// falha possível — na frente da única mensagem que PRECISA sair na hora. Aqui custa zero e
+// nunca falha. O que faltava não era prosa bonita: era o ack carregar o que foi entendido.
+//
+// Devolve SEMPRE string não-vazia: o chamador entrega isso ao `postTomText` e usa o retorno
+// como prova de entrega. Devolver null aqui faria o watcher tratar o turno como não-atendido.
+const ACK_CURTO_MAX = 40;
+
+/** Itens que a pessoa enumerou: "1." / "2)" / bullet. Só conta linha que ABRE com o marcador. */
+function contarItensDoPedido(texto) {
+  let n = 0;
+  for (const l of String(texto || '').split('\n')) {
+    if (/^\s*(?:\d+[.)]\s|[-•*]\s)/.test(l)) n += 1;
+  }
+  return n;
+}
+
+function ackDoPedido(texto, quem = null) {
+  const t = String(texto || '').trim();
+  const nome = (quem && quem !== 'alguém do grupo') ? `, ${quem}` : '';
+  // A CONTA vem antes do corte por tamanho: uma pauta enumerada curta cairia no aceno
+  // genérico — mas quem enumera não está batendo papo, está passando pauta. Teste pegou.
+  const itens = contarItensDoPedido(t);
+  if (itens >= 2) return `👽 Peguei os ${itens}${nome}. Vou medir e te falo.`;
+  if (t.length <= ACK_CURTO_MAX) return `👽 Opa${nome} — deixa eu ver aqui.`;
+  const primeira = (t.split('\n').find((l) => l.trim().length > 0) || t).trim();
+  const trecho = primeira.length > 70 ? `${primeira.slice(0, 70).trimEnd()}…` : primeira;
+  return `👽 Peguei${nome}: "${trecho}" — vou olhar e te falo.`;
+}
+
 // Governança reusa este spawn com protocolo próprio. Extraído em funções puras para o
 // zero-regressão do canal de ops ficar provado por teste, e não por leitura.
 function resolverBriefing(quem, briefing) {
@@ -320,5 +356,6 @@ module.exports = {
   isOpsChannel, runOpsAgent, buildBriefing, OPS_GROUP_ID, OPS_ALLOWLIST, OPS_ENABLED,
   pedidosEmAndamento, textoDePedidosPerdidos, configurarCanalAviso, avisarPedidosPerdidos,
   resolverBriefing, resolverTimeout, OPS_TIMEOUT_MS, linhaDeCusto,
+  ackDoPedido, contarItensDoPedido, ACK_CURTO_MAX,
   _registrarPedido, _concluirPedido,   // expostos para o teste do registro
 };
