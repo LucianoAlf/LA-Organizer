@@ -288,8 +288,17 @@ residuos() { ls -d "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* "$LK".mutex.sol
 # que tinha sobrado. Diagnostico que nao nomeia o achado obriga a proxima pessoa a reproduzir
 # do zero. NAO mexo na limpeza: sumir com o residuo sem saber qual e mascararia um defeito
 # real do lib-lock -- o `.mutex.morto.*` e o unico que a funcao conta e a listagem nao mostra.
-listar_residuos() { ls -d "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* "$LK".mutex.solto.* 2>/dev/null | tr '
-' ' '; }
+listar_residuos() { ls -d "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* "$LK".mutex.solto.* 2>/dev/null | tr -s "[:space:]" " "; }
+
+# ESPERA ASSENTAR ANTES DE JULGAR (31/08). Estas afirmacoes mediam um estado TRANSITORIO.
+# Reproduzido sob carga (4 cpus ocupadas, 12 rodadas): 2 falhas, e numa delas a mensagem saiu
+# "FALHA 0 residuo(s)" -- contou nao-zero e um instante depois ja era zero. A raiz: o orfao C
+# nasce DENTRO do subshell do `mv` falso, entao `$D/c.pid` pode ainda nao existir quando o
+# bloco de sincronizacao roda; o `[ -f ... ]` da falso, ninguem espera, e o `.mutex` que o C
+# segura legitimamente aparece como residuo.
+# Residuo que SOME sozinho nao e vazamento -- e corrida de medicao. O que reprova continua
+# sendo o que PERSISTE: se nao assentar em 5s, falha igual, e a mensagem mostra o estado FINAL.
+sem_residuo() { for _ in $(seq 1 50); do [ "$(residuos)" = 0 ] && return 0; sleep 0.1; done; return 1; }
 
 echo "-- A renova na fresta: A continua dono, B e C nao vencem --"
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
@@ -330,7 +339,7 @@ if grep -q "ADQUIRIDO\|ORFAO-REMOVIDO" "$D/c.out" 2>/dev/null; then
 else
   ok "C nao adquiriu durante a transicao de B ($(head -1 "$D/c.out" 2>/dev/null | cut -c1-24))"
 fi
-if [ "$(residuos)" = 0 ]; then ok "zero residuo .orfao/.mutex"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
+if sem_residuo; then ok "zero residuo .orfao/.mutex"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
 
 echo "-- A NAO renova: exatamente um entre B e C vence --"
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
@@ -344,7 +353,7 @@ wait
 V=$(grep -c '^VENCEU' "$D/placarbc" 2>/dev/null || true)
 if [ "$V" = 1 ]; then ok "exatamente um vencedor entre B e C ($(sed -n 's/^VENCEU //p' "$D/placarbc"))"
 else falhou "$V vencedores"; fi
-if [ "$(residuos)" = 0 ]; then ok "zero residuo apos a tomada legitima"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
+if sem_residuo; then ok "zero residuo apos a tomada legitima"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
 
 echo "-- falha ao DEVOLVER e fail-closed: nem vitoria nem dono abandonado --"
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
@@ -381,7 +390,7 @@ for rajada in 1 2 3; do
   [ "$V" = 1 ] || { RUINS=$((RUINS+1)); echo "        rajada $rajada: $V vencedores"; }
 done
 if [ "$RUINS" = 0 ]; then ok "3 rajadas de 12, um vencedor em cada"; else falhou "$RUINS rajada(s) com vencedores != 1"; fi
-if [ "$(residuos)" = 0 ]; then ok "zero residuo apos as rajadas"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
+if sem_residuo; then ok "zero residuo apos as rajadas"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
 
 
