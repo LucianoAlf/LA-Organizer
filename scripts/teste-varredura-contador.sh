@@ -39,6 +39,19 @@ trap limpar EXIT INT TERM
 COPIA="$S/conter.sh"
 sed -e "s|/opt/backups/la-organizer|$S/backup|g"     -e "s|/opt/LA-Organizer/.claude-tom|$S/cli|g"     -e "s|/opt/LA-Organizer/logs|$S/logs|g"     -e "s|find /tmp -maxdepth 1|find $S/tmp -maxdepth 1|g"     -e "s|mktemp /run/varrer|mktemp $S/varrer|g"     "$ORIG" > "$COPIA" || { echo "ABORTADO: sed falhou"; exit 2; }
 chmod 0700 "$COPIA"
+# CANAL DE ALERTA NEUTRALIZADO EXPLICITAMENTE (31/08). `conter-permissoes.sh` resolve o
+# alertador por `dirname "$0"`, entao a copia no sandbox ja nao alcancava o de producao -- mas
+# isso era garantia por ACIDENTE: bastava alguem passar a resolver por caminho absoluto e a
+# bateria voltaria a mandar WhatsApp de verdade. Foi exatamente o que aconteceu com a
+# teste-sentinela-timeline, que gritava 11 alertas REAIS por rodada. Aqui o alertar falso fica
+# do lado da copia e a asseracao no fim prova que o grito foi capturado, nao enviado.
+cat > "$S/alertar.sh" <<'ALERTAFALSO'
+#!/bin/bash
+printf '%s
+' "$*" >> "${ALERTAS_CAPTURADOS:?ALERTAS_CAPTURADOS nao definido}"
+ALERTAFALSO
+chmod 0700 "$S/alertar.sh"
+export ALERTAS_CAPTURADOS="$S/alertas-capturados.txt"; : > "$ALERTAS_CAPTURADOS"
 conferir_sub() { # <descricao> <minimo> <padrao>
   # OCORRENCIAS, nao linhas: as 3 raizes do CLI vivem todas na MESMA linha, entao
   # grep -c devolvia 1 e a bateria abortava achando que a substituicao nao pegou.
@@ -89,6 +102,13 @@ montar; mkdir -m 0755 "$S/logs/aberto"
 rodar; espera "diretorio 0755 continua sendo detectado" 1 0 0
 montar; ln -s /etc/hostname "$S/logs/link"
 rodar; espera "symlink nao conta e nao reprova" 0 0 0
+
+echo "== o grito do guard nao pode sair do sandbox =="
+if [ -s "$ALERTAS_CAPTURADOS" ]; then
+  ok "os $(grep -c . "$ALERTAS_CAPTURADOS") alerta(s) foram para o canal FALSO -- producao intocada"
+else
+  falha "zero alertas capturados: os cenarios com restante>0 tinham que gritar em algum lugar"
+fi
 
 echo
 echo "== $P passaram, $F falharam =="

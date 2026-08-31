@@ -9,13 +9,31 @@
 
 set -uo pipefail
 AQUI="$(dirname "$(readlink -f "$0")")"
-CB="$AQUI/check-backup.sh"
+CB="$AQUI/check-backup.sh"   # substituido logo abaixo pela copia com o canal neutralizado
 P=0; F=0
 ok()    { P=$((P+1)); printf '  ok    %s\n' "$1"; }
 falhou(){ F=$((F+1)); printf '  FALHA %s\n' "$1"; }
 D=$(mktemp -d /tmp/sentinela.XXXXXX)
 trap 'rm -rf "$D"' EXIT INT TERM
 mkdir -p "$D/db/dia"
+
+# CANAL DE ALERTA NEUTRALIZADO (31/08). O cabecalho desta bateria dizia "nao toca em producao"
+# e tocava: `grito()` no check-backup resolve `alertar.sh` AO LADO do proprio script, entao
+# rodar o binario de PRODUCAO mandava WhatsApp DE VERDADE pro grupo a cada cenario CRITICO --
+# e os atestados aqui sao fixture ("velho.drill", vencido-10d), ou seja, o grupo levava alarme
+# sobre um backup que nao existe. Aconteceu 3x em 31/08, uma por rodada da suite, e passou por
+# bug de producao. CHECK_BACKUP_DEST redireciona os DADOS; nao redirecionava o CANAL.
+# A copia leva junto o lib-baseline-queries porque o check-backup tambem o resolve por dirname.
+BIN="$D/bin"; mkdir -p "$BIN"
+cp "$AQUI/check-backup.sh" "$AQUI/lib-baseline-queries.sh" "$BIN/"   || { echo "ABORTADO: nao consegui copiar o check-backup para o sandbox"; exit 2; }
+cat > "$BIN/alertar.sh" <<'ALERTAFALSO'
+#!/bin/bash
+printf '%s
+' "$*" >> "${ALERTAS_CAPTURADOS:?ALERTAS_CAPTURADOS nao definido}"
+ALERTAFALSO
+chmod 0700 "$BIN/alertar.sh" "$BIN/check-backup.sh"
+CB="$BIN/check-backup.sh"
+export ALERTAS_CAPTURADOS="$D/alertas-capturados.txt"; : > "$ALERTAS_CAPTURADOS"
 
 # varredura sempre saudavel: nao e o que este teste mede
 VARR="$D/varredura"
@@ -149,6 +167,13 @@ if [ -x "$RD" ]; then
     || ok "com manifesto presente, a recusa passa a ser outra (docker/restore), nao o manifesto"
 else
   falhou "restore-drill.sh nao encontrado em $RD"
+fi
+
+echo "== o canal de alerta NAO pode ter saido do sandbox =="
+if [ -s "$ALERTAS_CAPTURADOS" ]; then
+  ok "os $(grep -c . "$ALERTAS_CAPTURADOS") alerta(s) foram para o canal FALSO -- producao intocada"
+else
+  falhou "zero alertas capturados: ou nenhum cenario gritou, ou o grito escapou para o alertar REAL"
 fi
 
 echo
