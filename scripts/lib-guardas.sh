@@ -16,7 +16,7 @@ GUARDAS=(alertar bootstrap-candidato backup-db backup-secrets check-backup conte
          rodar-baterias smoke-pos-aplicacao teste-alertar-mock teste-bundle-mock
          teste-ambiente-isolamento teste-bootstrap teste-cron-canonico teste-deploy-lock-sha teste-e2e-transicao teste-lock-dono teste-negativo-dataapi
          teste-negativo-permissoes teste-preflight-modo teste-publicar
-         teste-sentinela-timeline teste-seq-compare teste-modo-canonico teste-sequence-iscalled teste-turno-recursos teste-vercel-prova verificar-bundle)
+         teste-sentinela-timeline teste-seq-compare teste-varredura-contador teste-modo-canonico teste-sequence-iscalled teste-turno-recursos teste-vercel-prova verificar-bundle)
 
 # Dados (caminho relativo a scripts/, modo 0640)
 DADOS=(baterias-niveis.txt efeitos-criticos.txt manifesto-origem-v25.txt bundle-allowlist.txt bundle-esperados.txt suite-vermelhos-conhecidos.txt

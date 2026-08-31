@@ -26,6 +26,7 @@ teste-lock-dono.sh              unit                   lock em diretorio tempora
 teste-modo-canonico.sh          unit                   repo git descartavel em $TMPDIR
 teste-deploy-lock-sha.sh        unit                   repo git descartavel; so le o .ps1 do pacote
 teste-preflight-modo.sh         unit                   repo git descartavel com core.fileMode
+teste-varredura-contador.sh     unit                   copia do guard com as raizes redirecionadas para um dir descartavel; nao toca /run, /tmp real nem as raizes vivas
 
 teste-alertar-mock.sh           integration-sandbox     servidor HTTP local + marcas em diretorio injetado
 teste-bundle-mock.sh            integration-sandbox     dois servidores HTTP locais com bundle sintetico

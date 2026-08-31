@@ -76,7 +76,7 @@ if [ "$VARRER" = 1 ]; then
   }
   TMPERR=$(mktemp /run/varrer.XXXXXX 2>/dev/null || mktemp) || { echo "[varrer] mktemp falhou" >&2; exit 1; }
   chmod 0600 "$TMPERR"; trap 'rm -f "$TMPERR"' EXIT INT TERM
-  total=0; problemas=0
+  inicial=0; total=0; problemas=0
   for r in "${TODAS[@]}"; do
     if [ ! -d "$r" ]; then echo "[varrer] AUSENTE: $r" >&2; problemas=$((problemas+1)); continue; fi
     real=$(realpath "$r" 2>/dev/null) || { echo "[varrer] realpath falhou: $r" >&2; problemas=$((problemas+1)); continue; }
@@ -89,7 +89,7 @@ if [ "$VARRER" = 1 ]; then
       if ! find "$real" ! -type l \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} +; then
         echo "[varrer] chmod retornou erro em $real" >&2; problemas=$((problemas+1))
       fi
-      total=$((total + n))
+      inicial=$((inicial + n))
     fi
   done
 
@@ -103,7 +103,7 @@ if [ "$VARRER" = 1 ]; then
   else echo "[varrer] find em /tmp falhou: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); ntmp=0; fi
   if [ "$ntmp" -gt 0 ]; then
     if find /tmp -maxdepth 1 -name 'tom-*' -type f -user root -exec chmod go-rwx {} +; then
-      total=$((total + ntmp))
+      inicial=$((inicial + ntmp))
     else echo "[varrer] chmod retornou erro em /tmp/tom-*" >&2; problemas=$((problemas+1)); fi
   fi
 
@@ -141,8 +141,18 @@ if [ "$VARRER" = 1 ]; then
       find "$r" ! -type l \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) -exec chmod go-rwx {} + 2>"$TMPERR"         || { echo "[varrer] chmod da passada falhou em $r: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); }
     done
     find /tmp -maxdepth 1 -name 'tom-*' -type f -user root -exec chmod go-rwx {} + 2>"$TMPERR"       || { echo "[varrer] chmod da passada falhou em /tmp: $(head -1 "$TMPERR" | cut -c1-120)" >&2; problemas=$((problemas+1)); }
-    total=$((total + restante))
   done
+
+  # CONTADOR HONESTO (achado 31/08). Antes daqui, `total` somava `restante` a cada passada
+  # do laco -- e `restante` e exatamente o que NAO foi corrigido. Resultado: 4 arquivos
+  # irreparaveis viravam `corrigidos=16`, ou seja, o numero SUBIA quanto mais o guard
+  # falhava, e subia na direcao tranquilizadora. O bloco inicial tinha o mesmo vicio: somava
+  # `n` mesmo quando o chmod daquele lote retornava erro.
+  # Agora `corrigidos` significa UMA coisa, verificavel: estava exposto quando comecei e nao
+  # esta mais. Se sobrou mais do que havia (arquivo criado durante a varredura), o piso e 0 --
+  # subestimar um contador informativo e barato; infla-lo e mentira.
+  # O VEREDITO nao passa por aqui: quem reprova continua sendo `restante` + `problemas`.
+  if [ "$restante" -lt "$inicial" ]; then total=$(( inicial - restante )); else total=0; fi
 
   echo "[conter --varrer] corrigidos=$total restante=$restante problemas=$problemas passadas=$passadas"
 
