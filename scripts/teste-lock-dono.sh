@@ -282,6 +282,14 @@ echo "== BLOQUEADOR 2 (laudo v2.8): tres concorrentes, A/B/C =="
 # Agora toda aquisicao passa por um mutex, entao C nao observa o caminho no meio da transicao.
 C=nonce-processo-C
 residuos() { ls -d "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* "$LK".mutex.solto.* 2>/dev/null | wc -l; }
+# A mensagem tem que NOMEAR o que a contagem contou. Ate 31/08 `residuos()` contava QUATRO
+# padroes e a falha listava dois (`.orfao.*` e `.mutex`) ou nenhum -- entao um flake real na
+# suite completa saiu como `FALHA 1 residuo(s): ` com a lista VAZIA, e nao deu pra saber o
+# que tinha sobrado. Diagnostico que nao nomeia o achado obriga a proxima pessoa a reproduzir
+# do zero. NAO mexo na limpeza: sumir com o residuo sem saber qual e mascararia um defeito
+# real do lib-lock -- o `.mutex.morto.*` e o unico que a funcao conta e a listagem nao mostra.
+listar_residuos() { ls -d "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* "$LK".mutex.solto.* 2>/dev/null | tr '
+' ' '; }
 
 echo "-- A renova na fresta: A continua dono, B e C nao vencem --"
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
@@ -322,7 +330,7 @@ if grep -q "ADQUIRIDO\|ORFAO-REMOVIDO" "$D/c.out" 2>/dev/null; then
 else
   ok "C nao adquiriu durante a transicao de B ($(head -1 "$D/c.out" 2>/dev/null | cut -c1-24))"
 fi
-if [ "$(residuos)" = 0 ]; then ok "zero residuo .orfao/.mutex"; else falhou "$(residuos) residuo(s): $(ls -d "$LK".orfao.* "$LK".mutex 2>/dev/null | tr '\n' ' ')"; fi
+if [ "$(residuos)" = 0 ]; then ok "zero residuo .orfao/.mutex"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
 
 echo "-- A NAO renova: exatamente um entre B e C vence --"
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
@@ -336,7 +344,7 @@ wait
 V=$(grep -c '^VENCEU' "$D/placarbc" 2>/dev/null || true)
 if [ "$V" = 1 ]; then ok "exatamente um vencedor entre B e C ($(sed -n 's/^VENCEU //p' "$D/placarbc"))"
 else falhou "$V vencedores"; fi
-if [ "$(residuos)" = 0 ]; then ok "zero residuo apos a tomada legitima"; else falhou "$(residuos) residuo(s)"; fi
+if [ "$(residuos)" = 0 ]; then ok "zero residuo apos a tomada legitima"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
 
 echo "-- falha ao DEVOLVER e fail-closed: nem vitoria nem dono abandonado --"
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
@@ -373,7 +381,7 @@ for rajada in 1 2 3; do
   [ "$V" = 1 ] || { RUINS=$((RUINS+1)); echo "        rajada $rajada: $V vencedores"; }
 done
 if [ "$RUINS" = 0 ]; then ok "3 rajadas de 12, um vencedor em cada"; else falhou "$RUINS rajada(s) com vencedores != 1"; fi
-if [ "$(residuos)" = 0 ]; then ok "zero residuo apos as rajadas"; else falhou "$(residuos) residuo(s)"; fi
+if [ "$(residuos)" = 0 ]; then ok "zero residuo apos as rajadas"; else falhou "$(residuos) residuo(s): $(listar_residuos)"; fi
 rm -rf "$LK" "$LK".orfao.* "$LK".mutex "$LK".mutex.morto.* 2>/dev/null
 
 
