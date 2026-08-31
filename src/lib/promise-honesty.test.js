@@ -223,3 +223,31 @@ test('CONTROLE: promessa real continua sendo rebaixada mesmo com negação em ou
   assert.strictEqual(r.fired, true, 'a promessa da 2ª frase é vazia e tem que cair');
   assert.ok(!/vou criar na agenda/i.test(r.reply), 'a promessa vazia some');
 });
+
+// ── Oferta sem "que" (caso real 24/08, medido no corpus de 25 disparos) ──────
+// "manda pra mim — eu leio e registro os itens" é oferta CONDICIONAL a um ato futuro
+// do usuário, igual a "só manda que eu registro". Faltavam DUAS coisas na RE: o gatilho
+// "manda pra mim" (só havia "me manda") e o consequente ligado por travessão em vez de
+// "que". Resultado: a resposta inteira — que já era honesta, começando com "Não consigo" —
+// virou só o aviso de erro. 1 dos 3 disparos recentes com evidência viva.
+test('caso real (24/08): "manda pra mim — eu leio e registro" não é promessa vazia', () => {
+  const t = 'Não consigo jogar o arquivo direto no app, mas manda pra mim — eu leio e registro os itens um por um pelo sistema. Pode ser foto, PDF, planilha, o que tiver.';
+  assert.strictEqual(downgradeEmptyPromise(t).fired, false);
+});
+test('variantes de oferta ligada por travessão/vírgula não disparam', () => {
+  for (const t of [
+    'manda pra mim — eu registro tudo aqui',
+    'me manda, eu anoto na hora',
+    'qualquer coisa — eu registro depois',
+  ]) assert.strictEqual(downgradeEmptyPromise(t).fired, false, t);
+});
+// CONTRA-EXEMPLO que o comentário da RE já avisava: relaxar o "que eu" não pode deixar
+// uma promessa REAL escapar pelo "qualquer coisa".
+test('CONTROLE: promessa real com "qualquer coisa" continua rebaixando', () => {
+  const t = 'Vou criar a tarefa e qualquer coisa te aviso às 15h.';
+  assert.strictEqual(downgradeEmptyPromise(t).fired, true);
+});
+test('CONTROLE: "eu" longe do gatilho não vira oferta', () => {
+  const t = 'Registrei o pedido. Amanhã eu passo na loja.';
+  assert.strictEqual(downgradeEmptyPromise(t).fired, true);
+});

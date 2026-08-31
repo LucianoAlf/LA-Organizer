@@ -24,8 +24,19 @@ const PROMISE_NOMARKER_DISCLAIMER =
 // deste turno: não há ação pendente, logo não há vazio a rebaixar. Exige o gatilho E o "que
 // eu" na MESMA frase — sem isso, "vou criar a tarefa e qualquer coisa te aviso às 15h" (uma
 // promessa de verdade) escaparia pelo "qualquer coisa".
+// Duas lacunas medidas no corpus real de 25 disparos (31/08):
+//   * gatilho: havia "me manda", faltava "manda pra mim" — a mesma oferta com a ordem
+//     invertida. Caso 24/08: "Não consigo jogar o arquivo direto no app, mas manda pra
+//     mim — eu leio e registro os itens". A resposta INTEIRA, que já era honesta e já
+//     começava admitindo o limite, virou só o aviso de erro.
+//   * consequente: exigia literalmente "que eu". Em fala natural o "que" cai e o elo é um
+//     travessão ou uma vírgula ("manda pra mim — eu registro").
+// O aperto que segura o relaxamento continua sendo a PROXIMIDADE: `[^.!?]*` não atravessa
+// fim de frase, então "Registrei o pedido. Amanhã eu passo na loja" não vira oferta, e
+// "Vou criar a tarefa e qualquer coisa te aviso às 15h" — o contra-exemplo que o comentário
+// original já avisava — segue rebaixando, porque ali não há "eu" nenhum depois do gatilho.
 const OFERTA_CONDICIONAL_RE =
-  /(?:\b(?:se|quando)\s+(?:voc[êe]\s+)?(?:precisar|quiser|surgir|aparecer)\b|\bqualquer\s+coisa\b|(?:[ée]\s+)?\bs[óo]\s+(?:me\s+)?(?:mandar?|chamar?|falar?|avisar?|pedir?)\b|\bme\s+(?:manda|chama|fala|avisa)\b)[^.!?]*\bque\s+eu\b/i;
+  /(?:\b(?:se|quando)\s+(?:voc[êe]\s+)?(?:precisar|quiser|surgir|aparecer)\b|\bqualquer\s+coisa\b|(?:[ée]\s+)?\bs[óo]\s+(?:me\s+)?(?:mandar?|chamar?|falar?|avisar?|pedir?)\b|\bme\s+(?:manda|chama|fala|avisa)\b|\b(?:manda|chama|fala|avisa|passa)\s+(?:pra|para)\s+(?:mim|c[áa])\b)[^.!?]*(?:\bque\s+eu\b|[—–-]\s*eu\b|,\s*eu\b)/i;
 
 // ADMISSÃO DE FALHA não é promessa (bug 01/06, revivido em 27/08 — Rafinha). O engine já sabe
 // disso: `_replyIsDecline` (engine.js ~13543) zera `replyHasPromise` quando a reply nega o
