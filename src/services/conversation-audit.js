@@ -176,17 +176,25 @@ async function loadMarkerTrail(sb, collaboratorId, sinceIso) {
 }
 
 /** Carrega a conversa (AMBAS direções) das últimas `hours`h e formata em texto. */
-async function loadConversation(sb, collaboratorId, hours = 24) {
-  const sinceIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+// `ateIso` (01/09): fim da janela. Default null = agora, que e o comportamento de sempre.
+// Existe pro REPROCESSAMENTO dos dias que a auditoria passou cega (29/08 a 01/09): sem um
+// fim, "24h atras" so sabe olhar pro dia de hoje, e um dia perdido fica perdido pra sempre.
+async function loadConversation(sb, collaboratorId, hours = 24, ateIso = null) {
+  const fimMs = ateIso ? new Date(ateIso).getTime() : Date.now();
+  const sinceIso = new Date(fimMs - hours * 3600 * 1000).toISOString();
   // AUDIT-JANELA-CORTA-O-FIM (19/08): era order ASC + limit(300), ou seja as 300 mensagens
   // MAIS ANTIGAS. Num dia cheio o FIM da conversa sumia — e é lá que mora a RESOLUÇÃO. O
   // auditor via o pedido e não via a resposta, e fabricava dropped_request; de quebra, lastAt
   // virava a 300ª msg e envenenava o occurred_at. Pede DESC ao banco (as mais recentes) e
   // reordena em memória, então o corte passa a cair no começo, que é onde ele é inofensivo.
-  const { data } = await sb.from('conversation_history')
+  // O `.lt` so entra QUANDO ha fim de janela: sem ele a cadeia fica identica a de sempre,
+  // entao nenhum chamador (nem o mock dos testes) muda de forma por causa do reprocessamento.
+  let q = sb.from('conversation_history')
     .select('content, media_extracted_text, direction, created_at, ref_type')
     .eq('collaborator_id', collaboratorId)
-    .gte('created_at', sinceIso)
+    .gte('created_at', sinceIso);
+  if (ateIso) q = q.lt('created_at', new Date(fimMs).toISOString());
+  const { data } = await q
     .order('created_at', { ascending: false })
     .limit(300);
   // Slice por mensagem subiu 600→1600: o corte em 600 cortava áudios longos no meio
@@ -293,22 +301,43 @@ function formatGroupTranscript(rows) {
 }
 
 /** Carrega a conversa de um GRUPO das últimas `hours`h, já formatada. */
-async function loadGroupConversation(sb, groupId, hours = 24) {
-  const sinceIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
-  const { data } = await sb.from('group_chat_messages')
+async function loadGroupConversation(sb, groupId, hours = 24, ateIso = null) {
+  const fimMs = ateIso ? new Date(ateIso).getTime() : Date.now();
+  const sinceIso = new Date(fimMs - hours * 3600 * 1000).toISOString();
+  // `.lt` so entra QUANDO ha fim de janela: sem ele a cadeia fica identica a de sempre.
+  let q = sb.from('group_chat_messages')
     .select('content, media_extracted_text, role, created_at, wa_sender_name, sender:collaborators!group_chat_messages_sender_id_fkey(preferred_name, full_name)')
     .eq('group_id', groupId)
-    .gte('created_at', sinceIso)
+    .gte('created_at', sinceIso);
+  if (ateIso) q = q.lt('created_at', new Date(fimMs).toISOString());
+  const { data } = await q
     .order('created_at', { ascending: true })
     .limit(300);
   const rows = data || [];
   return { text: formatGroupTranscript(rows), lastAt: rows.length ? rows[rows.length - 1].created_at : null, sinceIso };
 }
 
-/** Analisa a conversa de um GRUPO. Retorna Finding[]. NUNCA lança. */
-async function auditGroupConversation(sb, chat, group, hours = 24) {
+// SENSOR DE CEGUEIRA (01/09). Ate aqui, falha do provedor virava `return []` -- e zero achado
+// por FALHA e byte-a-byte identico a zero achado por SAUDE. O gov-runner lia `ate2d: 0` e
+// escrevia "nada novo" de boa fe. Foram 4 dias assim (29/08 a 01/09, 20 pessoas na ultima
+// noite) sem ninguem notar, porque o silencio se parecia com sucesso.
+// Agora toda falha vira LINHA NO BANCO. Nao muda o contrato (segue devolvendo [] e nunca
+// lanca), mas passa a existir prova consultavel de que o detector NAO OLHOU.
+async function registrarCegueira(sb, alvo, err) {
   try {
-    const { text: convo, lastAt } = await loadGroupConversation(sb, group.id, hours);
+    await sb.from('marker_logs').insert({
+      marker_type: 'AUDIT',
+      result: 'fallback',
+      reason: `audit_blind: ${String((err && err.message) || err).slice(0, 90)}`,
+      raw_excerpt: `alvo=${String(alvo || '?').slice(0, 80)}`,
+    });
+  } catch (_) { /* sensor nunca derruba a auditoria */ }
+}
+
+/** Analisa a conversa de um GRUPO. Retorna Finding[]. NUNCA lança. */
+async function auditGroupConversation(sb, chat, group, hours = 24, ateIso = null) {
+  try {
+    const { text: convo, lastAt } = await loadGroupConversation(sb, group.id, hours, ateIso);
     if (convo.length < 80) return []; // conversa fina demais
     const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
     const { system, messages } = buildAuditMessages(convo);
@@ -318,14 +347,15 @@ async function auditGroupConversation(sb, chat, group, hours = 24) {
     return parseFindings(r && r.text, lastAt);
   } catch (err) {
     console.error(`[ConvAudit] erro no grupo ${group && group.name}:`, err.message);
+    await registrarCegueira(sb, `grupo:${group && group.name}`, err);
     return [];
   }
 }
 
 /** Analisa a conversa de um colaborador. Retorna Finding[]. NUNCA lança. */
-async function auditConversation(sb, chat, collaborator, hours = 24) {
+async function auditConversation(sb, chat, collaborator, hours = 24, ateIso = null) {
   try {
-    const { text: convo, lastAt, sinceIso } = await loadConversation(sb, collaborator.id, hours);
+    const { text: convo, lastAt, sinceIso } = await loadConversation(sb, collaborator.id, hours, ateIso);
     if (convo.length < 80) return []; // conversa fina demais
     const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
     const { system, messages } = buildAuditMessages(convo);
@@ -344,6 +374,7 @@ async function auditConversation(sb, chat, collaborator, hours = 24) {
     return findings;
   } catch (err) {
     console.error(`[ConvAudit] erro p/ ${collaborator.full_name}:`, err.message);
+    await registrarCegueira(sb, collaborator.full_name, err);
     return [];
   }
 }

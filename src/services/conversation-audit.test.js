@@ -494,3 +494,34 @@ test('upsertFinding ignora grupo de QA', async () => {
     { category: 'confabulacao', severity: 'alto', summary: 's', evidence: 'e' }, { groupId: 'g2' });
   assert.strictEqual(r, 'ignorado_qa');
 });
+
+// JANELA COM FIM (01/09) ----------------------------------------------------
+// Sem fim de janela, 'as ultimas 24h' so sabe olhar pro dia de HOJE -- e um dia que a
+// auditoria perdeu ficava perdido pra sempre. Isso existe pro reprocessamento dos dias
+// em que o detector ficou cego (29/08 a 01/09). O `.lt` so entra QUANDO ha fim: sem ele a
+// cadeia e identica a de sempre, que e por que nenhum chamador antigo muda de forma.
+test('janela com fim: filtra pelas duas pontas e nao vaza pro futuro', async () => {
+  const chamadas = { gte: null, lt: null };
+  const q = {
+    select: () => q, eq: () => q, order: () => q,
+    gte: (_c, v) => { chamadas.gte = v; return q; },
+    lt: (_c, v) => { chamadas.lt = v; return q; },
+    limit: async () => ({ data: [] }),
+  };
+  const sb = { from: () => q };
+  const fim = '2026-08-30T03:00:00.000Z';
+  await loadConversation(sb, 'c1', 24, fim);
+  assert.strictEqual(chamadas.lt, fim, 'o fim da janela tem que virar filtro');
+  assert.strictEqual(chamadas.gte, '2026-08-29T03:00:00.000Z', 'o inicio e fim-24h');
+});
+
+test('sem fim de janela: NENHUM filtro de fim e aplicado (caminho de sempre)', async () => {
+  let usouLt = false;
+  const q = {
+    select: () => q, eq: () => q, order: () => q, gte: () => q,
+    lt: () => { usouLt = true; return q; },
+    limit: async () => ({ data: [] }),
+  };
+  await loadConversation({ from: () => q }, 'c1', 24);
+  assert.strictEqual(usouLt, false, 'sem fim, a cadeia nao pode ganhar .lt');
+});
