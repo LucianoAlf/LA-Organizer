@@ -13,9 +13,15 @@
 
 // "Aviso o/a/os/as {Nome}" — nome CAPITALIZADO (1–2 tokens). [Aa]viso cobre início e meio de
 // frase sem ligar /i (que faria o nome aceitar minúscula e quebrar o requisito de capitalização).
-const AVISO_RE = /(?:^|[^\p{L}])[Aa]viso\s+(?:os?|as?)\s+([A-ZÀ-Ú][\p{L}._'-]*(?:\s+[A-ZÀ-Ú][\p{L}._'-]*)?)/u;
+// VERBOS REAIS DO TOM (caso Rafinha 29/08 14:07, finding bd84ca6b). A Fatia 3 existia e nao
+// disparava: o parser so conhecia 'Aviso o/a X', e a forma que o TOM mais usa e 'Mando pro X
+// assim? _"..."_'. Sem extracao, o payload ficava so-texto, a execucao voltava a depender do
+// LLM -- e ele respondeu 'Nao consegui processar aqui, me manda de novo' UM SEGUNDO depois de
+// a intent ser resolvida como confirmed. O fail-closed do texto entre aspas NAO muda: recado
+// errado pra pessoa real segue sendo pior que o drop.
+const AVISO_RE = /(?:^|[^\p{L}])(?:[Aa]viso\s+(?:os?|as?)|(?:[Mm]ando|[Ee]ncaminho|[Ee]nvio)\s+(?:pro|pra|para)(?:\s+(?:o|a))?)\s+([A-ZÀ-Ú][\p{L}._'-]*(?:\s+[A-ZÀ-Ú][\p{L}._'-]*)?)/u;
 // Negação: "não aviso" / "nem aviso" desqualifica a fala inteira.
-const NEG_RE = /\bn[ãa]o\s+aviso\b|\bnem\s+aviso\b/i;
+const NEG_RE = /\bn[\u00e3a]o\s+(?:aviso|mando|encaminho|envio)\b|\bnem\s+(?:aviso|mando)\b/i;
 // Bloco de mensagem: entre aspas retas ou tipográficas, ao menos 1 caractere.
 const QUOTE_RE = /["“”]([^"“”]+)["“”]/;
 
