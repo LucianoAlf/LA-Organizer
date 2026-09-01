@@ -33,7 +33,7 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       '-c', 'model_reasoning_effort=medium',
       '--skip-git-repo-check',
       '-',
-    ], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'], cwd: os.tmpdir() });
+    ], { env: { ...process.env, TZ: process.env.TOM_TZ || 'America/Sao_Paulo' }, stdio: ['pipe', 'pipe', 'pipe'], cwd: os.tmpdir() }); // mesmo envelope de data do claude.js (raiz da rajada noturna)
     proc.stdin.write(prompt);
     proc.stdin.end();
     let out = '', err = '';

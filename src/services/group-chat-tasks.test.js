@@ -629,3 +629,44 @@ test('cancel: mira o ciclo corrente (25/08), não o 25/07 done-twin', async () =
   assert.ok(events.find((e) => e.kind === 'update' && e.id === 'ao' && e.patch.status === 'cancelled'), 'cancelou a 25/08');
   assert.ok(!events.find((e) => e.kind === 'update' && e.id === 'jo'), 'NÃO tocou a 25/07');
 });
+
+// CASO ROSE 31/08 22:48 (KI GROUP-DIGEST-NAME-UNCLOSABLE) --------------------
+// O teste do caso Rose de cima passa porque ali a FILHA tem nome longo ('Venc 05 (prazo dia
+// 06)') e vence o pacote no containment por especificidade. AQUI a filha e CURTA ('Barra',
+// 1 token) e o PACOTE tem 3 tokens -- o matchPoolByPhrase devolve o pacote, o guard
+// anti-container derruba, o fallback de molde nao casa (ilike na direcao errada) e a Rose
+// ouviu 'nao achei essa tarefa no grupo' sobre trabalho listado no proprio digest. Foi a
+// gota que tirou o financeiro do TOM. O resolvedor certo (_resolvePackageChildByLabel,
+// 31/07) ja existia -- construido pro CREATE e nunca ligado no COMPLETE.
+test('complete: label composto com filha CURTA conclui a filha do pacote — caso Rose 31/08', async () => {
+  const events = [];
+  const tasks = [
+    G({ id: 'pkg', title: 'Repasses de Cartões - Maquininha', is_group: true, due_date: '2026-08-31' }),
+    G({ id: 'barra', title: 'Barra', parent_task_id: 'pkg', due_date: '2026-08-31' }),
+    G({ id: 'cg', title: 'CG', parent_task_id: 'pkg', due_date: '2026-08-31' }),
+    G({ id: 'recreio', title: 'Recreio', parent_task_id: 'pkg', due_date: '2026-08-31' }),
+    // gemea CANCELADA com o nome antigo composto (residuo da refatoracao 18/08): nao pode
+    // ser alvo nem atrapalhar a resolucao.
+    G({ id: 'twin', title: 'Repasses de Cartões - Maquininha: Barra', status: 'cancelled', due_date: '2026-08-31' }),
+  ];
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Repasses de Cartões - Maquininha: Barra' }],
+  });
+  assert.strictEqual((r.failed || []).length, 0, JSON.stringify(r.failed));
+  assert.strictEqual((r.completed || [])[0] && r.completed[0].id, 'barra');
+  const pkg = tasks.find((t) => t.id === 'pkg');
+  assert.strictEqual(pkg.status, 'pending', 'o container NAO pode ser fechado');
+});
+
+test('complete: label composto que NAO corresponde a filha nenhuma segue falha honesta', async () => {
+  const tasks = [
+    G({ id: 'pkg', title: 'Repasses de Cartões - Maquininha', is_group: true, due_date: '2026-08-31' }),
+    G({ id: 'barra', title: 'Barra', parent_task_id: 'pkg', due_date: '2026-08-31' }),
+  ];
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events: [] }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Repasses de Cartões - Maquininha: Niteroi' }],
+  });
+  assert.strictEqual((r.completed || []).length, 0, 'nao pode concluir no chute');
+});

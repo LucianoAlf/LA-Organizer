@@ -29,7 +29,9 @@ const _DIA_SEMANA = String.raw`(?:(?:seg|ter|qua|qui|sex|s[áa]b|dom)[\p{L}-]*\.
 // leve, tag HTML (a memória de longo prazo é HTML) ou dia-da-semana. "pra hoje? Vence 12/08"
 // não casa.
 const RE_DATA_AFIRMADA = new RegExp(
-  String.raw`(?<![\p{L}])(hoje|ontem|amanhã|amanha)(?![\p{L}])[ \t]*(?:é|eh)?[ \t]*[,:–—-]?[ \t]*(?:<[a-z/][^>]{0,24}>)*[ \t]*(\()?[ \t]*`
+  // weekday tambem ANTES do separador ('Hoje é terça, 01/09' — forma real da noite da Rose
+  // 31/08; o detector ficou mudo a noite inteira porque so aceitava weekday depois do parêntese).
+  String.raw`(?<![\p{L}])(hoje|ontem|amanhã|amanha)(?![\p{L}])[ \t]*(?:é|eh)?[ \t]*(?:(?:seg|ter|qua|qui|sex|s[áa]b|dom)[\p{L}-]*\.?[ \t]*)?[,:–—-]?[ \t]*(?:<[a-z/][^>]{0,24}>)*[ \t]*(\()?[ \t]*`
   + _DIA_SEMANA
   + String.raw`(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?:[ \t]*(\)))?`,
   'giu');

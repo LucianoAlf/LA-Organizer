@@ -70,6 +70,16 @@ function buildEnv(home = CLAUDE_USER_HOME) {
     PATH: CLAUDE_PATH,
     CLAUDE_HOME: path.join(home, '.claude'),
     LANG: process.env.LANG || 'C.UTF-8',
+    // RAIZ DA RAJADA NOTURNA DE DATA (provado 01/09): o CLI carimba a data de HOJE no
+    // envelope proprio dele e segue o TZ do processo — medido com o mesmo binario no mesmo
+    // instante: TZ=UTC -> 2026-09-01, TZ=Pacific/Kiritimati -> 2026-09-02. A VPS e UTC, entao
+    // das 21h a meia-noite BRT o envelope dizia ao modelo que ja era AMANHA — por BAIXO de
+    // toda ancora que o prompt monta (a re-ancoragem perdia a disputa: envelope de sistema
+    // parece mais autoritativo que texto de prompt). E o motivo de o erro de "hoje" vir
+    // sempre em RAJADA a noite (42% medido no grupo; caso Rose 31/08 22:46, a noite que
+    // tirou o financeiro do TOM). Data civil do TOM e BRT em toda parte; o envelope agora
+    // concorda com a ancora em vez de brigar com ela.
+    TZ: process.env.TOM_TZ || 'America/Sao_Paulo',
   };
   if (process.env.ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) env.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;

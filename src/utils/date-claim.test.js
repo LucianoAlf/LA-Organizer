@@ -130,3 +130,26 @@ test('texto vazio ou nulo nao quebra', () => {
   assert.deepEqual(detectaDataAfirmadaErrada(null, '2026-08-06'), []);
   assert.deepEqual(detectaDataAfirmadaErrada('hoje, 07/08', null), []);
 });
+
+// FORMA REAL DA NOITE DA ROSE (31/08 22:46) -------------------------------
+// 'Hoje é terça, 01/09' — o dia da semana vem ANTES da vírgula ('é terça,') e a regex so
+// aceitava weekday depois do parêntese. Resultado: o detector ficou MUDO na noite inteira
+// (zero DATE-CLAIM no log) e a neutralização do histórico também não pegava essa forma —
+// a fala errada do TOM voltava pro prompt intacta e virava profecia (self-poisoning).
+test('detecta "Hoje é terça, 01/09" (weekday antes da vírgula)', () => {
+  const r = detectaDataAfirmadaErrada('Hoje é terça, 01/09 — tem uma tarefa no radar:', '2026-08-31');
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].disse, '01/09');
+  assert.strictEqual(r[0].esperado, '31/08');
+});
+test('detecta "Hoje é segunda, 31/08 mesmo" como CERTA (não flagra verdade)', () => {
+  assert.strictEqual(detectaDataAfirmadaErrada('Erro meu! Hoje é segunda, 31/08 mesmo.', '2026-08-31').length, 0);
+});
+test('neutraliza a forma weekday-vírgula sem quebrar a frase', () => {
+  const out = neutralizaDataAfirmada('Hoje é terça, 01/09 — tem uma tarefa no radar:');
+  assert.ok(!out.includes('01/09'), out);
+  assert.ok(out.includes('tem uma tarefa no radar'), out);
+});
+test('CONTROLE: "amanhã (confirmar 07/08)" segue NÃO casando (palavra livre não é weekday)', () => {
+  assert.strictEqual(detectaDataAfirmadaErrada('amanhã (confirmar 07/08) a gente vê', '2026-08-06').length, 0);
+});

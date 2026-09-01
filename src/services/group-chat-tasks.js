@@ -404,6 +404,20 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // Fallback (GROUPCHAT-COMPLETE-COMPOSITE-LABEL-NOMATCH): a pessoa colou o label do
         // relatório ("{Pacote}: {Filha} ({Resp})") → o ilike exato não bate no title cru.
         // O fallback é compartilhado com o reschedule, então o guard fica aqui, no ramo.
+        // GROUP-DIGEST-NAME-UNCLOSABLE (Rose 31/08 22:48 — a gota que tirou o financeiro do
+        // TOM). O digest imprime "{Pacote}: {Filha}" e quando a filha e CURTA ("Barra", 1 token)
+        // o matchPoolByPhrase do fallback de frase devolve o PACOTE (3 tokens contidos > 1), o
+        // guard anti-container derruba, o fallback de molde nao casa (ilike na direcao errada) e
+        // a resposta foi "nao achei essa tarefa no grupo" sobre item listado no proprio digest.
+        // O resolvedor certo ja existia desde 31/07 (_resolvePackageChildByLabel, construido pro
+        // CREATE) e nunca foi ligado AQUI. E o mesmo padrao da Fatia 3 de ontem: mecanismo que
+        // existe mas nao esta na porta que falha e indistinguivel de mecanismo que nao existe.
+        // Vem ANTES do fallback de frase porque e o mais preciso: exige container is_group real
+        // com aquele prefixo E filha real dele com aquele sufixo — nunca resolve no chute.
+        if (!target) {
+          const viaLabel = await _resolvePackageChildByLabel({ supabase, groupId, label: title });
+          target = semContainer(viaLabel) ? viaLabel : null;
+        }
         if (!target) {
           const viaFrase = await _resolveByPhraseFallback({ supabase, groupId, phrase: title });
           target = semContainer(viaFrase) ? viaFrase : null;
