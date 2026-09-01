@@ -146,6 +146,24 @@ async function main() {
   // relatório afirmou que o Rafinha "recebeu" o recado; no banco só havia registro de envio.
   // Rebaixa a palavra, não bloqueia o achado: "foi enviado" é a verdade que ele tinha.
   const { rebaixarClaimDeEntrega } = require('../lib/claim-entrega');
+  const { rebaixarNadaNovoComCegueira } = require('../lib/audit-cegueira');
+  // CEGUEIRA DO DETECTOR (01/09). De 29/08 a 01/09 a auditoria falhou pra 15-20 pessoas por
+  // noite e o relatorio saiu "nada novo" -- porque zero achado por FALHA e identico a zero
+  // achado por SAUDE. O sensor em conversation-audit.js grava cada cegueira em marker_logs;
+  // aqui ela CHEGA no grupo. Falha na contagem devolve 0 (nunca inventa cegueira que nao viu).
+  // recebe o inicio do ciclo por PARAMETRO: `cicloInicio` e declarado abaixo, e capturar
+  // por closure aqui seria a mesma armadilha de escopo que deixou o chokepoint morto e
+  // calado por 106 turnos (CONFAB-CHOKEPOINT-SCOPE). Explicito nao tem zona morta.
+  const contarCegueira = async (desdeIso) => {
+    try {
+      const { count } = await supabase.from('marker_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('marker_type', 'AUDIT')
+        .like('reason', 'audit_blind:%')
+        .gte('created_at', desdeIso);
+      return count || 0;
+    } catch (_) { return 0; }
+  };
   const { conferirNumerosAfirmados } = require('../lib/confere-numero');
   const { tirarFalaDeRestart } = require('../lib/restart-so-do-runner');
   const { contarCorrigidosDesde, contarAcervoAberto } = require('../lib/confere-fontes');
@@ -178,7 +196,10 @@ async function main() {
     if (rr.removeu) console.log(`[GovRunner] fala de restart removida do agente: ${rr.trechos.join(' · ')}`);
     const g = rebaixarClaimDeEntrega(rr.texto);
     if (g.rebaixou) console.log(`[GovRunner] claim de entrega rebaixado: ${g.termos.join(' · ')}`);
-    const c = conferirNumerosAfirmados(g.texto, await fontesDeControle());
+    const cegos = await contarCegueira(cicloInicio);
+    const cg = rebaixarNadaNovoComCegueira(g.texto, cegos);
+    if (cg.rebaixou) console.log(`[GovRunner] relatorio rebaixado: ${cegos} conversa(s) que a auditoria NAO conseguiu ler`);
+    const c = conferirNumerosAfirmados(cg.texto, await fontesDeControle());
     if (c.divergiu) {
       console.log(`[GovRunner] CONFERE NÃO BATEU: ${c.conflitos.map((x) => `${x.chave} ${x.afirmado}≠${x.real}`).join(' · ')}`);
     }
