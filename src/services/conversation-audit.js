@@ -456,24 +456,29 @@ async function upsertFinding(sb, collaborator, finding, opts = {}) {
     // registra a reincidência no last_seen e mantém o status fechado.
     const closed = all.find(r => CLOSED_STATUSES.has(r.status));
     if (closed) {
-      try {
-        await sb.from('tom_audit_findings')
-          .update({ last_seen: new Date().toISOString(), ..._converge(closed) })
-          .eq('id', closed.id);
-      } catch (_) {}
+      // Mesmo motivo do insert: o cliente NAO lanca, devolve { error }. Sem olhar, uma
+      // reincidencia que nao foi gravada fica identica a uma que foi.
+      const { error: e1 } = await sb.from('tom_audit_findings')
+        .update({ last_seen: new Date().toISOString(), ..._converge(closed) })
+        .eq('id', closed.id);
+      if (e1) console.error(`[ConvAudit] last_seen NAO gravado (${closed.id}): ${String(e1.message || e1).slice(0, 120)}`);
       return 'suppressed_closed';
     }
     // Já aberto (novo/confirmado) → incrementa ocorrências.
     const open = all.find(r => r.status === 'novo' || r.status === 'confirmado');
     if (open) {
-      try {
-        await sb.from('tom_audit_findings')
-          .update({ occurrences: (open.occurrences || 1) + 1, last_seen: new Date().toISOString(), ..._converge(open) })
-          .eq('id', open.id);
-      } catch (_) {}
+      const { error: e2 } = await sb.from('tom_audit_findings')
+        .update({ occurrences: (open.occurrences || 1) + 1, last_seen: new Date().toISOString(), ..._converge(open) })
+        .eq('id', open.id);
+      if (e2) console.error(`[ConvAudit] ocorrencia NAO incrementada (${open.id}): ${String(e2.message || e2).slice(0, 120)}`);
       return 'incremented';
     }
-    await sb.from('tom_audit_findings').insert({
+    // O cliente do Supabase NAO lanca em erro de insert: devolve { data, error }. Ignorar o
+    // retorno fazia o achado sumir SEM RASTRO -- detectado, contado no log ("1 achado(s)") e
+    // nunca gravado. Aconteceu com 1 dos 5 achados do reprocessamento de 01/09. E a mesma
+    // doenca do dia inteiro: descarte que se parece com sucesso. Agora o erro vira log e
+    // retorno proprio, entao quem chama consegue distinguir "gravei" de "tentei e falhei".
+    const { error: erroInsert } = await sb.from('tom_audit_findings').insert({
       collaborator_id: _groupId ? null : collaborator.id,
       group_id: _groupId,
       category: finding.category,
@@ -486,6 +491,10 @@ async function upsertFinding(sb, collaborator, finding, opts = {}) {
       signature: sig,
       status: 'novo',
     });
+    if (erroInsert) {
+      console.error(`[ConvAudit] INSERT FALHOU (${collaborator && collaborator.full_name || _groupId}): ${String(erroInsert.message || erroInsert).slice(0, 160)}`);
+      return 'erro_insert';
+    }
     return 'inserted';
   } catch (err) {
     console.error('[ConvAudit] upsert err:', err.message);

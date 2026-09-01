@@ -73,11 +73,20 @@ async function emLotes(itens, n, fn) {
         }
         console.log(`  ${nome}: ${fs.length} achado(s)`);
       } catch (e) {
-        cegos++;
         console.log(`  ${nome}: FALHOU (${e.message.slice(0, 60)})`);
       }
     });
 
+    // `auditConversation` NUNCA lanca -- captura por dentro e devolve []. Entao contar
+    // cegueira por `catch` dava sempre ZERO, e o relatorio dizia "32 auditadas" incluindo as
+    // que nao foram lidas. Eu repeti no meu proprio script a doenca que passei o dia
+    // consertando. A verdade vem do SENSOR, que grava cada cegueira em marker_logs.
+    const { count } = await sb.from('marker_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('marker_type', 'AUDIT').like('reason', 'audit_blind:%')
+      .gte('created_at', new Date(t0).toISOString());
+    cegos = count || 0;
+    auditados -= cegos;
     const mins = Math.round((Date.now() - t0) / 60000);
     const porSev = {};
     for (const { f } of achadosDoDia) porSev[f.severity] = (porSev[f.severity] || 0) + 1;
