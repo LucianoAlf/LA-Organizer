@@ -140,4 +140,18 @@ function pickEventDupMenu(menus, opts = {}) {
   return { menu: vivos[vivos.length - 1], byQuote: false }; // mais recente
 }
 
-module.exports = { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, pickEventDupMenu, DUP_BYPASS_MAX_AGE_MS };
+// DUP-CHOICE1-FALSE-ASSERT (Ana Paula 28/07 22:09:58 BRT): o "1" do menu de dup ("mesma situação,
+// não preciso criar nova") respondia "Já está anotado como _<título>_" montado com o título do
+// DRAFT — a tarefa que o TOM ia criar — sem nunca ler o banco. No caso da Ana o conflito vinha de
+// um self_recent_skip fantasma (existing=32fb8ab9, id que não existe em `tasks`): ela ouviu que
+// estava anotado, não estava, e precisou insistir 2min depois pra a tarefa nascer.
+// O que o "1" garante é só que o TOM NÃO criou outra. Afirmar registro exige o registro na mão.
+function buildDupChoice1Reply(draft, existing) {
+  const real = existing && existing.title ? String(existing.title).trim() : '';
+  if (real) return `Certo! Já está anotado como _${real}_. Nada mudou.`;
+  const d = draft && draft.title ? String(draft.title).trim() : '';
+  const alvo = d ? `_${d}_` : 'essa tarefa';
+  return `Ok, não criei outra. Só que não localizei ${alvo} registrada aqui — me confirma que eu crio.`;
+}
+
+module.exports = { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, pickEventDupMenu, buildDupChoice1Reply, DUP_BYPASS_MAX_AGE_MS };

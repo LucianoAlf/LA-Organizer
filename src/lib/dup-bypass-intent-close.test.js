@@ -55,6 +55,10 @@ beforeEach(() => {
         inserted.push(row);
         return { select: () => ({ single: async () => ({ data: { id: 'task-novo', title: row.title }, error: null }) }) };
       },
+      // DUP-CHOICE1-FALSE-ASSERT: o choice=1 confere o conflito no banco. Aqui a intent é
+      // legada (sem _dup_conflict), então nem chega a consultar — o stub só existe pra o
+      // caminho não depender de `select` inexistente.
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
     };
   };
 });
@@ -69,7 +73,10 @@ test('escolha "1" (mesma situação) FECHA a intent — afirmativa posterior nã
   seedDupIntent(3);
 
   const r1 = await tryDupBypass(COLLAB, '1');
-  assert.match(r1.reply, /Já está anotado/, 'turno 1 deveria resolver o menu de dup');
+  // A âncora NÃO é mais "Já está anotado": essa frase só sai com o registro conferido no banco
+  // (DUP-CHOICE1-FALSE-ASSERT, dup-choice1-conflito-real.test.js). O que este teste fixa é o
+  // fechamento da intent — o menu tem que ficar resolvido, com qualquer que seja a fala.
+  assert.ok(r1 && r1.reply, 'turno 1 deveria resolver o menu de dup');
   assert.equal(inserted.length, 0, 'escolha "1" não cria nada');
   assert.ok(intents[0].resolved_at, 'a intent tem que ficar FECHADA no banco após a escolha "1"');
 

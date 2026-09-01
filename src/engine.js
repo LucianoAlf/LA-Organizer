@@ -61,7 +61,7 @@ const { classifyAutoRetry } = require('./lib/auto-retry-outcome');
 const { friendlyInventoryError } = require('./lib/inventory-error-message');
 const { decideTaskDoneFromQuote } = require('./services/taskdone-quote');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
-const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, pickEventDupMenu } = require('./lib/dup-choice');
+const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, pickEventDupMenu, buildDupChoice1Reply } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { normalizeHabitAliases } = require('./utils/habit-field-alias');
 const { normalizeHabitFrequency } = require('./utils/habit-frequency');
@@ -5514,6 +5514,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
               conflicts: _taskDupResult.probable.slice(0, 3).map(x => ({ id: x.id, title: x.title, status: x.status, due_date: x.due_date, _score: x._score })),
               candidateTitle: a.title.trim(),
             };
+            // DUP-CHOICE1-FALSE-ASSERT (Ana 28/07): o conflito é conhecido AQUI e morria aqui —
+            // no turno da resposta o "1" só tinha o draft, e afirmava registro sem conferir.
+            _pendingTask._dup_conflict = _taskIntegrityPayload.conflicts[0] || null;
             // DUP-BATCH-MENU-MISBIND (Ana 07/07): menu e alvo do "1/2/3" saem do MESMO
             // conflito — só o primeiro do lote amarra. Ver lib/dup-choice.js.
             const _dupBind = registerBatchDupConflict(
@@ -7689,7 +7692,17 @@ async function tryDupBypass(collab, text) {
     console.log(`[DupBypass] task choice=${choice} "${String(tk.title).slice(0,40)}"`);
     if (choice === '1') {
       await closeDupIntent('denied', 'dup_bypass choice=1');
-      return { reply: `Certo! Já está anotado como _${tk.title}_. Nada mudou.` };
+      // DUP-CHOICE1-FALSE-ASSERT (Ana 28/07): a frase afirma um fato de banco — só sai com o
+      // registro na mão. Sem conflito conferível, o TOM diz só o que é verdade (não criou outra).
+      let _existing = null;
+      const _cid = tk._dup_conflict && tk._dup_conflict.id;
+      if (_cid) {
+        try {
+          const { data: _row } = await supabase.from('tasks').select('id, title, status').eq('id', _cid).maybeSingle();
+          _existing = _row || null;
+        } catch (_e) { console.warn('[DupBypass] choice=1 lookup err (non-fatal):', _e.message); }
+      }
+      return { reply: buildDupChoice1Reply(tk, _existing) };
     }
     // choice === '2': inserir task diretamente (bypass dup check)
     // Sprint 31.4 Bug-B fix: insertRow vem do validated insertRow (armazenado no Map/DB),
@@ -7707,6 +7720,7 @@ async function tryDupBypass(collab, text) {
     };
     delete insertRow._dup_bypass;  // limpar marker interno antes de inserir
     delete insertRow._intentId;    // idem
+    delete insertRow._dup_conflict; // idem (identidade do conflito, não é coluna de tasks)
     if (!insertRow.assigned_to) insertRow.assigned_to = collab.id;
     if (!insertRow.assigned_to) {
       console.error('[DupBypass] task insert ABORT: no assignedTo');
