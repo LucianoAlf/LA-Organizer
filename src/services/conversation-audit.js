@@ -334,6 +334,29 @@ async function registrarCegueira(sb, alvo, err) {
   } catch (_) { /* sensor nunca derruba a auditoria */ }
 }
 
+// CONFERE O BANCO ANTES DE ACUSAR (01/09, finding bb00609d severidade ALTA). O auditor julgava
+// confabulacao pelo MARKER DO TURNO: "nao ha SISTEMA executed para elas". E nao havia -- naquele
+// turno. As tres tarefas estavam `done` no banco havia 1h45. O TOM reafirmou verdade e levou
+// acusacao de mentira, com severidade ALTA. E a mesma cegueira que o chokepoint tinha ate 31/08.
+// Falso positivo ALTO e o que faz a pessoa parar de ler o sensor -- e ai o dia em que ele
+// estiver certo passa junto.
+// Falha de consulta NAO refuta (fail-closed: na duvida o achado sobrevive).
+async function _refutarConfabPeloBanco(sb, collaborator, finding) {
+  try {
+    if (!finding || finding.category !== 'confabulation' || !collaborator || !collaborator.id) return null;
+    const { refutarPeloBanco, titulosCitados } = require('./confab-refuta-banco');
+    const titulos = titulosCitados(finding.evidence);
+    if (!titulos.length) return null;
+    const { data, error } = await sb.from('tasks')
+      .select('title, status')
+      .or(`assigned_to.eq.${collaborator.id},created_by.eq.${collaborator.id}`)
+      .limit(200);
+    if (error) return null;
+    const r = refutarPeloBanco({ evidencia: finding.evidence, tarefas: data || [] });
+    return r && r.refuta ? r : null;
+  } catch (_) { return null; }
+}
+
 /** Analisa a conversa de um GRUPO. Retorna Finding[]. NUNCA lança. */
 async function auditGroupConversation(sb, chat, group, hours = 24, ateIso = null) {
   try {
@@ -360,7 +383,16 @@ async function auditConversation(sb, chat, collaborator, hours = 24, ateIso = nu
     const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
     const { system, messages } = buildAuditMessages(convo);
     const r = await chat(system, messages, 1200);
-    const findings = parseFindings(r && r.text, lastAt);
+    const brutos = parseFindings(r && r.text, lastAt);
+    const findings = [];
+    for (const f of brutos) {
+      const refuta = await _refutarConfabPeloBanco(sb, collaborator, f);
+      if (refuta) {
+        console.log(`[ConvAudit] confabulacao REFUTADA pelo banco (${collaborator.full_name}): ${refuta.motivo}`);
+        continue;
+      }
+      findings.push(f);
+    }
     for (const f of findings) {
       const inc = await resolveIncidentAt(sb, collaborator.id, f.evidence, f.occurred_at, sinceIso);
       f.incident_at = inc.incident_at;
