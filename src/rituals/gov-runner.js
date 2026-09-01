@@ -243,6 +243,13 @@ async function main() {
           if (k.includes('/src/') || k.includes('\\src\\')) delete require.cache[k];
         }
         const engine = require('../engine');
+        // SONDA DE GRUPO (01/09): finding de grupo encena pelo caminho de GRUPO, no
+        // [QA] Financeiro Replay (wa_group_jid NULL — sem jid o bridge nao tem pra onde enviar,
+        // e o runner CONFERE isso antes de encenar). Sem esta injecao, o codigo novo do runner
+        // fica inerte e todo achado de grupo volta a sair 'inconclusivo' — que foi o estado dos
+        // ultimos 3 ciclos. Depois do purge do require.cache, de proposito: a sombra tem que
+        // testar o group-chat-engine que ACABOU de ir pro disco, nao o que estava em memoria.
+        const groupEngine = require('../services/group-chat-engine');
         const whatsapp = require('../services/whatsapp');
         const turnClaim = require('../services/turn-claim');
         const chat = require('../ai/openai').chat;
@@ -257,7 +264,7 @@ async function main() {
           const comIntent = alvos.map((f) => ({ ...f, fix_intent: f.verified_note || f.summary }));
           const res = await shadowPass(comIntent, {
             supabase, isReproducible, runShadow, judgeShadow,
-            engine, whatsapp, turnClaim, qaPhone, chat,
+            engine, groupEngine, whatsapp, turnClaim, qaPhone, chat,
           });
           // "verificado" ≠ "passou pelo passe". Inconclusivo NÃO é prova — contar tudo como
           // verificado é a mesma mordaça do gate sem prova de entrega. Separa os três.

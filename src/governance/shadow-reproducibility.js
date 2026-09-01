@@ -26,7 +26,12 @@ function extrairFalasDoUsuario(finding) {
 
 function isReproducible(finding) {
   const f = finding || {};
-  if (f.group_id) return { ok: false, motivo: 'grupo (v1 não encena chat de grupo)' };
+  // GRUPO LIBERADO (01/09). O gate recusava TODO finding de grupo desde 22/08 e nunca foi
+  // tocado -- so que o Replay Lab TEM grupo desde 13/08 ([QA] Financeiro Replay, wa_group_jid
+  // NULL). Consequencia medida: os bugs que mais doem (Rose, digest, data) sao de grupo, entao
+  // a sonda nao verificava NENHUM deles e os achados saiam 'inconclusivo' por construcao --
+  // o laboratorio existia, o robo e que nao sabia usar. As demais travas continuam iguais:
+  // categoria, cenario multi-turno e fala LITERAL do usuario valem para grupo tambem.
   if (!CATS_OK.has(f.category)) return { ok: false, motivo: `categoria ${f.category || '?'} fora do escopo v1` };
   const txt = String(f.evidence || f.summary || '').trim();
   if (!txt) return { ok: false, motivo: 'sem evidência aferível' };

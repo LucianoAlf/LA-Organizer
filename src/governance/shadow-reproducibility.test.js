@@ -23,3 +23,23 @@ test('lembrete diário (bug-farol de turno único) É reproduzível — não pod
   });
   assert.strictEqual(r.ok, true);
 });
+
+// SONDA DE GRUPO (01/09) ----------------------------------------------------
+// O gate recusava TODO finding de grupo ('v1 nao encena chat de grupo') desde 22/08 e nunca
+// foi tocado. So que o Replay Lab TEM grupo desde 13/08 ([QA] Financeiro Replay). Resultado:
+// os bugs que mais doem -- Rose, digest, data -- sao de grupo, entao a sonda nao verificava
+// NENHUM deles sozinha, e os achados saiam 'inconclusivo' por construcao.
+// O laboratorio existia; o robo e que nao sabia usar.
+test('finding de GRUPO com fala literal e encenavel', () => {
+  const r = isReproducible({ category: 'confabulation', group_id: 'g1',
+    evidence: 'USUÁRIO: sim, pode concluir' + String.fromCharCode(10) + 'TOM: nao achei essa tarefa no grupo' });
+  assert.strictEqual(r.ok, true, r.motivo);
+});
+test('CONTROLE: finding de grupo SEM fala literal segue recusado', () => {
+  const r = isReproducible({ category: 'confabulation', group_id: 'g1', summary: 'TOM confabulou no grupo' });
+  assert.strictEqual(r.ok, false);
+});
+test('CONTROLE: grupo nao afrouxa categoria nem multi-turno', () => {
+  assert.strictEqual(isReproducible({ category: 'frustration', group_id: 'g1', evidence: 'USUÁRIO: oi' }).ok, false);
+  assert.strictEqual(isReproducible({ category: 'confabulation', group_id: 'g1', evidence: 'USUÁRIO: confere a fatura' }).ok, false);
+});

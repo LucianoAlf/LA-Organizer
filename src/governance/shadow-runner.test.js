@@ -75,3 +75,50 @@ test('cleanup usa as colunas corretas por tabela (tasks=assigned_to, resto=colla
   assert.ok(convDel, 'conversation_history foi limpo');
   assert.strictEqual(convDel.coluna, 'collaborator_id');
 });
+
+// SONDA DE GRUPO (01/09) ----------------------------------------------------
+// Encena no [QA] Financeiro Replay: mesma fala literal, mas pelo caminho de GRUPO
+// (processGroupChatMessage), e a resposta do TOM sai de group_chat_messages em vez do
+// sendMessage. TRAVA DE SAIDA: o grupo QA tem wa_group_jid NULL -- sem jid o bridge nao tem
+// pra onde enviar. Se alguem vincular esse grupo ao WhatsApp, a sonda RECUSA em vez de
+// arriscar mensagem de teste na frente do time.
+function fakesGrupo({ jid = null } = {}) {
+  const d = fakes();
+  const grupo = { id: 'gqa', name: '[QA] Financeiro Replay', wa_group_jid: jid };
+  const postadas = [];
+  const cleaned = d._cleaned; const deletedBy = d._deletedBy;
+  d.supabase = {
+    from(tbl) { return {
+      select(){ return this; }, eq(){ return this; }, ilike(){ return this; }, gte(){ return this; },
+      is(){ return this; }, not(){ return this; }, order(){ return this; }, limit(){ return this; },
+      maybeSingle: async () => ({ data: tbl === 'collaborators' ? { id: 'qa1', phone: '5500000000001' } : (tbl === 'work_groups' ? grupo : null) }),
+      insert(){ return { select(){ return { single: async () => ({ data: { id: 'x' } }) }; } }; },
+      delete(){ cleaned.push(tbl); return { eq: async (c) => { deletedBy.push({ tbl, coluna: c }); return {}; }, in: async (c) => { deletedBy.push({ tbl, coluna: c }); return {}; } }; },
+      then(r){ return Promise.resolve({ data: tbl === 'group_chat_messages' ? postadas : [] }).then(r); },
+    }; },
+  };
+  d.groupEngine = { processGroupChatMessage: async ({ text }) => { postadas.push({ role: 'tom', content: 'resposta do grupo pra: ' + text }); } };
+  d.qaGroupName = '[QA] Financeiro Replay';
+  return d;
+}
+
+test('runShadow encena finding de GRUPO pelo caminho de grupo', async () => {
+  const d = fakesGrupo();
+  const r = await runShadow({ category: 'confabulation', group_id: 'greal', evidence: 'USUÁRIO: sim, pode concluir' }, d);
+  assert.strictEqual(r.erro, null, String(r.erro));
+  assert.strictEqual(r.transcript.turns.length, 1);
+  assert.match(r.transcript.turns[0].reply, /resposta do grupo/);
+});
+
+test('TRAVA DE SAIDA: grupo QA vinculado ao WhatsApp faz a sonda RECUSAR', async () => {
+  const d = fakesGrupo({ jid: '1203630@g.us' });
+  const r = await runShadow({ category: 'confabulation', group_id: 'greal', evidence: 'USUÁRIO: sim' }, d);
+  assert.ok(r.erro && /whatsapp|jid|vinculad/i.test(r.erro), 'esperava recusa, veio: ' + r.erro);
+  assert.strictEqual(r.transcript.turns.length, 0, 'nao pode ter encenado');
+});
+
+test('runShadow de grupo SEMPRE limpa o rastro do grupo QA', async () => {
+  const d = fakesGrupo();
+  await runShadow({ category: 'confabulation', group_id: 'greal', evidence: 'USUÁRIO: oi' }, d);
+  assert.ok(d._cleaned.includes('group_chat_messages'), 'mensagens do grupo QA tem que ser apagadas');
+});
