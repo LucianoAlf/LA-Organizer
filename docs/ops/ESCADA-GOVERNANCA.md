@@ -1242,3 +1242,100 @@ _"não consegui registrar"_. São **dois** bloqueios independentes em `src/event
 Controles válidos: `"Vou"` e `"Confirmo"` → `confirmed`; `"Não vou poder"` → `declined`; frase longa
 → `null`. Logo os dois `null` são comportamento, não instrumento (regra 15/08). Corrigível em
 minutos por quem pegar — o gate deveria rodar sobre o texto **sem** o bloco de quote.
+
+### ETAPA 2 (varredura) — o lever mais forte até hoje: o candidato é gerado pelo RAMO, não pelo texto
+
+**Ocorrências:** 1 (02/09), e drenou 2 achados antigos — os primeiros fechados por "já corrigido"
+desde 22/08.
+
+Todos os levers anteriores geram candidato por proximidade (regex casa, data bate, comentário cita
+o nome, gap ≤3s) e depois pagam ~50% de falso na execução. O de hoje gera candidato **rodando o fix
+da rodada contra o estado real de cada turno**, e o que dá a precisão não é o flip — é o FILTRO
+pelo ramo que o `engine.js` de fato toma.
+
+Como: para cada achado aberto não-alto, puxar as `pending_intents` da janela e manter só as que
+satisfazem, nesta ordem, as condições do ramo:
+
+1. `hasConcrete(payload) === false` — a lista literal de `engine.js:10468`
+   (`draft|drafts|anchor|task_id|event_id|items`), não "parece vazio";
+2. **não** ter `payload.coordination.items` — com ele o engine entra no executor determinístico de
+   `engine.js:10373` e **retorna cedo**, então o gate nunca é consultado;
+3. `podeLiberarCriacao(question_text) === false` — o create-gate tem precedência em `engine.js:10491`;
+4. só então: `podeLiberarRecado` vira `false → true` entre a versão pré-fix e a de hoje.
+
+Sobre **126 abertos não-altos** isso devolveu **8 intents em 4 achados**, e 3 dos 4 se sustentaram
+como diagnóstico correto. Sem o passo 2 o conjunto seria bem maior e majoritariamente falso: os
+casos `525d947c` (Peterson 13/07, "Aviso 6 pessoas (…)? Confirma?"), `bbe68318` (Peterson 15/07) e
+`0e6dfbf4` (Jereh 13/07) **viram o veredito** e mesmo assim não são do gate — os três têm
+`payload.coordination.items` e morrem no executor de 10373. Rodar o gate neles provaria só que o
+fix existe, que é exatamente o erro registrado em 18/08.
+
+Fechados com prova completa: `b7d08ea2` (Fabi 09/07, "Mando um agradecimento pro Jhonatan?
+Confirma?" → "Sim" → "não avisei ninguém", `coordination_requests` da janela vazio) e `7701ee2f`
+(Fabi 11/07 09:36–09:41, a MESMA pergunta devolvida **quatro vezes** contra "Confirma" / "Confirmo"
+/ "Sim, avisa" — o loop é o sintoma e o gate apagado é a raiz).
+
+Proposta de virar código: é a versão executável do `provar(literal, guard)` pedido desde 13/08, com
+a correção de desenho que hoje ficou medida — **o gerador tem que reproduzir a CASCATA de ramos do
+`engine.js`, não só chamar a função do fix.** Um helper `ramoDaConfirmacao(payload, question_text)`
+que devolva `'executor_coord' | 'create_gate' | 'coord_gate' | 'proibitivo'` serve o gerador de
+candidatos e o fechamento ao mesmo tempo.
+
+### ETAPA 2 (varredura) — "mesma família" pela 6ª vez, desviada por ler a NOTA do próprio achado
+
+**Ocorrências:** 6 (13/08, 14/08, 17/08, 21/08, 29/08, 02/09). Sexta vez em 20 dias.
+
+`824d11c7` (Rafinha 28/07) saiu do lever de hoje com tudo a favor: pergunta
+`"Aviso o Alf sobre os calendários das escolas? Confirma?"`, payload sem campo concreto, create-gate
+`false`, veredito `false → true`, e no turno das 15:03 BRT a resposta entregue é o fallback
+proibitivo palavra por palavra (`"Não consegui registrar o aviso, Rafinha — pode me mandar de novo
+o que quer que eu diga pro Alf…"`), com `coordination_requests` vazio. Quatro sinais alinhados.
+
+**Não fechei, e não devia mesmo.** O `verified_note` que uma rodada minha escreveu em 20/08 documenta
+que o incidente DESTE achado é outro turno — 28/07 **20:07** BRT, `{"action":"delegate","id":
+"0077a1ad","to_name":"Luciano"}`, delegação para a pessoa errada, rejeitada com `all_failed:1`. O
+turno das 15:03 é um recado real e quebrado do mesmo dia, mas não é o que o achado afirma.
+
+O que isto acrescenta às cinco ocorrências anteriores: desta vez o desempate não veio de rodar mais
+nada — veio de **ler a nota que o próprio acervo já tinha**. A varredura das rodadas anteriores
+produziu 68 `verified_note` justamente com o turno e a raiz; usá-los como primeira checagem de
+identidade do achado é grátis e teria evitado pelo menos duas das seis reincidências.
+
+Regra: **antes de fechar um achado que já tem `verified_note`, o turno que você mediu tem que ser o
+turno que a nota descreve.** Se divergir, o candidato é outro incidente — anote e siga.
+
+### ETAPA 3 — a direção da claim inverteu de novo, agora contra `marker_logs`
+
+**Ocorrências:** 2 (30/08, 02/09).
+
+`6cf4bd8d` (Gabi 25/06) está catalogado como "pediu para repassar agradecimento/recado à Rose, mas o
+TOM acabou dizendo que não conseguiu registrar". Lido assim é `dropped_request` e entra na fila do
+gate de recado. **Os dois recados foram enviados**: `marker_logs COORDINATION_REQUEST executed
+recipient=Rose` às 21:36:27 e 21:38:49 BRT, cada um no segundo seguinte à fala correspondente.
+
+O que sobrou depois de medir é um bug de outra família, e vivo: às 21:39:04 a Gabi respondeu
+**"Beleza"** — puro acuse de recebimento, depois de o envio já ter dado certo — e levou
+_"não consegui registrar isso agora"_. O chokepoint disparou num turno que não pedia escrita
+nenhuma. É a mesma classe do falso-positivo medido em 24/08 (Ana 26/06) e em 30/08 (turno de
+leitura/cálculo): o veto não cobre "o turno não pediu persistência".
+
+Reforça a regra de 30/08 com um alvo novo: quando a claim é "o TOM disse que não conseguiu", a
+verificação barata não é o `conversation_history` — é o `marker_logs` da janela. A frase de falha
+pode ser verdadeira **e** o pedido ter sido cumprido; são duas asserções e o achado só afirma uma.
+
+### ETAPA 1 — a contagem `'alto'` vs `'high'` reincidiu, e de novo escondeu o único alto
+
+**Ocorrências:** 2 (30/08, 02/09).
+
+Em 30/08 ficou registrado que `tom_audit_findings.severity` é uma coluna MISTA (`medio`/`baixo` em
+português, `high` em inglês) e que contar por `'alto'` some com as altas sem falhar. Em 02/09 o
+briefing da rodada informou de novo **"0 de severidade alta"**, e o banco tem **1** (`bad1c55e`).
+
+O custo se repetiu exatamente como previsto: a ETAPA 2 manda pegar o de maior severidade quando não
+há sinal fresco, e o agente foi informado de que não havia nenhum. O alto só apareceu porque a
+varredura leu a coluna crua — e, ao ser lido, já tinha nota de 30/08 dizendo que a raiz mora em
+`skills/`, intocável por veto do Alf.
+
+A proposta de 30/08 segue de pé e agora com duas ocorrências para sustentá-la: normalizar `severity`
+na escrita, ou o `gov-runner` contar por `in ('alto','high')` e **falhar ruidosamente** ao encontrar
+as duas grafias na mesma tabela. Enquanto for contagem à mão, isto volta todo mês.
