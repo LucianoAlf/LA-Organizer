@@ -5370,10 +5370,16 @@ async function checkTaskReminders() {
   // Título do pacote pai p/ os lembretes de tarefa de GRUPO que são filhas de pacote (batch, defensivo).
   const pkgMap = await fetchPackageTitles(due.map((r) => r.tasks?.parent_task_id));
   const ids = [...new Set(due.map(r => r.tasks?.assigned_to).filter(Boolean))];
-  if (!ids.length) return;
-  const { data: collabs } = await supabase
-    .from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
-  const byId = new Map((collabs || []).map(c => [c.id, c]));
+  // GROUP-REMINDAT-IGNORADO: aqui havia `if (!ids.length) return;`. Tarefa de pool de grupo
+  // tem `assigned_to` NULL, então uma leva só de lembrete de GRUPO zerava `ids` e a função
+  // voltava ANTES do ramo de grupo logo abaixo — que existe desde 10/06 e nunca disparava
+  // nesse caso. A consulta de colaborador é que é opcional, não o ciclo.
+  let byId = new Map();
+  if (ids.length) {
+    const { data: collabs } = await supabase
+      .from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
+    byId = new Map((collabs || []).map(c => [c.id, c]));
+  }
   const whatsapp = require('../services/whatsapp');
   let fired = 0;
   for (const r of due) {
@@ -5387,17 +5393,20 @@ async function checkTaskReminders() {
         const dayG = relativeDayFromYmd(t.due_date);
         const whenG = [dayG, (t.due_time || '').slice(0, 5)].filter(Boolean).join(' ');
         const textG = buildGroupTaskReminderText({ label: r.label, title: t.title, when: whenG, creatorFirstName: firstNameOf(t.creator), description: t.description, packageTitle: pkgMap.get(t.parent_task_id) });
-        let sentG = 0;
-        for (const m of members) {
-          const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });
-          if (qM.quiet) continue;
-          try {
-            await proactiveLink.sendAndLink(supabase, { phone: m.phone, content: textG, collaboratorId: m.collaborator_id, refType: 'task', refId: t.id });
-            sentG++;
-          } catch (eS) { console.error(`[TaskReminders] group send err:`, eS.message); }
-        }
+        // Decisão do Alf (02/09): grupo VINCULADO ao WhatsApp recebe UMA mensagem no grupo
+        // (o bridge-out espelha) em vez de N DMs; grupo sem vínculo mantém o fan-out por DM.
+        const { enviarLembreteDeGrupo } = require('./group-task-reminder');
+        const resG = await enviarLembreteDeGrupo({
+          supabase, task: t, texto: textG,
+          deps: {
+            membros: members,
+            isQuietNow: (cid) => isQuietNow(cid, nowSaoPaulo(), 'work', { defaultNightGate: false }),
+            sendAndLink: (sb, args) => proactiveLink.sendAndLink(sb, args),
+          },
+        });
+        const sentG = resG.enviados;
         await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
-        console.log(`[TaskReminders] group fan-out ${String(r.id).slice(0,8)} task=${String(t.id).slice(0,8)} sent=${sentG}/${members.length}`);
+        console.log(`[TaskReminders] grupo ${String(r.id).slice(0,8)} task=${String(t.id).slice(0,8)} destino=${resG.destino} enviados=${sentG}`);
         if (sentG) fired++;
       } catch (eG) { console.error('[TaskReminders] group branch err:', eG.message); }
       continue;

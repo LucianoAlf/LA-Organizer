@@ -5638,6 +5638,16 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           if (rErr) console.error('[Task] reminders insert err:', rErr.message);
           else attachedReminders = rows.length;
         }
+        // GROUP-REMINDAT-IGNORADO (Clayton 02/09): em tarefa de GRUPO o `remind_at` da própria
+        // tarefa não tem quem dispare — `remindPendingTasks` exclui tarefa de grupo e
+        // `remindGroupTasks` só olha "vence amanhã". Sem isto o TOM promete "lembrete às 14h" e
+        // nada sai na hora. Espelha o horário numa linha de `task_reminders`, que TEM disparo
+        // com `sent_at` próprio (e por isso não colide com o aviso de véspera).
+        if (taskId && insertRow.assigned_group_id && insertRow.remind_at && !reminders.length) {
+          const { error: gErr } = await supabase.from('task_reminders')
+            .insert({ task_id: taskId, remind_at: insertRow.remind_at, label: null });
+          if (gErr) console.error('[Task] espelho remind_at de grupo err:', gErr.message);
+        }
         // FATIA 6 (#1): guarda os horários de lembrete desta tarefa criada (one-shot + múltiplos)
         // pra o caller poder surfacer "🔔 Lembro às HHh" se a fala do TOM não citar a hora.
         if (insertRow.remind_at) createdReminderTimes.push(insertRow.remind_at);
