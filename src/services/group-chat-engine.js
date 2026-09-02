@@ -532,8 +532,9 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       // é a fala que diz de quem se está falando. Sem nenhuma das duas, PERGUNTA.
       const unidadeId = situ.resolverUnidade(p.unidade) || (ctx.group && ctx.group.la_report_unidade_id);
       if (!unidadeId) {
-        actions.push({ kind: 'situacao', status: 'fail', label: 'Situação do aluno',
-          detail: 'me diz de qual unidade — Recreio, Barra ou Campo Grande' });
+        // 'ask', não 'fail': falta um dado que só a pessoa tem. Ver buildTomContent.
+        actions.push({ kind: 'situacao', status: 'ask', label: 'Situação do aluno',
+          detail: 'de qual unidade? Recreio, Barra ou Campo Grande' });
       } else {
         const recorte = situ.normalizarRecorte(p.recorte);
         const pagina = Math.max(0, Number(p.pagina) || 0);
@@ -695,12 +696,23 @@ function buildTomContent(rawReply, actions) {
   const acts = Array.isArray(actions) ? actions : [];
   const cleaned = String(rawReply || '').replace(/<<SILENCIO>>/gi, '').trim();
   const hasFailure = acts.some((a) => a && a.status === 'fail');
+  // PEDIR informação não é FALHAR (achado na bateria E2E de 02/09). Quando o que falta é um
+  // dado que só a pessoa tem — qual unidade, qual aluno —, a resposta é uma PERGUNTA. Vestir
+  // isso de "tentei mas não consegui" ensina o time a achar que ele quebrou, e some com a
+  // pergunta no meio do pedido de desculpa.
+  const asks = acts.filter((a) => a && a.status === 'ask');
   let prose = hasFailure ? '' : cleaned;
   if (hasFailure) {
     const motivos = acts.filter((a) => a && a.status === 'fail')
       .map((a) => `${a.label || 'ação'}${a.detail ? ': ' + a.detail : ''}`).join(' · ');
     prose = `Opa, tentei mas não consegui concluir agora — ${motivos}. Dá uma conferida ou me explica de outro jeito que eu tento de novo. 🙏`;
   }
+  // A pergunta entra ANTES do chokepoint: ela não é afirmação de escrita, é coleta.
+  if (!hasFailure && asks.length) {
+    const perguntas = asks.map((a) => a.detail).filter(Boolean).join(' · ');
+    prose = prose.trim() ? `${prose.trim()}\n\n${perguntas}` : perguntas;
+  }
+
   // GROUP-NOTE-CONFAB (Clayton, Recreio 02/09): a regra acima só cobre ação que FALHOU. Quando
   // o LLM não emite marker NENHUM e mesmo assim afirma a escrita na prosa ("Anotado aqui pra
   // contexto"), `acts` vem vazio, `hasFailure` é false e a afirmação passa inteira — o membro
@@ -712,7 +724,7 @@ function buildTomContent(rawReply, actions) {
   // content-solicitation ("Anotado! Pode mandar o próximo" é coleta, não escrita) e pergunta
   // pendente de confirmação (a ação ainda vai acontecer).
   if (!hasFailure && prose.trim()) {
-    const persistiuOuVaiPersistir = acts.some((a) => a && (a.status === 'ok' || a.status === 'pending'));
+    const persistiuOuVaiPersistir = acts.some((a) => a && (a.status === 'ok' || a.status === 'pending' || a.status === 'ask'));
     if (!persistiuOuVaiPersistir) {
       try {
         const { enforceNoMarkerHonesty } = require('../lib/optimistic-confirm');

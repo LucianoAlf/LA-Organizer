@@ -153,3 +153,33 @@ test('ação pendente de confirmação não dispara o guard', () => {
   const c = buildTomContent('Confirma que é pra apagar a ficha *X*?', [{ kind: 'note', status: 'pending', label: 'X' }]);
   assert.doesNotMatch(c, /não consegui registrar/i);
 });
+
+// ── PEDIR NÃO É FALHAR (bateria E2E de 02/09) ─────────────────────────────────────────────
+// Grupo que atende mais de uma unidade, pergunta sem unidade: o TOM respondia
+// "Opa, tentei mas não consegui concluir agora — me diz de qual unidade". A pergunta estava
+// certa e a moldura de erro estava errada. Pedido de informação vira PERGUNTA.
+test('ação "ask" vira pergunta, não mensagem de erro', () => {
+  const c = buildTomContent('Deixa eu ver aqui 👇', [
+    { kind: 'situacao', status: 'ask', label: 'Situação do aluno', detail: 'de qual unidade? Recreio, Barra ou Campo Grande' },
+  ]);
+  assert.doesNotMatch(c, /não consegui|tentei mas/i, 'perguntar não é falhar');
+  assert.match(c, /de qual unidade/i);
+  assert.match(c, /Deixa eu ver aqui/, 'a fala do TOM é preservada');
+});
+
+test('ask sem prosa nenhuma ainda entrega a pergunta', () => {
+  const c = buildTomContent('', [{ kind: 'situacao', status: 'ask', label: 'x', detail: 'de qual unidade?' }]);
+  assert.match(c, /de qual unidade/i);
+});
+
+test('ZERO-REGRESSÃO: fail de verdade continua com a moldura de erro', () => {
+  const c = buildTomContent('Pronto!', [
+    { kind: 'situacao', status: 'fail', label: 'Situação do aluno', detail: 'não consegui consultar o LA Report agora' },
+  ]);
+  assert.match(c, /não consegui/i);
+});
+
+test('ask não dispara o chokepoint de escrita sem marker', () => {
+  const c = buildTomContent('Anotado, já vou ver', [{ kind: 'situacao', status: 'ask', label: 'x', detail: 'de qual unidade?' }]);
+  assert.doesNotMatch(c, /não consegui registrar/i);
+});
