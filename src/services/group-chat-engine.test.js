@@ -183,3 +183,28 @@ test('ask não dispara o chokepoint de escrita sem marker', () => {
   const c = buildTomContent('Anotado, já vou ver', [{ kind: 'situacao', status: 'ask', label: 'x', detail: 'de qual unidade?' }]);
   assert.doesNotMatch(c, /não consegui registrar/i);
 });
+
+// ── A NOTA HONESTA É DO SISTEMA, NÃO DO MODELO (Sucesso do Aluno, 02/09) ──────────────────
+// A Fabíola apontou que o número não respondia à pergunta dela (mês de matrícula), o TOM
+// explicou CERTO que não faz esse filtro — e emendou sozinho "⚠️ Na real não consegui
+// registrar isso agora", sem nenhuma ação no turno. Autoacusação falsa na frente da equipe.
+// A nota é escrita pelo chokepoint DEPOIS de medir; o modelo nunca deve escrevê-la.
+test('nota honesta escrita pelo MODELO é arrancada', () => {
+  const c = buildTomContent(
+    'Fabi, o filtro aqui é por unidade e por pendência. Mês de matrícula não é um recorte que eu faço.\n\n_⚠️ Na real não consegui registrar isso agora — me manda de novo, por favor._',
+    [{ kind: 'situacao', status: 'ok', label: 'x' }]);
+  assert.doesNotMatch(c, /não consegui registrar/i);
+  assert.match(c, /Mês de matrícula não é um recorte/);
+});
+
+test('mas o chokepoint continua podendo ADICIONAR a nota quando mede que nada persistiu', () => {
+  const c = buildTomContent('Anotado aqui pra contexto.', []);
+  assert.match(c, /não consegui registrar/i, 'a nota do sistema, essa sim, continua valendo');
+});
+
+test('a nota do modelo não engana o chokepoint a ponto de sumir com a resposta', () => {
+  const c = buildTomContent(
+    'Já te mando a lista completa.\n\n⚠️ Na real não consegui registrar isso agora',
+    [{ kind: 'situacao', status: 'ok', label: 'x' }]);
+  assert.match(c, /Já te mando a lista completa/);
+});

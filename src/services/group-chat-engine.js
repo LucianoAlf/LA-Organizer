@@ -692,9 +692,21 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
 // acha que o TOM o ignorou (caso Rose 15/06, GROUPCHAT-FAIL-NOPROSE-SILENT). Por isso, na FALHA
 // troca a prosa otimista por uma HONESTA (com o motivo). Sucesso fica INALTERADO (zero regressão
 // no fluxo normal/relatório, que já tem prosa do LLM ou espelha o próprio card).
+// A nota honesta ("Na real não consegui registrar isso agora") é a voz do SISTEMA — quem a
+// escreve é o chokepoint, depois de MEDIR que nada persistiu. Em 02/09, no Sucesso do Aluno, o
+// próprio modelo a escreveu no fim de uma resposta correta (ele explicava, com razão, que não
+// filtra por mês de matrícula) e o resultado foi o TOM se acusando de uma falha que não houve,
+// na frente da equipe. Guard invertido: alarme falso destrói o sinal do alarme verdadeiro.
+// Arrancamos a nota da fala do modelo SEMPRE; se ela tiver que existir, o chokepoint abaixo a
+// devolve — aí com medição por trás.
+const NOTA_DO_SISTEMA_RE = /_?⚠️?\s*Na real n[ãa]o consegui registrar isso agora[^\n]*/gi;
+
 function buildTomContent(rawReply, actions) {
   const acts = Array.isArray(actions) ? actions : [];
-  const cleaned = String(rawReply || '').replace(/<<SILENCIO>>/gi, '').trim();
+  const cleaned = String(rawReply || '')
+    .replace(/<<SILENCIO>>/gi, '')
+    .replace(NOTA_DO_SISTEMA_RE, '')
+    .trim();
   const hasFailure = acts.some((a) => a && a.status === 'fail');
   // PEDIR informação não é FALHAR (achado na bateria E2E de 02/09). Quando o que falta é um
   // dado que só a pessoa tem — qual unidade, qual aluno —, a resposta é uma PERGUNTA. Vestir

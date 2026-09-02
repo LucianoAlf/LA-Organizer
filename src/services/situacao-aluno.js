@@ -140,9 +140,16 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome } = {}) {
       ? ' <i>(marcada como preenchida, mas sem registro hoje — conferir)</i>' : '';
     return `<li>${faixa} ${esc(p.nome)}${ressalva}</li>`;
   }).join('');
+  // COMUNIDADE + CRIANÇA: a criança não entra em grupo de WhatsApp, o responsável entra. O dado
+  // já considera isso (a RPC casa telefone do aluno, do responsável e dos contatos), mas quem lê
+  // a lista precisa saber COM QUEM falar — senão sai convidando a pessoa errada.
+  const temCrianca = itens.some((p) => String(p.classificacao).toUpperCase() === 'LAMK');
+  const nota = (rec === 'comunidade' && temCrianca)
+    ? '<p><i>Nas crianças (🧒) quem precisa entrar é o responsável — o convite vai pra ele, não pra ela.</i></p>'
+    : '';
   const cabeca = pagina === 0
-    ? `<p><b>${total}</b> ${rotulo}. Começando pelas crianças:</p>`
-    : `<p>Continuando — <b>${total}</b> ${rotulo}:</p>`;
+    ? `<p><b>${total}</b> ${rotulo}. Começando pelas crianças:</p>${nota}`
+    : `<p>Continuando — <b>${total}</b> ${rotulo}:</p>${nota}`;
   // O convite tem que caber no que SOBROU. Com 5 restando, "mando os próximos 30" e depois
   // vêm 5 faz o número parecer inventado — e o número é a coisa que eles mais olham.
   // (Fabíola, Sucesso do Aluno, 02/09: sobravam 5 e ele ofereceu 30.)

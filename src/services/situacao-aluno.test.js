@@ -246,3 +246,33 @@ test('sobrando exatamente 1, fala no singular', () => {
   const html = renderLista({ recorte: 'foto', grupoNome: 'X', pessoas: dz, total: 16, pagina: 0 });
   assert.match(html, /o último\?/);
 });
+
+// ── CRIANÇA NÃO ENTRA EM GRUPO; O RESPONSÁVEL ENTRA (Alf, 02/09) ──────────────────────────
+// O dado está certo (a RPC casa telefone do aluno, do responsável e dos contatos), mas a lista
+// entregava só o nome da criança — e quem lê sai convidando a pessoa errada.
+test('lista de comunidade avisa que o convite é do responsável quando há criança', () => {
+  const html = renderLista({
+    recorte: 'comunidade', grupoNome: 'X',
+    pessoas: [P('Alice', { classificacao: 'LAMK', comunidade_status: 'fora_da_comunidade' })],
+    total: 1, pagina: 0,
+  });
+  assert.match(html, /responsável/i);
+});
+
+test('sem criança na fatia, não polui com a nota do responsável', () => {
+  const html = renderLista({
+    recorte: 'comunidade', grupoNome: 'X',
+    pessoas: [P('Ana Clara', { classificacao: 'EMLA', comunidade_status: 'fora_da_comunidade' })],
+    total: 1, pagina: 0,
+  });
+  assert.doesNotMatch(html, /responsável/i);
+});
+
+test('a nota é SÓ do recorte de comunidade — não aparece em anamnese', () => {
+  const html = renderLista({
+    recorte: 'anamnese', grupoNome: 'X',
+    pessoas: [P('Alice', { classificacao: 'LAMK' })],
+    total: 1, pagina: 0,
+  });
+  assert.doesNotMatch(html, /responsável/i);
+});
