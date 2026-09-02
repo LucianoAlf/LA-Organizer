@@ -690,6 +690,7 @@ const ALL_CHECKS = [
   ['finding_triage',         checkFindingTriage],
   ['conversation_quality',   checkConversationQuality],
   ['grupos_ativos',          checkGruposAtivos],
+  ['licoes_pendentes',       checkLicoesPendentes],
 ];
 
 // CHECK — Painel dos grupos de trabalho (pedido do Alf, 02/09). Ele saiu do dia a dia dos
@@ -699,9 +700,36 @@ const ALL_CHECKS = [
 //   disse-sem-gravar — quantas vezes em 24h o chokepoint pegou o TOM afirmando escrita sem
 //                      marker nenhum. É o sintoma que custou o dia 02/09 pra achar.
 // PURAS pra dar teste: o formato da linha e a decisão ok/warning não tocam o banco.
-function formatarLinhaGrupo({ nome, fichas, abertas, claims }) {
-  const base = `${nome}: ${fichas} fichas · ${abertas} abertas`;
+function formatarLinhaGrupo({ nome, fichas, abertas, claims, memorias = 0 }) {
+  const base = `${nome}: ${fichas} fichas · ${abertas} abertas · +${memorias} memórias`;
   return claims > 0 ? `${base} · ⚠️ ${claims} disse-sem-gravar` : base;
+}
+
+// CHECK — Lições esperando o ok do Alf. O gate (lesson nasce is_active=false) só serve se ele
+// SOUBER que tem algo represado; senão o freio vira paralisia e o TOM nunca aprende. Mostra o
+// grupo e o dia pra ele decidir sem abrir tela nenhuma.
+function resumirLicoesPendentes(licoes) {
+  const arr = Array.isArray(licoes) ? licoes : [];
+  if (!arr.length) return { status: 'ok', detail: 'Nenhuma lição esperando aprovação' };
+  const mostra = arr.slice(0, 3).map((l) => {
+    const [a, m, d] = String(l.dia || '').split('-');
+    const data = d ? `${d}/${m}` : (l.dia || '?');
+    return `“${String(l.conteudo || '').slice(0, 110)}” — ${l.grupo}, ${data}`;
+  }).join(' | ');
+  const resto = arr.length > 3 ? ` (+${arr.length - 3})` : '';
+  const plural = arr.length === 1 ? 'lição' : 'lições';
+  return { status: 'warning', detail: `⛔ ${arr.length} ${plural} esperando seu ok: ${mostra}${resto}` };
+}
+
+async function checkLicoesPendentes() {
+  const { data, error } = await supabase.from('group_memory')
+    .select('content, occurred_on, group:work_groups(name)')
+    .eq('memory_type', 'lesson').eq('is_active', false).is('approved_at', null)
+    .order('occurred_on', { ascending: false }).limit(20);
+  if (error) return { status: 'ok', detail: `lições não consultadas (${error.message})` };
+  return resumirLicoesPendentes((data || []).map((r) => ({
+    grupo: (r.group && r.group.name) || 'grupo', dia: r.occurred_on, conteudo: r.content,
+  })));
 }
 
 function resumirGrupos(linhas) {
@@ -721,7 +749,7 @@ async function checkGruposAtivos() {
   const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const linhas = [];
   for (const g of (grupos || [])) {
-    const [fichasRes, tarefasRes, claimsRes] = await Promise.all([
+    const [fichasRes, tarefasRes, claimsRes, memoriasRes] = await Promise.all([
       supabase.from('group_notes').select('id', { count: 'exact', head: true })
         .eq('group_id', g.id).is('deleted_at', null),
       supabase.from('tasks').select('id', { count: 'exact', head: true })
@@ -730,10 +758,13 @@ async function checkGruposAtivos() {
       supabase.from('marker_logs').select('id', { count: 'exact', head: true })
         .eq('marker_type', 'CONFAB').gte('created_at', desde)
         .like('reason', `grupo_claim_sem_marker: ${g.id}%`),
+      supabase.from('group_memory').select('id', { count: 'exact', head: true })
+        .eq('group_id', g.id).gte('created_at', desde),
     ]);
     linhas.push({
       nome: g.name, fichas: fichasRes.count || 0,
       abertas: tarefasRes.count || 0, claims: claimsRes.count || 0,
+      memorias: memoriasRes.count || 0,
     });
   }
   return resumirGrupos(linhas);
@@ -786,4 +817,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos };
+module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes };
