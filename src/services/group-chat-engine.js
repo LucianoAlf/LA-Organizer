@@ -642,6 +642,32 @@ function buildTomContent(rawReply, actions) {
       .map((a) => `${a.label || 'ação'}${a.detail ? ': ' + a.detail : ''}`).join(' · ');
     prose = `Opa, tentei mas não consegui concluir agora — ${motivos}. Dá uma conferida ou me explica de outro jeito que eu tento de novo. 🙏`;
   }
+  // GROUP-NOTE-CONFAB (Clayton, Recreio 02/09): a regra acima só cobre ação que FALHOU. Quando
+  // o LLM não emite marker NENHUM e mesmo assim afirma a escrita na prosa ("Anotado aqui pra
+  // contexto"), `acts` vem vazio, `hasFailure` é false e a afirmação passa inteira — o membro
+  // fica achando que ficou registrado e `group_notes` tem zero linha. É o mesmo buraco que o
+  // 1:1 fechou com o chokepoint; aqui ele nunca tinha sido ligado.
+  //
+  // Reusa `enforceNoMarkerHonesty` em vez de escrever outro vocabulário: é a fonte única de
+  // "isto afirma conclusão", com os vetos que a casa já pagou pra descobrir —
+  // content-solicitation ("Anotado! Pode mandar o próximo" é coleta, não escrita) e pergunta
+  // pendente de confirmação (a ação ainda vai acontecer).
+  if (!hasFailure && prose.trim()) {
+    const persistiuOuVaiPersistir = acts.some((a) => a && (a.status === 'ok' || a.status === 'pending'));
+    if (!persistiuOuVaiPersistir) {
+      try {
+        const { enforceNoMarkerHonesty } = require('../lib/optimistic-confirm');
+        const rc = require('./reply-classify');
+        prose = enforceNoMarkerHonesty(prose, {
+          nothingPersisted: true,
+          infoGathering: rc.hasTrailingQuestion(prose) || rc.isInfoGatheringReply(prose),
+          contentSolicitation: rc.isContentSolicitationReply(prose),
+          markerAttempted: false,
+          awaitingConfirm: false,
+        });
+      } catch (e) { console.error('[GroupChat] chokepoint err:', e.message); }
+    }
+  }
   let content = prose.trim();
   // Pendência de confirmação (ex.: apagar ficha): garante uma pergunta CLARA mesmo se o LLM não
   // escreveu prosa — senão o bridge-out (que tira o bloco ACTIONS) espelharia VAZIO no WhatsApp.

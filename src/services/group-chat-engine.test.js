@@ -113,3 +113,43 @@ test('postOpsResult: agente sem texto — se nem o aviso entrar, também rejeita
   const sb = sbQueFalhaNa(1);
   await assert.rejects(() => postOpsResult(sb, 'g1', '   '));
 });
+
+// ── GROUP-NOTE-CONFAB (Clayton, Recreio 02/09) ────────────────────────────────────────────
+// A regra anti-mentira acima só olhava ação que FALHOU. Quando o LLM não emite marker NENHUM
+// e mesmo assim afirma a escrita na prosa, `actions` vem VAZIO, `hasFailure` é false, e a
+// afirmação passa inteira. Caso real, primeira hora de uso do grupo do Recreio: o Clayton
+// explicou que o 6o contrato não sai (aluno em aviso prévio), o TOM respondeu "Anotado aqui
+// pra contexto" e `group_notes` do grupo ficou com ZERO linhas.
+// Reusa o MESMO chokepoint do 1:1 (enforceNoMarkerHonesty) — fonte única de vocabulário.
+test('CASO REAL Kaique: afirma "Anotado" sem marker nenhum → não passa como verdade', () => {
+  const c = buildTomContent(
+    'Entendido, Clayton! Então tá tudo certo — ficamos com os 5 contratos mesmo, e o Kaique Batista já sai depois do aviso prévio. Anotado aqui pra contexto.',
+    []);
+  assert.match(c, /não consegui registrar/i, 'a fala precisa admitir que nada foi gravado');
+});
+
+test('ZERO-REGRESSÃO: afirmar escrita COM ação ok segue passando intacto', () => {
+  const c = buildTomContent('Feito! Anotei aqui pra vocês.', [{ kind: 'note', status: 'ok', label: 'Kaique' }]);
+  assert.doesNotMatch(c, /não consegui registrar/i);
+  assert.match(c, /Anotei aqui/);
+});
+
+test('ZERO-REGRESSÃO: conversa social sem ação nenhuma não é acusada', () => {
+  for (const fala of ['Eai Clayton! 👽 Obrigado pelo acesso!', 'De nada, Clayton! 👽', 'Bom dia, pessoal!']) {
+    const c = buildTomContent(fala, []);
+    assert.doesNotMatch(c, /não consegui registrar/i, `falso positivo em: ${fala}`);
+  }
+});
+
+// FALSEFIRE-COMPOSICAO (Rose ADM 14/08, já pago no 1:1): "Anotado! Pode mandar o próximo" é
+// TOM COLETANDO conteúdo, não afirmando escrita. Sem este veto o guard acusa a coleta.
+test('content-solicitation ("pode mandar o próximo") não é afirmação de escrita', () => {
+  const c = buildTomContent('Anotado! Pode mandar o próximo.', []);
+  assert.doesNotMatch(c, /não consegui registrar/i);
+});
+
+// Pergunta de confirmação pendente não é afirmação de escrita — a ação ainda vai acontecer.
+test('ação pendente de confirmação não dispara o guard', () => {
+  const c = buildTomContent('Confirma que é pra apagar a ficha *X*?', [{ kind: 'note', status: 'pending', label: 'X' }]);
+  assert.doesNotMatch(c, /não consegui registrar/i);
+});
