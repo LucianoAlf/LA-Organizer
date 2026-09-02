@@ -33,10 +33,22 @@ const PROPOE_RECADO = new RegExp([
 // proposta são avaliados na MESMA frase (a última interrogativa): proposta limpa numa frase com
 // ação destrutiva em OUTRA continua vetada, e o fail-closed segue fechado.
 // Sem "?" no texto, avalia tudo (comportamento antigo).
+// COORD-GATE-APAGADO-PELA-TAG (Clayton 29/08 08:53). A casa fecha proposta com uma tag de
+// confirmação SEM conteúdo ("Mando um agradecimento pro Rafinha? *Confirma?*"), e era ela a
+// última interrogativa — então o alvo do gate virava "Confirma?", que não casa proposta
+// nenhuma. Nas perguntas gravadas em CONFIRM_NOEXEC o gate liberava 1 e ficava apagado por
+// isto em 5. A tag é pulada; o veto segue rodando na frase da proposta, então o fail-closed
+// não afrouxa. Tag sozinha (sem proposta antes) continua sem liberar.
+const TAG_CONFIRMACAO = /^(?:confirma\w*|certo|t[áa]\s+certo|correto|pode\s+ser)\b[^?]*\?$/iu;
+
 function ultimaPergunta(texto) {
   // Corta em fim de FRASE (. ! ?), não só em "?": o preâmbulo do gate termina em ponto, e sem
   // isso o texto inteiro contaria como "a pergunta" — que era justamente o bug.
   const frases = String(texto).split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const limpa = (s) => s.replace(/[*_"“”]/g, '').replace(/\s+/g, ' ').trim();
+  for (let i = frases.length - 1; i >= 0; i--) {
+    if (frases[i].endsWith('?') && !TAG_CONFIRMACAO.test(limpa(frases[i]))) return frases[i];
+  }
   for (let i = frases.length - 1; i >= 0; i--) {
     if (frases[i].endsWith('?')) return frases[i];
   }
