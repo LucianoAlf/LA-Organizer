@@ -14377,19 +14377,9 @@ async function logConversation(collaboratorId, direction, content, waMessageId =
 const MEM_VALID_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
 
 // Simple word-set overlap dedupe. Returns true if `a` looks like `b`.
-function looksLikeMemory(a, b, threshold = 0.6) {
-  const norm = s => String(s || '').toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
-    .filter(w => w.length >= 4);
-  const wa = new Set(norm(a));
-  const wb = new Set(norm(b));
-  if (!wa.size || !wb.size) return false;
-  let inter = 0;
-  for (const w of wa) if (wb.has(w)) inter++;
-  const union = wa.size + wb.size - inter;
-  return union > 0 && inter / union >= threshold;
-}
+// looksLikeMemory mora em services/agent-memory.js desde 02/09 — a mesma regra serve a memória
+// de PESSOA e a de GRUPO. Duas cópias é como nasce drift.
+const { looksLikeMemory } = require('./services/agent-memory');
 
 async function _consolidateExtract(collab, historyText, existingMems) {
   // existingMems: array de { content, memory_type, importance }
