@@ -92,3 +92,32 @@ test('decideGroupReply (modelo JANELA): aberta responde a tudo; fechada abre por
   assert.deepEqual(decideGroupReply({ engaged: false, vocative: false, isFarewell: false, tomAwaiting: false }),
     { shouldRun: false, clearAfter: false, opensWindow: false });
 });
+
+// ── REAÇÃO NÃO É CONVERSA (ADM CG, 02/09) ─────────────────────────────────────────────────
+// Com a janela aberta, a Ana Paula mandou "👀" e "🙏🏻" depois de um card e o TOM emendou
+// "Pois é, Ana — 346 é bastante coisa", sem ninguém ter perguntado nada. Gesto não é pergunta.
+const { isReacaoSemTexto } = require('./group-chat-triggers');
+
+test('isReacaoSemTexto: emoji e pontuação são reação; qualquer letra ou número não', () => {
+  for (const t of ['👀', '🙏🏻', '😂😂', '!!!', '...', '  ', '', null]) {
+    assert.strictEqual(isReacaoSemTexto(t), true, JSON.stringify(t));
+  }
+  for (const t of ['ok', '👍 blz', 'sim', '5', 'Tom?']) {
+    assert.strictEqual(isReacaoSemTexto(t), false, JSON.stringify(t));
+  }
+});
+
+test('janela aberta + reação sem texto = SILÊNCIO', () => {
+  const r = decideGroupReply({ engaged: true, vocative: false, reacaoSemTexto: true });
+  assert.strictEqual(r.shouldRun, false);
+});
+
+test('mas o vocativo fura: chamou pelo nome, ele responde mesmo com emoji junto', () => {
+  const r = decideGroupReply({ engaged: false, vocative: true, reacaoSemTexto: true });
+  assert.strictEqual(r.shouldRun, true);
+});
+
+test('ZERO-REGRESSÃO: janela aberta com texto de verdade continua respondendo', () => {
+  const r = decideGroupReply({ engaged: true, vocative: false, reacaoSemTexto: false });
+  assert.strictEqual(r.shouldRun, true);
+});

@@ -143,8 +143,12 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome } = {}) {
   const cabeca = pagina === 0
     ? `<p><b>${total}</b> ${rotulo}. Começando pelas crianças:</p>`
     : `<p>Continuando — <b>${total}</b> ${rotulo}:</p>`;
+  // O convite tem que caber no que SOBROU. Com 5 restando, "mando os próximos 30" e depois
+  // vêm 5 faz o número parecer inventado — e o número é a coisa que eles mais olham.
+  // (Fabíola, Sucesso do Aluno, 02/09: sobravam 5 e ele ofereceu 30.)
+  const proximos = Math.min(restam, PAGINA_SEGUINTE);
   const rodape = restam
-    ? `<p>…e mais <b>${restam}</b>. Quer que eu mande os próximos ${PAGINA_SEGUINTE}?</p>`
+    ? `<p>…e mais <b>${restam}</b>. Quer que eu mande ${proximos === 1 ? 'o último' : `os próximos ${proximos}`}?</p>`
     : '<p>Essa foi a lista toda. 👊</p>';
   return `<h3>👥 ${nome}</h3>${cabeca}<ul>${li}</ul>${rodape}`;
 }

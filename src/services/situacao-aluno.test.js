@@ -223,3 +223,26 @@ test('resolverUnidade devolve null pro que nao reconhece', () => {
     assert.strictEqual(resolverUnidade(x), null, String(x));
   }
 });
+
+// ── O CONVITE CABE NO QUE SOBROU (Fabíola, Sucesso do Aluno, 02/09) ───────────────────────
+// Sobravam 5 e ele oferecia "os próximos 30". Número que não bate com o que vem depois faz o
+// resto parecer inventado — e o número é justamente o que o time mais olha.
+test('rodapé oferece o que REALMENTE sobrou, não o teto fixo', () => {
+  const vinte = Array.from({ length: 20 }, (_, i) => P(`Aluno ${String(i).padStart(2, '0')}`));
+  const html = renderLista({ recorte: 'foto', grupoNome: 'X', pessoas: vinte, total: 20, pagina: 0 });
+  assert.match(html, /e mais <b>5<\/b>/);
+  assert.match(html, /os próximos 5\?/, 'não pode oferecer 30 quando sobram 5');
+  assert.doesNotMatch(html, /próximos 30/);
+});
+
+test('quando sobram muitos, oferece a fatia cheia de 30', () => {
+  const cem = Array.from({ length: 100 }, (_, i) => P(`Aluno ${String(i).padStart(3, '0')}`));
+  const html = renderLista({ recorte: 'anamnese', grupoNome: 'X', pessoas: cem, total: 100, pagina: 0 });
+  assert.match(html, /os próximos 30\?/);
+});
+
+test('sobrando exatamente 1, fala no singular', () => {
+  const dz = Array.from({ length: 16 }, (_, i) => P(`Aluno ${String(i).padStart(2, '0')}`));
+  const html = renderLista({ recorte: 'foto', grupoNome: 'X', pessoas: dz, total: 16, pagina: 0 });
+  assert.match(html, /o último\?/);
+});

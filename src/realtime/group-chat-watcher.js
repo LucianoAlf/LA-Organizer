@@ -11,7 +11,7 @@
 //  - Recuperação: se um restart matou o processamento no meio (claim feito, resposta perdida),
 //    a varredura detecta a mensagem de membro órfã (última, sem resposta) e a re-libera pro poll.
 
-const { detectDisengageTrigger, isEngaged, isVocativeTom, decideGroupReply, shouldRecoverOrphan, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
+const { detectDisengageTrigger, isEngaged, isVocativeTom, decideGroupReply, isReacaoSemTexto, shouldRecoverOrphan, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
 const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
 const { processGroupChatClosing } = require('../services/group-chat-closing');
@@ -75,7 +75,7 @@ async function processOne(supabase, msg) {
   const vocative = isVocativeTom(text);
   const isFarewell = detectDisengageTrigger(text);
   const tomAwaiting = (engaged || vocative) ? false : await computeTomAwaiting(supabase, msg.group_id);
-  const { shouldRun, clearAfter, opensWindow } = decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting });
+  const { shouldRun, clearAfter, opensWindow } = decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting, reacaoSemTexto: isReacaoSemTexto(msg.content) });
 
   if (!shouldRun) {
     // Marca como TRATADA (silêncio intencional) pra recuperação de órfã NÃO re-disparar.

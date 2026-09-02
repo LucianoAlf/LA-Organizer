@@ -56,7 +56,18 @@ function shouldRecoverOrphan(last, ageMs, { orphanMinMs, idleMaxMs, alreadyRecov
 // (back-and-forth sem repetir o nome). FECHADA → abre por vocativo OU por estar respondendo a uma
 // pergunta do TOM. "valeu Tom" (isFarewell) responde e FECHA. Papo com janela fechada e sem chamado
 // → silêncio. (Substitui o modelo estrito "endereçar a cada msg".)
-function decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting } = {}) {
+// Mensagem que é só REAÇÃO (emoji, pontuação, figurinha) não é conversa — é gesto. Com a
+// janela aberta o TOM respondia a ela, e o efeito no grupo é ele falar sozinho: no ADM CG
+// (02/09) a Ana Paula mandou "👀" e "🙏🏻" depois de um card e ele emendou "Pois é, Ana — 346 é
+// bastante coisa", sem ninguém ter perguntado nada. O vocativo continua furando isto: se a
+// pessoa escrever o nome dele, ele responde mesmo que só tenha emoji junto.
+const SEM_CONTEUDO_RE = /[\p{L}\p{N}]/u;
+function isReacaoSemTexto(text) {
+  return !SEM_CONTEUDO_RE.test(String(text || ''));
+}
+
+function decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting, reacaoSemTexto } = {}) {
+  if (reacaoSemTexto && !vocative) return { shouldRun: false, clearAfter: false, opensWindow: false };
   if (engaged) return { shouldRun: true, clearAfter: !!isFarewell, opensWindow: false };
   if (vocative) return { shouldRun: true, clearAfter: !!isFarewell, opensWindow: !isFarewell };
   if (tomAwaiting) return { shouldRun: true, clearAfter: false, opensWindow: true };
@@ -90,6 +101,7 @@ function isEngaged(engagedAt, now = new Date(), maxHours = ENGAGE_MAX_HOURS) {
 }
 
 module.exports = {
+  isReacaoSemTexto,
   detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan, decideGroupReply,
   VOCATIVE_STOPWORDS, AWAIT_WINDOW_MS, ENGAGE_WINDOW_MIN, ENGAGE_MAX_HOURS,
 };
