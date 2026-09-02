@@ -60,7 +60,7 @@ apenas em decisão de negócio. O humano sai do caminho crítico da manutenção
    ┌─────────────────────────────────────────────────────────────────┐
    │  CICLO DE GOVERNANÇA (diário, processo próprio, LLM com tools)  │
    │  ETAPA 1  Placar: dos KIs que EU fechei, quantos voltaram?      │
-   │  ETAPA 2  1 CORREÇÃO por rodada; refutação SEM teto             │
+   │  ETAPA 2  2 CORREÇÕES por rodada; refutação SEM teto            │
    │  ETAPA 2.5 Bug ou pedido de feature? (feature → fila, não faz)  │
    │  ETAPA 3  REFUTAR antes de acreditar (grep, literal, datar)     │
    │  ETAPA 4  Prova de reversão (teste VERMELHO com a entrada real) │

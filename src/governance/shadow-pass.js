@@ -9,6 +9,12 @@ function ymdUtc() { return new Date().toISOString().slice(0, 10); }
 // vocabulário válido e guarda o verdict cru no reason.
 const VERDICT_TO_RESULT = { reprovado: 'rejected', aprovado: 'executed', inconclusivo: 'skipped' };
 
+// A nota anterior é a prova do fechamento escrita pelo corretor. A sombra escreve DEPOIS dela.
+function anexar(anterior, nova) {
+  const a = String(anterior || '').trim();
+  return a ? `${a}\n${nova}` : nova;
+}
+
 async function shadowPass(findings, deps = {}) {
   const { supabase, isReproducible, runShadow, judgeShadow } = deps;
   const out = [];
@@ -29,11 +35,18 @@ async function shadowPass(findings, deps = {}) {
       }
       const barrou = verdict === 'reprovado';
       const nota = `[shadow ${ymdUtc()}] ${verdict}: ${reason}${evidencia ? ' | ' + evidencia : ''}`;
+      // A sombra ANEXA ao verified_note, nunca substitui. A nota anterior é a prova do
+      // fechamento escrita pelo corretor ({antes, depois}, turno real, commit). Sobrescrever
+      // apagou essa prova em 89d9734e (o fix do próprio dia) e 7701ee2f em 02/09: o achado
+      // ficou `corrigido` carregando só "inconclusivo: não reproduzível", e quem lê a tabela
+      // ou reabre ou para de confiar nela. Reprovado reabre, mas a prova refutada fica junto
+      // da refutação — é ela que explica o que o corretor achou que tinha provado.
+      const notaFinal = anexar(f.verified_note, nota);
       try {
         if (barrou) {
-          await supabase.from('tom_audit_findings').update({ status: 'novo', verified_result: null, verified_note: nota }).eq('id', f.id);
+          await supabase.from('tom_audit_findings').update({ status: 'novo', verified_result: null, verified_note: notaFinal }).eq('id', f.id);
         } else if (!infraError) {
-          await supabase.from('tom_audit_findings').update({ verified_note: nota }).eq('id', f.id);
+          await supabase.from('tom_audit_findings').update({ verified_note: notaFinal }).eq('id', f.id);
         }
         // infraError: o judge não rodou, então NADA foi aprendido sobre o achado — e o
         // verified_note é onde mora a prova do fechamento. Sobrescrever aqui apaga a prova e

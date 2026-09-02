@@ -187,17 +187,19 @@ test('o protocolo de verdade é encontrado e entra no briefing', () => {
   assert.ok(b.length > 2000, `briefing curto demais (${b.length}) — o .md não entrou`);
 });
 
-// ── TETO SEPARADO: 1 CORREÇÃO por rodada, refutação sem limite ──────────────────────────────
+// ── TETO SEPARADO: 2 CORREÇÕES por rodada (era 1 até 02/09), refutação sem limite ──────────────────────────────
 // Medido em 09/08: 206 achados abertos e só 1 na janela de 2 dias (106 com +30 dias, 83 com
 // 8-30). O agente ia rodar a seco enquanto o acervo apodrecia. O "um por rodada" foi decidido
 // porque ninguém revisa cinco mudanças de engine por dia — a restrição real é banda de revisão
 // de CÓDIGO. Refutar não muda código, então não consome revisão.
 const ACERVO = { total: 206, alto: 8, ate2d: 1, ate7d: 17, mais30d: 106 };
 
-test('o pedido separa o teto: UMA correção, refutação sem limite', () => {
+test('o pedido separa o teto: DUAS correções (a 2ª só de OUTRA raiz), refutação sem limite', () => {
   const m = carregar();
   const p = m.montarPedido({ fechados: 0, reincidentes: [], emParada: [], taxa: 0 }, ACERVO);
-  assert.match(p, /UMA? corre[çc][ãa]o/i, 'tem que dizer que o teto de correção é 1');
+  assert.match(p, /DUAS corre[çc][õo]es por rodada/i, 'tem que dizer que o teto de correção é 2 (02/09)');
+  assert.match(p, /OUTRA raiz/i, 'a 2ª correção tem que ser de outra raiz — duas portas da mesma contam como uma');
+  assert.match(p, /COMMITADA/i, 'a 2ª só entra com a 1ª commitada: trabalho sem commit morre no teto de tempo');
   assert.match(p, /sem limite|quantos conseguir|o quanto conseguir/i, 'refutação não pode herdar o teto de 1');
 });
 
@@ -280,4 +282,20 @@ test('CLI sem custo não vira ruído no detail', async () => {
   });
   assert.doesNotMatch(sb.inserts[0].detail, /custo=/, 'gravou "custo=null" — ruído que ninguém consegue somar');
   assert.match(sb.inserts[0].detail, /fechados=/);
+});
+
+// 30/08 e 02/09: uma linha 'high' (origem sombra) ficava fora da contagem de 'alto' e o
+// briefing dizia "0 de severidade alta" com 1 no banco — 2ª reincidência apontada pelo próprio
+// agente. A contagem aceita o sinônimo; o dado foi normalizado pra 'alto'.
+test('carregarAcervo: severity "high" conta como alto', async () => {
+  const m = carregar();
+  const linhas = [
+    { severity: 'high',  incident_at: new Date().toISOString() },
+    { severity: 'alto',  incident_at: new Date().toISOString() },
+    { severity: 'medio', incident_at: new Date().toISOString() },
+  ];
+  const sb = { from: () => { const o = {}; for (const k of ['select','not','in','gte','eq','order','limit']) o[k] = () => o; o.then = (ok) => ok({ data: linhas, error: null }); return o; } };
+  const a = await m.carregarAcervo(sb);
+  assert.strictEqual(a.total, 3);
+  assert.strictEqual(a.alto, 2);
 });

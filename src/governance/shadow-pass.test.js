@@ -104,3 +104,31 @@ test('CONTROLE: infra caída ainda deixa rastro no marker_logs', async () => {
   await shadowPass([{ id: 'f1', summary: 'x', fix_intent: 'y' }], d);
   assert.strictEqual(d._markers.length, 1, 'a falha não pode sumir de todo lugar');
 });
+
+// 02/09: a sombra sobrescrevia a prova do corretor com "inconclusivo: não reproduzível" —
+// 89d9734e (o fix do próprio dia) e 7701ee2f ficaram `corrigido` carregando só a nota da
+// sombra. O passe infra (acima) já preservava; os outros ramos não. Regra: a sombra ANEXA,
+// nunca substitui — a prova vem primeiro e inteira, o veredito da sombra vem depois.
+test('inconclusivo por irreproduzível ANEXA à prova anterior em vez de apagá-la', async () => {
+  const d = deps({ isReproducible: () => ({ ok: false, motivo: 'sem fala literal' }) });
+  await shadowPass([{ id: 'f1', summary: 'x', fix_intent: 'y', verified_note: 'PROVA: antes=X depois=Y' }], d);
+  const u = d._updates.find((x) => x.tbl === 'tom_audit_findings' && 'verified_note' in x.patch);
+  assert.ok(u, 'a nota da sombra continua sendo gravada');
+  assert.ok(u.patch.verified_note.startsWith('PROVA: antes=X depois=Y'), 'a prova do corretor vem primeiro e inteira');
+  assert.match(u.patch.verified_note, /\n\[shadow [0-9-]+\] inconclusivo: não reproduzível: sem fala literal/);
+});
+
+test('reprovado reabre, mas preserva a prova refutada junto da refutação', async () => {
+  const d = deps();
+  await shadowPass([{ id: 'f1', summary: 'x', fix_intent: 'y', verified_note: 'PROVA: antes=X depois=Y' }], d);
+  const reopen = d._updates.find((x) => x.tbl === 'tom_audit_findings' && x.patch.status === 'novo');
+  assert.ok(reopen.patch.verified_note.startsWith('PROVA: antes=X depois=Y'));
+  assert.match(reopen.patch.verified_note, /reprovado: confabulou/);
+});
+
+test('sem nota anterior, a nota da sombra entra sozinha (sem quebra de linha órfã)', async () => {
+  const d = deps({ judgeShadow: async () => ({ verdict: 'aprovado', reason: 'ok' }) });
+  await shadowPass([{ id: 'f1', summary: 'x', fix_intent: 'y' }], d);
+  const u = d._updates.find((x) => x.tbl === 'tom_audit_findings' && 'verified_note' in x.patch);
+  assert.match(u.patch.verified_note, /^\[shadow /);
+});

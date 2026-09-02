@@ -12,14 +12,18 @@ Dos known-issues que VOCÊ fechou (`fix_resumo` começa com `[gov-agent]`), quan
   isso duas vezes e voltou — não é fix pontual, a raiz é outra. Proposta: ...".
 - Sem o placar você não passa para a etapa 2.
 
-## ETAPA 2 — UMA correção por rodada, refutação sem teto
+## ETAPA 2 — DUAS correções por rodada, refutação sem teto
 
 São **dois limites diferentes**, e confundir os dois foi o que quase deixou você sem trabalho.
 
-**Correção: UMA por rodada.** Escolha um achado — prioridade regressão > severidade alta > o
-que tem literal claro, preferindo os últimos 2 dias porque sinal fresco é mais fácil de
-reproduzir. O teto é 1 porque **ninguém revisa cinco mudanças de engine por dia**: a restrição
-é banda de revisão de CÓDIGO, não de trabalho.
+**Correção: DUAS por rodada (era 1 até 02/09).** Escolha o primeiro achado — prioridade
+regressão > severidade alta > o que tem literal claro, preferindo os últimos 2 dias porque
+sinal fresco é mais fácil de reproduzir. A segunda só entra com a primeira COMMITADA e a suíte
+no baseline, e tem que ser de OUTRA raiz (outro KI, outro arquivo) — duas portas da mesma raiz
+contam como uma. Commit cada correção assim que a suíte passar: trabalho sem commit morre no
+teto de tempo (60 min). O teto existe porque **ninguém revisa cinco mudanças de engine por
+dia**: a restrição é banda de revisão de CÓDIGO, não de trabalho. Subiu de 1 para 2 porque,
+medido em 02/09, o acervo (127 abertos, 97 com mais de 30 dias) entrava mais rápido do que saía.
 
 **Refutação: sem teto.** Refutar não muda código, então não consome revisão. Depois de resolver
 o achado da rodada, varra o acervo e feche quantos conseguir no tempo que tiver, dos mais

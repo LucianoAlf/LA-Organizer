@@ -4,7 +4,7 @@
 //
 // POR QUE UM PROCESSO SEPARADO, E NÃO DENTRO DO TICK DO DISPATCHER
 // O cron do dispatcher roda sob `flock -n /tmp/la-dispatcher.lock` a cada 5 min. Um ciclo de
-// governança leva minutos (refutar + reproduzir + corrigir + suíte inteira; o teto é 30 min).
+// governança leva minutos (refutar + reproduzir + corrigir + suíte inteira; o teto é 60 min).
 // Se o tick esperasse por ele, o lock ficaria preso esse tempo todo e TODO o resto do
 // dispatcher — lembretes, fila do LA EDUCA ("latência max 5min"), rituais — seria pulado por
 // ~6 ticks toda manhã. E não dá pra só não esperar: o dispatcher termina em `process.exit(0)`,

@@ -20,8 +20,9 @@ const RAIZ = path.join(__dirname, '..', '..');
 const PROTOCOLO_PATH = process.env.TOM_GOV_PROTOCOLO || path.join(RAIZ, 'docs/ops/PROTOCOLO-GOVERNANCA.md');
 const ESCADA_PATH = process.env.TOM_GOV_ESCADA || path.join(RAIZ, 'docs/ops/ESCADA-GOVERNANCA.md');
 // Um ciclo é refutar + reproduzir + corrigir + suíte inteira. 10 min (o default do canal de
-// ops) não cobre: a suíte sozinha leva minutos.
-const GOV_TIMEOUT_MS = Number(process.env.TOM_GOV_TIMEOUT_MS || 30 * 60 * 1000);
+// ops) não cobre: a suíte sozinha leva minutos. 02/09: o teto de correção subiu de 1 pra 2 e
+// o tempo acompanha (30 → 60 min) — trabalho que estoura o tempo morre SEM COMMIT.
+const GOV_TIMEOUT_MS = Number(process.env.TOM_GOV_TIMEOUT_MS || 60 * 60 * 1000);
 const GOV_ON = process.env.TOM_GOV_AGENT === '1';
 const GOV_OWNER = (process.env.TOM_OPS_ALLOWLIST || '').split(',')[0].trim();
 const JANELA_FINDINGS_DIAS = Number(process.env.TOM_GOV_JANELA_DIAS || 2);
@@ -57,6 +58,12 @@ const STATUS_FECHADOS = ['resolvido', 'falso_positivo', 'wontfix', 'corrigido', 
  * medido em 09/08, eram 206 abertos e só 1 nos últimos 2 dias — ele rodaria a seco enquanto
  * 106 achados de +30 dias apodreciam. Nunca lança: sem acervo o ciclo roda como antes.
  */
+// 30/08 e 02/09: uma linha gravada como 'high' (origem: sombra) ficava fora da contagem e o
+// briefing dizia "0 de severidade alta" com 1 no banco — a rodada escolhia alvo achando que
+// não havia alto nenhum. O dado foi normalizado pra 'alto'; a contagem aceita o sinônimo
+// porque o agente e a sombra também escrevem nessa tabela, fora do VALID_SEVERITY do auditor.
+const SEVERIDADE_ALTA = new Set(['alto', 'alta', 'high']);
+
 async function carregarAcervo(sb) {
   try {
     const { data } = await sb.from('tom_audit_findings')
@@ -70,7 +77,7 @@ async function carregarAcervo(sb) {
     };
     return {
       total: linhas.length,
-      alto: linhas.filter((r) => r && r.severity === 'alto').length,
+      alto: linhas.filter((r) => r && SEVERIDADE_ALTA.has(String(r.severity || '').toLowerCase())).length,
       ate2d: linhas.filter((r) => { const d = idade(r); return d !== null && d <= 2; }).length,
       ate7d: linhas.filter((r) => { const d = idade(r); return d !== null && d <= 7; }).length,
       mais30d: linhas.filter((r) => { const d = idade(r); return d !== null && d > 30; }).length,
@@ -105,10 +112,14 @@ ETAPA 1 já foi medida pra você (confira no banco se quiser, mas não repita o 
 
 Agora siga da ETAPA 2 em diante.${blocoAcervo}
 
-TETO DE CORREÇÃO: **UMA correção por rodada.** Escolha UM achado para corrigir — de preferência
-dos últimos ${JANELA_FINDINGS_DIAS} dias, porque sinal fresco é mais fácil de reproduzir; se não
-houver, pegue o de maior severidade. Refute antes de acreditar e só corrija o que reproduzir com
-teste vermelho. O teto é 1 porque ninguém revisa cinco mudanças de engine por dia.
+TETO DE CORREÇÃO: **DUAS correções por rodada** (subiu de 1 em 02/09 — o acervo entrava mais
+rápido do que saía). Escolha o 1º achado de preferência dos últimos ${JANELA_FINDINGS_DIAS} dias,
+porque sinal fresco é mais fácil de reproduzir; se não houver, pegue o de maior severidade.
+Refute antes de acreditar e só corrija o que reproduzir com teste vermelho. A 2ª correção só
+entra depois que a 1ª está COMMITADA com a suíte no baseline, e tem que ser de OUTRA raiz
+(outro KI, outro arquivo) — duas portas da mesma raiz contam como uma. Commit cada correção
+assim que a suíte passar: trabalho sem commit morre no teto de tempo. Não passe de 2 porque
+ninguém revisa cinco mudanças de engine por dia.
 
 VARREDURA DO ACERVO: refutar NÃO muda código, então não consome revisão — aqui não há teto,
 feche quantos conseguir no tempo que tiver. Vá pelos mais ANTIGOS primeiro: quase todos são
