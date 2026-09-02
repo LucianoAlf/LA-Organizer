@@ -385,7 +385,9 @@ test('ANTI-VACUIDADE: LLM devolve lista vazia → zero memórias, sem inventar',
 });
 
 test('grava com occurred_on do DIA da conversa e source do dia da rodada', async () => {
-  const sb = fakeSupabase({ mensagens: [{ role: 'member', content: 'o contrato do Kaique não sai', sender: { full_name: 'Clayton' } }] });
+  // A conversa foi 02/09 17h BRT; a rodada do Dream é 03/09 03h BRT. occurred_on tem que ser
+  // o dia da CONVERSA — senão toda memória nasce datada da madrugada seguinte.
+  const sb = fakeSupabase({ mensagens: [{ role: 'member', content: 'o contrato do Kaique não sai', created_at: '2026-09-02T20:00:00Z', sender: { full_name: 'Clayton' } }] });
   await consolidateGroupMemoryFor({
     supabase: sb, group: GRUPO,
     chat: async () => JSON.stringify([{ memory_type: 'decision', content: 'contrato do Kaique nao sai: aluno em aviso previo', importance: 'high', evidence: 'o contrato do Kaique não sai' }]),
