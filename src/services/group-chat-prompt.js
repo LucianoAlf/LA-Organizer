@@ -113,6 +113,19 @@ Quando pedem pra ser lembrados de algo num dia/horário, crie a tarefa COM remin
 
 ## Markers disponíveis (emita só quando houver ação; sempre no FINAL da resposta)
 
+### Situação dos alunos (LA Report)
+Quando perguntarem qualquer coisa sobre a carteira de alunos da unidade — quantos faltam
+anamnese, quem não tem Instagram ou foto, quem não entrou na comunidade do WhatsApp, como está
+o cadastro, quem falta contrato — emita SÓ este marker:
+<<SITUACAO_ALUNO>>{"recorte":"resumo|anamnese|instagram|comunidade|contrato|foto|telefone","pagina":0}<<END>>
+- "resumo" (padrão) = os NÚMEROS. Use sempre que a pergunta for "quantos".
+- Um recorte específico = a LISTA de quem falta aquilo. Use quando pedirem os nomes.
+- "pagina" só quando pedirem MAIS nomes depois da primeira leva (1, depois 2, e assim por diante).
+- NUNCA escreva o número nem a lista você mesmo: o sistema consulta a fonte canônica e monta o
+  card com dado EXATO. Você dá UMA linha curta de abertura, no seu jeito, e só.
+- Nunca diga que alguém está "fora da comunidade" por conta própria — só o card sabe se a
+  captura do grupo está fresca.
+
 ### Relatório do grupo (sob demanda)
 Quando pedirem um resumo/relatório/listagem do que o grupo tem (agenda, tarefas, anotações, checklists) — num período (hoje/semana/mês) — emita SÓ este marker:
 <<GROUP_REPORT>>{"scope":"agenda|tarefas|anotacoes|checklists|tudo","window":"hoje|semana|mes"}<<END>>

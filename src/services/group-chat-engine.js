@@ -28,7 +28,7 @@ function displayName(c) {
 
 async function loadContext(supabase, groupId, senderCollabId) {
   const [{ data: group }, { data: memberRows }, { data: poolRows }, { data: histRows }, { data: senderRow }] = await Promise.all([
-    supabase.from('work_groups').select('id, name, tom_chat_engaged_at, tom_chat_memory').eq('id', groupId).maybeSingle(),
+    supabase.from('work_groups').select('id, name, tom_chat_engaged_at, tom_chat_memory, la_report_unidade_id').eq('id', groupId).maybeSingle(),
     supabase.from('work_group_members').select('collaborators(full_name, preferred_name)').eq('group_id', groupId),
     // Pool = SÓ tarefa REAL ativa (igual ao builder determinístico): exclui done/cancelled e os
     // moldes de recorrência. Sem isso o LLM via tarefa cancelada como "pendente" e cobrava/concluía
@@ -514,6 +514,50 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     } catch (e) {
       console.error('[GroupChat] relatório falhou:', e.message);
       actions.push({ kind: 'report', status: 'fail', label: 'Relatório', detail: 'não consegui montar' });
+    }
+  }
+
+  // ─── SITUAÇÃO DO ALUNO (LA Report) ─────────────────────────────────
+  // A LLM interpreta a pergunta e emite o marker; QUEM ESCREVE OS NÚMEROS É O CÓDIGO.
+  // Zero regex de roteamento (decisão do Alf 02/09: "eu fujo de regex") e zero chance de
+  // confabular — ele nunca redige o número, igual ao <<GROUP_REPORT>>.
+  const situMatch = reply.match(/<<SITUACAO_ALUNO>>([\s\S]*?)<<END>>/i);
+  if (situMatch) {
+    stripBlock(/<<SITUACAO_ALUNO>>[\s\S]*?<<END>>/i);
+    try {
+      const situ = require('./situacao-aluno');
+      const unidadeId = ctx.group && ctx.group.la_report_unidade_id;
+      if (!unidadeId) {
+        actions.push({ kind: 'situacao', status: 'fail', label: 'Situação do aluno',
+          detail: 'este grupo não está amarrado a uma unidade do LA Report' });
+      } else {
+        let p = {};
+        try { p = JSON.parse(situMatch[1].trim()) || {}; } catch (_) { p = {}; }
+        const recorte = situ.normalizarRecorte(p.recorte);
+        const pagina = Math.max(0, Number(p.pagina) || 0);
+        const { laReportClient, isLaReportConfigured } = require('./la-report-client');
+        if (!isLaReportConfigured()) throw new Error('credenciais do LA Report ausentes');
+
+        let html;
+        if (recorte === 'resumo') {
+          const { data } = await situ.consultarComCache({ tipo: 'resumo', unidadeId, client: laReportClient });
+          html = situ.renderResumo(data, { grupoNome: ctx.group.name });
+        } else {
+          const { data } = await situ.consultarComCache({ tipo: 'lista', unidadeId, client: laReportClient });
+          const pessoas = situ.filtrarPorRecorte(data || [], recorte);
+          html = situ.renderLista({ recorte, pessoas, total: pessoas.length, pagina, grupoNome: ctx.group.name });
+        }
+        await supabase.from('group_chat_messages').insert({
+          group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',
+        });
+        actions.push({ kind: 'situacao', status: 'ok', label: `Situação do aluno (${recorte})` });
+        console.log(`[GroupChat] situacao grupo=${groupId} recorte=${recorte} pagina=${pagina}`);
+      }
+    } catch (e) {
+      // Falha é DITA. Número de aluno errado ou inventado é pior que não responder.
+      console.error('[GroupChat] situacao falhou:', e.message);
+      actions.push({ kind: 'situacao', status: 'fail', label: 'Situação do aluno',
+        detail: 'não consegui consultar o LA Report agora' });
     }
   }
 
