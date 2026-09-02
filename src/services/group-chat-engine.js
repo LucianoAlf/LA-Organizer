@@ -617,6 +617,19 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   const content = buildTomContent(reply, actions);
   if (!content) return null; // nada a dizer (silêncio real — sem prosa e sem ação)
 
+  // GROUP-NOTE-CONFAB — SENSOR. O chokepoint acima corrige a fala, mas sem registro ninguém
+  // sabe QUANTAS vezes o TOM afirmou escrita sem escrever num grupo. Zero por saúde e zero por
+  // falta de instrumento são byte-a-byte iguais; o laudo diário do Alf lê este marcador.
+  try {
+    const { NO_MARKER_HONEST_NOTE } = require('../lib/optimistic-confirm');
+    if (NO_MARKER_HONEST_NOTE && content.includes(NO_MARKER_HONEST_NOTE)) {
+      await supabase.from('marker_logs').insert({
+        marker_type: 'CONFAB', result: 'fallback',
+        reason: `grupo_claim_sem_marker: ${groupId}`.slice(0, 120),
+      });
+    }
+  } catch (_) { /* sensor é best-effort; nunca derruba a resposta */ }
+
   const { data: inserted, error } = await supabase.from('group_chat_messages').insert({
     group_id: groupId, sender_id: null, role: 'tom', kind: 'text', content, channel: 'app',
   }).select('id').single();

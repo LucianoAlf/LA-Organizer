@@ -689,7 +689,55 @@ const ALL_CHECKS = [
   ['provider_health',        checkProviderHealth],
   ['finding_triage',         checkFindingTriage],
   ['conversation_quality',   checkConversationQuality],
+  ['grupos_ativos',          checkGruposAtivos],
 ];
+
+// CHECK — Painel dos grupos de trabalho (pedido do Alf, 02/09). Ele saiu do dia a dia dos
+// grupos de propósito, mas precisa enxergar o que acontece lá. Três números por grupo:
+//   fichas  — a ferramenta que o time pede no braço sem saber que existe (group_notes)
+//   abertas — trabalho vivo no pool (instância, nunca molde)
+//   disse-sem-gravar — quantas vezes em 24h o chokepoint pegou o TOM afirmando escrita sem
+//                      marker nenhum. É o sintoma que custou o dia 02/09 pra achar.
+// PURAS pra dar teste: o formato da linha e a decisão ok/warning não tocam o banco.
+function formatarLinhaGrupo({ nome, fichas, abertas, claims }) {
+  const base = `${nome}: ${fichas} fichas · ${abertas} abertas`;
+  return claims > 0 ? `${base} · ⚠️ ${claims} disse-sem-gravar` : base;
+}
+
+function resumirGrupos(linhas) {
+  const arr = Array.isArray(linhas) ? linhas : [];
+  if (!arr.length) return { status: 'ok', detail: 'Nenhum grupo de trabalho ativo' };
+  const texto = arr.map(formatarLinhaGrupo).join(' | ');
+  const sujos = arr.filter((g) => g.claims > 0).length;
+  return {
+    status: sujos ? 'warning' : 'ok',
+    detail: sujos ? `🗣️ ${sujos} grupo(s) com fala sem gravação — ${texto}` : `👥 ${texto}`,
+  };
+}
+
+async function checkGruposAtivos() {
+  const { data: grupos, error } = await supabase.from('work_groups').select('id, name').eq('active', true);
+  if (error) return { status: 'ok', detail: `grupos não consultados (${error.message})` };
+  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const linhas = [];
+  for (const g of (grupos || [])) {
+    const [fichasRes, tarefasRes, claimsRes] = await Promise.all([
+      supabase.from('group_notes').select('id', { count: 'exact', head: true })
+        .eq('group_id', g.id).is('deleted_at', null),
+      supabase.from('tasks').select('id', { count: 'exact', head: true })
+        .eq('assigned_group_id', g.id).is('recurrence_rule', null)
+        .in('status', ['pending', 'in_progress']),
+      supabase.from('marker_logs').select('id', { count: 'exact', head: true })
+        .eq('marker_type', 'CONFAB').gte('created_at', desde)
+        .like('reason', `grupo_claim_sem_marker: ${g.id}%`),
+    ]);
+    linhas.push({
+      nome: g.name, fichas: fichasRes.count || 0,
+      abertas: tarefasRes.count || 0, claims: claimsRes.count || 0,
+    });
+  }
+  return resumirGrupos(linhas);
+}
 
 async function runHealthCheck() {
   const ranAt = new Date().toISOString();
@@ -738,4 +786,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks };
+module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos };
