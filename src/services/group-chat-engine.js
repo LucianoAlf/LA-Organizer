@@ -526,13 +526,15 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     stripBlock(/<<SITUACAO_ALUNO>>[\s\S]*?<<END>>/i);
     try {
       const situ = require('./situacao-aluno');
-      const unidadeId = ctx.group && ctx.group.la_report_unidade_id;
+      let p = {};
+      try { p = JSON.parse(situMatch[1].trim()) || {}; } catch (_) { p = {}; }
+      // A unidade dita na fala vence a do grupo: no Sucesso do Aluno, que atravessa as três,
+      // é a fala que diz de quem se está falando. Sem nenhuma das duas, PERGUNTA.
+      const unidadeId = situ.resolverUnidade(p.unidade) || (ctx.group && ctx.group.la_report_unidade_id);
       if (!unidadeId) {
         actions.push({ kind: 'situacao', status: 'fail', label: 'Situação do aluno',
-          detail: 'este grupo não está amarrado a uma unidade do LA Report' });
+          detail: 'me diz de qual unidade — Recreio, Barra ou Campo Grande' });
       } else {
-        let p = {};
-        try { p = JSON.parse(situMatch[1].trim()) || {}; } catch (_) { p = {}; }
         const recorte = situ.normalizarRecorte(p.recorte);
         const pagina = Math.max(0, Number(p.pagina) || 0);
         const { laReportClient, isLaReportConfigured } = require('./la-report-client');

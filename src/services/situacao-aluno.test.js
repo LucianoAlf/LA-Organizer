@@ -201,3 +201,25 @@ test('a lista SEGURA a foto por 10 min — paginação não pode trocar de base 
   assert.strictEqual(c.chamadas(), 1, 'a página 2 usa a MESMA foto da página 1');
   assert.strictEqual(p2.data[0].nome, 'A');
 });
+
+// ── UNIDADE NO MARKER (grupo que atravessa unidades) ──────────────────────────────────────
+const { resolverUnidade, UNIDADES } = require('./situacao-aluno');
+
+test('resolverUnidade aceita apelido, com acento, caixa e espaco', () => {
+  assert.strictEqual(resolverUnidade('Recreio'), UNIDADES.recreio);
+  assert.strictEqual(resolverUnidade('  BARRA '), UNIDADES.barra);
+  assert.strictEqual(resolverUnidade('Campo Grande'), UNIDADES['campo grande']);
+  assert.strictEqual(resolverUnidade('CG'), UNIDADES.cg);
+});
+
+test('resolverUnidade aceita uuid cru', () => {
+  assert.strictEqual(resolverUnidade(UNIDADES.recreio), UNIDADES.recreio);
+});
+
+// Responder pela unidade ERRADA e pior que nao responder — quem nao sabe, devolve null e o
+// chamador faz o TOM perguntar.
+test('resolverUnidade devolve null pro que nao reconhece', () => {
+  for (const x of ['', null, 'tijuca', 'unidade 4', 'todas']) {
+    assert.strictEqual(resolverUnidade(x), null, String(x));
+  }
+});

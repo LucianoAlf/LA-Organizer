@@ -13,6 +13,28 @@
 // este arquivo é a implementação dela do lado do TOM.
 
 const RECORTES = ['resumo', 'anamnese', 'instagram', 'comunidade', 'contrato', 'foto', 'telefone'];
+
+// Unidades do LA Report. Grupo de UMA unidade traz a dela amarrada (work_groups.la_report_unidade_id);
+// grupo que ATRAVESSA unidades — o Sucesso do Aluno olha aluno das tres — recebe a unidade na
+// fala e o TOM passa no marker. Sem nenhuma das duas, ele PERGUNTA: responder pela unidade
+// errada e pior que nao responder.
+const UNIDADES = {
+  recreio: '95553e96-971b-4590-a6eb-0201d013c14d',
+  barra: '368d47f5-2d88-4475-bc14-ba084a9a348e',
+  'campo grande': '2ec861f6-023f-4d7b-9927-3960ad8c2a92',
+  cg: '2ec861f6-023f-4d7b-9927-3960ad8c2a92',
+  campogrande: '2ec861f6-023f-4d7b-9927-3960ad8c2a92',
+};
+
+function resolverUnidade(nome) {
+  const s = String(nome || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  if (UNIDADES[s]) return UNIDADES[s];
+  // uuid direto tambem vale (quem ja sabe o id nao precisa do apelido)
+  if (/^[0-9a-f-]{36}$/i.test(String(nome || '').trim())) return String(nome).trim();
+  return null;
+}
 const PAGINA_INICIAL = 15;   // primeira entrega: cabe no WhatsApp e já dá pra começar
 const PAGINA_SEGUINTE = 30;  // se insistirem, vai fatiando de 30 em 30
 
@@ -176,7 +198,7 @@ async function consultarComCache({ tipo, unidadeId, client, agora = Date.now(), 
 function _limparCache() { _cache.clear(); }
 
 module.exports = {
-  RECORTES, PAGINA_INICIAL, PAGINA_SEGUINTE, TTL_MS, TTL_POR_TIPO, ttlDoTipo,
+  RECORTES, PAGINA_INICIAL, PAGINA_SEGUINTE, TTL_MS, TTL_POR_TIPO, ttlDoTipo, UNIDADES, resolverUnidade,
   normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte,
   renderResumo, renderLista, linhaComunidade,
   consultarComCache, _limparCache,
