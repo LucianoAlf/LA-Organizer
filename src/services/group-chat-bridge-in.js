@@ -35,6 +35,29 @@ function normalizeName(s) {
     .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+// Casa por TELEFONE, com a regra do 9º dígito do Brasil: o WhatsApp devolve ora com, ora sem o
+// 9 inicial do celular, e o cadastro guarda de um jeito só. Compara pelos últimos dígitos nas
+// duas formas — sem isso o casamento erra em massa e a pessoa fica SEM AUTOR.
+function chavesTelefone(p) {
+  const d = String(p || '').replace(/\D/g, '');
+  if (d.length < 8) return [];
+  // Tira o DDI 55 EXPLICITAMENTE. Fatiar "os ultimos 11" quebra o numero SEM o 9: ele tem 12
+  // digitos com o 55 (55 + DDD + 8), e o corte comia o DDD — a Vitoria, DDD 31, virava 53, e
+  // ela ficava sem autor. Medido no ADM CG em 02/09.
+  const on = (d.length >= 12 && d.startsWith('55')) ? d.slice(2) : d;
+  const sem9 = on.length === 11 ? on.slice(0, 2) + on.slice(3) : on;
+  return [...new Set([on, sem9])];
+}
+
+function matchMemberByPhone(phone, members) {
+  const alvo = new Set(chavesTelefone(phone));
+  if (!alvo.size) return null;
+  for (const m of members || []) {
+    if (chavesTelefone(m.phone).some((k) => alvo.has(k))) return m.id;
+  }
+  return null;
+}
+
 // Casa o nome de exibição do WhatsApp ("Rose_Gerente Recreio", "Ana Paula Recepção/ADM",
 // "Luciano Alf") contra os MEMBROS do grupo (full_name/preferred_name). Match = o senderName
 // COMEÇA com o nome do colaborador (limite de palavra). Pega o nome mais LONGO que casa
@@ -185,9 +208,24 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
         .select('id').or(`phone.eq.${phone},phone.eq.${phone.replace(/^55/, '')}`).maybeSingle();
       sender_id = collab?.id || null;
     }
-    // Membros do grupo (carregados 1x) — p/ match de identidade por nome E p/ resolver menções.
+    // Membros do grupo (carregados 1x) — p/ identidade por telefone/nome E p/ menções.
     let members = null;
-    if ((!sender_id && waName) || hasMention) members = await loadGroupMembers(supabase, group.id);
+    if (!sender_id || hasMention) members = await loadGroupMembers(supabase, group.id);
+
+    // 1b) @lid → TELEFONE pelos PARTICIPANTES do grupo. Em grupo no modo lid os dígitos do
+    // remetente não são telefone, e a identidade caía toda no nome do perfil — que a pessoa
+    // escolhe e muda. No ADM CG (02/09) o perfil do Jhon chega como "n." literal: 6 mensagens
+    // sem autor, e sem autor o TOM não processa — ele ficou MUDO pra ele. O par (lid, phone)
+    // já vem de /group/info e o cache já existe; só não era usado pra identidade.
+    // Número não muda com o humor de quem edita o perfil.
+    if (!sender_id && phone && helpers.getGroupParticipants && members && members.length) {
+      try {
+        const parts = await getParticipantsCached(helpers.getGroupParticipants, jid);
+        const hit = (parts || []).find((p) => String(p.lid || '').replace(/\D/g, '') === phone);
+        if (hit && hit.phone) sender_id = matchMemberByPhone(hit.phone, members);
+      } catch (_) { /* melhor-esforço: se falhar, cai no nome logo abaixo */ }
+    }
+
     // 2) fallback de identidade por NOME (resolve avatar/nome no app + destrava o watcher).
     if (!sender_id && waName && members) sender_id = matchMemberByName(waName, members);
 
@@ -248,4 +286,4 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
   }
 }
 
-module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, normalizeName, resolveMentions, firstName, mediaKindFromBody, parseDeletedWaIds, maybeHandleGroupDelete };
+module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, matchMemberByPhone, chavesTelefone, normalizeName, resolveMentions, firstName, mediaKindFromBody, parseDeletedWaIds, maybeHandleGroupDelete };

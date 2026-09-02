@@ -130,3 +130,46 @@ test('ANTI-FALSO-POSITIVO: alias vazio/sujo não casa, e desconhecido segue sem 
   assert.strictEqual(matchMemberByName('Zezinho da Padaria', membros), null);
   assert.strictEqual(matchMemberByName('', membros), null);
 });
+
+// ── GROUPCHAT-LID-SEM-AUTOR (ADM CG, 02/09) ───────────────────────────────────────────────
+// Em grupo @lid a identidade caía toda no NOME do perfil do WhatsApp. O perfil do Jhon chega
+// como "n." literal — 6 mensagens sem autor, e sem autor o TOM não processa: ficou mudo pra
+// ele. Agora o lid resolve pra TELEFONE pelos participantes do grupo, e telefone não muda
+// quando a pessoa edita o perfil.
+const { matchMemberByPhone, chavesTelefone } = require('./group-chat-bridge-in');
+
+test('chavesTelefone: descarta o 55 e gera a forma com e sem o 9', () => {
+  assert.deepStrictEqual(chavesTelefone('5521987654321'), ['21987654321', '2187654321']);
+  // CASO REAL (Vitoria, ADM CG 02/09): WhatsApp manda 12 digitos SEM o 9 e o cadastro tem 13
+  // COM o 9. Fatiar "os ultimos 11" comia o DDD (31 virava 53) e ela ficava sem autor.
+  assert.deepStrictEqual(chavesTelefone('553133332022'), ['3133332022']);
+  assert.deepStrictEqual(chavesTelefone('5531933332022'), ['31933332022', '3133332022']);
+  assert.deepStrictEqual(chavesTelefone('2187654321'), ['2187654321']);
+  assert.deepStrictEqual(chavesTelefone('123'), [], 'lixo não vira chave');
+  assert.deepStrictEqual(chavesTelefone(null), []);
+});
+
+test('casa telefone do WhatsApp COM 9 contra cadastro SEM 9', () => {
+  const membros = [{ id: 'c1', phone: '2187654321' }];
+  assert.strictEqual(matchMemberByPhone('5521987654321', membros), 'c1');
+});
+
+test('casa telefone do WhatsApp SEM 9 contra cadastro COM 9', () => {
+  const membros = [{ id: 'c1', phone: '5521987654321' }];
+  assert.strictEqual(matchMemberByPhone('2187654321', membros), 'c1');
+});
+
+test('não casa pessoa de outro número — sem autor é melhor que autor ERRADO', () => {
+  const membros = [{ id: 'c1', phone: '5521987654321' }];
+  assert.strictEqual(matchMemberByPhone('5511999998888', membros), null);
+});
+
+test('membro sem telefone cadastrado não quebra o casamento dos outros', () => {
+  const membros = [{ id: 'c0', phone: null }, { id: 'c1', phone: '5521987654321' }];
+  assert.strictEqual(matchMemberByPhone('5521987654321', membros), 'c1');
+});
+
+test('CASO REAL: numero de 12 digitos (sem o 9) casa com cadastro de 13 (com o 9)', () => {
+  assert.strictEqual(matchMemberByPhone('553133332022', [{ id: 'vit', phone: '5531933332022' }]), 'vit');
+  assert.strictEqual(matchMemberByPhone('5531933332022', [{ id: 'vit', phone: '553133332022' }]), 'vit');
+});
