@@ -97,3 +97,36 @@ test('mensagem de grupo de pessoa real segue o fluxo normal (guard não afeta pr
   await maybeHandleGroupMessage(sb, body, { extractMessageId: () => 'X2' });
   assert.strictEqual(consultou, true, 'o guard bloqueou mensagem de pessoa real');
 });
+
+// GROUPCHAT-LID-SENDER-ALIAS (Recreio, 02/09). O grupo "Administração RC" está em AddressingMode
+// `lid`: o remetente chega como id linkado, os dígitos NÃO são telefone, e a identidade sai do
+// NOME do perfil do WhatsApp. Medido no grupo real ANTES de ligar: "Clayton Consultor Recreio" e
+// "Daiana Adm Recreio" casavam; "Fernanda ADM Recreio" (cadastro "Fefê") e "Vitoria (Adm Recreio)"
+// (cadastro "Vitoria Andrade") NÃO — as duas entrariam sem autor, que é a falha muda de sempre.
+// `aliases` (text[]) já existe no cadastro exatamente pra "também é conhecida por".
+test('LID: casa pelo ALIAS quando o nome do WhatsApp não é o do cadastro', () => {
+  const membros = [
+    { id: 'fefe', full_name: 'Fefê', preferred_name: null, aliases: ['Fernanda'] },
+    { id: 'vit', full_name: 'Vitoria Andrade', preferred_name: null, aliases: ['Vitoria'] },
+  ];
+  assert.strictEqual(matchMemberByName('Fernanda ADM Recreio', membros), 'fefe');
+  assert.strictEqual(matchMemberByName('Vitoria (Adm Recreio)', membros), 'vit');
+});
+
+test('ZERO-REGRESSÃO: full_name e preferred_name continuam casando, e o mais LONGO ganha', () => {
+  const membros = [
+    { id: 'clay', full_name: 'Clayton', preferred_name: null, aliases: null },
+    { id: 'ana', full_name: 'Ana', preferred_name: null, aliases: [] },
+    { id: 'anap', full_name: 'Ana Paula', preferred_name: null, aliases: [] },
+  ];
+  assert.strictEqual(matchMemberByName('Clayton Consultor Recreio', membros), 'clay');
+  assert.strictEqual(matchMemberByName('Ana Paula Souza', membros), 'anap');
+  assert.strictEqual(matchMemberByName('Ana Souza', membros), 'ana');
+});
+
+test('ANTI-FALSO-POSITIVO: alias vazio/sujo não casa, e desconhecido segue sem autor', () => {
+  const membros = [{ id: 'x', full_name: 'Fefê', preferred_name: null, aliases: ['', '   ', null] }];
+  assert.strictEqual(matchMemberByName('Fernanda ADM Recreio', membros), null);
+  assert.strictEqual(matchMemberByName('Zezinho da Padaria', membros), null);
+  assert.strictEqual(matchMemberByName('', membros), null);
+});

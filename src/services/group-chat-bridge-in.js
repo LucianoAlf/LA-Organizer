@@ -41,12 +41,17 @@ function normalizeName(s) {
 // (ex.: "ana paula" ganha de "ana"). Restrito aos membros → sem falso-positivo externo.
 // Retorna o collaborator.id ou null. A identidade vem do remetente real (perfil do WhatsApp),
 // nunca do LLM — compatível com a regra de collaborator_id.
+// `aliases` entra junto de preferred_name/full_name: em grupo @lid a identidade sai do NOME do
+// perfil do WhatsApp, e quem se apresenta lá com outro nome ("Fernanda ADM Recreio" pra quem é
+// "Fefê" no cadastro) entrava SEM AUTOR — a falha muda de sempre. O casamento segue ancorado no
+// começo do nome e restrito aos MEMBROS do grupo, então alias não abre porta pra estranho.
 function matchMemberByName(senderName, members) {
   const s = normalizeName(senderName);
   if (!s) return null;
   let best = null, bestLen = 0;
   for (const m of members || []) {
-    for (const cand of [m.preferred_name, m.full_name]) {
+    const apelidos = Array.isArray(m.aliases) ? m.aliases : [];
+    for (const cand of [m.preferred_name, m.full_name, ...apelidos]) {
       const c = normalizeName(cand);
       if (!c) continue;
       if ((s === c || s.startsWith(c + ' ')) && c.length > bestLen) { best = m.id; bestLen = c.length; }
@@ -84,7 +89,7 @@ async function loadGroupMembers(supabase, groupId) {
   const ids = (mem || []).map((r) => r.collaborator_id).filter(Boolean);
   if (!ids.length) return [];
   const { data: cols } = await supabase.from('collaborators')
-    .select('id, full_name, preferred_name, phone').in('id', ids);
+    .select('id, full_name, preferred_name, phone, aliases').in('id', ids);
   return cols || [];
 }
 
