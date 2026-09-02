@@ -132,12 +132,25 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome } = {}) {
 // 1 de 7 chamadas voltou `statement timeout`. Sem isto o TOM falha de forma aleatória na frente
 // do time. O cache também torna a paginação de graça (a 2ª página não repaga 7s).
 // Servir dado de minutos atrás é honesto porque o card SEMPRE mostra quando foi medido.
+// TTL POR TIPO, e a razão é diferente em cada um (revisto em 02/09 depois que a RPC ficou 7x
+// mais rápida — CG de 7,8s para ~1s):
+//   resumo (o NÚMERO) → 60s. Só junta rajada de perguntas seguidas. O número anda durante o
+//     dia: as anamneses do Recreio foram de 91 pra 104 em um mutirão. Cache longo aqui faria o
+//     TOM repetir número velho enquanto o time trabalha.
+//   lista (os NOMES) → 10 min, e agora por CONSISTÊNCIA, não por performance: a paginação
+//     precisa de uma foto estável, senão a página 2 pula ou repete nome que mudou no meio.
 const TTL_MS = 10 * 60 * 1000;
+const TTL_POR_TIPO = { resumo: 60 * 1000, lista: TTL_MS };
 const _cache = new Map();
 
 function _chave(tipo, unidadeId) { return `${tipo}:${unidadeId}`; }
 
-async function consultarComCache({ tipo, unidadeId, client, agora = Date.now(), ttlMs = TTL_MS }) {
+function ttlDoTipo(tipo) {
+  return TTL_POR_TIPO[tipo] != null ? TTL_POR_TIPO[tipo] : TTL_MS;
+}
+
+async function consultarComCache({ tipo, unidadeId, client, agora = Date.now(), ttlMs = null }) {
+  if (ttlMs == null) ttlMs = ttlDoTipo(tipo);
   const k = _chave(tipo, unidadeId);
   const hit = _cache.get(k);
   if (hit && (agora - hit.em) < ttlMs) return { data: hit.data, doCache: true, idadeMs: agora - hit.em };
@@ -163,7 +176,7 @@ async function consultarComCache({ tipo, unidadeId, client, agora = Date.now(), 
 function _limparCache() { _cache.clear(); }
 
 module.exports = {
-  RECORTES, PAGINA_INICIAL, PAGINA_SEGUINTE, TTL_MS,
+  RECORTES, PAGINA_INICIAL, PAGINA_SEGUINTE, TTL_MS, TTL_POR_TIPO, ttlDoTipo,
   normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte,
   renderResumo, renderLista, linhaComunidade,
   consultarComCache, _limparCache,

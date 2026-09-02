@@ -123,7 +123,8 @@ test('cache: segunda pergunta na janela não bate na RPC de novo', async () => {
   _limparCache();
   const c = clienteFake([{ data: { total_pessoas: 336 }, error: null }]);
   const a = await consultarComCache({ tipo: 'resumo', unidadeId: 'u1', client: c, agora: 1000 });
-  const b = await consultarComCache({ tipo: 'resumo', unidadeId: 'u1', client: c, agora: 1000 + 60000 });
+  // 30s: dentro da janela do RESUMO (60s). Rajada de perguntas seguidas nao repaga a RPC.
+  const b = await consultarComCache({ tipo: 'resumo', unidadeId: 'u1', client: c, agora: 1000 + 30000 });
   assert.strictEqual(c.chamadas(), 1, 'a segunda veio do cache');
   assert.strictEqual(b.doCache, true);
   assert.strictEqual(a.data.total_pessoas, b.data.total_pessoas);
@@ -167,4 +168,36 @@ test('duas falhas COM cache velho: serve o velho e marca degradado', async () =>
   assert.strictEqual(r.doCache, true);
   assert.match(r.degradado, /timeout/);
   assert.strictEqual(r.data.total_pessoas, 336);
+});
+
+// ── TTL POR TIPO (02/09, depois da otimização da RPC pelo Codex) ───────────────────────────
+// O número anda durante o dia (anamneses do Recreio: 91 → 104 num mutirão), então o RESUMO
+// não pode ficar 10 min parado. A LISTA fica, mas por consistência de paginação.
+const { ttlDoTipo, TTL_POR_TIPO } = require('./situacao-aluno');
+
+test('resumo tem TTL curto; lista tem TTL longo', () => {
+  assert.strictEqual(ttlDoTipo('resumo'), 60 * 1000);
+  assert.strictEqual(ttlDoTipo('lista'), 10 * 60 * 1000);
+  assert.ok(TTL_POR_TIPO.resumo < TTL_POR_TIPO.lista, 'o número precisa ser mais fresco que a lista');
+});
+
+test('o resumo REBUSCA depois de 1 minuto — número velho em dia de mutirão é mentira útil', async () => {
+  _limparCache();
+  const c = clienteFake([
+    { data: { total_pessoas: 336, pendentes: { anamnese: 236 } }, error: null },
+    { data: { total_pessoas: 337, pendentes: { anamnese: 233 } }, error: null },
+  ]);
+  await consultarComCache({ tipo: 'resumo', unidadeId: 'u1', client: c, agora: 0 });
+  const depois = await consultarComCache({ tipo: 'resumo', unidadeId: 'u1', client: c, agora: 61 * 1000 });
+  assert.strictEqual(c.chamadas(), 2);
+  assert.strictEqual(depois.data.pendentes.anamnese, 233, 'pegou o número novo');
+});
+
+test('a lista SEGURA a foto por 10 min — paginação não pode trocar de base no meio', async () => {
+  _limparCache();
+  const c = clienteFake([{ data: [{ nome: 'A' }], error: null }, { data: [{ nome: 'B' }], error: null }]);
+  await consultarComCache({ tipo: 'lista', unidadeId: 'u1', client: c, agora: 0 });
+  const p2 = await consultarComCache({ tipo: 'lista', unidadeId: 'u1', client: c, agora: 5 * 60 * 1000 });
+  assert.strictEqual(c.chamadas(), 1, 'a página 2 usa a MESMA foto da página 1');
+  assert.strictEqual(p2.data[0].nome, 'A');
 });
