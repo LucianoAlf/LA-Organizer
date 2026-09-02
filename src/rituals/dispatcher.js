@@ -3955,6 +3955,38 @@ async function run(opts = {}) {
         } catch (gErr) {
           console.error(`[ConvAudit] falha no grupo ${g.name}:`, gErr.message);
         }
+
+        // MEMORIA DE GRUPO (02/09). O Dream ja passava por aqui so pra JULGAR o grupo; agora
+        // ele tambem guarda. Fatia 1: escreve e nao le — nada disso entra no prompt ainda.
+        //
+        // NAO usar ritual_logs/alreadySent/logRitualEvent aqui: ritual_logs.collaborator_id e
+        // NOT NULL e o sujeito deste ritual e um GRUPO. O insert falharia em silencio (o
+        // logRitualEvent engole erro), o sensor ficaria morto e a idempotencia nunca gravaria —
+        // ou seja, exatamente a doenca que este sensor existe pra evitar. marker_logs aceita
+        // linha sem colaborador e ja e a fonte que o painel de grupos do laudo le.
+        try {
+          const { consolidateGroupMemoryFor, deveConsolidarGrupo } = require('../services/group-memory');
+          const { getEmbedding } = require('../services/embeddings');
+          const chaveDia = `group_memory:${g.id}:${now.ymd}`;
+
+          const { data: jaTem } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'GROUP_MEMORY').like('reason', `${chaveDia}%`).limit(1);
+
+          if (deveConsolidarGrupo({ jaRodouHoje: !!(jaTem && jaTem.length) })) {
+            const r = await consolidateGroupMemoryFor({ supabase, group: g, chat: aiChat, getEmbedding });
+            // SENSOR: zero por falha nao pode ser igual a zero por dia tranquilo — foi o que
+            // cegou a auditoria de 29/08 a 01/09.
+            await supabase.from('marker_logs').insert({
+              marker_type: 'GROUP_MEMORY',
+              result: r.erro ? 'fallback' : 'executed',
+              reason: `${chaveDia} msgs=${r.mensagens} cand=${r.candidatas} salvas=${r.salvas}${r.erro ? ' erro=' + r.erro : ''}`.slice(0, 120),
+            });
+            if (r.salvas) console.log(`[GroupMemory] ${g.name}: ${r.salvas} memoria(s) de ${r.candidatas} candidata(s)`);
+            if (r.erro) console.error(`[GroupMemory] ${g.name}: ${r.erro}`);
+          }
+        } catch (mErr) {
+          console.error(`[GroupMemory] falha no grupo ${g.name}:`, mErr.message);
+        }
       }
     } catch (err) {
       console.error('[ConvAudit] varredura de grupos erro:', err.message);
