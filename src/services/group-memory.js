@@ -51,6 +51,10 @@ REGRAS:
 - NUNCA guarde senha, token, chave ou credencial.
 - Cada item traz "evidence": o trecho LITERAL da conversa que originou. Sem trecho, não é memória.
 - Não repita o que já está guardado.
+- NÃO transforme um pedido feito A alguém em responsabilidade PERMANENTE dessa pessoa.
+  "Fulana, quando você fizer X, faz Y" é instrução daquele momento — o combinado vale para o
+  grupo, não vira o papel dela. Só atribua dono se a conversa disser que é regra ("daqui pra
+  frente quem faz é a fulana"). Na dúvida, escreva o combinado SEM dono.
 
 O que já está guardado:
 ${jaSei}
