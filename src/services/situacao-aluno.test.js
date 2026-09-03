@@ -666,3 +666,68 @@ test('a dica de ordem só sai quando há criança E mais de um nome', () => {
   });
   assert.match(comCrianca, /Começando pelas crianças/);
 });
+
+// ── NOME DE COLUNA NÃO É PALAVRA DE GENTE ─────────────────────────────────────────────────
+// A bateria de sombra pegou "📋 Cadastro: falta data_inicio_contrato" no card. Esse token
+// aparece 306 vezes na base — ninguém no grupo fala assim.
+const { rotuloPendencia, responsavelDistinto } = require('./situacao-aluno');
+
+test('rotuloPendencia traduz o vocabulário conhecido', () => {
+  assert.strictEqual(rotuloPendencia('data_inicio_contrato'), 'data de início do contrato');
+  assert.strictEqual(rotuloPendencia('instagram'), 'Instagram');
+  assert.strictEqual(rotuloPendencia('foto'), 'foto');
+  assert.strictEqual(rotuloPendencia('telefone'), 'telefone');
+});
+
+// Coluna nova tem que ficar FEIA, não sumir: pendência que desaparece calada é pior.
+test('rotuloPendencia humaniza token desconhecido em vez de escondê-lo', () => {
+  assert.strictEqual(rotuloPendencia('cpf_responsavel_legal'), 'cpf responsavel legal');
+});
+
+test('ficha escreve a pendência em português, não o nome da coluna', () => {
+  const h = renderFicha({ ...ALUNO, cadastro_faltando: ['data_inicio_contrato', 'instagram'] }, { hoje: HOJE });
+  assert.match(h, /data de início do contrato/);
+  assert.doesNotMatch(h, /data_inicio_contrato/);
+});
+
+// ── RESPONSÁVEL QUE É O PRÓPRIO ALUNO ─────────────────────────────────────────────────────
+// responsavel_nome cai pro nome da criança em 64% dos casos (310 de 481). Na lista da
+// comunidade isso virava "🧒 Alice — resp. Alice": manda convidar a criança, que é justamente
+// quem não entra em grupo de WhatsApp.
+test('responsavelDistinto ignora o campo quando ele repete o nome do aluno', () => {
+  assert.strictEqual(responsavelDistinto({ nome: 'Alice Mafra', responsavel_nome: 'Alice Mafra' }), null);
+  assert.strictEqual(responsavelDistinto({ nome: 'Alice Mafra', responsavel_nome: 'ALICE MAFRA' }), null, 'caixa não engana');
+  assert.strictEqual(responsavelDistinto({ nome: 'Alice Cagnin', responsavel_nome: 'Joyce Alves' }), 'Joyce Alves');
+  assert.strictEqual(responsavelDistinto({ nome: 'Alice', responsavel_nome: null }), null);
+});
+
+test('lista da comunidade: sem responsável distinto, DIZ que não tem — não repete a criança', () => {
+  const h = renderLista({
+    recorte: 'comunidade', total: 1, unidadeNome: 'Barra',
+    pessoas: [{ nome: 'Alice Cordeiro Mafra', classificacao: 'LAMK', responsavel_nome: 'Alice Cordeiro Mafra' }],
+  });
+  assert.match(h, /sem responsável identificado/);
+  assert.doesNotMatch(h, /resp\. Alice/);
+});
+
+test('lista da comunidade: com responsável de verdade, mostra o nome dele', () => {
+  const h = renderLista({
+    recorte: 'comunidade', total: 1, unidadeNome: 'Recreio',
+    pessoas: [{ nome: 'Alice Cagnin', classificacao: 'LAMK', responsavel_nome: 'Joyce Alves de Souza' }],
+  });
+  assert.match(h, /resp\. Joyce Alves de Souza/);
+});
+
+test('ficha: responsável repetido vira "não identificado", não o nome da criança', () => {
+  const h = renderFicha({ ...ALUNO, nome: 'Bento Serpa Benitez', responsavel_nome: 'Bento Serpa Benitez' }, { hoje: HOJE });
+  assert.match(h, /não identificado no cadastro/);
+});
+
+test('ficha: fora da comunidade sem responsável distinto não aponta pra criança', () => {
+  const h = renderFicha({
+    ...ALUNO, nome: 'Bento Serpa Benitez', responsavel_nome: 'Bento Serpa Benitez',
+    comunidade_status: 'fora_da_comunidade',
+  }, { hoje: HOJE });
+  assert.match(h, /Fora da comunidade/);
+  assert.doesNotMatch(h, /quem precisa entrar é Bento/);
+});

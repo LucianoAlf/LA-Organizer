@@ -167,6 +167,29 @@ function tempoDeCasa(desde, hoje = new Date()) {
 // contrato na Barra" e "92 alunos sem contrato" — que soa como a escola inteira.
 // Nomes que aparecem como PROFESSOR de alguma turma, tirados do proprio conjunto consultado —
 // nao ha lista de professores separada, e o dado ja vem em professores[] de cada matricula.
+// O que a RPC devolve em cadastro_faltando sao nomes de COLUNA. Ninguem no grupo fala
+// "data_inicio_contrato".
+const ROTULO_PENDENCIA = {
+  instagram: 'Instagram',
+  data_inicio_contrato: 'data de início do contrato',
+  foto: 'foto',
+  telefone: 'telefone',
+};
+
+function rotuloPendencia(token) {
+  const t = String(token || '').trim();
+  if (ROTULO_PENDENCIA[t]) return ROTULO_PENDENCIA[t];
+  // Token novo: humaniza em vez de esconder. Pendencia que some calada e pior que mal escrita.
+  return t.replace(/_/g, ' ').trim() || t;
+}
+
+// responsavel_nome cai pro nome do PROPRIO aluno em 64% das criancas. Quando repete, nao ha
+// responsavel identificado — e dizer o nome da crianca ali manda convidar a pessoa errada.
+function responsavelDistinto(p) {
+  if (!p || !p.responsavel_nome) return null;
+  return _norm(p.responsavel_nome) === _norm(p.nome) ? null : p.responsavel_nome;
+}
+
 function conjuntoDeProfessores(pessoas) {
   const s = new Set();
   (pessoas || []).forEach((p) => (p.professores || []).forEach((n) => { if (n) s.add(_norm(n)); }));
@@ -246,8 +269,10 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNo
       ? ' <i>(marcada como preenchida, mas sem registro hoje — conferir)</i>' : '';
     // Na comunidade, quem entra no grupo é o RESPONSÁVEL — então é o nome dele que serve pra
     // agir. Só nesse recorte e só nas crianças: em anamnese ou foto o nome do aluno basta.
-    const resp = (rec === 'comunidade' && ehCrianca && p.responsavel_nome)
-      ? ` <i>— resp. ${esc(p.responsavel_nome)}</i>` : '';
+    const quem = responsavelDistinto(p);
+    const resp = (rec === 'comunidade' && ehCrianca)
+      ? (quem ? ` <i>— resp. ${esc(quem)}</i>` : ' <i>— sem responsável identificado no cadastro</i>')
+      : '';
     // Quem tambem da aula na escola sai marcado: sem isso, o nome de um professor numa lista
     // de pendencia parece erro da base e alguem vai gastar meia hora conferindo (Alf, 02/09).
     const daAula = tambemDaAula(p.nome, professores) ? ' <i>(também dá aula aqui)</i>' : '';
@@ -345,13 +370,16 @@ function renderFicha(p, { grupoNome, hoje = new Date(), professores } = {}) {
   const tempo = tempoDeCasa(p.entrou_em, hoje);
   if (tempo) L.push(`<p>📅 Na escola há <b>${esc(tempo)}</b>${p.entrou_em ? ` <i>(desde ${esc(String(p.entrou_em).slice(0, 10).split('-').reverse().join('/'))})</i>` : ''}</p>`);
 
-  if (String(p.classificacao).toUpperCase() === 'LAMK' && p.responsavel_nome) {
-    L.push(`<p>👤 Responsável: ${esc(p.responsavel_nome)}</p>`);
+  if (String(p.classificacao).toUpperCase() === 'LAMK') {
+    const quem = responsavelDistinto(p);
+    L.push(quem
+      ? `<p>👤 Responsável: ${esc(quem)}</p>`
+      : '<p>👤 Responsável: <i>não identificado no cadastro</i></p>');
   }
 
   const falta = (p.cadastro_faltando || []).filter(Boolean);
   L.push(falta.length
-    ? `<p>📋 Cadastro: falta <b>${falta.map(esc).join(', ')}</b></p>`
+    ? `<p>📋 Cadastro: falta <b>${falta.map((t) => esc(rotuloPendencia(t))).join(', ')}</b></p>`
     : '<p>📋 Cadastro completo ✅</p>');
 
   if (p.anamnese_flag_sem_registro) L.push('<p>🧠 Anamnese: marcada como preenchida, mas <b>sem registro hoje</b> — vale conferir</p>');
@@ -395,8 +423,8 @@ function desdeAUltimaAula(dias) {
 function linhaComunidadePessoa(p) {
   if (p.comunidade_status === 'na_comunidade') return '📱 Está na comunidade do WhatsApp ✅';
   if (p.comunidade_status === 'fora_da_comunidade') {
-    const quem = (String(p.classificacao).toUpperCase() === 'LAMK' && p.responsavel_nome)
-      ? ` — quem precisa entrar é ${esc(p.responsavel_nome)}` : '';
+    const r = (String(p.classificacao).toUpperCase() === 'LAMK') ? responsavelDistinto(p) : null;
+    const quem = r ? ` — quem precisa entrar é ${esc(r)}` : '';
     return `📱 <b>Fora da comunidade</b>${quem}`;
   }
   return '📱 Comunidade: <i>não sei (sem captura recente do grupo)</i>';
@@ -436,6 +464,7 @@ function renderAmbiguo(candidatos, termo, total = null) {
 module.exports = {
   RECORTES, PAGINA_INICIAL, PAGINA_SEGUINTE, TTL_MS, TTL_POR_TIPO, ttlDoTipo, UNIDADES, resolverUnidade,
   UNIDADES_IDS, nomeDaUnidade, buscarAlunoNasUnidades, conjuntoDeProfessores, tambemDaAula,
+  rotuloPendencia, responsavelDistinto,
   resolverAluno, tempoDeCasa, renderFicha, renderAmbiguo,
   normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, filtrarPorPeriodo, rotuloPeriodo,
   renderResumo, renderLista, linhaComunidade,
