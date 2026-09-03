@@ -300,6 +300,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   } catch (_) { /* velocímetro nunca derruba a resposta */ }
 
   const actions = []; // { kind, status, label, detail } → render rico no MessageBubble
+  const cards = []; // HTML dos cards; gravados DEPOIS da fala (ver o fim de processGroupChatMessage)
   const collab = ctx.collab;
   const engine = require('../engine'); // lazy: engine já carregado no processo; evita ciclo na carga
 
@@ -506,9 +507,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     } catch (_) { /* default tudo/mes */ }
     try {
       const { html } = await buildGroupReport({ supabase, groupId, scope, window });
-      await supabase.from('group_chat_messages').insert({
-        group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',
-      });
+      cards.push(html);
       actions.push({ kind: 'report', status: 'ok', label: 'Relatório gerado' });
       console.log(`[GroupChat] relatório grupo=${groupId} scope=${scope} window=${window}`);
     } catch (e) {
@@ -540,6 +539,8 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           detail: 'de qual unidade? Recreio, Barra ou Campo Grande' });
       } else {
         const recorte = situ.normalizarRecorte(p.recorte);
+        // O cabecalho do card assina a UNIDADE, nao o grupo (ver cabecalhoDe).
+        const unidadeNome = situ.nomeDaUnidade(unidadeId);
         const pagina = Math.max(0, Number(p.pagina) || 0);
         const { laReportClient, isLaReportConfigured } = require('./la-report-client');
         if (!isLaReportConfigured()) throw new Error('credenciais do LA Report ausentes');
@@ -556,7 +557,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           const ressalva = falharam.length
             ? ` (não consegui consultar ${falharam.map(situ.nomeDaUnidade).filter(Boolean).join(' e ')} agora)` : '';
           const r = situ.resolverAluno(pessoas, p.aluno);
-          if (r.pessoa) html = situ.renderFicha(r.pessoa, { grupoNome: ctx.group.name });
+          if (r.pessoa) html = situ.renderFicha(r.pessoa, { grupoNome: ctx.group.name, professores: situ.conjuntoDeProfessores(pessoas) });
           else if (r.erro === 'ambiguo') html = situ.renderAmbiguo(r.candidatos, p.aluno, r.total);
           else {
             const onde = unidadeId ? 'nessa unidade' : 'em nenhuma das três unidades';
@@ -566,7 +567,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           }
         } else if (recorte === 'resumo') {
           const { data } = await situ.consultarComCache({ tipo: 'resumo', unidadeId, client: laReportClient });
-          html = situ.renderResumo(data, { grupoNome: ctx.group.name });
+          html = situ.renderResumo(data, { grupoNome: ctx.group.name, unidadeNome });
         } else {
           const { data } = await situ.consultarComCache({ tipo: 'lista', unidadeId, client: laReportClient });
           // Recorte por período de matrícula: a LLM traduz "agosto de 2026" em datas, o código
@@ -576,14 +577,14 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
             : null;
           let pessoas = situ.filtrarPorRecorte(data || [], recorte);
           if (periodo) pessoas = situ.filtrarPorPeriodo(pessoas, periodo);
-          html = situ.renderLista({ recorte, pessoas, total: pessoas.length, pagina, grupoNome: ctx.group.name, periodo });
+          html = situ.renderLista({ recorte, pessoas, total: pessoas.length, pagina,
+            grupoNome: ctx.group.name, unidadeNome, periodo,
+            professores: situ.conjuntoDeProfessores(data || []) });
         }
         // Sem card nao ha insert: nome nao encontrado ja virou 'ask' la em cima, e gravar
         // content null deixaria uma mensagem vazia no grupo.
         if (html) {
-          await supabase.from('group_chat_messages').insert({
-            group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',
-          });
+          cards.push(html);
           const rotulo = p.aluno ? `Ficha: ${p.aluno}` : `Situação do aluno (${recorte})`;
           actions.push({ kind: 'situacao', status: 'ok', label: rotulo });
           console.log(`[GroupChat] situacao grupo=${groupId} ${p.aluno ? `aluno=${p.aluno}` : `recorte=${recorte} pagina=${pagina}`}`);
@@ -714,6 +715,17 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     group_id: groupId, sender_id: null, role: 'tom', kind: 'text', content, channel: 'app',
   }).select('id').single();
   if (error) { console.error(`[GroupChat] falha ao gravar resposta TOM: ${error.message}`); return null; }
+
+  // Os cards saem DEPOIS da fala. O modelo escreve a linha de abertura antes de ver o resultado
+  // (ele so emitiu o marker), então a fala termina em "👇" — e o 👇 tem que apontar pra alguma
+  // coisa. Gravando o card no meio do processamento, ele chegava ANTES e o dedo apontava pro
+  // vazio (Sucesso do Aluno, 02/09).
+  for (const html of cards) {
+    const { error: e2 } = await supabase.from('group_chat_messages').insert({
+      group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',
+    });
+    if (e2) console.error(`[GroupChat] falha ao gravar card: ${e2.message}`);
+  }
 
   return inserted;
 }

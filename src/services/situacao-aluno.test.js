@@ -546,3 +546,123 @@ test('ficha diz em qual unidade a pessoa está quando a busca atravessou', () =>
   const h = renderFicha({ ...ALUNO, _unidade_id: BAR }, { hoje: HOJE });
   assert.match(h, /LA Report · Barra/);
 });
+
+// ── O CABEÇALHO ASSINA A UNIDADE ──────────────────────────────────────────────────────────
+// 02/09, Sucesso do Aluno: a Fabi pediu "sem contrato na Barra" e o card veio com o cabeçalho
+// "👥 Sucesso do Aluno · 92". 92 era da Barra, mas quem lê entende como sendo da escola. Quando
+// ela contestou, nem o TOM sabia dizer de qual das três listas ela falava.
+test('lista: o cabeçalho é a UNIDADE, não o nome do grupo', () => {
+  const h = renderLista({
+    recorte: 'contrato', pessoas: [{ nome: 'Alice', classificacao: 'LA' }], total: 1,
+    grupoNome: 'Sucesso do Aluno', unidadeNome: 'Barra',
+  });
+  assert.match(h, /Barra/);
+  assert.doesNotMatch(h, /Sucesso do Aluno/, 'o grupo perguntou; quem assina o número é a unidade');
+});
+
+test('lista vazia também assina a unidade (o "ninguém" é de alguém)', () => {
+  const h = renderLista({
+    recorte: 'foto', pessoas: [], total: 0, grupoNome: 'Sucesso do Aluno', unidadeNome: 'Recreio',
+  });
+  assert.match(h, /Recreio/);
+  assert.doesNotMatch(h, /Sucesso do Aluno/);
+});
+
+test('resumo: o cabeçalho é a UNIDADE', () => {
+  const h = renderResumo({ total_pessoas: 337, pendentes: { anamnese: 233 } },
+    { grupoNome: 'Sucesso do Aluno', unidadeNome: 'Recreio' });
+  assert.match(h, /Recreio/);
+  assert.doesNotMatch(h, /Sucesso do Aluno/);
+});
+
+test('sem unidade conhecida, cai pro nome do grupo em vez de mentir', () => {
+  const h = renderLista({ recorte: 'foto', pessoas: [], total: 0, grupoNome: 'ADM CG' });
+  assert.match(h, /ADM CG/);
+});
+
+test('sem unidade e sem grupo, não inventa nome nenhum', () => {
+  const h = renderLista({ recorte: 'foto', pessoas: [], total: 0 });
+  assert.match(h, /a unidade/);
+});
+
+// ── QUEM É ALUNO E TAMBÉM DÁ AULA ─────────────────────────────────────────────────────────
+// 02/09: "1 sem anamnese: Gabriel Antony Alves de Araujo" — e o Alf: "esse é professor, não
+// aluno". Conferido: ele é os dois (matriculado em Bateria, com aula ontem) e o nome dele
+// aparece como professor de outras turmas. São 6 pessoas assim. O card tem que dizer, senão
+// toda aparição delas vira uma suspeita de bug.
+const { conjuntoDeProfessores, tambemDaAula } = require('./situacao-aluno');
+
+const TURMAS = [
+  { nome: 'Alice Cagnin', professores: ['Gabriel Antony Alves de Araújo'] },
+  { nome: 'Bento Serpa', professores: ['Rafael Alves Souza (Akeem)'] },
+];
+
+test('conjuntoDeProfessores tira os professores do próprio conjunto consultado', () => {
+  const s = conjuntoDeProfessores(TURMAS);
+  assert.strictEqual(s.size, 2);
+  assert.ok(tambemDaAula('Gabriel Antony Alves de Araujo', s), 'acento não pode desfazer o match');
+  assert.ok(!tambemDaAula('Alice Cagnin', s));
+});
+
+test('tambemDaAula com conjunto vazio nunca marca ninguém', () => {
+  assert.ok(!tambemDaAula('Fulano', new Set()));
+  assert.ok(!tambemDaAula('Fulano', null));
+});
+
+test('lista marca quem também dá aula', () => {
+  const profs = conjuntoDeProfessores(TURMAS);
+  const h = renderLista({
+    recorte: 'anamnese', total: 1, unidadeNome: 'Recreio', professores: profs,
+    pessoas: [{ nome: 'Gabriel Antony Alves de Araujo', classificacao: 'EMLA' }],
+  });
+  assert.match(h, /também dá aula aqui/);
+});
+
+test('lista NÃO marca quem só estuda', () => {
+  const h = renderLista({
+    recorte: 'anamnese', total: 1, unidadeNome: 'Recreio', professores: conjuntoDeProfessores(TURMAS),
+    pessoas: [{ nome: 'Alice Cagnin', classificacao: 'LAMK' }],
+  });
+  assert.doesNotMatch(h, /também dá aula/);
+});
+
+test('ficha diz que a pessoa é aluno E dá aula', () => {
+  const h = renderFicha({ ...ALUNO, nome: 'Gabriel Antony Alves de Araujo' },
+    { hoje: HOJE, professores: conjuntoDeProfessores(TURMAS) });
+  assert.match(h, /também aparece como professor/);
+});
+
+// ── O CARD NÃO FALA: dado é do código, voz é do modelo ────────────────────────────────────
+// Três unidades seguidas devolveram a MESMA frase enlatada ("tudo em dia por aqui 👊"), junto
+// com a linha do modelo. Duas vozes na mesma resposta, uma delas sempre idêntica: robô.
+test('lista vazia é um fato, não uma frase de efeito', () => {
+  const h = renderLista({ recorte: 'foto', pessoas: [], total: 0, unidadeNome: 'Recreio' });
+  assert.match(h, /Ninguém sem foto/);
+  assert.doesNotMatch(h, /tudo em dia por aqui/);
+  assert.doesNotMatch(h, /👊/);
+});
+
+test('fim de lista não estampa "Essa foi a lista toda"', () => {
+  const h = renderLista({
+    recorte: 'foto', total: 2, unidadeNome: 'Barra',
+    pessoas: [{ nome: 'Ana', classificacao: 'LA' }, { nome: 'Bia', classificacao: 'LA' }],
+  });
+  assert.doesNotMatch(h, /lista toda/);
+  assert.doesNotMatch(h, /👊/);
+});
+
+// "Começando pelas crianças" explica a ORDEM. Com um adulto sozinho não explica nada.
+test('a dica de ordem só sai quando há criança E mais de um nome', () => {
+  const so1 = renderLista({
+    recorte: 'anamnese', total: 1, unidadeNome: 'Recreio',
+    pessoas: [{ nome: 'Gabriel', classificacao: 'EMLA' }],
+  });
+  assert.doesNotMatch(so1, /Começando pelas crianças/);
+  assert.doesNotMatch(so1, /\.:/, 'e sem ponto duplicado');
+
+  const comCrianca = renderLista({
+    recorte: 'foto', total: 2, unidadeNome: 'Barra',
+    pessoas: [{ nome: 'Bento', classificacao: 'LAMK' }, { nome: 'Ana', classificacao: 'LA' }],
+  });
+  assert.match(comCrianca, /Começando pelas crianças/);
+});

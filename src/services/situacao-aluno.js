@@ -162,6 +162,25 @@ function tempoDeCasa(desde, hoje = new Date()) {
   return 'menos de um mês';
 }
 
+// Quem assina o numero e a UNIDADE consultada, nao o grupo que perguntou. Num grupo de uma
+// unidade so da no mesmo; num grupo que atravessa as tres, e a diferenca entre "92 alunos sem
+// contrato na Barra" e "92 alunos sem contrato" — que soa como a escola inteira.
+// Nomes que aparecem como PROFESSOR de alguma turma, tirados do proprio conjunto consultado —
+// nao ha lista de professores separada, e o dado ja vem em professores[] de cada matricula.
+function conjuntoDeProfessores(pessoas) {
+  const s = new Set();
+  (pessoas || []).forEach((p) => (p.professores || []).forEach((n) => { if (n) s.add(_norm(n)); }));
+  return s;
+}
+
+function tambemDaAula(nome, professores) {
+  return !!(professores && professores.size && professores.has(_norm(nome)));
+}
+
+function cabecalhoDe({ unidadeNome, grupoNome } = {}) {
+  return esc(unidadeNome || grupoNome || 'a unidade');
+}
+
 function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -187,7 +206,8 @@ function linhaComunidade(c) {
 function renderResumo(resumo, opts = {}) {
   const r = resumo || {};
   const pend = r.pendentes || {};
-  const nome = esc(opts.grupoNome || 'a unidade');
+  // A UNIDADE vence o nome do grupo: o numero e dela. Ver cabecalhoDe().
+  const nome = cabecalhoDe(opts);
   const linhas = [];
   linhas.push(`<h3>👥 Situação dos alunos — ${nome}</h3>`);
   linhas.push(`<p><b>${r.total_pessoas || 0} alunos ativos</b> (pessoas, não matrículas).</p>`);
@@ -210,13 +230,13 @@ function renderResumo(resumo, opts = {}) {
   return linhas.join('\n');
 }
 
-function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, periodo } = {}) {
+function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNome, periodo, professores } = {}) {
   const rec = normalizarRecorte(recorte);
   const rotulo = ROTULO[rec] || 'com pendência';
-  const nome = esc(grupoNome || 'a unidade');
+  const nome = cabecalhoDe({ grupoNome, unidadeNome });
   if (!total || !(pessoas || []).length) {
     const per = periodo ? ` ${rotuloPeriodo(periodo)}` : '';
-    return `<h3>👥 ${nome}</h3><p>Ninguém ${rotulo}${esc(per)} — tudo em dia por aqui. 👊</p>`;
+    return `<h3>👥 ${nome}</h3><p>Ninguém ${rotulo}${esc(per)}.</p>`;
   }
   const { itens, restam } = fatiar(ordenarPessoas(pessoas), pagina);
   const li = itens.map((p) => {
@@ -228,7 +248,10 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, periodo }
     // agir. Só nesse recorte e só nas crianças: em anamnese ou foto o nome do aluno basta.
     const resp = (rec === 'comunidade' && ehCrianca && p.responsavel_nome)
       ? ` <i>— resp. ${esc(p.responsavel_nome)}</i>` : '';
-    return `<li>${faixa} ${esc(p.nome)}${resp}${ressalva}</li>`;
+    // Quem tambem da aula na escola sai marcado: sem isso, o nome de um professor numa lista
+    // de pendencia parece erro da base e alguem vai gastar meia hora conferindo (Alf, 02/09).
+    const daAula = tambemDaAula(p.nome, professores) ? ' <i>(também dá aula aqui)</i>' : '';
+    return `<li>${faixa} ${esc(p.nome)}${resp}${daAula}${ressalva}</li>`;
   }).join('');
   // COMUNIDADE + CRIANÇA: a criança não entra em grupo de WhatsApp, o responsável entra. O dado
   // já considera isso (a RPC casa telefone do aluno, do responsável e dos contatos), mas quem lê
@@ -238,8 +261,11 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, periodo }
     ? '<p><i>Nas crianças (🧒) quem precisa entrar é o responsável — o convite vai pra ele, não pra ela.</i></p>'
     : '';
   const per = periodo ? ` <i>(${esc(rotuloPeriodo(periodo))})</i>` : '';
+  // A dica de ordem so serve se houver crianca na fatia E mais de um nome: com um adulto
+  // sozinho, "Começando pelas crianças" nao explica ordem nenhuma — e so barulho.
+  const dicaOrdem = (temCrianca && itens.length > 1) ? '. Começando pelas crianças:' : ':';
   const cabeca = pagina === 0
-    ? `<p><b>${total}</b> ${rotulo}${per}. Começando pelas crianças:</p>${nota}`
+    ? `<p><b>${total}</b> ${rotulo}${per}${dicaOrdem}</p>${nota}`
     : `<p>Continuando — <b>${total}</b> ${rotulo}${per}:</p>${nota}`;
   // O convite tem que caber no que SOBROU. Com 5 restando, "mando os próximos 30" e depois
   // vêm 5 faz o número parecer inventado — e o número é a coisa que eles mais olham.
@@ -247,7 +273,7 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, periodo }
   const proximos = Math.min(restam, PAGINA_SEGUINTE);
   const rodape = restam
     ? `<p>…e mais <b>${restam}</b>. Quer que eu mande ${proximos === 1 ? 'o último' : `os próximos ${proximos}`}?</p>`
-    : '<p>Essa foi a lista toda. 👊</p>';
+    : '';
   return `<h3>👥 ${nome}</h3>${cabeca}<ul>${li}</ul>${rodape}`;
 }
 
@@ -304,7 +330,7 @@ function _limparCache() { _cache.clear(); }
 
 // Monta a ficha. Cada linha so aparece quando ha o que dizer, e o "nao sei" e dito com todas as
 // letras — comunidade sem captura fresca e presenca de confianca baixa nao viram afirmacao.
-function renderFicha(p, { grupoNome, hoje = new Date() } = {}) {
+function renderFicha(p, { grupoNome, hoje = new Date(), professores } = {}) {
   if (!p) return null;
   const L = [];
   const faixa = String(p.classificacao).toUpperCase() === 'LAMK' ? '🧒' : '🎓';
@@ -349,6 +375,9 @@ function renderFicha(p, { grupoNome, hoje = new Date() } = {}) {
   else if (p.contrato_vencido) L.push('<p>📄 <b>Contrato vencido</b></p>');
   else if (p.proxima_renovacao_em) L.push(`<p>📄 Renova em ${esc(String(p.proxima_renovacao_em).slice(0, 10).split('-').reverse().join('/'))}${p.vence_em_30d ? ' <b>(nos próximos 30 dias)</b>' : ''}</p>`);
 
+  if (tambemDaAula(p.nome, professores)) {
+    L.push('<p>🧑‍🏫 <i>Esse nome também aparece como professor de turma aqui — é aluno e dá aula.</i></p>');
+  }
   const uni = p._unidade_id ? nomeDaUnidade(p._unidade_id) : null;
   L.push(`<p><i>fonte: LA Report${uni ? ` · ${esc(uni)}` : ''}, regra ${esc(p.regra_versao || 'desconhecida')}</i></p>`);
   return L.join('\n');
@@ -406,7 +435,7 @@ function renderAmbiguo(candidatos, termo, total = null) {
 
 module.exports = {
   RECORTES, PAGINA_INICIAL, PAGINA_SEGUINTE, TTL_MS, TTL_POR_TIPO, ttlDoTipo, UNIDADES, resolverUnidade,
-  UNIDADES_IDS, nomeDaUnidade, buscarAlunoNasUnidades,
+  UNIDADES_IDS, nomeDaUnidade, buscarAlunoNasUnidades, conjuntoDeProfessores, tambemDaAula,
   resolverAluno, tempoDeCasa, renderFicha, renderAmbiguo,
   normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, filtrarPorPeriodo, rotuloPeriodo,
   renderResumo, renderLista, linhaComunidade,
