@@ -215,3 +215,99 @@ test('sem memória nova E sem buffer, devolve null — nunca inventa bloco', () 
 test('MINIMO_PRA_TROCAR é 3, como a spec definiu', () => {
   assert.strictEqual(MINIMO_PRA_TROCAR, 3);
 });
+
+// ── FATIA 3: O ATO DE APROVAR A LIÇÃO ─────────────────────────────────────────────────────
+// A lição nasce inativa porque muda o COMPORTAMENTO do TOM na frente da equipe. O health-check
+// das 05:00 já avisava "⛔ N lições esperando seu ok" — mas não existia como responder, e sete
+// ficaram paradas. O portão está certo; faltava a maçaneta.
+const {
+  ordenarLicoes, decidirLicoes, renderLicoesPendentes, renderDecisao,
+} = require('./group-memory');
+
+const L = (id, content, dia) => ({ id, content, occurred_on: dia || '2026-09-03' });
+
+// A pessoa responde por NÚMERO. Se a ordem escorregar entre o card e o comando, ela aprova
+// outra coisa — e lição errada muda o comportamento dele com o time inteiro.
+test('ordem é determinística: data desc, id como desempate', () => {
+  const r = ordenarLicoes([
+    L('b', 'dois', '2026-09-03'), L('a', 'um', '2026-09-03'), L('c', 'velha', '2026-09-01'),
+  ]);
+  assert.deepStrictEqual(r.map((x) => x.id), ['a', 'b', 'c']);
+});
+
+test('a mesma entrada em ordem embaralhada dá a mesma numeração', () => {
+  const base = [L('b', 'dois'), L('a', 'um'), L('c', 'três')];
+  const n1 = ordenarLicoes(base).map((x) => x.id);
+  const n2 = ordenarLicoes([...base].reverse()).map((x) => x.id);
+  assert.deepStrictEqual(n1, n2);
+});
+
+test('o card numera e diz como responder', () => {
+  const h = renderLicoesPendentes([L('a', 'chamar pelo nome'), L('b', 'não chutar dado')], { grupoNome: 'ADM CG' });
+  assert.match(h, /ADM CG/);
+  assert.match(h, /<b>1\.<\/b> chamar pelo nome/);
+  assert.match(h, /<b>2\.<\/b> não chutar dado/);
+  assert.match(h, /aprova a 1/);
+});
+
+test('sem lição pendente o card diz isso, não fica vazio', () => {
+  assert.match(renderLicoesPendentes([], { grupoNome: 'Barra' }), /Nenhuma lição esperando/);
+});
+
+function fakeSb(registro) {
+  return {
+    from() {
+      const api = {
+        update(patch) { api._patch = patch; return api; },
+        eq(col, val) { if (col === 'id') registro.push({ id: val, ...api._patch }); return Promise.resolve({ error: null }); },
+      };
+      return api;
+    },
+  };
+}
+
+test('aprovar ativa e carimba a decisão', async () => {
+  const escritas = [];
+  const r = await decidirLicoes(fakeSb(escritas), {
+    licoes: [L('a', 'um'), L('b', 'dois'), L('c', 'três')], numeros: [1, 3], acao: 'aprovar',
+  });
+  assert.deepStrictEqual(escritas.map((x) => x.id), ['a', 'c']);
+  assert.ok(escritas.every((x) => x.is_active === true && x.approved_at));
+  assert.strictEqual(r.feitos.length, 2);
+});
+
+// Descartada também recebe approved_at, senão volta pra fila amanhã e a pessoa é obrigada a
+// dizer não pra sempre.
+test('descartar carimba a decisão para a lição não voltar pra fila', async () => {
+  const escritas = [];
+  await decidirLicoes(fakeSb(escritas), { licoes: [L('a', 'um')], numeros: [1], acao: 'descartar' });
+  assert.strictEqual(escritas[0].is_active, false);
+  assert.ok(escritas[0].approved_at, 'sem approved_at ela reaparece como pendente');
+});
+
+test('número fora da lista não vira aprovação silenciosa', async () => {
+  const escritas = [];
+  const r = await decidirLicoes(fakeSb(escritas), { licoes: [L('a', 'um')], numeros: [1, 7], acao: 'aprovar' });
+  assert.deepStrictEqual(escritas.map((x) => x.id), ['a']);
+  assert.deepStrictEqual(r.foraDaLista, [7]);
+});
+
+test('número repetido não aplica duas vezes', async () => {
+  const escritas = [];
+  await decidirLicoes(fakeSb(escritas), { licoes: [L('a', 'um')], numeros: [1, 1, 1], acao: 'aprovar' });
+  assert.strictEqual(escritas.length, 1);
+});
+
+// Mostra o TEXTO do que foi decidido, não o número: se a numeração tiver escorregado, quem leu
+// vê na hora que aprovou outra coisa.
+test('o card da decisão repete o TEXTO da lição, não o número', () => {
+  const h = renderDecisao({ feitos: [L('a', 'chamar pelo nome')], foraDaLista: [], acao: 'aprovar' });
+  assert.match(h, /chamar pelo nome/);
+  assert.match(h, /Aprovada/);
+});
+
+test('nada aplicado é dito com todas as letras', () => {
+  const h = renderDecisao({ feitos: [], foraDaLista: [9], acao: 'aprovar' });
+  assert.match(h, /Não consegui aplicar nada/);
+  assert.match(h, /9/);
+});

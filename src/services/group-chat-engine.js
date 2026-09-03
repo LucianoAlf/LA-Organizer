@@ -617,6 +617,48 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     }
   }
 
+
+  // ─── LICOES APRENDIDAS (fatia 3: o ato de aprovar) ────────────────────────────────────────
+  // A licao muda o COMPORTAMENTO do TOM na frente da equipe, entao nasce inativa e precisa de um
+  // sim humano. O health-check das 05:00 avisa que ha pendentes; aqui e onde a pessoa responde.
+  const licaoMatch = reply.match(/<<LICOES>>([\s\S]*?)<<END>>/i);
+  if (licaoMatch) {
+    stripBlock(/<<LICOES>>[\s\S]*?<<END>>/i);
+    try {
+      const gm = require('./group-memory');
+      let p = {};
+      try { p = JSON.parse(licaoMatch[1].trim()) || {}; } catch (_) { p = {}; }
+      const pendentes = await gm.listarLicoesPendentes(supabase, groupId);
+      if (pendentes === null) throw new Error('nao consegui ler as licoes');
+
+      const acao = (p.acao === 'aprovar' || p.acao === 'descartar') ? p.acao : 'listar';
+      const numeros = Array.isArray(p.itens) ? p.itens : [];
+      let html;
+      if (acao === 'listar' || !numeros.length) {
+        html = gm.renderLicoesPendentes(pendentes, { grupoNome: ctx.group.name });
+        actions.push({ kind: 'licao', status: 'ok', label: `Licoes pendentes (${pendentes.length})` });
+      } else {
+        const r = await gm.decidirLicoes(supabase, { licoes: pendentes, numeros, acao });
+        html = gm.renderDecisao({ ...r, acao });
+        const restam = r.total - r.feitos.length;
+        if (restam > 0) html += `<p><i>Ainda faltam ${restam} esperando decisao.</i></p>`;
+        // 'ok' so quando algo mudou de verdade no banco. Zero feito com cara de sucesso e a
+        // doenca que este projeto inteiro passou o dia caçando.
+        actions.push({
+          kind: 'licao',
+          status: r.feitos.length ? 'ok' : 'fail',
+          label: `${acao === 'aprovar' ? 'Aprovar' : 'Descartar'} licao`,
+          detail: r.feitos.length ? '' : 'nenhuma da lista',
+        });
+        console.log(`[GroupMemory] ${acao} grupo=${groupId} feitas=${r.feitos.length} de ${numeros.length} pedidas`);
+      }
+      cards.push(html);
+    } catch (e) {
+      console.error('[GroupChat] licoes falhou:', e.message);
+      actions.push({ kind: 'licao', status: 'fail', label: 'Licoes', detail: 'nao consegui agora' });
+    }
+  }
+
   // ─── PROJETO ──────────────────────────────────────────────────────────────
   try {
     const parsed = engine.parseProjectMarker(reply);

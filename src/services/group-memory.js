@@ -212,8 +212,85 @@ async function carregarMemoriasDoGrupo(supabase, groupId) {
   return data || [];
 }
 
+
+// HTML do card: o conteudo vem de texto que a LLM extraiu de conversa real.
+function esc(x) {
+  return String(x == null ? '' : x)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── FATIA 3: APROVAR OU DESCARTAR LICAO ───────────────────────────────────────────────────
+// Ordem DETERMINISTICA: a pessoa responde por numero ("aprova a 1 e a 3") e o numero precisa
+// significar a mesma coisa entre o card e o comando. occurred_on desc, id como desempate — nunca
+// created_at, que empata em lote (as 22 memorias de 03/09 nasceram no mesmo segundo).
+function ordenarLicoes(licoes) {
+  return [...(licoes || [])].sort((a, b) => {
+    const d = String(b.occurred_on || '').localeCompare(String(a.occurred_on || ''));
+    return d !== 0 ? d : String(a.id || '').localeCompare(String(b.id || ''));
+  });
+}
+
+async function listarLicoesPendentes(supabase, groupId) {
+  const { data, error } = await supabase.from('group_memory')
+    .select('id, content, occurred_on, importance, evidence')
+    .eq('group_id', groupId).eq('memory_type', 'lesson')
+    .eq('is_active', false).is('approved_at', null).limit(20);
+  if (error) { console.error(`[GroupMemory] listar licoes falhou grupo=${groupId}: ${error.message}`); return null; }
+  return ordenarLicoes(data || []);
+}
+
+// A DECISAO fica gravada nos dois casos. Descartada tambem recebe approved_at — senao ela volta
+// pra fila de pendentes amanha e a pessoa e obrigada a dizer nao pra sempre.
+async function decidirLicoes(supabase, { licoes, numeros, acao }) {
+  const lista = ordenarLicoes(licoes);
+  const pedidos = [...new Set((numeros || []).map((n) => Number(n)).filter((n) => Number.isInteger(n)))];
+  const validos = pedidos.filter((n) => n >= 1 && n <= lista.length);
+  const foraDaLista = pedidos.filter((n) => !validos.includes(n));
+  const alvos = validos.map((n) => lista[n - 1]);
+  const agora = new Date().toISOString();
+  const feitos = [];
+  for (const l of alvos) {
+    const { error } = await supabase.from('group_memory')
+      .update({ is_active: acao === 'aprovar', approved_at: agora }).eq('id', l.id);
+    // Erro de update NAO pode virar sucesso silencioso: quem le o card precisa ver o que de fato
+    // mudou, nao o que eu pedi pra mudar.
+    if (error) console.error(`[GroupMemory] decidir licao ${l.id} falhou: ${error.message}`);
+    else feitos.push(l);
+  }
+  return { feitos, foraDaLista, total: lista.length };
+}
+
+function renderLicoesPendentes(licoes, { grupoNome } = {}) {
+  const lista = ordenarLicoes(licoes);
+  if (!lista.length) return `<h3>📚 ${esc(grupoNome || 'Este grupo')}</h3><p>Nenhuma lição esperando aprovação.</p>`;
+  const itens = lista.map((l, i) => {
+    const d = String(l.occurred_on || '').slice(0, 10).split('-');
+    const data = d.length === 3 ? `${d[2]}/${d[1]}` : '';
+    return `<li><b>${i + 1}.</b> ${esc(String(l.content || '').trim())}${data ? ` <i>(${data})</i>` : ''}</li>`;
+  }).join('');
+  const plural = lista.length === 1 ? 'lição aprendida esperando' : 'lições aprendidas esperando';
+  return `<h3>📚 ${esc(grupoNome || 'Este grupo')}</h3>`
+    + `<p><b>${lista.length}</b> ${plural} seu ok — só passam a valer depois que alguém aprovar:</p>`
+    + `<ul>${itens}</ul>`
+    + '<p><i>Responda "aprova a 1 e a 3" ou "descarta a 2".</i></p>';
+}
+
+function renderDecisao({ feitos, foraDaLista, acao }) {
+  const verbo = acao === 'aprovar' ? 'Aprovada' : 'Descartada';
+  const verboP = acao === 'aprovar' ? 'Aprovadas' : 'Descartadas';
+  if (!feitos.length) {
+    return `<p>Não consegui aplicar nada${foraDaLista.length ? ` — ${foraDaLista.join(', ')} não está na lista` : ''}.</p>`;
+  }
+  const itens = feitos.map((l) => `<li>${esc(String(l.content || '').trim())}</li>`).join('');
+  const sobra = foraDaLista.length ? `<p><i>Ignorei ${foraDaLista.join(', ')} — fora da lista.</i></p>` : '';
+  // Mostra o TEXTO do que foi decidido, nao o numero: se a numeracao tiver escorregado, a pessoa
+  // ve na hora que aprovou outra coisa.
+  return `<p>${feitos.length === 1 ? verbo : `${verboP} (${feitos.length})`}:</p><ul>${itens}</ul>${sobra}`;
+}
+
 module.exports = {
   montarHistorico, extrairMemoriaDeGrupo, consolidateGroupMemoryFor, deveConsolidarGrupo,
+  ordenarLicoes, listarLicoesPendentes, decidirLicoes, renderLicoesPendentes, renderDecisao,
   JANELA_HORAS, TETO_POR_NOITE,
   TETO_BLOCO, MINIMO_PRA_TROCAR, memoriaViva, ordenarMemorias, linhaDeMemoria,
   montarBlocoMemoria, escolherMemoria, carregarMemoriasDoGrupo,
