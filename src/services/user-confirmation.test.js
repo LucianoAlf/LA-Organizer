@@ -161,6 +161,37 @@ test('FIX Ana: zero-regressão — afirmador puro e verbo de CONCLUSÃO seguem y
   }
 });
 
+// ── CONFIRM-AUX-FOI-BLIND (Jhonatan 02/09 19:41 BRT) ────────────────────────
+// "Tom, já rolou tudo" abriu o A2 de fechamento em lote (6 tarefas, intent com
+// batch_complete[6]). O Jhonatan confirmou TRÊS vezes — "Foi" (19:41:27),
+// "Onfirmado" (19:42:15) e "Confirmado" (19:42:59) — e recebeu a MESMA pergunta
+// de volta nas duas primeiras: cada null manda o turno pro LLM, que re-emite o
+// complete, e o guard A2 re-pergunta (3× TASK_UPDATE rejected all_failed:6).
+//
+// "Foi" é a resposta afirmativa mais curta do português a "já foi feito?", e
+// morria no `^(?:QUANT)(já\s+)?(?:foram|foi)\b`, onde o quantificador é
+// OBRIGATÓRIO — "tudo foi" confirmava, "foi" pelado não. O QUANT estava ali pra
+// que "foi ele" não virasse confirmação; a âncora de fim de frase segura esse
+// risco sem exigir o quantificador.
+test('FIX Jhonatan: auxiliar "foi"/"foram" sozinho sob allowDone → yes', () => {
+  for (const s of ['Foi', 'foi', 'foi.', 'Foi!', 'foram', 'foi sim', 'foram todas']) {
+    assert.strictEqual(detectUserConfirmation(s, { allowDone: true }), 'yes',
+      `"${s}" é confirmação de conclusão`);
+  }
+});
+
+test('FIX Jhonatan: "foi" só confirma como frase INTEIRA — objeto depois segue null', () => {
+  for (const s of ['foi ele quem fez', 'foi mal', 'foi o Rafinha', 'foi por pouco']) {
+    assert.strictEqual(detectUserConfirmation(s, { allowDone: true }), null,
+      `"${s}" é conteúdo, não confirmação`);
+  }
+});
+
+test('FIX Jhonatan: gated em allowDone — sem intent de conclusão aberta, "foi" não confirma', () => {
+  assert.strictEqual(detectUserConfirmation('Foi', {}), null);
+  assert.strictEqual(detectUserConfirmation('foram', {}), null);
+});
+
 // ── defensivo ───────────────────────────────────────────────────────────────
 test('defensivo: não-string / vazio / longo demais → null', () => {
   assert.strictEqual(detectUserConfirmation(null), null);

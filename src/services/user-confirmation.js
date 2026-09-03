@@ -113,6 +113,15 @@ function classify(t, opts = {}) {
     // "todas já foram" / "tudo foi" — auxiliar SOZINHO só confirma atrás do quantificador,
     // senão "foi ele" viraria confirmação.
     if (new RegExp(String.raw`^(?:${QUANT})(j[áa]\s+)?(?:foram|foi)\b`).test(t)) return 'yes';
+    // CONFIRM-AUX-FOI-BLIND (Jhonatan 02/09 19:41 BRT): sem o quantificador o auxiliar
+    // pelado dava null — "Foi" é a resposta mais curta possível a "já foi feito?", e o
+    // null mandou o turno pro LLM, que re-emitiu complete e fez o A2 re-perguntar. Três
+    // voltas da MESMA pergunta (3× TASK_UPDATE rejected all_failed:6) até ele escrever
+    // "Confirmado". O QUANT existia pra barrar "foi ele"; exigir que o auxiliar FECHE a
+    // frase barra igual, sem obrigar o quantificador. Aditivo à linha acima (que segue
+    // valendo pra "todas foram feitas ontem", onde a frase continua): só converte null
+    // em 'yes', nenhum resultado existente muda.
+    if (/^(j[áa]\s+)?(?:foram|foi)(?:\s+(?:sim|mesmo|tudo|tod[oa]s))?\s*[.!]*$/.test(t)) return 'yes';
   }
   return null;
 }
