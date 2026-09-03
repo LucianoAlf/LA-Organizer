@@ -547,8 +547,14 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           html = situ.renderResumo(data, { grupoNome: ctx.group.name });
         } else {
           const { data } = await situ.consultarComCache({ tipo: 'lista', unidadeId, client: laReportClient });
-          const pessoas = situ.filtrarPorRecorte(data || [], recorte);
-          html = situ.renderLista({ recorte, pessoas, total: pessoas.length, pagina, grupoNome: ctx.group.name });
+          // Recorte por período de matrícula: a LLM traduz "agosto de 2026" em datas, o código
+          // filtra e o cabeçalho DIZ qual eixo usou (entrou na escola x matrícula nova).
+          const periodo = (p.periodo_de || p.periodo_ate)
+            ? { de: p.periodo_de || null, ate: p.periodo_ate || null, criterio: p.periodo_criterio === 'recente' ? 'recente' : 'entrada' }
+            : null;
+          let pessoas = situ.filtrarPorRecorte(data || [], recorte);
+          if (periodo) pessoas = situ.filtrarPorPeriodo(pessoas, periodo);
+          html = situ.renderLista({ recorte, pessoas, total: pessoas.length, pagina, grupoNome: ctx.group.name, periodo });
         }
         await supabase.from('group_chat_messages').insert({
           group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',

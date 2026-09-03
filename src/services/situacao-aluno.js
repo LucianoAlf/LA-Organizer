@@ -73,6 +73,39 @@ const PENDENCIA = {
   comunidade: (p) => p.comunidade_status === 'fora_da_comunidade',
 };
 
+// PERIODO DE MATRICULA (Fabiola, 02/09: "dos matriculados em agosto, quantos sem foto?").
+// A LLM traduz a fala em datas; o codigo filtra. Dois eixos, porque sao perguntas diferentes:
+//   entrou_em            = quando a pessoa virou ALUNA DA ESCOLA (min das matriculas vivas)
+//   matricula_recente_em = a matricula mais nova (2o curso conta)
+// Default: entrou_em. "Aluno de agosto" quase sempre quer dizer quem CHEGOU em agosto — e o
+// renderizador DIZ qual criterio usou, senao o numero vira opiniao.
+const CAMPOS_PERIODO = { entrada: 'entrou_em', recente: 'matricula_recente_em' };
+
+function filtrarPorPeriodo(pessoas, { de, ate, criterio = 'entrada' } = {}) {
+  const campo = CAMPOS_PERIODO[criterio] || CAMPOS_PERIODO.entrada;
+  const dISO = de ? String(de).slice(0, 10) : null;
+  const aISO = ate ? String(ate).slice(0, 10) : null;
+  if (!dISO && !aISO) return pessoas || [];
+  return (pessoas || []).filter((p) => {
+    const v = p && p[campo] ? String(p[campo]).slice(0, 10) : null;
+    if (!v) return false; // sem data conhecida NAO entra num recorte de data
+    if (dISO && v < dISO) return false;
+    if (aISO && v > aISO) return false;
+    return true;
+  });
+}
+
+function rotuloPeriodo({ de, ate, criterio = 'entrada' } = {}) {
+  if (!de && !ate) return '';
+  const br = (d) => { const [a, m, dd] = String(d).slice(0, 10).split('-'); return `${dd}/${m}/${a}`; };
+  // "Ninguem sem foto QUE ENTRARAM..." nao concorda. "entre os que entraram" serve tanto pro
+  // caso cheio ("12 sem contrato, entre os que entraram...") quanto pro vazio.
+  const eixo = criterio === 'recente' ? 'entre os que fizeram matrícula nova' : 'entre os que entraram na escola';
+  if (de && ate) return `${eixo} de ${br(de)} a ${br(ate)}`;
+  if (de) return `${eixo} a partir de ${br(de)}`;
+  return `${eixo} até ${br(ate)}`;
+}
+
 function filtrarPorRecorte(pessoas, recorte) {
   const f = PENDENCIA[normalizarRecorte(recorte)];
   return f ? (pessoas || []).filter(f) : (pessoas || []);
@@ -126,19 +159,25 @@ function renderResumo(resumo, opts = {}) {
   return linhas.join('\n');
 }
 
-function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome } = {}) {
+function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, periodo } = {}) {
   const rec = normalizarRecorte(recorte);
   const rotulo = ROTULO[rec] || 'com pendência';
   const nome = esc(grupoNome || 'a unidade');
   if (!total || !(pessoas || []).length) {
-    return `<h3>👥 ${nome}</h3><p>Ninguém ${rotulo} — tudo em dia por aqui. 👊</p>`;
+    const per = periodo ? ` ${rotuloPeriodo(periodo)}` : '';
+    return `<h3>👥 ${nome}</h3><p>Ninguém ${rotulo}${esc(per)} — tudo em dia por aqui. 👊</p>`;
   }
   const { itens, restam } = fatiar(ordenarPessoas(pessoas), pagina);
   const li = itens.map((p) => {
-    const faixa = String(p.classificacao).toUpperCase() === 'LAMK' ? '🧒' : '🎓';
+    const ehCrianca = String(p.classificacao).toUpperCase() === 'LAMK';
+    const faixa = ehCrianca ? '🧒' : '🎓';
     const ressalva = p.anamnese_flag_sem_registro
       ? ' <i>(marcada como preenchida, mas sem registro hoje — conferir)</i>' : '';
-    return `<li>${faixa} ${esc(p.nome)}${ressalva}</li>`;
+    // Na comunidade, quem entra no grupo é o RESPONSÁVEL — então é o nome dele que serve pra
+    // agir. Só nesse recorte e só nas crianças: em anamnese ou foto o nome do aluno basta.
+    const resp = (rec === 'comunidade' && ehCrianca && p.responsavel_nome)
+      ? ` <i>— resp. ${esc(p.responsavel_nome)}</i>` : '';
+    return `<li>${faixa} ${esc(p.nome)}${resp}${ressalva}</li>`;
   }).join('');
   // COMUNIDADE + CRIANÇA: a criança não entra em grupo de WhatsApp, o responsável entra. O dado
   // já considera isso (a RPC casa telefone do aluno, do responsável e dos contatos), mas quem lê
@@ -147,9 +186,10 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome } = {}) {
   const nota = (rec === 'comunidade' && temCrianca)
     ? '<p><i>Nas crianças (🧒) quem precisa entrar é o responsável — o convite vai pra ele, não pra ela.</i></p>'
     : '';
+  const per = periodo ? ` <i>(${esc(rotuloPeriodo(periodo))})</i>` : '';
   const cabeca = pagina === 0
-    ? `<p><b>${total}</b> ${rotulo}. Começando pelas crianças:</p>${nota}`
-    : `<p>Continuando — <b>${total}</b> ${rotulo}:</p>${nota}`;
+    ? `<p><b>${total}</b> ${rotulo}${per}. Começando pelas crianças:</p>${nota}`
+    : `<p>Continuando — <b>${total}</b> ${rotulo}${per}:</p>${nota}`;
   // O convite tem que caber no que SOBROU. Com 5 restando, "mando os próximos 30" e depois
   // vêm 5 faz o número parecer inventado — e o número é a coisa que eles mais olham.
   // (Fabíola, Sucesso do Aluno, 02/09: sobravam 5 e ele ofereceu 30.)
@@ -210,7 +250,7 @@ function _limparCache() { _cache.clear(); }
 
 module.exports = {
   RECORTES, PAGINA_INICIAL, PAGINA_SEGUINTE, TTL_MS, TTL_POR_TIPO, ttlDoTipo, UNIDADES, resolverUnidade,
-  normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte,
+  normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, filtrarPorPeriodo, rotuloPeriodo,
   renderResumo, renderLista, linhaComunidade,
   consultarComCache, _limparCache,
 };

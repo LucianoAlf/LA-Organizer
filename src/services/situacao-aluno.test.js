@@ -276,3 +276,74 @@ test('a nota é SÓ do recorte de comunidade — não aparece em anamnese', () =
   });
   assert.doesNotMatch(html, /responsável/i);
 });
+
+// ── RECORTE POR PERÍODO DE MATRÍCULA (Fabíola, 02/09) ─────────────────────────────────────
+// "dos alunos matriculados em agosto de 2026, quantos estão sem foto?" — antes ele respondia
+// a unidade inteira. Os campos entrou_em / matricula_recente_em chegaram na RPC (Codex 9de30a74).
+const { filtrarPorPeriodo, rotuloPeriodo } = require('./situacao-aluno');
+
+const Q = (nome, entrou, recente) => P(nome, { entrou_em: entrou, matricula_recente_em: recente });
+
+test('filtra pelo mês de ENTRADA na escola (padrão)', () => {
+  const gente = [Q('Ago', '2026-08-10', '2026-08-10'), Q('Out', '2025-10-01', '2025-10-01'), Q('Set', '2026-09-01', '2026-09-01')];
+  const r = filtrarPorPeriodo(gente, { de: '2026-08-01', ate: '2026-08-31' });
+  assert.deepStrictEqual(r.map((p) => p.nome), ['Ago']);
+});
+
+// O caso que separa os dois eixos: quem já era aluno e ADICIONOU um curso em agosto.
+test('critério "recente" pega quem acrescentou curso no período; "entrada" não', () => {
+  const gente = [Q('Veterano', '2024-03-01', '2026-08-20')];
+  assert.strictEqual(filtrarPorPeriodo(gente, { de: '2026-08-01', ate: '2026-08-31' }).length, 0);
+  assert.strictEqual(filtrarPorPeriodo(gente, { de: '2026-08-01', ate: '2026-08-31', criterio: 'recente' }).length, 1);
+});
+
+test('sem data conhecida NÃO entra num recorte de data', () => {
+  assert.strictEqual(filtrarPorPeriodo([Q('SemData', null, null)], { de: '2026-08-01' }).length, 0);
+});
+
+test('sem período, devolve todo mundo', () => {
+  const gente = [Q('A', '2020-01-01', '2020-01-01')];
+  assert.strictEqual(filtrarPorPeriodo(gente, {}).length, 1);
+});
+
+// O número vira opinião se ninguém disser o critério.
+test('o rótulo DIZ qual eixo foi usado', () => {
+  assert.match(rotuloPeriodo({ de: '2026-08-01', ate: '2026-08-31' }), /entre os que entraram na escola de 01\/08\/2026 a 31\/08\/2026/);
+  assert.match(rotuloPeriodo({ de: '2026-08-01', criterio: 'recente' }), /matrícula nova/);
+  // a frase tem que ler bem tambem quando nao ha ninguem
+  assert.match(`Ninguém sem foto ${rotuloPeriodo({ de: '2026-08-01', ate: '2026-08-31' })}`, /Ninguém sem foto entre os que entraram/);
+  assert.strictEqual(rotuloPeriodo({}), '');
+});
+
+test('a lista mostra o período no cabeçalho', () => {
+  const html = renderLista({ recorte: 'foto', grupoNome: 'X', pessoas: [Q('Ago', '2026-08-10', '2026-08-10')],
+    total: 1, pagina: 0, periodo: { de: '2026-08-01', ate: '2026-08-31' } });
+  assert.match(html, /entraram na escola/);
+});
+
+test('lista VAZIA com período diz o recorte — "ninguém" precisa dizer ninguém DO QUÊ', () => {
+  const html = renderLista({ recorte: 'foto', grupoNome: 'X', pessoas: [], total: 0, pagina: 0,
+    periodo: { de: '2026-08-01', ate: '2026-08-31' } });
+  assert.match(html, /Ninguém sem foto/);
+  assert.match(html, /entraram na escola/);
+});
+
+// ── RESPONSÁVEL NA LISTA DA COMUNIDADE ────────────────────────────────────────────────────
+test('comunidade: criança sai com o nome do RESPONSÁVEL, que é quem entra no grupo', () => {
+  const html = renderLista({ recorte: 'comunidade', grupoNome: 'X', total: 1, pagina: 0,
+    pessoas: [P('Alice', { classificacao: 'LAMK', responsavel_nome: 'Mychelle Dellatorre', comunidade_status: 'fora_da_comunidade' })] });
+  assert.match(html, /Alice/);
+  assert.match(html, /resp\. Mychelle Dellatorre/);
+});
+
+test('adulto não ganha "resp." — ele mesmo entra no grupo', () => {
+  const html = renderLista({ recorte: 'comunidade', grupoNome: 'X', total: 1, pagina: 0,
+    pessoas: [P('Ana Clara', { classificacao: 'EMLA', responsavel_nome: 'Mãe da Ana', comunidade_status: 'fora_da_comunidade' })] });
+  assert.doesNotMatch(html, /resp\./);
+});
+
+test('o responsável NÃO polui outros recortes', () => {
+  const html = renderLista({ recorte: 'anamnese', grupoNome: 'X', total: 1, pagina: 0,
+    pessoas: [P('Alice', { classificacao: 'LAMK', responsavel_nome: 'Mychelle' })] });
+  assert.doesNotMatch(html, /resp\./);
+});
