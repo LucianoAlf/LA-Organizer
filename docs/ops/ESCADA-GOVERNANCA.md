@@ -1339,3 +1339,127 @@ varredura leu a coluna crua — e, ao ser lido, já tinha nota de 30/08 dizendo 
 A proposta de 30/08 segue de pé e agora com duas ocorrências para sustentá-la: normalizar `severity`
 na escrita, ou o `gov-runner` contar por `in ('alto','high')` e **falhar ruidosamente** ao encontrar
 as duas grafias na mesma tabela. Enquanto for contagem à mão, isto volta todo mês.
+
+### ETAPA 3 — o resultado NEUTRO pela 6ª vez, agora por RELÓGIO: o guard lê `Date.now()`
+
+**Ocorrências:** 6 (14/08, 15/08, 17/08, 27/08, 30/08, 03/09). Classe nova de instrumento quebrado.
+
+Todas as ocorrências anteriores do neutro vieram de **assinatura** errada (`isQuietNow` com `Date`),
+de **controle** mal escolhido (o `Math.round` do `resolveTxnTarget`) ou de **coluna** inexistente
+(`role` em `conversation_history`). Em 03/09 apareceu uma quarta origem, e é a mais silenciosa:
+**o guard compara com o instante presente.**
+
+Caso `15266b41` (Jhonatan 25/06). O literal preservado no `raw_excerpt` traz
+`<<PREFS_UPDATE>> {"do_not_disturb_until":"2026-06-26T11:00:00Z", …}`. Rodado pelo
+`parsePrefsMarker` do código de HOJE: **`{malformed:true, dnd:null}`** — que se lê como "não foi
+corrigido, o achado segue vivo". Os controles estavam bons (`briefing_time` → update válido; campo
+inexistente → malformed), então a chamada parecia sã e o veredito, confiável.
+
+Não era. `parsePrefsMarker` roteia o DND por `validateDndWindow` (`src/lib/dnd-window.js`), cuja
+assinatura é `(until, reason, nowMs = Date.now())` e que devolve `{ok:false, code:'not_future'}`
+quando o alvo está a menos de 60s do agora. Uma data de **junho** rodada em **setembro** é sempre
+passado: o guard recusa por caducidade, não por schema. Refeito com o relógio fixado no instante do
+incidente (`Date.now = () => new Date('2026-06-26T01:15:00Z').getTime()`), a comparação passou a
+valer — **ANTES (`88c055aa^`) `{malformed:true, errors:["do_not_disturb_until:use_DND_SET_marker_instead"]}`
+→ HOJE `{malformed:false, dnd:{until,reason}}`**, com os dois controles válidos nos dois lados.
+
+O que torna esta origem pior que as três anteriores: os controles **não a denunciam**. Um controle
+sem data (`briefing_time`) atravessa igual nas duas versões e confirma que a chamada está boa —
+ele não toca o caminho temporal. Só a leitura da assinatura pega.
+
+Regra: **todo achado do acervo é rodado no passado. Antes de ler qualquer neutro, procure `Date.now`,
+`new Date()` sem argumento e comparações de janela no caminho da função — e fixe o relógio no
+instante do incidente.** Um controle que não carrega data não desempata isso.
+
+Proposta de virar código: o `provar(literal, guard)` pedido desde 13/08 deve **sempre** rodar com o
+relógio fixado no `occurred_at` do achado, e o `gov-runner` deve recusar o fechamento quando o
+módulo sob teste referenciar `Date.now()` e a prova tiver sido produzida sem pin.
+
+### ETAPA 2 (varredura) — o lever `marker_logs rejected` gera candidato pela JANELA, e janela ≠ turno
+
+**Ocorrências:** 2 (27/08, 03/09). O melhor lever medido tem um viés que precisa ficar escrito.
+
+Em 27/08 registrei que cruzar achados abertos com `marker_logs result='rejected'` em ±20 min é o
+gerador com melhor razão sinal/ruído, porque o `raw_excerpt` preserva o bloco `<<MARKER>>` que o
+validador recusou. Continua verdade. O que faltava dizer é o custo do `±20 min`.
+
+Em `15266b41` o lever entregou um `PREFS_UPDATE` recusado às **20:42:30 BRT** e o achado é a fala do
+usuário de **20:40:15** ("Já resolvi pô"). Dois minutos, mesma conversa, mesma pessoa — e sintomas
+diferentes: a irritação do achado é o TOM ter cobrado uma tarefa *Cancelamento* que ele mesmo, no
+turno seguinte, admite não estar aberta; o marker recusado é o "fico quieto pro resto da noite" que
+não gravou. Provei o segundo (corrigido em `88c055aa`, 26/06) e **não fechei o achado**, porque a
+prova não é do que ele afirma.
+
+Subproduto que vale como aviso de calibragem: a prova ficou órfã. Varri os achados abertos da janela
+(`1e85605f`, `6cf4bd8d`, `15266b41`, `c9d0100d`) e **nenhum** reivindica o sintoma do DND — gastei
+uma reprodução completa, com controles nos dois lados, num bug que o acervo nem cobra.
+
+Regra: **no lever de `marker_logs`, o marker recusado é uma HIPÓTESE de turno, não o turno.** Antes
+de reproduzir, confira que o sintoma do marker é o sintoma que o achado descreve — a evidência do
+achado é a agulha, o `raw_excerpt` é só a entrada preservada. Ordem barata: agulha primeiro, marker
+depois.
+
+### ETAPA 3 — classe nova de fechamento: houve DEPLOY entre as duas falas comparadas
+
+**Ocorrências:** 1 (03/09), e produziu o único `falso_positivo` do dia.
+
+`768b3e25` (Fabi, `wrong_refusal`) é construído sobre uma comparação: às **20:46 BRT** o TOM disse
+que não conseguia fazer um recorte por período de matrícula; às **22:41** do mesmo dia fez. Lido
+assim é recusa falsa — o sistema sempre pôde, o TOM negou.
+
+O que desempata não está em nenhuma das duas falas nem no banco: está no `git log`. O commit
+`afc3910f` (*"feat(la-report): recorte por PERÍODO de matrícula"*) entrou em **02/09 21:55 BRT** —
+**1h09 depois da recusa e 46 min antes do sucesso**. A recusa era **verdadeira quando dita**. O
+achado compara duas versões diferentes do produto e chama a diferença de inconsistência do TOM.
+
+Isto abre um lever de fechamento que nenhuma rodada tinha usado: **quando o achado é
+`wrong_refusal`/`inconsistency` e as duas falas comparadas estão a horas de distância, rode
+`git log --since/--until` na janela entre elas.** Se houver deploy tocando o domínio, o achado é
+falso positivo por construção — e a prova custa um comando, não uma reprodução.
+
+⚠️ Não foi de graça: no MESMO turno, às 20:39, o TOM aceitou em silêncio um filtro que não existia e
+devolveu 20 alunos como "matriculados em agosto", o primeiro deles de out/2025 — quem pegou foi a
+Fabi. Fechar o `wrong_refusal` como falso positivo **não** fecha isso; ficou anotado à parte.
+
+### ETAPA 3 — a direção causal invertida reincidiu, e a causa é o executor determinístico
+
+**Ocorrências:** 3 (30/08, 02/09, 03/09).
+
+`f2108bfd` (alto, Jhonatan 02/09) chegou catalogado como confabulação: o TOM escreveu
+`✅ Concluí: …` sem nenhum `TASK_UPDATE` executado no `marker_logs`. Premissa perfeita para procurar
+guard de honestidade.
+
+Invertida. As 6 tarefas **foram concluídas** às 19:42:59 BRT (todas `status=done` na `tasks`), e o
+`✅` de 19:43:01 era verdadeiro. O que não existe é o registro: `executeBatchComplete`
+(`utils/batch-complete`, chamado em `engine.js:10373`) é determinístico, responde e **retorna cedo
+sem escrever em `marker_logs`** — o gap inbound→outbound de 2s confirma que o LLM não foi chamado.
+É a mesma classe do achado-fantasma de 23/08 (`5e81c4c6`), agora por ausência em `marker_logs` em
+vez de ausência em `conversation_history`.
+
+O bug real do turno era outro e estava embaixo: "Foi" e "Onfirmado" não eram reconhecidos como
+confirmação, cada `null` ia pro LLM, que re-emitia complete, e o guard A2 re-perguntava — 3 voltas
+da MESMA pergunta e 2 intents `superseded`. Virou a correção da rodada (`CONFIRM-AUX-FOI-BLIND`).
+
+Reforça a regra de 30/08 com um alvo novo: **"não há marker executado" não é ausência de ação — é
+ausência de LOG.** Antes de tratar como confabulação, confira a tabela de efeito (`tasks.completed_at`,
+`event_participants.notified_at`) e o gap inbound→outbound. Caminho determinístico não deixa rastro
+onde o auditor procura.
+
+Proposta de virar código: os executores determinísticos que retornam cedo deveriam gravar uma linha
+em `marker_logs` (`result='executed'`, `via='deterministic'`). Hoje toda ação bem-sucedida por esse
+caminho é matéria-prima para achado fantasma — e já custou dois altos.
+
+### ETAPA 2 (varredura) — lever do dia com resultado NEGATIVO: flip do fix contra o acervo
+
+**Ocorrências:** 1 (03/09). Registrado para não ser refeito.
+
+Repeti o lever de 02/09 (o melhor até então: gerar candidato reproduzindo a CASCATA de ramos do
+`engine.js`, não só chamando a função do fix) com o fix de hoje. Filtro pelo ramo real: intent com
+`payload.batch_complete` **ou** `anchor`+`action=complete`, `resolution !== 'confirmed'`, e então
+`detectUserConfirmation(literal,{allowDone:true})` virando `null → 'yes'` entre a versão pré-fix e a
+de hoje. Sobre **123 abertos não-altos: 0 candidatos.**
+
+Não é falha do lever — é medição do alcance do fix. `CONFIRM-AUX-FOI-BLIND` é estreito por desenho
+(o auxiliar tem que FECHAR a frase) e o acervo não tem outro turno com "Foi" pelado sob intent de
+conclusão aberta. Vale como calibragem da expectativa: **um fix estreito não drena acervo, e isso
+não o torna menos correto.** O que 02/09 drenou (2 achados) veio de um fix de gate, que é largo.
