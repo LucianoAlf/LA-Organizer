@@ -347,3 +347,202 @@ test('o responsável NÃO polui outros recortes', () => {
     pessoas: [P('Alice', { classificacao: 'LAMK', responsavel_nome: 'Mychelle' })] });
   assert.doesNotMatch(html, /resp\./);
 });
+
+// ── FICHA DE UM ALUNO ─────────────────────────────────────────────────────────────────────
+// A RPC já devolvia tudo por pessoa; faltava o TOM montar a resposta sobre UM aluno.
+const { resolverAluno, tempoDeCasa, renderFicha, renderAmbiguo } = require('./situacao-aluno');
+
+const HOJE = new Date('2026-09-03T12:00:00Z');
+const ALUNO = {
+  nome: 'Bento Serpa Benitez', classificacao: 'LAMK', responsavel_nome: 'Carla Serpa',
+  cursos: ['Canto'], professores: ['Rafael'], aulas_resumo: ['Canto — qua 15:00'],
+  entrou_em: '2024-03-15', cadastro_faltando: [], anamnese_preenchida: true, anamnese_em: '2024-04-01',
+  comunidade_status: 'na_comunidade', presenca_taxa_geral: 0.92, presenca_confianca: 'alta',
+  dias_desde_ultima_aula: 2, inadimplente: false, proxima_renovacao_em: '2027-03-15',
+  regra_versao: 'situacao_alunos_v1',
+};
+
+// Anti-chute: responder pela pessoa errada num grupo de trabalho é pior que perguntar de novo.
+test('resolverAluno: nome exato e primeiro nome único resolvem', () => {
+  const gente = [ALUNO, { nome: 'Alice Cordeiro' }];
+  assert.strictEqual(resolverAluno(gente, 'Bento Serpa Benitez').pessoa.nome, ALUNO.nome);
+  assert.strictEqual(resolverAluno(gente, 'bento').pessoa.nome, ALUNO.nome);
+  assert.strictEqual(resolverAluno(gente, 'BENTO SERPA').pessoa.nome, ALUNO.nome);
+});
+
+test('resolverAluno: acento não atrapalha', () => {
+  assert.strictEqual(resolverAluno([{ nome: 'Vitória Assunção' }], 'vitoria').pessoa.nome, 'Vitória Assunção');
+});
+
+test('resolverAluno: dois com o mesmo primeiro nome NÃO escolhe — devolve os candidatos', () => {
+  const r = resolverAluno([{ nome: 'Bento Serpa' }, { nome: 'Bento Vieira' }], 'bento');
+  assert.strictEqual(r.erro, 'ambiguo');
+  assert.strictEqual(r.candidatos.length, 2);
+});
+
+test('resolverAluno: nome completo desempata mesmo com dois primeiros nomes iguais', () => {
+  const r = resolverAluno([{ nome: 'Bento Serpa' }, { nome: 'Bento Vieira' }], 'bento vieira');
+  assert.strictEqual(r.pessoa.nome, 'Bento Vieira');
+});
+
+test('resolverAluno: ninguém com esse nome devolve nao_achei, não o mais parecido', () => {
+  assert.strictEqual(resolverAluno([{ nome: 'Alice' }], 'Joaquim').erro, 'nao_achei');
+});
+
+test('resolverAluno: termo curto demais não busca', () => {
+  assert.strictEqual(resolverAluno([{ nome: 'Alice' }], 'a').erro, 'termo_curto');
+  assert.strictEqual(resolverAluno([{ nome: 'Alice' }], '').erro, 'termo_curto');
+});
+
+test('tempoDeCasa fala em anos e meses, não em data crua', () => {
+  assert.strictEqual(tempoDeCasa('2024-03-15', HOJE), '2 anos e 5 meses');
+  assert.strictEqual(tempoDeCasa('2026-08-20', HOJE), 'menos de um mês');
+  assert.strictEqual(tempoDeCasa('2025-09-03', HOJE), '1 ano');
+  assert.strictEqual(tempoDeCasa('2026-07-03', HOJE), '2 meses');
+  assert.strictEqual(tempoDeCasa(null, HOJE), null);
+});
+
+test('ficha traz professor, aula, tempo de casa e responsável', () => {
+  const h = renderFicha(ALUNO, { hoje: HOJE });
+  assert.match(h, /Bento Serpa Benitez/);
+  assert.match(h, /Canto — qua 15:00/);
+  assert.match(h, /Rafael/);
+  assert.match(h, /2 anos e 5 meses/);
+  assert.match(h, /Carla Serpa/);
+  assert.match(h, /Cadastro completo/);
+  assert.match(h, /Anamnese preenchida/);
+  assert.match(h, /situacao_alunos_v1/);
+});
+
+test('ficha: presença de confiança BAIXA não vira número', () => {
+  const h = renderFicha({ ...ALUNO, presenca_confianca: 'baixa', presenca_taxa_geral: 1 }, { hoje: HOJE });
+  assert.doesNotMatch(h, /100%/);
+  assert.match(h, /não dá pra afirmar/i);
+});
+
+test('ficha: comunidade sem captura diz NÃO SEI, nunca "está fora"', () => {
+  const h = renderFicha({ ...ALUNO, comunidade_status: 'sem_captura' }, { hoje: HOJE });
+  assert.match(h, /não sei/i);
+  assert.doesNotMatch(h, /Fora da comunidade/);
+});
+
+test('ficha: criança fora da comunidade diz QUEM precisa entrar', () => {
+  const h = renderFicha({ ...ALUNO, comunidade_status: 'fora_da_comunidade' }, { hoje: HOJE });
+  assert.match(h, /quem precisa entrar é Carla Serpa/);
+});
+
+test('ficha: adulto não ganha linha de responsável', () => {
+  const h = renderFicha({ ...ALUNO, classificacao: 'LA', responsavel_nome: 'Carla Serpa' }, { hoje: HOJE });
+  assert.doesNotMatch(h, /Responsável/);
+});
+
+test('ficha: aviso prévio tem precedência sobre renovação', () => {
+  const h = renderFicha({ ...ALUNO, em_aviso_previo: true }, { hoje: HOJE });
+  assert.match(h, /aviso prévio/i);
+  assert.doesNotMatch(h, /Renova em/);
+});
+
+test('ficha: inadimplência aparece com o número de faturas', () => {
+  const h = renderFicha({ ...ALUNO, inadimplente: true, faturas_vencidas_abertas: 2 }, { hoje: HOJE });
+  assert.match(h, /2 faturas vencidas/);
+});
+
+test('ficha: cadastro incompleto diz O QUE falta', () => {
+  const h = renderFicha({ ...ALUNO, cadastro_faltando: ['foto', 'contrato'] }, { hoje: HOJE });
+  assert.match(h, /falta <b>foto, contrato<\/b>/);
+});
+
+test('ficha: anamnese com flag sem registro sai como RESSALVA', () => {
+  const h = renderFicha({ ...ALUNO, anamnese_flag_sem_registro: true }, { hoje: HOJE });
+  assert.match(h, /sem registro hoje/);
+});
+
+test('ficha: sem professor nem aula não inventa a linha', () => {
+  const h = renderFicha({ ...ALUNO, professores: [], aulas_resumo: [] }, { hoje: HOJE });
+  assert.doesNotMatch(h, /Professor/);
+  assert.match(h, /Canto/, 'cai pro curso, que é o que se sabe');
+});
+
+test('renderAmbiguo lista os candidatos e pergunta', () => {
+  const h = renderAmbiguo([{ nome: 'Bento Serpa' }, { nome: 'Bento Vieira' }], 'bento');
+  assert.match(h, /Bento Serpa/);
+  assert.match(h, /Bento Vieira/);
+  assert.match(h, /Qual deles/i);
+});
+
+test('ficha: "hoje"/"ontem" em vez de "há 0 dia(s)"', () => {
+  const f = (d) => renderFicha({ ...ALUNO, dias_desde_ultima_aula: d }, { hoje: HOJE });
+  assert.match(f(0), /teve aula hoje/);
+  assert.match(f(1), /última aula ontem/);
+  assert.match(f(5), /última aula há 5 dias/);
+  assert.doesNotMatch(f(5), /dia\(s\)/);
+});
+
+test('ficha: fatura no singular e no plural', () => {
+  const f = (n) => renderFicha({ ...ALUNO, inadimplente: true, faturas_vencidas_abertas: n }, { hoje: HOJE });
+  assert.match(f(1), /1 fatura vencida</);
+  assert.match(f(3), /3 faturas vencidas</);
+});
+
+// "Maria" tem 23 alunos só no Recreio. Mostrar 8 de 23 dá a impressão de que são 8.
+test('renderAmbiguo: muitos homônimos dizem o TAMANHO e pedem o sobrenome', () => {
+  const h = renderAmbiguo([{ nome: 'Maria A' }], 'maria', 23);
+  assert.match(h, /23 alunos/);
+  assert.match(h, /sobrenome/i);
+  assert.doesNotMatch(h, /<li>/, 'não lista uma amostra que engana');
+});
+
+test('resolverAluno devolve o total de homônimos, não só a fatia', () => {
+  const gente = Array.from({ length: 12 }, (_, i) => ({ nome: `Maria Sobrenome${i}` }));
+  const r = resolverAluno(gente, 'maria');
+  assert.strictEqual(r.total, 12);
+  assert.strictEqual(r.candidatos.length, 8, 'a fatia continua limitada');
+});
+
+// ── BUSCA ATRAVESSANDO AS UNIDADES ────────────────────────────────────────────────────────
+const { buscarAlunoNasUnidades, UNIDADES_IDS, nomeDaUnidade } = require('./situacao-aluno');
+const REC = '95553e96-971b-4590-a6eb-0201d013c14d';
+const BAR = '368d47f5-2d88-4475-bc14-ba084a9a348e';
+
+test('UNIDADES_IDS tem as três unidades, sem repetir apelido', () => {
+  assert.strictEqual(UNIDADES_IDS.length, 3, 'cg e campogrande são o MESMO lugar');
+  assert.strictEqual(nomeDaUnidade(REC), 'Recreio');
+  assert.strictEqual(nomeDaUnidade('id-que-nao-existe'), null);
+});
+
+test('buscarAlunoNasUnidades junta as três e marca de onde cada pessoa veio', async () => {
+  const consultar = async ({ unidadeId }) => ({ data: [{ nome: `Aluno de ${unidadeId.slice(0, 4)}` }] });
+  const r = await buscarAlunoNasUnidades({ unidadeIds: [REC, BAR], client: null, consultar });
+  assert.strictEqual(r.pessoas.length, 2);
+  assert.strictEqual(r.pessoas[0]._unidade_id, REC);
+  assert.strictEqual(r.falharam.length, 0);
+});
+
+// Zero por FALHA não pode parecer zero por SAÚDE: se uma unidade caiu, quem chamou precisa saber.
+test('buscarAlunoNasUnidades: unidade que falha não derruba a busca, mas é REPORTADA', async () => {
+  const consultar = async ({ unidadeId }) => {
+    if (unidadeId === BAR) throw new Error('timeout');
+    return { data: [{ nome: 'Alice' }] };
+  };
+  const r = await buscarAlunoNasUnidades({ unidadeIds: [REC, BAR], client: null, consultar });
+  assert.strictEqual(r.pessoas.length, 1);
+  assert.deepStrictEqual(r.falharam, [BAR]);
+});
+
+test('buscarAlunoNasUnidades: todas falhando devolve falharam completo (o chamador vira erro)', async () => {
+  const consultar = async () => { throw new Error('fora do ar'); };
+  const r = await buscarAlunoNasUnidades({ unidadeIds: [REC, BAR], client: null, consultar });
+  assert.strictEqual(r.pessoas.length, 0);
+  assert.strictEqual(r.falharam.length, 2);
+});
+
+test('homônimos em unidades diferentes: o card mostra a UNIDADE, que é o que desempata', () => {
+  const h = renderAmbiguo([{ nome: 'Ana Silva', _unidade_id: REC }, { nome: 'Ana Silva', _unidade_id: BAR }], 'ana silva');
+  assert.match(h, /Recreio/);
+  assert.match(h, /Barra/);
+});
+
+test('ficha diz em qual unidade a pessoa está quando a busca atravessou', () => {
+  const h = renderFicha({ ...ALUNO, _unidade_id: BAR }, { hoje: HOJE });
+  assert.match(h, /LA Report · Barra/);
+});

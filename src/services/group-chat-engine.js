@@ -531,7 +531,10 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       // A unidade dita na fala vence a do grupo: no Sucesso do Aluno, que atravessa as três,
       // é a fala que diz de quem se está falando. Sem nenhuma das duas, PERGUNTA.
       const unidadeId = situ.resolverUnidade(p.unidade) || (ctx.group && ctx.group.la_report_unidade_id);
-      if (!unidadeId) {
+      // CONTAR exige a unidade — o número muda. ACHAR UMA PESSOA pelo nome, não: procura nas
+      // três e o card diz onde ela está. No Sucesso do Aluno, que atende as três, exigir a
+      // unidade antes de cada nome é fricção sem ganho nenhum de honestidade.
+      if (!unidadeId && !p.aluno) {
         // 'ask', não 'fail': falta um dado que só a pessoa tem. Ver buildTomContent.
         actions.push({ kind: 'situacao', status: 'ask', label: 'Situação do aluno',
           detail: 'de qual unidade? Recreio, Barra ou Campo Grande' });
@@ -542,7 +545,26 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         if (!isLaReportConfigured()) throw new Error('credenciais do LA Report ausentes');
 
         let html;
-        if (recorte === 'resumo') {
+        // FICHA DE UM ALUNO: sai da MESMA lista que os recortes usam — nenhuma ida nova ao
+        // banco. Nome ambiguo NAO e escolhido no chute: vira pergunta, igual a unidade.
+        if (p.aluno) {
+          const alvos = unidadeId ? [unidadeId] : situ.UNIDADES_IDS;
+          const { pessoas, falharam } = await situ.buscarAlunoNasUnidades({ unidadeIds: alvos, client: laReportClient });
+          // Uma unidade fora do ar vira "nao achei" silencioso se ninguem contar. Zero por
+          // FALHA tem que soar diferente de zero por SAUDE.
+          if (falharam.length === alvos.length) throw new Error('nenhuma unidade respondeu');
+          const ressalva = falharam.length
+            ? ` (não consegui consultar ${falharam.map(situ.nomeDaUnidade).filter(Boolean).join(' e ')} agora)` : '';
+          const r = situ.resolverAluno(pessoas, p.aluno);
+          if (r.pessoa) html = situ.renderFicha(r.pessoa, { grupoNome: ctx.group.name });
+          else if (r.erro === 'ambiguo') html = situ.renderAmbiguo(r.candidatos, p.aluno, r.total);
+          else {
+            const onde = unidadeId ? 'nessa unidade' : 'em nenhuma das três unidades';
+            actions.push({ kind: 'situacao', status: 'ask', label: 'Ficha do aluno',
+              detail: r.erro === 'termo_curto' ? 'me diz o nome do aluno'
+                : `não achei ninguém com esse nome entre os alunos ativos ${onde}${ressalva} — confere o nome pra mim?` });
+          }
+        } else if (recorte === 'resumo') {
           const { data } = await situ.consultarComCache({ tipo: 'resumo', unidadeId, client: laReportClient });
           html = situ.renderResumo(data, { grupoNome: ctx.group.name });
         } else {
@@ -556,11 +578,16 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           if (periodo) pessoas = situ.filtrarPorPeriodo(pessoas, periodo);
           html = situ.renderLista({ recorte, pessoas, total: pessoas.length, pagina, grupoNome: ctx.group.name, periodo });
         }
-        await supabase.from('group_chat_messages').insert({
-          group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',
-        });
-        actions.push({ kind: 'situacao', status: 'ok', label: `Situação do aluno (${recorte})` });
-        console.log(`[GroupChat] situacao grupo=${groupId} recorte=${recorte} pagina=${pagina}`);
+        // Sem card nao ha insert: nome nao encontrado ja virou 'ask' la em cima, e gravar
+        // content null deixaria uma mensagem vazia no grupo.
+        if (html) {
+          await supabase.from('group_chat_messages').insert({
+            group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',
+          });
+          const rotulo = p.aluno ? `Ficha: ${p.aluno}` : `Situação do aluno (${recorte})`;
+          actions.push({ kind: 'situacao', status: 'ok', label: rotulo });
+          console.log(`[GroupChat] situacao grupo=${groupId} ${p.aluno ? `aluno=${p.aluno}` : `recorte=${recorte} pagina=${pagina}`}`);
+        }
       }
     } catch (e) {
       // Falha é DITA. Número de aluno errado ou inventado é pior que não responder.

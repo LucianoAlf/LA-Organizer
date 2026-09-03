@@ -50,3 +50,20 @@ web/.claude/
 # viajar por commit/rebase e virar estado compartilhado: o hold de um chat some no pull do
 # outro (DEPLOYHOLD-CAMINHO-INVISIVEL, 10/08).
 .deploy-hold
+
+# Workspaces dos AGENTES (TOM, Codex, worktrees w0/w1). Nao sao codigo: sao HOME de processo,
+# com .credentials.json (accessToken/refreshToken OAuth), cache do npm com blobs de 68MB e um
+# repositorio git embutido. Entraram uma vez por `git add -A` (02/09) e foram parar no remoto.
+.claude-tom
+.claude-tom/
+.claude-tom-*/
+
+# Logs de PRODUCAO. Carregam mensagem real de gente, telefone e trecho de conversa — a mesma
+# regra do .env: dado de pessoa nao vai pro versionamento, nem em repositorio privado.
+logs/
+*.log
+
+# Sobras de refatoracao e scripts soltos na raiz, que so existem na copia da VPS.
+_orphans_0607/
+CLAUDE.md.tom-disabled
+scorecard-semanal.md

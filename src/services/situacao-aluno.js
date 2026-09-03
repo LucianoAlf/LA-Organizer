@@ -26,6 +26,18 @@ const UNIDADES = {
   campogrande: '2ec861f6-023f-4d7b-9927-3960ad8c2a92',
 };
 
+// So os tres ids reais — 'cg'/'campogrande' sao apelidos do mesmo lugar e nao podem virar
+// uma terceira consulta.
+const UNIDADES_IDS = [...new Set(Object.values(UNIDADES))];
+
+// Nome legivel a partir do id, pra dizer em QUAL unidade a pessoa esta.
+const NOME_DA_UNIDADE = {
+  '95553e96-971b-4590-a6eb-0201d013c14d': 'Recreio',
+  '368d47f5-2d88-4475-bc14-ba084a9a348e': 'Barra',
+  '2ec861f6-023f-4d7b-9927-3960ad8c2a92': 'Campo Grande',
+};
+function nomeDaUnidade(id) { return NOME_DA_UNIDADE[id] || null; }
+
 function resolverUnidade(nome) {
   const s = String(nome || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -109,6 +121,45 @@ function rotuloPeriodo({ de, ate, criterio = 'entrada' } = {}) {
 function filtrarPorRecorte(pessoas, recorte) {
   const f = PENDENCIA[normalizarRecorte(recorte)];
   return f ? (pessoas || []).filter(f) : (pessoas || []);
+}
+
+// ── FICHA DE UM ALUNO ─────────────────────────────────────────────────────────────────────
+// Resolucao por NOME com a mesma regra anti-chute do checklist: exato unico ganha; parcial
+// unico serve; 0 ou 2+ NAO escolhe — devolve os candidatos pra perguntar. Responder pela pessoa
+// errada num grupo de trabalho e pior que perguntar de novo.
+function _norm(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function resolverAluno(pessoas, termo) {
+  const t = _norm(termo);
+  if (!t || t.length < 2) return { erro: 'termo_curto' };
+  const lista = pessoas || [];
+  const exatos = lista.filter((p) => _norm(p.nome) === t);
+  if (exatos.length === 1) return { pessoa: exatos[0] };
+  const comeca = lista.filter((p) => _norm(p.nome).startsWith(t + ' ') || _norm(p.nome) === t);
+  if (comeca.length === 1) return { pessoa: comeca[0] };
+  const contem = lista.filter((p) => _norm(p.nome).includes(t));
+  if (contem.length === 1) return { pessoa: contem[0] };
+  if (contem.length === 0) return { erro: 'nao_achei' };
+  return { erro: 'ambiguo', candidatos: contem.slice(0, TETO_CANDIDATOS), total: contem.length };
+}
+
+// "Na escola desde ..." — o tempo de casa e a pergunta que o time faz, nao a data crua.
+function tempoDeCasa(desde, hoje = new Date()) {
+  if (!desde) return null;
+  const d = new Date(String(desde).slice(0, 10) + 'T12:00:00Z');
+  if (Number.isNaN(d.getTime())) return null;
+  let meses = (hoje.getUTCFullYear() - d.getUTCFullYear()) * 12 + (hoje.getUTCMonth() - d.getUTCMonth());
+  if (hoje.getUTCDate() < d.getUTCDate()) meses -= 1;
+  if (meses < 0) return null;
+  const anos = Math.floor(meses / 12);
+  const resto = meses % 12;
+  if (anos && resto) return `${anos} ano${anos > 1 ? 's' : ''} e ${resto} ${resto > 1 ? 'meses' : 'mês'}`;
+  if (anos) return `${anos} ano${anos > 1 ? 's' : ''}`;
+  if (resto) return `${resto} ${resto > 1 ? 'meses' : 'mês'}`;
+  return 'menos de um mês';
 }
 
 function esc(s) {
@@ -213,7 +264,10 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, periodo }
 //   lista (os NOMES) → 10 min, e agora por CONSISTÊNCIA, não por performance: a paginação
 //     precisa de uma foto estável, senão a página 2 pula ou repete nome que mudou no meio.
 const TTL_MS = 10 * 60 * 1000;
-const TTL_POR_TIPO = { resumo: 60 * 1000, lista: TTL_MS };
+// 'ficha' e a base INTEIRA (inclusive quem esta com tudo em ordem); 'lista' e so quem tem
+// pendencia. Perguntar do aluno certinho e o caso mais comum — se ele nao estivesse na base
+// consultada, o TOM responderia "nao achei" sobre alguem que existe.
+const TTL_POR_TIPO = { resumo: 60 * 1000, lista: TTL_MS, ficha: TTL_MS };
 const _cache = new Map();
 
 function _chave(tipo, unidadeId) { return `${tipo}:${unidadeId}`; }
@@ -230,7 +284,7 @@ async function consultarComCache({ tipo, unidadeId, client, agora = Date.now(), 
 
   const chamar = () => (tipo === 'resumo'
     ? client.rpc('get_situacao_alunos_resumo_v1', { p_unidade_id: unidadeId })
-    : client.rpc('get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: true }));
+    : client.rpc('get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: tipo !== 'ficha' }));
 
   let { data, error } = await chamar();
   if (error) {
@@ -248,8 +302,112 @@ async function consultarComCache({ tipo, unidadeId, client, agora = Date.now(), 
 
 function _limparCache() { _cache.clear(); }
 
+// Monta a ficha. Cada linha so aparece quando ha o que dizer, e o "nao sei" e dito com todas as
+// letras — comunidade sem captura fresca e presenca de confianca baixa nao viram afirmacao.
+function renderFicha(p, { grupoNome, hoje = new Date() } = {}) {
+  if (!p) return null;
+  const L = [];
+  const faixa = String(p.classificacao).toUpperCase() === 'LAMK' ? '🧒' : '🎓';
+  L.push(`<h3>${faixa} ${esc(p.nome)}</h3>`);
+
+  const aulas = (p.aulas_resumo || []).filter(Boolean);
+  const profs = (p.professores || []).filter(Boolean);
+  if (aulas.length) L.push(`<p>🎵 ${aulas.map(esc).join(' · ')}</p>`);
+  else if ((p.cursos || []).length) L.push(`<p>🎵 ${(p.cursos || []).map(esc).join(' · ')}</p>`);
+  if (profs.length) L.push(`<p>👩‍🏫 ${profs.length > 1 ? 'Professores' : 'Professor(a)'}: ${profs.map(esc).join(', ')}</p>`);
+
+  const tempo = tempoDeCasa(p.entrou_em, hoje);
+  if (tempo) L.push(`<p>📅 Na escola há <b>${esc(tempo)}</b>${p.entrou_em ? ` <i>(desde ${esc(String(p.entrou_em).slice(0, 10).split('-').reverse().join('/'))})</i>` : ''}</p>`);
+
+  if (String(p.classificacao).toUpperCase() === 'LAMK' && p.responsavel_nome) {
+    L.push(`<p>👤 Responsável: ${esc(p.responsavel_nome)}</p>`);
+  }
+
+  const falta = (p.cadastro_faltando || []).filter(Boolean);
+  L.push(falta.length
+    ? `<p>📋 Cadastro: falta <b>${falta.map(esc).join(', ')}</b></p>`
+    : '<p>📋 Cadastro completo ✅</p>');
+
+  if (p.anamnese_flag_sem_registro) L.push('<p>🧠 Anamnese: marcada como preenchida, mas <b>sem registro hoje</b> — vale conferir</p>');
+  else if (p.anamnese_preenchida) L.push(`<p>🧠 Anamnese preenchida ✅${p.anamnese_em ? ` <i>(${esc(String(p.anamnese_em).slice(0, 10).split('-').reverse().join('/'))})</i>` : ''}</p>`);
+  else L.push('<p>🧠 Anamnese: <b>falta</b></p>');
+
+  const com = linhaComunidadePessoa(p);
+  if (com) L.push(`<p>${com}</p>`);
+
+  if (p.presenca_confianca === 'baixa') {
+    L.push('<p>📈 Presença: <i>não dá pra afirmar — a chamada tem pouco registro confirmado</i></p>');
+  } else if (p.presenca_taxa_geral != null) {
+    L.push(`<p>📈 Presença: <b>${Math.round(Number(p.presenca_taxa_geral) * 100)}%</b>${desdeAUltimaAula(p.dias_desde_ultima_aula)}</p>`);
+  }
+
+  if (p.inadimplente) {
+    const n = Number(p.faturas_vencidas_abertas || 0);
+    L.push(`<p>💰 <b>${n > 1 ? `${n} faturas vencidas` : '1 fatura vencida'}</b> em aberto</p>`);
+  }
+  if (p.em_aviso_previo) L.push('<p>🚪 <b>Em aviso prévio</b></p>');
+  else if (p.contrato_vencido) L.push('<p>📄 <b>Contrato vencido</b></p>');
+  else if (p.proxima_renovacao_em) L.push(`<p>📄 Renova em ${esc(String(p.proxima_renovacao_em).slice(0, 10).split('-').reverse().join('/'))}${p.vence_em_30d ? ' <b>(nos próximos 30 dias)</b>' : ''}</p>`);
+
+  const uni = p._unidade_id ? nomeDaUnidade(p._unidade_id) : null;
+  L.push(`<p><i>fonte: LA Report${uni ? ` · ${esc(uni)}` : ''}, regra ${esc(p.regra_versao || 'desconhecida')}</i></p>`);
+  return L.join('\n');
+}
+
+function desdeAUltimaAula(dias) {
+  if (dias == null) return '';
+  const d = Number(dias);
+  if (d <= 0) return ' · teve aula hoje';
+  if (d === 1) return ' · última aula ontem';
+  return ` · última aula há ${d} dias`;
+}
+
+// Mesma trava da lista: sem captura fresca, "não sei" — nunca "está fora".
+function linhaComunidadePessoa(p) {
+  if (p.comunidade_status === 'na_comunidade') return '📱 Está na comunidade do WhatsApp ✅';
+  if (p.comunidade_status === 'fora_da_comunidade') {
+    const quem = (String(p.classificacao).toUpperCase() === 'LAMK' && p.responsavel_nome)
+      ? ` — quem precisa entrar é ${esc(p.responsavel_nome)}` : '';
+    return `📱 <b>Fora da comunidade</b>${quem}`;
+  }
+  return '📱 Comunidade: <i>não sei (sem captura recente do grupo)</i>';
+}
+
+const TETO_CANDIDATOS = 8;
+
+// Consulta as unidades pedidas em paralelo e devolve todo mundo com _unidade_id marcado. Uma
+// unidade que falhar NAO derruba a busca — mas o chamador precisa SABER que ela ficou de fora,
+// senao "nao achei" pode ser "nao procurei ali". Zero por falha nao pode parecer zero por saude.
+async function buscarAlunoNasUnidades({ unidadeIds, client, consultar = consultarComCache }) {
+  const alvos = (unidadeIds || []).filter(Boolean);
+  const resultados = await Promise.all(alvos.map(async (id) => {
+    try {
+      const { data } = await consultar({ tipo: 'ficha', unidadeId: id, client });
+      return { id, pessoas: (data || []).map((p) => ({ ...p, _unidade_id: id })) };
+    } catch (e) { return { id, erro: e.message }; }
+  }));
+  return {
+    pessoas: resultados.flatMap((r) => r.pessoas || []),
+    falharam: resultados.filter((r) => r.erro).map((r) => r.id),
+  };
+}
+
+function renderAmbiguo(candidatos, termo, total = null) {
+  const quantos = total != null ? total : (candidatos || []).length;
+  if (quantos > TETO_CANDIDATOS) {
+    return `<p>Tem <b>${quantos} alunos</b> com "<b>${esc(termo)}</b>" no nome — mostrar oito ia dar a impressão errada. Me diz o sobrenome?</p>`;
+  }
+  const nomes = (candidatos || []).map((p) => {
+    const u = p._unidade_id ? nomeDaUnidade(p._unidade_id) : null;
+    return `<li>${esc(p.nome)}${u ? ` <i>(${esc(u)})</i>` : ''}</li>`;
+  }).join('');
+  return `<p>Achei mais de um com "<b>${esc(termo)}</b>":</p><ul>${nomes}</ul><p>Qual deles?</p>`;
+}
+
 module.exports = {
   RECORTES, PAGINA_INICIAL, PAGINA_SEGUINTE, TTL_MS, TTL_POR_TIPO, ttlDoTipo, UNIDADES, resolverUnidade,
+  UNIDADES_IDS, nomeDaUnidade, buscarAlunoNasUnidades,
+  resolverAluno, tempoDeCasa, renderFicha, renderAmbiguo,
   normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, filtrarPorPeriodo, rotuloPeriodo,
   renderResumo, renderLista, linhaComunidade,
   consultarComCache, _limparCache,
