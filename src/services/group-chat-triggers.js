@@ -100,8 +100,41 @@ function isEngaged(engagedAt, now = new Date(), maxHours = ENGAGE_MAX_HOURS) {
   return now.getTime() - t < maxHours * 60 * 60 * 1000;
 }
 
+// ── RAJADA DE FATIAS ──────────────────────────────────────────────────────────────────────
+// Gente escreve em pedaco: "lembra o Arthur de falar com a Thais sobre a reposicao de sabado"
+// + "Amanha as 10h". Respondendo fatia a fatia, o TOM responde a uma frase pela METADE — e no
+// caso real (Krissya, Barra 02/09) agendou pro sabado antes de saber que a hora era outra.
+//
+// Regra: espera a rajada ASSENTAR (nada novo daquela pessoa por ESPERA_FATIA_MS) e responde
+// SO a ultima. As fatias anteriores ficam no historico, entao ele le a mensagem inteira —
+// nao se perde nada, so nao se responde cedo demais.
+const ESPERA_FATIA_MS = 5000;
+
+function planejarFatias(rows, agora = Date.now(), esperaMs = ESPERA_FATIA_MS) {
+  const porAutor = new Map();
+  for (const m of (rows || [])) {
+    const k = `${m.group_id}|${m.sender_id}`;
+    if (!porAutor.has(k)) porAutor.set(k, []);
+    porAutor.get(k).push(m);
+  }
+  const processar = [];
+  const silenciar = [];  // ficam no historico, mas nao geram resposta propria
+  const adiar = [];      // rajada ainda quente: espera o proximo tick
+  for (const lote of porAutor.values()) {
+    const ordenado = [...lote].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const ultima = ordenado[ordenado.length - 1];
+    const idade = agora - new Date(ultima.created_at).getTime();
+    if (idade < esperaMs) { adiar.push(...ordenado); continue; }
+    silenciar.push(...ordenado.slice(0, -1));
+    processar.push(ultima);
+  }
+  return { processar, silenciar, adiar };
+}
+
 module.exports = {
   isReacaoSemTexto,
+  planejarFatias,
+  ESPERA_FATIA_MS,
   detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan, decideGroupReply,
   VOCATIVE_STOPWORDS, AWAIT_WINDOW_MS, ENGAGE_WINDOW_MIN, ENGAGE_MAX_HOURS,
 };

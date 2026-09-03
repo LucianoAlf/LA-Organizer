@@ -11,7 +11,7 @@
 //  - Recuperação: se um restart matou o processamento no meio (claim feito, resposta perdida),
 //    a varredura detecta a mensagem de membro órfã (última, sem resposta) e a re-libera pro poll.
 
-const { detectDisengageTrigger, isEngaged, isVocativeTom, decideGroupReply, isReacaoSemTexto, shouldRecoverOrphan, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
+const { detectDisengageTrigger, isEngaged, isVocativeTom, decideGroupReply, isReacaoSemTexto, planejarFatias, shouldRecoverOrphan, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
 const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
 const { processGroupChatClosing } = require('../services/group-chat-closing');
@@ -143,7 +143,17 @@ async function tick(supabaseMain) {
       .eq('role', 'member').is('tom_seen_at', null)
       .order('created_at', { ascending: true }).limit(BATCH);
     if (error) { console.error('[GroupChat] poll err:', error.message); return; }
-    for (const msg of rows || []) {
+    // Rajada de fatias: espera assentar e responde so a ultima (as anteriores seguem no
+    // historico, entao o TOM le a frase inteira em vez de meia frase).
+    const plano = planejarFatias(rows || []);
+    if (plano.silenciar.length) {
+      // Marcadas como vistas SEM resposta propria: existem pro contexto, nao pro eco.
+      await supabaseMain.from('group_chat_messages')
+        .update({ tom_seen_at: new Date().toISOString(), tom_done_at: new Date().toISOString() })
+        .in('id', plano.silenciar.map((m) => m.id));
+      console.log(`[GroupChat] fatias agrupadas: ${plano.silenciar.length} silenciada(s), respondendo a ultima`);
+    }
+    for (const msg of plano.processar) {
       try { await processOne(supabaseMain, msg); }
       catch (e) { console.error(`[GroupChat] erro msg=${msg.id}:`, e.message); }
     }

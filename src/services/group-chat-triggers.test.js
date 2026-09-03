@@ -121,3 +121,47 @@ test('ZERO-REGRESSÃO: janela aberta com texto de verdade continua respondendo',
   const r = decideGroupReply({ engaged: true, vocative: false, reacaoSemTexto: false });
   assert.strictEqual(r.shouldRun, true);
 });
+
+// ── RAJADA DE FATIAS (Krissya, Barra 02/09) ───────────────────────────────────────────────
+// "…reposição de aula dele sábado" + "Amanhã às 10h" 4s depois. Respondendo a primeira sozinha,
+// o TOM agendou pro sábado e só corrigiu depois — o grupo viu ele errar em público.
+const { planejarFatias } = require('./group-chat-triggers');
+
+const M = (id, sender, segundos, group = 'g1') =>
+  ({ id, group_id: group, sender_id: sender, created_at: new Date(segundos * 1000).toISOString() });
+
+test('rajada assentada: responde só a ÚLTIMA, silencia as anteriores', () => {
+  const r = planejarFatias([M('a', 'k', 100), M('b', 'k', 104)], 120 * 1000, 5000);
+  assert.deepStrictEqual(r.processar.map((m) => m.id), ['b']);
+  assert.deepStrictEqual(r.silenciar.map((m) => m.id), ['a']);
+  assert.strictEqual(r.adiar.length, 0);
+});
+
+test('rajada ainda QUENTE: adia tudo, não responde meia frase', () => {
+  const r = planejarFatias([M('a', 'k', 100), M('b', 'k', 104)], 106 * 1000, 5000);
+  assert.strictEqual(r.processar.length, 0);
+  assert.strictEqual(r.adiar.length, 2, 'espera a próxima volta');
+});
+
+test('mensagem única e assentada é respondida normalmente', () => {
+  const r = planejarFatias([M('a', 'k', 100)], 120 * 1000, 5000);
+  assert.deepStrictEqual(r.processar.map((m) => m.id), ['a']);
+  assert.strictEqual(r.silenciar.length, 0);
+});
+
+test('pessoas diferentes não se agrupam — cada uma tem a sua resposta', () => {
+  const r = planejarFatias([M('a', 'krissya', 100), M('b', 'arthur', 101)], 120 * 1000, 5000);
+  assert.deepStrictEqual(r.processar.map((m) => m.id).sort(), ['a', 'b']);
+  assert.strictEqual(r.silenciar.length, 0);
+});
+
+test('mesma pessoa em GRUPOS diferentes não se agrupa', () => {
+  const r = planejarFatias([M('a', 'k', 100, 'g1'), M('b', 'k', 101, 'g2')], 120 * 1000, 5000);
+  assert.deepStrictEqual(r.processar.map((m) => m.id).sort(), ['a', 'b']);
+});
+
+test('rajada de três: responde a última e silencia as duas primeiras', () => {
+  const r = planejarFatias([M('a', 'k', 100), M('b', 'k', 102), M('c', 'k', 104)], 120 * 1000, 5000);
+  assert.deepStrictEqual(r.processar.map((m) => m.id), ['c']);
+  assert.deepStrictEqual(r.silenciar.map((m) => m.id), ['a', 'b']);
+});
