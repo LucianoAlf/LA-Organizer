@@ -349,6 +349,20 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         actions.push({ kind: 'task', status: 'fail', label: _pedido ? `"${String(_pedido).slice(0, 60)}"` : 'Tarefa', detail: friendlyTaskFail((failed[0] || {}).why) });
         console.warn(`[GroupChat] task FAIL grupo=${groupId} pedido="${String(_pedido || '').slice(0, 60)}" why=${(failed[0] || {}).why}`);
       }
+      // SENSOR (03/09, caso Gabriela): sem esta linha a tarefa fecha e marker_logs nao sabe.
+      // O auditor le a fala do TOM sem execucao do lado e chama de confabulacao — a mesma raiz
+      // dos 2 achados altos do 1:1. Best-effort: o registro nunca derruba o que ja foi feito.
+      try {
+        const { marcadorDeConfirmacao } = require('../utils/confirm-marker');
+        const _ok = created.length + (updated || []).length + completed.length + (cancelled || []).length;
+        const _fail = (failed || []).length;
+        const _mk = marcadorDeConfirmacao({ tipo: 'task', ok: _ok, total: _ok + _fail, via: 'grupo' });
+        const { error: _e } = await supabase.from('marker_logs').insert({
+          collaborator_id: senderCollabId || null,
+          marker_type: _mk.marker_type, result: _mk.result, reason: _mk.reason,
+        });
+        if (_e) console.error(`[GroupChat] sensor de tarefa falhou: ${_e.message}`);
+      } catch (e) { console.error('[GroupChat] sensor de tarefa erro:', e.message); }
       console.log(`[GroupChat] task grupo=${groupId}: created=${created.length} updated=${(updated || []).length} completed=${completed.length} cancelled=${(cancelled || []).length} failed=${(failed || []).length}`);
     } else if (parsed && parsed.malformed) {
       stripBlock(/<<TASK_UPDATE>>[\s\S]*?<<END>>/i);
