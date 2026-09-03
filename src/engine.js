@@ -10351,6 +10351,14 @@ async function processMessage(phone, text, raw = {}) {
           } catch (ancEx) { console.warn('[PendingIntents] anchored complete err:', ancEx.message); }
         }
         if (okAnc) {
+          // CONFIRM-EXEC-SEM-LOG (02/09): este caminho escreve DIRETO na tabela e retorna cedo,
+          // sem passar por applyTaskActions — que e quem grava em marker_logs. A acao boa nao
+          // deixava rastro, e o auditor lia a ultima tentativa do LLM ('rejected') como mentira.
+          try {
+            const { marcadorDeConfirmacao } = require('./utils/confirm-marker');
+            const _mk = marcadorDeConfirmacao({ tipo: anc.type, ok: 1, total: 1, via: 'confirm_anchored' });
+            await logMarker(collab.id, _mk.marker_type, _mk.result, _mk.reason, null);
+          } catch (_) { /* best-effort: o registro nunca derruba a acao que ja foi feita */ }
           await pendingIntents.resolveIntent(target.id, 'confirmed', 'anchored complete (engine)');
           const msgAnc = `✅ *${anc.title || 'Item'}* concluído.`;
           try { await whatsapp.sendMessage(phone, msgAnc); await logConversation(collab.id, 'outbound', msgAnc); } catch (_) { /* já persistiu */ }
@@ -10371,6 +10379,15 @@ async function processMessage(phone, text, raw = {}) {
           supabase, resolveTaskByShortId, collaboratorId: collab.id,
           ids: target.payload.batch_complete, now: new Date().toISOString(),
         });
+        // CONFIRM-EXEC-SEM-LOG (Jhonatan 02/09): as 6 fecharam as 19:42:59 e marker_logs nao
+        // registrou NADA — a ultima palavra sobre TASK_UPDATE ficou sendo o 'rejected all_failed:6'
+        // das tentativas do LLM, e o auditor classificou acao boa como confabulacao. 2 achados
+        // altos nasceram disso. Grava nos dois casos: o zero tambem sumia.
+        try {
+          const { marcadorDeConfirmacao } = require('./utils/confirm-marker');
+          const _mk = marcadorDeConfirmacao({ tipo: 'task', ok: okCount, total, via: 'confirm_batch' });
+          await logMarker(collab.id, _mk.marker_type, _mk.result, _mk.reason, null);
+        } catch (_) { /* best-effort */ }
         if (okCount > 0) {
           await pendingIntents.resolveIntent(target.id, 'confirmed', `batch complete (engine) ${okCount}/${total}`);
           const lista = okTitles.length ? okTitles.map((t) => `*${t}*`).join(', ') : `${okCount} tarefa${okCount > 1 ? 's' : ''}`;

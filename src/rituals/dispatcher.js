@@ -3898,6 +3898,12 @@ async function run(opts = {}) {
       console.log(`[Dream] consolidando memórias para ${(allCollabs || []).length} colaborador(es) ativo(s)+onboarded`);
       let dreamOk = 0;
       let dreamSkipped = 0;
+      // SENSOR (03/09): sem estes numeros, "noite tranquila" e "extrator quebrado" sao a mesma
+      // linha de log — foi o que aconteceu em 03/09 (37 execucoes, 0 memorias, nada legivel).
+      let dreamCand = 0;
+      let dreamSalvas = 0;
+      const dreamErros = [];
+      let dreamMagros = 0;
       for (const c of (allCollabs || [])) {
         // Idempotência: slot de 15min × cron de 5min faz 3 ticks consecutivos
         // baterem o mesmo slot 03:00. Sem este gate, o Dream rodava 3× por noite
@@ -3907,7 +3913,11 @@ async function run(opts = {}) {
           continue;
         }
         try {
-          await consolidateMemoryFor(c);
+          const _rm = await consolidateMemoryFor(c);
+          dreamCand += (_rm && Number(_rm.candidates)) || 0;
+          dreamSalvas += (_rm && Number(_rm.saved)) || 0;
+          if (_rm && _rm.skipped === 'too_thin') dreamMagros++;
+          if (_rm && _rm.skipped === 'extract_error') dreamErros.push(`${c.full_name}:${String(_rm.error || '').slice(0, 40)}`);
           dreamOk++;
           // Log p/ ritual_logs — health check usa pra detectar "Dream não rodou".
           await logRitualEvent(c.id, 'daily_dream', 'sent', null, now.ymd);
@@ -3927,6 +3937,17 @@ async function run(opts = {}) {
         }
       }
       console.log(`[Dream] concluído: ${dreamOk}/${(allCollabs || []).length} colaboradores (skipped=${dreamSkipped} ja_enviado_hoje)`);
+      // Uma linha por noite com o quadro inteiro. `fallback` quando ALGUM extrator falhou —
+      // e o unico jeito de o zero do dia ter causa lida. Espelha o marker do lado do grupo.
+      try {
+        await supabase.from('marker_logs').insert({
+          marker_type: 'DREAM_MEMORY',
+          result: dreamErros.length ? 'fallback' : 'executed',
+          reason: `dm:${now.ymd} colabs=${dreamOk} cand=${dreamCand} salvas=${dreamSalvas}`
+            + ` magros=${dreamMagros} erros=${dreamErros.length}`
+            + (dreamErros.length ? ` [${dreamErros.slice(0, 2).join('; ')}]` : ''),
+        });
+      } catch (mErr) { console.error('[Dream] sensor falhou:', mErr.message); }
     } catch (err) {
       console.error('[Dispatcher] dream-consolidation erro:', err.message);
     }
