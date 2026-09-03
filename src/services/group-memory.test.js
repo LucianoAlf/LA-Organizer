@@ -123,3 +123,95 @@ test('gate: so consolida grupo que ainda nao rodou hoje', () => {
   assert.strictEqual(deveConsolidarGrupo({ jaRodouHoje: false }), true);
   assert.strictEqual(deveConsolidarGrupo({ jaRodouHoje: true }), false, 'idempotencia: 1x por dia por grupo');
 });
+
+// ── FATIA 2: LEITURA DA MEMÓRIA DE GRUPO ──────────────────────────────────────────────────
+// O TOM guardava desde 02/09 e nunca lia de volta. O bloco fixo entra em todo prompt do grupo
+// e custa zero de LLM.
+const {
+  memoriaViva, ordenarMemorias, linhaDeMemoria, montarBlocoMemoria, escolherMemoria,
+  MINIMO_PRA_TROCAR,
+} = require('./group-memory');
+
+const AGORA = new Date('2026-09-03T12:00:00Z');
+const M = (o) => ({ content: 'combinado qualquer', importance: 'normal', occurred_on: '2026-09-02', is_active: true, ...o });
+
+test('memoriaViva: desativada, vencida ou vazia ficam de fora', () => {
+  assert.ok(memoriaViva(M({}), AGORA));
+  assert.ok(!memoriaViva(M({ is_active: false }), AGORA));
+  assert.ok(!memoriaViva(M({ decay_at: '2026-09-01T00:00:00Z' }), AGORA), 'venceu ontem');
+  assert.ok(memoriaViva(M({ decay_at: '2026-09-12T00:00:00Z' }), AGORA), 'vence semana que vem');
+  assert.ok(!memoriaViva(M({ content: '   ' }), AGORA));
+});
+
+test('ordem: importância primeiro, recência como desempate', () => {
+  const r = ordenarMemorias([
+    M({ content: 'a', importance: 'normal', occurred_on: '2026-09-01' }),
+    M({ content: 'b', importance: 'high', occurred_on: '2026-08-01' }),
+    M({ content: 'c', importance: 'normal', occurred_on: '2026-09-02' }),
+    M({ content: 'd', importance: 'low', occurred_on: '2026-09-03' }),
+  ]);
+  assert.deepStrictEqual(r.map((m) => m.content), ['b', 'c', 'a', 'd']);
+});
+
+// Sem a data, "contrato do Kaique não sai" vira verdade sem prazo e ele repete em novembro —
+// exatamente o que o buffer velho fez com "hoje é 06/08".
+test('cada linha carrega a data do dia em que aquilo aconteceu', () => {
+  assert.strictEqual(linhaDeMemoria(M({ content: 'boleto vai no grupo', occurred_on: '2026-08-12' })),
+    '12/08 — boleto vai no grupo');
+  assert.strictEqual(linhaDeMemoria(M({ content: 'sem data', occurred_on: null })), 'sem data');
+});
+
+test('bloco respeita o teto e corta pelo MENOS importante', () => {
+  const bloco = montarBlocoMemoria([
+    M({ content: 'IMPORTANTE', importance: 'high' }),
+    M({ content: 'x'.repeat(200), importance: 'low' }),
+  ], { agora: AGORA, teto: 40 });
+  assert.match(bloco, /IMPORTANTE/);
+  assert.doesNotMatch(bloco, /xxxxx/, 'o low não coube e foi cortado');
+});
+
+test('bloco só com memórias vencidas devolve null, não string vazia', () => {
+  assert.strictEqual(montarBlocoMemoria([M({ decay_at: '2026-01-01T00:00:00Z' })], { agora: AGORA }), null);
+});
+
+// A transição é por GRUPO: nenhum grupo passa um dia sem contexto.
+test('menos de 3 memórias ativas: segue o buffer velho', () => {
+  const r = escolherMemoria({ memorias: [M({}), M({})], bufferAntigo: 'resumo antigo', agora: AGORA });
+  assert.strictEqual(r.fonte, 'buffer');
+  assert.strictEqual(r.texto, 'resumo antigo');
+  assert.strictEqual(r.vivas, 2);
+});
+
+test('a partir de 3: só o bloco novo, o buffer velho sai de cena', () => {
+  const r = escolherMemoria({
+    memorias: [M({ content: 'um' }), M({ content: 'dois' }), M({ content: 'três' })],
+    bufferAntigo: 'resumo antigo', agora: AGORA,
+  });
+  assert.strictEqual(r.fonte, 'group_memory');
+  assert.match(r.texto, /um/);
+  assert.doesNotMatch(r.texto, /resumo antigo/);
+});
+
+test('memórias vencidas não contam pro mínimo de 3', () => {
+  const r = escolherMemoria({
+    memorias: [M({}), M({}), M({ decay_at: '2026-01-01T00:00:00Z' })],
+    bufferAntigo: 'resumo antigo', agora: AGORA,
+  });
+  assert.strictEqual(r.fonte, 'buffer', 'duas vivas + uma morta = ainda não troca');
+});
+
+// Leitura que falha devolve null (não []), e null não pode virar "grupo sem memória" calado.
+test('falha de leitura cai no buffer velho, não em silêncio', () => {
+  const r = escolherMemoria({ memorias: null, bufferAntigo: 'resumo antigo', agora: AGORA });
+  assert.strictEqual(r.fonte, 'buffer');
+  assert.strictEqual(r.texto, 'resumo antigo');
+});
+
+test('sem memória nova E sem buffer, devolve null — nunca inventa bloco', () => {
+  const r = escolherMemoria({ memorias: [], bufferAntigo: null, agora: AGORA });
+  assert.strictEqual(r.texto, null);
+});
+
+test('MINIMO_PRA_TROCAR é 3, como a spec definiu', () => {
+  assert.strictEqual(MINIMO_PRA_TROCAR, 3);
+});

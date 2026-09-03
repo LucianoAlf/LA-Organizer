@@ -165,13 +165,22 @@ function _claimSemNegacao(texto, re) {
 // de ESTADO (nothingPersisted + recência), NUNCA actionable_intent — este é falso justamente
 // no turno-alvo ("Isso"→"Fechou": inputActionable=false E replyHasPromise=false, engine.js:12294)
 // e é circular (depende do mesmo detector que a Rede 1 estende).
-const WEAK_COMPLETION_RE = /\b(fechou|combinad[oa]s?|beleza|show)\b/i;
+// ANCORA NO INICIO DA LINHA (02/09): as quatro sao INTERJEICOES de confirmacao e, como tal,
+// abrem a fala. No meio da frase a palavra muda de sentido — "O combinado foi simples:" e
+// substantivo, e disparava a nota de falha em resposta de MEMORIA, onde nada devia persistir.
+// Todos os casos historicos que este gate pega abrem a linha, entao ancorar nao perde nenhum.
+const WEAK_COMPLETION_RE = /^(fechou|combinad[oa]s?|beleza|show)\b/i;
 // WEAK-FALSE-POSITIVE-CORDIALIDADE (caso Juliana): "Beleza/Fechou" é interjeição cordial, não
 // afirmação de conclusão, quando a linha segue com um PLANO futuro ("Beleza, crio separado" /
 // "Fechou, vou criar amanhã"). O que precisa ser stripado é a conclusão FALSA ("Fechou! Viro em
 // lembrete — te chamo todo dia"), não a cordialidade + promessa. Sem esta escape, ligar a lista
 // fraca nos ramos de falha comeria o "crio separado". Verbo de INTENÇÃO em 1ª pessoa (crio/faço/
 // mando/…) ou advérbio de futuro (depois/amanhã/…) => é plano, não conclusão => não strip.
+// CONFAB-CONDICIONAL-FALSEFIRE (03/09, memoria de grupo): oracao condicional/temporal joga a
+// acao pro FUTURO — "Quando um contrato for assinado, alguem posta aqui confirmando" e REGRA,
+// nao conclusao, e o gerundio ali e de outra pessoa. O ramo de 1a pessoa ja tinha esse veto
+// ("Quando voce quiser, eu crio a tarefa", teste desde 05/08); o do gerundio nao tinha.
+const CONDICIONAL_FUTURO_RE = /^(?:e\s+|a[ií]\s+|ent[aã]o\s+)?(?:quando|se|assim\s+que|sempre\s+que|caso|toda\s+vez\s+que|depois\s+que|no\s+dia\s+que)\b/i;
 const WEAK_FUTURE_ESCAPE = /\b(crio|criarei|fa[çc]o|farei|mando|mandarei|deixo|separo|separarei|organizo|vou\s+\w+|depois|mais\s+tarde|amanh[ãa]|semana\s+que\s+vem|em\s+seguida)\b/i;
 
 function _stripLeadingEmoji(line) {
@@ -205,7 +214,7 @@ function _isOptimisticLine(line, includeWeak) {
   // TOM-AFIRMA-DEPOIS-DESMENTE (a): gerúndio de conclusão — "Fechando a tarefa dela"
   // (Rose 06/08). Pergunta fica de fora: "Quer que eu vá fechando as pendências?" é
   // legítima e some se o gate pegar (mesmo cuidado que o MOVE_CLAIM tem com "mova/mover").
-  if (!t.endsWith('?') && _claimSemNegacao(t, COMPLETION_GERUND_RE)) return true;
+  if (!t.endsWith('?') && !CONDICIONAL_FUTURO_RE.test(_stripLeadingEmoji(t)) && _claimSemNegacao(t, COMPLETION_GERUND_RE)) return true;
   if (includeWeak && WEAK_COMPLETION_RE.test(noEmoji) && !WEAK_FUTURE_ESCAPE.test(noEmoji)) return true;
   return false;
 }
@@ -296,7 +305,7 @@ function _isCompletionClaimLine(line) {
   // A evidência apareceu: "lançando todas as 14 parcelas!" sem marker NENHUM — sem marker o
   // sanitizador nem roda, então este gate era o único no caminho. Mesmos dois guards de lá
   // (pergunta e negação), que é o que separa a promessa falsa da fala legítima.
-  if (!t.endsWith('?') && _claimSemNegacao(t, COMPLETION_GERUND_RE)) return true;
+  if (!t.endsWith('?') && !CONDICIONAL_FUTURO_RE.test(_stripLeadingEmoji(t)) && _claimSemNegacao(t, COMPLETION_GERUND_RE)) return true;
   return false;
 }
 function hasCompletionClaim(text) {

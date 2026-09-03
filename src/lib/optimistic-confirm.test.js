@@ -642,3 +642,84 @@ test('CONTROLE: 1 token sozinho, SEM marcador de anterioridade, não casa', () =
 test('CONTROLE: marcador de anterioridade não afrouxa lista vazia', () => {
   assert.strictEqual(restatesRecentWrite('O lembrete já existe, criamos antes.', []), false);
 });
+
+// ── "COMBINADO" SUBSTANTIVO NÃO É "COMBINADO!" INTERJEIÇÃO ────────────────────────────────
+// 02/09, na entrega da memória de grupo: "Tom, o que a gente combinou sobre contrato assinado?"
+// → ele respondeu certo, da memória, e o chokepoint colou "⚠️ Na real não consegui registrar
+// isso agora" no fim. Ninguém pediu registro. Disparou em 2 de 3 perguntas de recuperação.
+// A linha culpada era "O combinado foi simples:" — substantivo, não interjeição.
+// Isso só ia piorar: a memória de grupo existe justamente pra responder "o que ficou combinado".
+
+test('weak claim: a interjeição ABRE a linha — no meio é outra palavra', () => {
+  // interjeição (o que o gate existe pra pegar)
+  assert.ok(hasWeakCompletionClaim('Fechou!'));
+  assert.ok(hasWeakCompletionClaim('Fechou, reagendei pra amanhã.'));
+  assert.ok(hasWeakCompletionClaim('Beleza, movendo as 3 pro grupo!'));
+  assert.ok(hasWeakCompletionClaim('Show, criei aqui pra você.'));
+  assert.ok(hasWeakCompletionClaim('Combinado!'));
+  // substantivo / particípio — resposta de MEMÓRIA, nada a persistir
+  assert.ok(!hasWeakCompletionClaim('O combinado foi simples:'));
+  assert.ok(!hasWeakCompletionClaim('Ficou combinado que o boleto vai no grupo.'));
+  assert.ok(!hasWeakCompletionClaim('o fluxo que a gente já tem combinado aqui'));
+  assert.ok(!hasWeakCompletionClaim('Esse é o combinado do grupo desde agosto.'));
+});
+
+test('resposta de memória não ganha nota de falha do chokepoint', () => {
+  const real = 'O combinado foi simples:\n\nQuando um contrato for assinado, alguém avisa aqui '
+    + 'e eu dou baixa na tarefa.\n\nSó me avisar quando cada um assinar. 👽';
+  const out = enforceNoMarkerHonesty(real, {
+    nothingPersisted: true, infoGathering: false, contentSolicitation: false,
+    markerAttempted: false, awaitingConfirm: false, pendingActionRecent: true,
+  });
+  assert.strictEqual(out, real, 'recuperar um combinado não é afirmar escrita');
+});
+
+test('o NOOP de verdade continua pego (zero regressão no que importa)', () => {
+  const r = enforceNoMarkerHonesty('Fechou!', { nothingPersisted: true, pendingActionRecent: true });
+  assert.ok(/não consegui registrar/i.test(r), '"Fechou!" sozinho depois de pergunta de ação segue sendo NOOP');
+});
+
+// ── "QUANDO X, ALGUÉM FAZ Y" É REGRA, NÃO CONCLUSÃO ───────────────────────────────────────
+// 03/09, entregando a memória de grupo: "Tom, o que a gente combinou sobre contrato assinado?"
+// → ele respondeu certo, da memória, e o chokepoint colou "⚠️ Na real não consegui registrar
+// isso agora". Três tentativas, três disparos, medidos com sensor.
+// Gatilho: COMPLETION_GERUND_RE casando "confirmando" em "alguém do grupo posta aqui
+// confirmando — e eu dou baixa". Oração condicional, no futuro, e o gerúndio é de OUTRA pessoa.
+// Doeria todo dia: todo combinado da escola tem a forma "quando X, alguém faz Y".
+
+test('condicional no futuro não é afirmação de conclusão', () => {
+  const regra = 'Quando um contrato for assinado, alguém do grupo posta aqui confirmando — e eu dou baixa na tarefa.';
+  assert.strictEqual(hasCompletionClaim(regra), false);
+  assert.strictEqual(sanitizeOptimisticConfirm(regra, 'failed'), regra, 'a regra tem que sobreviver inteira');
+});
+
+test('as outras conjunções condicionais também vetam', () => {
+  for (const s of [
+    'Se alguém assinar, avisa aqui que eu vou registrando.',
+    'Assim que fecharem, me manda que eu vou marcando.',
+    'Sempre que tiver matrícula nova, posta aqui confirmando os dados.',
+    'Aí quando ela responder, eu vou anotando o que faltar.',
+  ]) {
+    assert.strictEqual(hasCompletionClaim(s), false, `"${s}" descreve regra, não conclusão`);
+  }
+});
+
+// ZERO REGRESSÃO no que o gate existe pra pegar: sem condicional, gerúndio segue sendo claim.
+test('gerúndio SEM condicional continua pego', () => {
+  assert.ok(hasCompletionClaim('Fechando a tarefa dela.'), 'Rose 06/08');
+  assert.ok(hasCompletionClaim('Beleza, Rose — lançando todas as 14 parcelas!'), 'Rose 09/08');
+  assert.ok(hasCompletionClaim('Criando a tarefa aqui pra você.'));
+});
+
+// O veto é SÓ do ramo de gerúndio — o de 1ª pessoa não foi tocado. Documentando o que ele
+// realmente faz (comportamento anterior a 03/09, medido, não suposto): o claim precisa ABRIR a
+// linha. "Já registrei aqui!" é pego; "eu já registrei aqui." no meio da frase não é — e isso
+// independe de condicional ("Ontem você pediu, eu já registrei" também passa). É uma lacuna
+// conhecida do detector, não efeito deste veto; alargá-la reabriria a família de falso-positivo
+// que este commit está justamente fechando.
+test('o veto do gerúndio não mexeu no ramo de 1ª pessoa', () => {
+  assert.ok(hasCompletionClaim('Já registrei aqui!'), 'claim que ABRE a linha segue pego');
+  assert.strictEqual(hasCompletionClaim('Quando você pediu, eu já registrei aqui.'), false);
+  assert.strictEqual(hasCompletionClaim('Ontem você pediu, eu já registrei aqui.'), false,
+    'mesma coisa sem condicional nenhuma — é posição, não o veto novo');
+});

@@ -135,3 +135,76 @@ test('selectRevocable ignora placeholder no formato novo', () => {
   ]);
   assert.deepStrictEqual(r.map((x) => x.id), [4], 'só o id real do WhatsApp é revogável');
 });
+
+// ── O ESPELHO NÃO PODE REORDENAR ──────────────────────────────────────────────────────────
+// 02/09, Sucesso do Aluno: o card chegava ANTES da fala e o "👇" apontava pro vazio. A causa
+// era a ordem de INSERT (corrigida no engine: fala primeiro, card na fila depois). Mas a ordem
+// no banco só vale se o espelho enviar na mesma ordem — e ele lê `.order('created_at', asc)` e
+// manda num for/await sequencial. Isso aqui TRAVA esse contrato: um refactor que troque o laço
+// por Promise.all embaralharia tudo de novo, e no WhatsApp ninguém veria teste nenhum falhar.
+const { runOutboundOnce } = require('./group-chat-bridge-out');
+
+function fakeSupabase(mensagens) {
+  const updates = [];
+  const q = (tabela) => {
+    const estado = { tabela, filtros: {} };
+    const api = {
+      select() { return api; },
+      not() { return api; },
+      eq(col, val) { estado.filtros[col] = val; return api; },
+      is() { return api; },
+      in() { return api; },
+      lt() { return api; },
+      order() { return api; },
+      update(patch) { estado.patch = patch; return api; },
+      limit() { return api; },
+      then(resolve) { return Promise.resolve(api._resultado()).then(resolve); },
+      _resultado() {
+        if (estado.patch) { updates.push({ id: estado.filtros.id, ...estado.patch }); return { data: null, error: null }; }
+        if (tabela === 'work_groups') {
+          return { data: [{ id: 'g1', wa_group_jid: 'jid-1', wa_linked_at: null }], error: null };
+        }
+        // o drain pré-link não roda (wa_linked_at null); esta é a busca da fila
+        return { data: mensagens, error: null };
+      },
+    };
+    return api;
+  };
+  return { from: q, _updates: updates };
+}
+
+test('o espelho envia na ordem de created_at, não na ordem que o banco devolveu', async () => {
+  const enviados = [];
+  // De propósito fora de ordem no array: quem ordena é a query, e o laço tem que respeitar.
+  const sb = fakeSupabase([
+    { id: 'm1', group_id: 'g1', role: 'tom', kind: 'text', content: 'Já busco aqui 👇', created_at: '2026-09-03T10:00:00.100Z' },
+    { id: 'm2', group_id: 'g1', role: 'tom', kind: 'report', content: '<h3>👥 Recreio</h3><p>232 sem anamnese</p>', created_at: '2026-09-03T10:00:00.200Z' },
+  ]);
+  await runOutboundOnce(sb, {
+    sendGroupText: async (jid, texto) => { enviados.push(texto); return 'wa-' + enviados.length; },
+    sendGroupMedia: async () => 'wa-media',
+  });
+  assert.strictEqual(enviados.length, 2, 'fala e card, os dois espelhados');
+  assert.match(enviados[0], /Já busco aqui/, 'a FALA sai primeiro — senão o 👇 aponta pro vazio');
+  assert.match(enviados[1], /232 sem anamnese/, 'o card vem depois');
+});
+
+test('cada mensagem enviada é marcada com o id REAL do WhatsApp, não com placeholder', async () => {
+  const sb = fakeSupabase([
+    { id: 'm1', group_id: 'g1', role: 'tom', kind: 'text', content: 'oi', created_at: '2026-09-03T10:00:00.100Z' },
+  ]);
+  await runOutboundOnce(sb, { sendGroupText: async () => 'ID-REAL-DO-WA', sendGroupMedia: async () => null });
+  assert.deepStrictEqual(sb._updates, [{ id: 'm1', wa_message_id: 'ID-REAL-DO-WA' }]);
+});
+
+test('mensagem sem nada a espelhar sai da fila com placeholder ÚNICO (o UNIQUE não deixa repetir)', async () => {
+  const sb = fakeSupabase([
+    { id: 'm1', group_id: 'g1', role: 'tom', kind: 'text', content: '‹‹ACTIONS››[]', created_at: '2026-09-03T10:00:00.100Z' },
+    { id: 'm2', group_id: 'g1', role: 'tom', kind: 'text', content: '‹‹ACTIONS››[]', created_at: '2026-09-03T10:00:00.200Z' },
+  ]);
+  await runOutboundOnce(sb, { sendGroupText: async () => 'x', sendGroupMedia: async () => null });
+  const vals = sb._updates.map((u) => u.wa_message_id);
+  assert.strictEqual(vals.length, 2);
+  assert.notStrictEqual(vals[0], vals[1], 'dois valores iguais violariam gcm_wa_msg_uq e prenderiam a fila');
+  vals.forEach((v) => assert.match(v, /^skipped:/));
+});

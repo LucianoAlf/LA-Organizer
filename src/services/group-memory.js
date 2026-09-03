@@ -141,7 +141,80 @@ function deveConsolidarGrupo({ jaRodouHoje }) {
   return !jaRodouHoje;
 }
 
+// ── LEITURA (fatia 2) ─────────────────────────────────────────────────────────────────────
+// Teto em caracteres porque o bloco entra em TODO prompt do grupo. O buffer velho tinha 3000;
+// aqui cabe menos texto e informa mais, porque sao fatos separados em vez de resumo colado.
+const TETO_BLOCO = 2500;
+// Menos que isso, o bloco novo diria menos que o resumo velho. A troca e por GRUPO.
+const MINIMO_PRA_TROCAR = 3;
+const PESO_IMPORTANCIA = { high: 0, normal: 1, low: 2 };
+
+// Memoria vencida (decay_at no passado) ou desativada nao entra. `context` nasce com prazo — foi
+// pra isso que a coluna existe: "5 contratos agendados pra semana de 08-11/09" nao pode virar
+// verdade permanente do grupo.
+function memoriaViva(m, agora) {
+  if (!m || m.is_active === false) return false;
+  if (m.decay_at && new Date(m.decay_at).getTime() <= agora.getTime()) return false;
+  return !!String(m.content || '').trim();
+}
+
+function ordenarMemorias(memorias) {
+  return [...(memorias || [])].sort((a, b) => {
+    const pa = PESO_IMPORTANCIA[a.importance] != null ? PESO_IMPORTANCIA[a.importance] : 1;
+    const pb = PESO_IMPORTANCIA[b.importance] != null ? PESO_IMPORTANCIA[b.importance] : 1;
+    if (pa !== pb) return pa - pb;
+    return String(b.occurred_on || '').localeCompare(String(a.occurred_on || ''));
+  });
+}
+
+// A DATA na linha nao e enfeite: sem ela, "contrato do Kaique nao sai" vira verdade sem prazo e
+// o TOM repete em novembro. O buffer velho ja fez isso ("hoje e 06/08" gravado como permanente).
+function linhaDeMemoria(m) {
+  const d = String(m.occurred_on || '').slice(0, 10).split('-');
+  const data = d.length === 3 ? `${d[2]}/${d[1]}` : null;
+  const texto = String(m.content || '').trim();
+  return data ? `${data} — ${texto}` : texto;
+}
+
+function montarBlocoMemoria(memorias, { agora = new Date(), teto = TETO_BLOCO } = {}) {
+  const vivas = (memorias || []).filter((m) => memoriaViva(m, agora));
+  if (!vivas.length) return null;
+  const linhas = [];
+  let tam = 0;
+  for (const m of ordenarMemorias(vivas)) {
+    const l = linhaDeMemoria(m);
+    if (tam + l.length + 1 > teto) break; // corta pelo MENOS importante, que ja esta no fim
+    linhas.push(l);
+    tam += l.length + 1;
+  }
+  return linhas.length ? linhas.join('\n') : null;
+}
+
+function escolherMemoria({ memorias, bufferAntigo, agora = new Date(), minimo = MINIMO_PRA_TROCAR } = {}) {
+  const vivas = (memorias || []).filter((m) => memoriaViva(m, agora));
+  if (vivas.length < minimo) {
+    return { texto: bufferAntigo || null, fonte: 'buffer', vivas: vivas.length };
+  }
+  const bloco = montarBlocoMemoria(vivas, { agora });
+  return bloco
+    ? { texto: bloco, fonte: 'group_memory', vivas: vivas.length }
+    : { texto: bufferAntigo || null, fonte: 'buffer', vivas: vivas.length };
+}
+
+async function carregarMemoriasDoGrupo(supabase, groupId) {
+  const { data, error } = await supabase.from('group_memory')
+    .select('memory_type, content, importance, occurred_on, decay_at, is_active')
+    .eq('group_id', groupId).eq('is_active', true)
+    .order('occurred_on', { ascending: false }).limit(60);
+  // Falha de leitura NAO pode virar "grupo sem memoria" em silencio: devolve null (nao []) pra
+  // o chamador cair no buffer velho sabendo por que.
+  if (error) { console.error(`[GroupMemory] leitura falhou grupo=${groupId}: ${error.message}`); return null; }
+  return data || [];
+}
+
 module.exports = {
   montarHistorico, extrairMemoriaDeGrupo, consolidateGroupMemoryFor, deveConsolidarGrupo,
   JANELA_HORAS, TETO_POR_NOITE,
+  TETO_BLOCO, MINIMO_PRA_TROCAR, memoriaViva, ordenarMemorias, linhaDeMemoria,
+  montarBlocoMemoria, escolherMemoria, carregarMemoriasDoGrupo,
 };

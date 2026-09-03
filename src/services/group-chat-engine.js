@@ -26,8 +26,23 @@ function displayName(c) {
   return (c?.preferred_name || c?.full_name || '').split(' ')[0] || 'alguém';
 }
 
+// FATIA 2 — o que vai como "memoria de longo prazo" no prompt. Ate 2 memorias ativas o grupo
+// segue com o resumo rolante velho; da terceira em diante, so o bloco novo (fatos datados, um
+// por linha). A troca e por GRUPO — nenhum grupo passa um dia sem contexto.
+function memoriaDoPrompt(ctx) {
+  const gm = require('./group-memory');
+  const r = gm.escolherMemoria({
+    memorias: ctx.memoriasDoGrupo,
+    bufferAntigo: ctx.group && ctx.group.tom_chat_memory,
+  });
+  // Sensor: sem isto, "grupo sem memoria" e "leitura falhou" ficam identicos no log.
+  console.log(`[GroupMemory] grupo=${ctx.group && ctx.group.id} fonte=${r.fonte} ativas=${r.vivas}`);
+  return r.texto;
+}
+
 async function loadContext(supabase, groupId, senderCollabId) {
-  const [{ data: group }, { data: memberRows }, { data: poolRows }, { data: histRows }, { data: senderRow }] = await Promise.all([
+  const [{ data: group }, { data: memberRows }, { data: poolRows }, { data: histRows }, { data: senderRow },
+    memoriasDoGrupo] = await Promise.all([
     supabase.from('work_groups').select('id, name, tom_chat_engaged_at, tom_chat_memory, la_report_unidade_id').eq('id', groupId).maybeSingle(),
     supabase.from('work_group_members').select('collaborators(full_name, preferred_name)').eq('group_id', groupId),
     // Pool = SÓ tarefa REAL ativa (igual ao builder determinístico): exclui done/cancelled e os
@@ -44,6 +59,9 @@ async function loadContext(supabase, groupId, senderCollabId) {
       .order('created_at', { ascending: false }).limit(POOL_LIMIT * 2),
     supabase.from('group_chat_messages').select('role, content, media_extracted_text, sender_id, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)').eq('group_id', groupId).order('created_at', { ascending: false }).limit(HISTORY_LIMIT),
     supabase.from('collaborators').select('*').eq('id', senderCollabId).maybeSingle(),
+    // FATIA 2 — leitura da memoria de grupo. Devolve array puro (nao { data }), por isso fica no
+    // FIM: a destruturacao acima e posicional.
+    require('./group-memory').carregarMemoriasDoGrupo(supabase, groupId),
   ]);
 
   const members = (memberRows || []).map((m) => ({ name: displayName(m.collaborators) }));
@@ -87,7 +105,8 @@ async function loadContext(supabase, groupId, senderCollabId) {
     content: m.media_extracted_text ? `${m.content || ''} [mídia: ${m.media_extracted_text}]`.trim() : (m.content || ''),
   }));
 
-  return { group, members, pool, poolToday, history, senderName: displayName(senderRow), collab: senderRow || null };
+  return { group, members, pool, poolToday, history, senderName: displayName(senderRow), collab: senderRow || null,
+    memoriasDoGrupo: memoriasDoGrupo || null };
 }
 
 // Insere uma mensagem de texto do TOM no chat do grupo (mesmo caminho do fluxo normal → bridge-out espelha).
@@ -270,7 +289,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     today: ctx.poolToday, // GROUPCHAT-POOL-DATE-NO-RELLABEL: pré-computa o dia relativo no pool (paridade 1:1)
     history: ctx.history,
     senderName: ctx.senderName,
-    longTermMemory: ctx.group.tom_chat_memory,
+    longTermMemory: memoriaDoPrompt(ctx),
     notesContext: notesCtx, // base de conhecimento do grupo (índice + body das fixadas)
     credentialContext: credCtx, // credenciais que casam com o pedido deste turno (secrets decifrados)
     dateAnchor: buildBrtDateAnchor(), // hoje + tabela de datas (BRT) — LLM não calcula weekday e erra
@@ -748,7 +767,11 @@ const NOTA_DO_SISTEMA_RE = /_?⚠️?\s*Na real n[ãa]o consegui registrar isso 
 
 function buildTomContent(rawReply, actions) {
   const acts = Array.isArray(actions) ? actions : [];
-  const cleaned = String(rawReply || '')
+  const bruto = String(rawReply || '');
+  const modeloEscreveuNota = NOTA_DO_SISTEMA_RE.test(bruto);
+  NOTA_DO_SISTEMA_RE.lastIndex = 0; // regex com /g guarda estado entre chamadas
+  if (modeloEscreveuNota) console.log('[GroupChat] nota honesta veio DO MODELO — arrancada');
+  const cleaned = bruto
     .replace(/<<SILENCIO>>/gi, '')
     .replace(NOTA_DO_SISTEMA_RE, '')
     .trim();
@@ -786,6 +809,7 @@ function buildTomContent(rawReply, actions) {
       try {
         const { enforceNoMarkerHonesty } = require('../lib/optimistic-confirm');
         const rc = require('./reply-classify');
+        const antes = prose;
         prose = enforceNoMarkerHonesty(prose, {
           nothingPersisted: true,
           infoGathering: rc.hasTrailingQuestion(prose) || rc.isInfoGatheringReply(prose),
@@ -793,6 +817,15 @@ function buildTomContent(rawReply, actions) {
           markerAttempted: false,
           awaitingConfirm: false,
         });
+        if (prose !== antes) {
+          console.log('[GroupChat] chokepoint DISPAROU e rebaixou a fala');
+          const _oc = require('../lib/optimistic-confirm');
+          String(antes).split(String.fromCharCode(10)).filter((l) => l.trim()).forEach((l) => {
+            const forte = _oc.hasCompletionClaim(l);
+            const fraca = _oc.hasWeakCompletionClaim(l);
+            if (forte || fraca) console.log(`[GroupChat]   gatilho ${forte ? 'FORTE' : 'fraca'}: ${l.slice(0, 110)}`);
+          });
+        }
       } catch (e) { console.error('[GroupChat] chokepoint err:', e.message); }
     }
   }
