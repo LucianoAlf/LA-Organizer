@@ -89,3 +89,49 @@ test('mídia (kind != text) → null no v1', () => {
 test('membro com texto vazio → null', () => {
   assert.equal(buildWhatsappText({ role: 'member', kind: 'text', content: '   ' }, 'Ana'), null);
 });
+
+// ── PLACEHOLDER DE wa_message_id TEM UNIQUE ───────────────────────────────────────────────
+// `gcm_wa_msg_uq` é UNIQUE em wa_message_id, e o bridge marcava com as strings literais
+// 'skipped'/'sent'. Só a PRIMEIRA linha do banco conseguia; da segunda em diante o UPDATE batia
+// em 23505 e o erro era descartado (`await update()` sem checar error). Resultado: mensagem
+// não-espelhável presa na fila pra sempre, repescada a cada 4s. Em 02/09 eram 4 linhas, a mais
+// velha há 82 dias, ocupando 4 das 10 vagas do tick — e quando chegasse a 10, o espelho
+// app→WhatsApp pararia inteiro, em silêncio.
+const { ehPlaceholderWa, placeholderWa } = require('./group-chat-bridge-out');
+
+test('placeholderWa é único por linha', () => {
+  const a = placeholderWa('skipped', 'id-1');
+  const b = placeholderWa('skipped', 'id-2');
+  assert.notStrictEqual(a, b, 'dois valores iguais violariam o UNIQUE');
+  assert.match(a, /^skipped:/);
+  assert.match(placeholderWa('sent', 'id-3'), /^sent:/);
+});
+
+test('ehPlaceholderWa reconhece o formato novo E os valores nus antigos', () => {
+  assert.ok(ehPlaceholderWa('skipped:abc'));
+  assert.ok(ehPlaceholderWa('sent:abc'));
+  assert.ok(ehPlaceholderWa('skipped'), 'a linha de junho que já está no banco continua valendo');
+  assert.ok(ehPlaceholderWa('sent'));
+});
+
+test('ehPlaceholderWa NÃO confunde id real do WhatsApp com placeholder', () => {
+  assert.ok(!ehPlaceholderWa('3EB0D19F334BA486C9D484'));
+  assert.ok(!ehPlaceholderWa('5521997243082:AC190A74F059BA48'));
+  assert.ok(!ehPlaceholderWa(null));
+  assert.ok(!ehPlaceholderWa(''));
+  assert.ok(!ehPlaceholderWa('skippedish'), 'prefixo tem que ser seguido de : ou fim');
+});
+
+// selectRevocable existe pra revogar no WhatsApp o que foi apagado no app. Quem nunca chegou
+// lá (placeholder) não pode entrar — e agora o placeholder tem sufixo.
+test('selectRevocable ignora placeholder no formato novo', () => {
+  const base = { deleted_origin: 'app', deleted_synced: false };
+  const r = selectRevocable([
+    { ...base, id: 1, wa_message_id: 'skipped:xyz' },
+    { ...base, id: 2, wa_message_id: 'sent:xyz' },
+    { ...base, id: 3, wa_message_id: 'skipped' },
+    { ...base, id: 4, wa_message_id: '3EB0REAL' },
+    { ...base, id: 5, wa_message_id: null },
+  ]);
+  assert.deepStrictEqual(r.map((x) => x.id), [4], 'só o id real do WhatsApp é revogável');
+});

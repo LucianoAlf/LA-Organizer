@@ -50,13 +50,27 @@ function buildWhatsappText(msg, senderName) {
 
 const KIND_TO_WA_TYPE = { image: 'image', pdf: 'document', audio: 'audio' };
 
-const WA_PLACEHOLDER_IDS = new Set(['sent', 'skipped']);
+// wa_message_id tem UNIQUE (gcm_wa_msg_uq). Placeholder tem que ser unico POR LINHA, senao so
+// a primeira mensagem do banco consegue ser marcada e todas as outras ficam presas na fila pra
+// sempre (02/09: 4 linhas, a mais velha ha 82 dias, retentadas a cada 4s).
+const WA_PLACEHOLDER_RE = /^(sent|skipped)(:|$)/;
+function ehPlaceholderWa(v) { return WA_PLACEHOLDER_RE.test(String(v || '')); }
+function placeholderWa(tipo, id) { return `${tipo}:${id}`; }
+
+// Marca e DIZ quando nao consegue. O `await update()` sem checar error foi o que escondeu o bug
+// por 82 dias — a linha voltava pra fila e ninguem tinha como saber.
+async function marcarWa(supabase, id, valor) {
+  const { error } = await supabase.from('group_chat_messages')
+    .update({ wa_message_id: valor }).eq('id', id);
+  if (error) console.error(`[Bridge-out] nao consegui marcar msg=${id} como ${valor}: ${error.message}`);
+  return !error;
+}
 // Rows cuja deleção (feita no app) precisa ser revogada no WhatsApp: origem app, não
 // sincronizada, com wa_message_id REAL (não placeholder/null).
 function selectRevocable(rows) {
   return (rows || []).filter((r) =>
     r.deleted_origin === 'app' && r.deleted_synced === false &&
-    r.wa_message_id && !WA_PLACEHOLDER_IDS.has(r.wa_message_id));
+    r.wa_message_id && !ehPlaceholderWa(r.wa_message_id));
 }
 
 // Converte uma row de mídia (channel='app') no payload de /send/media. null se não for
@@ -91,10 +105,12 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
   // segue pro envio. Sem wa_linked_at → não drena (preserva comportamento).
   for (const g of groups || []) {
     if (!g.wa_linked_at) continue;
-    await supabase.from('group_chat_messages')
-      .update({ wa_message_id: 'skipped' })
-      .eq('group_id', g.id).eq('channel', 'app')
-      .is('wa_message_id', null).lt('created_at', g.wa_linked_at);
+    // Linha a linha porque cada uma leva o proprio id no placeholder — um UPDATE em massa com
+    // o mesmo valor violaria o UNIQUE e o guard anti-flood morreria calado.
+    const { data: antigas } = await supabase.from('group_chat_messages')
+      .select('id').eq('group_id', g.id).eq('channel', 'app')
+      .is('wa_message_id', null).lt('created_at', g.wa_linked_at).limit(500);
+    for (const a of antigas || []) await marcarWa(supabase, a.id, placeholderWa('skipped', a.id));
   }
 
   const { data: rows } = await supabase.from('group_chat_messages')
@@ -116,7 +132,7 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
       if (!media) { continue; } // sem media_url ainda → re-tenta próximo tick
       try {
         const waId = await deps.sendGroupMedia(jid, { ...media, mimetype: m.media_mime || '' });
-        await supabase.from('group_chat_messages').update({ wa_message_id: waId || 'sent' }).eq('id', m.id);
+        await marcarWa(supabase, m.id, waId || placeholderWa('sent', m.id));
         sent++;
       } catch (e) {
         const st = e.response?.status;
@@ -124,7 +140,7 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
           // Erro DEFINITIVO da API (ex.: URL não-baixável, mídia inválida) → re-tentar não
           // resolve. Marca 'skipped' pra não martelar a UAZAPI a cada tick (loop infinito).
           console.error(`[Bridge-out] mídia DESCARTADA msg=${m.id} (${st}): ${JSON.stringify(e.response?.data || '').slice(0, 150)}`);
-          await supabase.from('group_chat_messages').update({ wa_message_id: 'skipped' }).eq('id', m.id);
+          await marcarWa(supabase, m.id, placeholderWa('skipped', m.id));
         } else {
           // Transitório (503 hibernação / timeout / rede) → re-tenta no próximo tick.
           console.error(`[Bridge-out] mídia falhou msg=${m.id} (re-tenta): ${st || 'net'} ${e.message}`);
@@ -136,12 +152,12 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
     const text = buildWhatsappText(m, senderName);
     if (!text) {
       // nada a espelhar → marca pra não reprocessar todo ciclo
-      await supabase.from('group_chat_messages').update({ wa_message_id: 'skipped' }).eq('id', m.id);
+      await marcarWa(supabase, m.id, placeholderWa('skipped', m.id));
       continue;
     }
     try {
       const waId = await deps.sendGroupText(jid, text);
-      await supabase.from('group_chat_messages').update({ wa_message_id: waId || 'sent' }).eq('id', m.id);
+      await marcarWa(supabase, m.id, waId || placeholderWa('sent', m.id));
       sent++;
     } catch (e) {
       console.error(`[Bridge-out] falha msg=${m.id} (re-tenta): ${e.response?.status || ''} ${e.message}`);
@@ -184,4 +200,5 @@ async function runDeleteSyncOnce(supabase, deps, limit = 10) {
   return done;
 }
 
-module.exports = { buildWhatsappText, buildWhatsappMedia, firstName, runOutboundOnce, selectRevocable, runDeleteSyncOnce };
+module.exports = { buildWhatsappText, buildWhatsappMedia, firstName, runOutboundOnce, selectRevocable, runDeleteSyncOnce,
+  ehPlaceholderWa, placeholderWa };
