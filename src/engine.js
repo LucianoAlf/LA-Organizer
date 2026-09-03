@@ -4505,6 +4505,14 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           } catch (_) { /* intent best-effort */ }
           actions = actions.filter((a) => !(a && a.action === 'complete'));
           failCount += completes.length;
+          // Este ramo PERGUNTA; nao falha. Como reusa a plumbing de falha, o outcome sai
+          // 'rejected all_failed:N' e o auditor leu pergunta como mentira (caso Jhonatan
+          // 02/09: 3 perguntas -> 3 'rejeicoes' no log). O failCount fica igual; o que entra
+          // e o registro de que houve PERGUNTA, pra a leitura do acervo parar de acusar.
+          try {
+            await logMarker(collaborator.id, 'TASK_UPDATE', 'skipped',
+              `awaiting_confirm:${completes.length} batch`, null);
+          } catch (_) { /* best-effort: registro nunca derruba a pergunta */ }
           console.warn(`[Task] A2 batch-complete nao-ancorado (${titles.length}) -> pediu confirmacao, removido do lote`);
           }
         }

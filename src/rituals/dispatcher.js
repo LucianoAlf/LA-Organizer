@@ -3902,6 +3902,7 @@ async function run(opts = {}) {
       // linha de log — foi o que aconteceu em 03/09 (37 execucoes, 0 memorias, nada legivel).
       let dreamCand = 0;
       let dreamSalvas = 0;
+      let dreamDedup = 0;
       const dreamErros = [];
       let dreamMagros = 0;
       for (const c of (allCollabs || [])) {
@@ -3916,6 +3917,7 @@ async function run(opts = {}) {
           const _rm = await consolidateMemoryFor(c);
           dreamCand += (_rm && Number(_rm.candidates)) || 0;
           dreamSalvas += (_rm && Number(_rm.saved)) || 0;
+          dreamDedup += (_rm && Number(_rm.dedup)) || 0;
           if (_rm && _rm.skipped === 'too_thin') dreamMagros++;
           if (_rm && _rm.skipped === 'extract_error') dreamErros.push(`${c.full_name}:${String(_rm.error || '').slice(0, 40)}`);
           dreamOk++;
@@ -3944,7 +3946,7 @@ async function run(opts = {}) {
           marker_type: 'DREAM_MEMORY',
           result: dreamErros.length ? 'fallback' : 'executed',
           reason: `dm:${now.ymd} colabs=${dreamOk} cand=${dreamCand} salvas=${dreamSalvas}`
-            + ` magros=${dreamMagros} erros=${dreamErros.length}`
+            + ` dedup=${dreamDedup} magros=${dreamMagros} erros=${dreamErros.length}`
             + (dreamErros.length ? ` [${dreamErros.slice(0, 2).join('; ')}]` : ''),
         });
       } catch (mErr) { console.error('[Dream] sensor falhou:', mErr.message); }
