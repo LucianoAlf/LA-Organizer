@@ -21,11 +21,16 @@ async function shadowPass(findings, deps = {}) {
   for (const f of (findings || [])) {
     try {
       let verdict = 'inconclusivo'; let reason = ''; let evidencia = ''; let infraError = false;
-      const rep = isReproducible(f);
+      // `await` de proposito: o gate agora pode consultar o banco pra achar a fala LITERAL do
+      // incidente (o evidence e prosa do auditor e parafraseia). Continua funcionando com gate
+      // sincrono — await em valor nao-promessa e o proprio valor.
+      const rep = await isReproducible(f);
       if (!rep.ok) {
         reason = `não reproduzível: ${rep.motivo}`;
       } else {
-        const { transcript, erro } = await runShadow(f, deps);
+        // As falas resolvidas pelo GATE viajam pro runner: se ele re-extraisse por conta
+        // propria, um poderia aceitar o que o outro recusa — foi o buraco de 19/08.
+        const { transcript, erro } = await runShadow(f, { ...deps, falas: rep.falas });
         if (erro) { reason = `runner: ${erro}`; }
         else {
           const j = await judgeShadow({ finding: f, fixIntent: f.fix_intent, transcript }, deps);

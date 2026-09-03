@@ -9,8 +9,11 @@ const { extrairFalasDoUsuario } = require('./shadow-reproducibility');
 // SHADOW-VERDE-VACUO (27/08): NÃO existe mais fallback pro `summary`. Encenar a prosa do auditor
 // gerava verde que não exercitava o bug (ver shadow-vacuidade.test.js). Sem fala → cenário vazio,
 // e o runner abaixo recusa — o passe vira inconclusivo, nunca aprovado.
-function derivarCenario(finding) {
-  return { setup: {}, turns: extrairFalasDoUsuario(finding).map((userText) => ({ userText })) };
+// `deps.falas` vem do gate (fala literal do banco, ou do evidence quando o banco nao tem).
+// Sem elas, cai no comportamento antigo — nenhum caminho passa a encenar prosa do auditor.
+function derivarCenario(finding, falas) {
+  const lista = (Array.isArray(falas) && falas.length) ? falas : extrairFalasDoUsuario(finding);
+  return { setup: {}, turns: lista.map((userText) => ({ userText })) };
 }
 
 // ENCENACAO DE GRUPO (01/09). O caminho 1:1 acima stuba `whatsapp.sendMessage` pra capturar a
@@ -32,7 +35,7 @@ async function runShadowGrupo(finding, deps) {
   }
   const { data: qa } = await supabase.from('collaborators').select('id, phone').eq('phone', deps.qaPhone).maybeSingle();
   if (!qa) return { transcript: { turns: [] }, erro: 'perfil QA inexistente' };
-  const cenario = derivarCenario(finding);
+  const cenario = derivarCenario(finding, deps.falas);
   if (!cenario.turns.length) {
     return { transcript: { turns: [] }, erro: 'sem fala literal do usuário (resumo do finding não é fala)' };
   }
@@ -78,7 +81,7 @@ async function runShadow(finding, deps = {}) {
   }
   const { data: qa } = await supabase.from('collaborators').select('id, phone').eq('phone', qaPhone).maybeSingle();
   if (!qa) return { transcript: { turns: [] }, erro: 'perfil QA inexistente' };
-  const cenario = derivarCenario(finding);
+  const cenario = derivarCenario(finding, deps.falas);
   // 2ª trava (o gate isReproducible é a 1ª): nunca encenar sem a fala real do usuário.
   if (!cenario.turns.length) {
     return { transcript: { turns: [] }, erro: 'sem fala literal do usuário (resumo do finding não é fala)' };

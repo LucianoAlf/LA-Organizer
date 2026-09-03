@@ -234,7 +234,11 @@ async function main() {
         console.log('[Shadow] pulado: TOM_QA_PHONES não configurado (barreira de replay off)');
       } else {
         const { shadowPass } = require('../governance/shadow-pass');
-        const { isReproducible } = require('../governance/shadow-reproducibility');
+        // Gate ASYNC (03/09): consulta conversation_history/group_chat_messages pra achar a
+        // fala LITERAL do incidente quando o evidence so tem a prosa do auditor. Era isso que
+        // deixava a sonda com 0 vereditos.
+        const { avaliarReprodutibilidade } = require('../governance/shadow-reproducibility');
+        const isReproducible = (f) => avaliarReprodutibilidade({ supabase, finding: f });
         const { runShadow } = require('../governance/shadow-runner');
         const { judgeShadow } = require('../governance/shadow-judge');
         // O ciclo já carregou o engine (group-chat post) → require devolveria código PRÉ-fix.
@@ -256,7 +260,11 @@ async function main() {
         const qaPhone = qaEnv.split(',')[0].trim();
 
         const { data: alvos } = await supabase.from('tom_audit_findings')
-          .select('id, summary, evidence, category, group_id, promoted_code, verified_note')
+          // collaborator_id + carimbos do incidente sao o que a sonda usa pra achar a fala
+          // LITERAL em conversation_history. Sem eles no select, a busca nova ficaria INERTE e
+          // cairia sempre no evidence — mecanismo existe e nao chega, de novo.
+          .select('id, summary, evidence, category, group_id, promoted_code, verified_note,'
+            + ' collaborator_id, incident_at, occurred_at, last_seen, created_at')
           .eq('verified_result', 'confirmado').eq('status', 'corrigido')
           .gte('verified_at', cicloInicio).limit(10);
 

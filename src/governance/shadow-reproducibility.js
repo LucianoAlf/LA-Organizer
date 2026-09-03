@@ -42,4 +42,77 @@ function isReproducible(finding) {
   return { ok: true, motivo: 'turno curto encenável' };
 }
 
-module.exports = { isReproducible, extrairFalasDoUsuario };
+
+// ── A FALA VEM DO BANCO, NAO DO RESUMO (03/09) ────────────────────────────────────────────
+// O `evidence` e prosa do auditor e PARAFRASEIA. Em 08/08 ele dizia USUARIO: "Confirmado" e o
+// literal em conversation_history era "Siim" — detectUserConfirmation devolvia yes pro primeiro
+// e null pro segundo, e essa diferenca era o bug inteiro. Encenar parafrase testa outro caminho.
+const JANELA_MIN = 15;   // lado a lado com o incidente; conversa de horas antes e outro assunto
+const TETO_FALAS = 3;    // o bug mora nos ultimos turnos; encenar 20 e caro e ruidoso
+
+function _instante(f) {
+  return (f && (f.incident_at || f.occurred_at || f.last_seen || f.created_at)) || null;
+}
+
+// Fail-closed e MUDO por desenho: sem supabase, sem instante ou com erro de leitura devolve []
+// e quem chama cai no evidence. O que NAO pode e devolver fala inventada.
+async function falasDoIncidente({ supabase, finding, janelaMin = JANELA_MIN, teto = TETO_FALAS } = {}) {
+  const f = finding || {};
+  const quando = _instante(f);
+  if (!supabase || !quando) return [];
+  const fim = new Date(quando).getTime();
+  if (!Number.isFinite(fim)) return [];
+  const ini = new Date(fim - janelaMin * 60 * 1000).toISOString();
+  const ate = new Date(fim + 60 * 1000).toISOString(); // 1min de folga: o carimbo do finding e do fim do turno
+  try {
+    if (f.group_id) {
+      const { data, error } = await supabase.from('group_chat_messages')
+        .select('content, created_at, role').eq('group_id', f.group_id).eq('role', 'member')
+        .gte('created_at', ini).lte('created_at', ate)
+        .order('created_at', { ascending: true }).limit(30);
+      if (error) return [];
+      return (data || []).map((m) => String(m.content || '').trim()).filter(Boolean).slice(-teto);
+    }
+    if (!f.collaborator_id) return [];
+    const { data, error } = await supabase.from('conversation_history')
+      .select('content, created_at, direction').eq('collaborator_id', f.collaborator_id)
+      .eq('direction', 'inbound')
+      .gte('created_at', ini).lte('created_at', ate)
+      .order('created_at', { ascending: true }).limit(30);
+    if (error) return [];
+    return (data || []).map((m) => String(m.content || '').trim()).filter(Boolean).slice(-teto);
+  } catch (_) {
+    return [];
+  }
+}
+
+// CHOKEPOINT UNICO: o gate e o runner resolvem a fala pela MESMA funcao. Se um aceitasse o que o
+// outro recusa, voltaria o buraco de 19/08 (o gate aprovava e o runner encenava vazio).
+async function resolverFalas({ supabase, finding }) {
+  const doBanco = await falasDoIncidente({ supabase, finding });
+  if (doBanco.length) return { falas: doBanco, fonte: 'conversation_history' };
+  const doEvidence = extrairFalasDoUsuario(finding);
+  return doEvidence.length
+    ? { falas: doEvidence, fonte: 'evidence' }
+    : { falas: [], fonte: null };
+}
+
+// Versao async do gate: mesmas travas de categoria e multi-turno; so a trava da FALA passa a
+// consultar o banco antes de recusar. `isReproducible` sincrono fica exportado e intacto.
+async function avaliarReprodutibilidade({ supabase, finding }) {
+  const f = finding || {};
+  if (!CATS_OK.has(f.category)) return { ok: false, motivo: `categoria ${f.category || '?'} fora do escopo v1`, falas: [] };
+  const txt = String(f.evidence || f.summary || '').trim();
+  if (!txt) return { ok: false, motivo: 'sem evidência aferível', falas: [] };
+  if (MULTITURNO_RE.test(txt)) return { ok: false, motivo: 'cenário cron/multi-turno', falas: [] };
+  const { falas, fonte } = await resolverFalas({ supabase, finding: f });
+  if (!falas.length) {
+    return { ok: false, motivo: 'sem fala literal do usuário (nem no evidence, nem na conversa da janela)', falas: [] };
+  }
+  return { ok: true, motivo: `turno curto encenável (fala do ${fonte})`, falas, fonte };
+}
+
+module.exports = {
+  isReproducible, extrairFalasDoUsuario,
+  falasDoIncidente, resolverFalas, avaliarReprodutibilidade, JANELA_MIN, TETO_FALAS,
+};
