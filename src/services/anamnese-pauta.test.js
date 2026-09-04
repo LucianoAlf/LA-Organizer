@@ -107,3 +107,33 @@ test('sem mapa de falhas, todo mundo é 1ª vez — nunca escala no escuro', () 
   assert.strictEqual(r.pauta.length, 1);
   assert.strictEqual(r.escalados.length, 0);
 });
+
+// ── A mensagem do grupo (Task 4) ────────────────────────────────────────────────────────────
+const { mensagemDoGrupo } = require('./anamnese-pauta');
+
+const ITENS = [
+  { pessoa: { nome: 'Arthur Bezerra' }, hora: '08:00', curso: 'Bateria' },
+  { pessoa: { nome: 'Maria Isabel' }, hora: '09:00', curso: 'Canto' },
+  { pessoa: { nome: 'Davi Reis' }, hora: '09:00', curso: 'Canto' },
+  { pessoa: { nome: 'Alice Cagnin' }, hora: '14:00', curso: 'Canto' },
+];
+
+test('a mensagem diz o número e SÓ os primeiros horários', () => {
+  const m = mensagemDoGrupo({ itens: ITENS, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  assert.match(m, /4 alunos/);
+  assert.match(m, /qua 10\/09/);
+  assert.match(m, /08:00 Arthur Bezerra/);
+  // quem tem aula às 14h não precisa aparecer às 7h30
+  assert.doesNotMatch(m, /Alice Cagnin/, 'só os 3 primeiros — 43 nomes ninguém lê num zap');
+  assert.match(m, /painel/, 'aponta pro painel, onde a lista inteira está');
+});
+
+test('singular quando é um só', () => {
+  const m = mensagemDoGrupo({ itens: [ITENS[0]], unidadeNome: 'Barra', dataBr: 'sáb 13/09' });
+  assert.match(m, /1 aluno com aula hoje/);
+  assert.doesNotMatch(m, /alunos/);
+});
+
+test('pauta vazia não gera mensagem — dia limpo é silêncio, não spam', () => {
+  assert.strictEqual(mensagemDoGrupo({ itens: [], unidadeNome: 'Recreio', dataBr: 'dom 14/09' }), null);
+});

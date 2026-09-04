@@ -72,7 +72,25 @@ function separarPorDegrau(itens, mapaFalhas) {
   return { pauta, escalados };
 }
 
+// ── A MENSAGEM (Task 4) ──────────────────────────────────────────────────────────────────
+const PRIMEIROS_NO_ZAP = 3;
+
+// Os N primeiros HORÁRIOS, não os N primeiros nomes alfabéticos: quem chega às 8h é quem
+// importa quando o dia começa. A lista inteira mora no painel.
+function mensagemDoGrupo({ itens, unidadeNome, dataBr } = {}) {
+  const lista = itens || [];
+  if (!lista.length) return null;
+  const n = lista.length;
+  const cabeca = lista.slice(0, PRIMEIROS_NO_ZAP)
+    .map((i) => `${i.hora} ${i.pessoa.nome}`).join(' · ');
+  return `📋 *Anamnese — hoje (${dataBr})*\n`
+    + `${n} aluno${n > 1 ? 's' : ''} com aula hoje ainda sem anamnese.\n`
+    + `${n > PRIMEIROS_NO_ZAP ? 'Os primeiros' : 'Hoje'}: ${cabeca}\n`
+    + 'A lista completa está no painel do grupo.';
+}
+
 module.exports = {
   diaDaAula, horaDaAula, pautaDoDia, DIAS,
   degrau, tituloDaFilha, tituloDaEscalada, separarPorDegrau,
+  mensagemDoGrupo, PRIMEIROS_NO_ZAP,
 };
