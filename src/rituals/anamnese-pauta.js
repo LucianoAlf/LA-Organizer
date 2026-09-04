@@ -994,8 +994,17 @@ async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recupera
   }
 
   // Dois recortes, UMA leitura. A ordem (anamnese antes de contrato) é a do rótulo combinado.
+  //
+  // REVERSÃO DO CONTRATO (Alf, 04/09): enquanto pura.CONTRATO_NA_PAUTA for false, o recorte de
+  // contrato nem é CALCULADO — o interruptor e o porquê inteiro moram em cima da constante, em
+  // services/anamnese-pauta.js, e a condição pra religar está lá. Não é só economia: a linha
+  // continua aqui, do jeito que volta, e quem lê este arquivo vê na hora que a lista de hoje é
+  // deliberadamente só de anamnese. `alunosDaHora` também ignora o recorte por conta própria (mesmo
+  // interruptor) — as duas guardas leem o MESMO valor, então não há como voltar pela metade.
   const anamnese = pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'anamnese'), diaSemana);
-  const contrato = pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'contrato'), diaSemana);
+  const contrato = pura.CONTRATO_NA_PAUTA
+    ? pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'contrato'), diaSemana)
+    : [];
   const alunos = pura.alunosDaHora({ anamnese, contrato, hora, recuperacao });
 
   // texto null com motivo null = ninguém chegando pendente nesta hora. Silêncio é notícia boa —

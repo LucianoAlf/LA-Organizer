@@ -90,9 +90,12 @@ const TEXTO = (hora) => `⏰ *Próxima hora — ${hora}*\n· Ana (Canto) — *an
 // a guarda de duplicata do bloco casa pelo PRIMEIRO caractere ate o fim da primeira linha — se o
 // cabecalho novo nao for visto por ela, a faixa sai duas vezes num grupo real de WhatsApp. Repare
 // que o agrupamento comeca DEPOIS da primeira linha: e isso que mantem a guarda enxergando.
+// A pendencia dos dois e *anamnese*: desde a reversao de 04/09 (CONTRATO_NA_PAUTA, em
+// services/anamnese-pauta.js) o lembrete nao cobra contrato, e um fixture com "*contrato*" aqui
+// faria quem le este arquivo achar que o texto de producao ainda cobra.
 const TEXTO_RECUP = (hora) => `⏰ *Do começo do dia até as ${hora}*\n`
   + `\n🕗 *08:00*\n· Ana (Canto) — *anamnese*\n`
-  + `\n🕘 *09:00*\n· Bento (Violão) — *contrato*`;
+  + `\n🕘 *09:00*\n· Bento (Violão) — *anamnese*`;
 
 async function semBarulho(fn, saida) {
   const original = { log: console.log, warn: console.warn, error: console.error };
@@ -115,7 +118,9 @@ function mundo({
 } = {}) {
   // Abertura de cada unidade ja registrada: e a prova, em marker_logs, de que a pauta do dia saiu
   // no grupo. Sem ela o lembrete nao pode cobrar (Campo Grande abre as 10:00).
-  const logs = marcadores || abertura.map((u) => ({ result: 'executed', reason: `pauta_fala:${u}:${YMD} itens=4 contrato=1` }));
+  // O sufixo do marcador da abertura perdeu o `contrato=N` com a reversao de 04/09 — o fixture
+  // acompanha. Quem casa aqui e o PREFIXO (`pauta_fala:<u>:<ymd>`), entao o sufixo e so honestidade.
+  const logs = marcadores || abertura.map((u) => ({ result: 'executed', reason: `pauta_fala:${u}:${YMD} itens=4` }));
   if (recuperacaoFeita) {
     for (const u of unidades) logs.push({ result: 'executed', reason: `pauta_lembrete_recup:${u}:${YMD} faixa ate 09:00 coberta` });
   }

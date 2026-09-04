@@ -256,6 +256,31 @@ function _linhasPorHora(lista, quantos) {
     .join('\n');
 }
 
+// ── O INTERRUPTOR DO CONTRATO (reversão pedida pelo Alf, 04/09) ──────────────────────────────
+// PONTO ÚNICO DE REATIVAÇÃO. Enquanto isto for `false`, nem a mensagem da manhã nem o lembrete de
+// hora em hora falam de contrato — o TOM volta ao escopo que ele tinha antes de hoje: só anamnese.
+//
+// POR QUE A REVERSÃO. A auditoria de hoje no Emusys mostrou que o critério que alimentava o bloco
+// não mede o que ele promete medir. `filtrarPorRecorte(pessoas, 'contrato')` se apoia em
+// `data_inicio_contrato`, um campo DERIVADO da data da primeira aula: ele fica preenchido desde a
+// criação da matrícula, independentemente de o contrato estar assinado ou não. Ou seja, a lista
+// que saía nos grupos não era "quem está sem contrato assinado" — era outra coisa, com o nome
+// dessa. Cobrar a equipe por um número que ninguém mediu é exatamente o que esta casa não faz, e
+// mensagem que cobra errado uma vez custa a confiança das que estão certas.
+//
+// QUANDO RELIGAR (a condição, não uma data): o Emusys tem o campo que responde à pergunta certa —
+// o booleano `contrato_atual.contrato_assinado`. Ele ainda NÃO é trazido nem materializado no LA
+// Report. Religar isto é o ÚLTIMO passo, e só depois de: (1) o campo chegar à RPC
+// get_situacao_alunos_v1; (2) `filtrarPorRecorte(..., 'contrato')`, em services/situacao-aluno.js,
+// passar a decidir por ele; (3) o ROTULO de lá deixar de dizer "sem data de contrato" e passar a
+// dizer o que o booleano de fato afirma. Virar este `false` antes disso devolve o bug ao ar.
+//
+// POR QUE O CÓDIGO FICA. O bloco volta — o pedido do dono não mudou, só o critério é que não
+// servia. Apagar e reescrever amanhã de memória perderia a copy que ele aprovou palavra por
+// palavra, e os testes que a travam byte a byte (services/anamnese-pauta.test.js, passando
+// `comContrato: true`) continuam rodando justamente pra que o que volta seja o que saiu.
+const CONTRATO_NA_PAUTA = false;
+
 // ── O BLOCO DE CONTRATO (pedido do Alf, 04/09) ───────────────────────────────────────────────
 // "anamnese e contrato sem assinar são duas demandas extremamente importantes que precisam ser
 // colocadas ali de forma separada. Não pode vir dentro do mesmo bolo, tem que estar separadinho."
@@ -297,7 +322,13 @@ function _blocoDeContrato({ contrato, contratoErro, dataBr }) {
 // importa quando o dia começa. A lista inteira mora no painel.
 // `unidadeNome` não entra no texto de propósito: a mensagem já vai pro grupo daquela
 // unidade — repetir o nome seria redundante. Não é esquecimento; não "conserte" tirando o parâmetro.
-function mensagemDoGrupo({ itens, contrato, contratoErro, unidadeNome, dataBr } = {}) {
+// `comContrato` NÃO é opção de produto: é o interruptor da reversão (CONTRATO_NA_PAUTA, lá em
+// cima) com uma porta pro TESTE poder continuar travando, byte a byte, a copy que volta quando o
+// campo certo chegar. Produção não passa este parâmetro — nem o dispatcher, nem o ritual — e por
+// isso a manhã sai hoje exatamente como saía antes de o bloco existir. Quando `false`, `contrato` e
+// `contratoErro` são IGNORADOS de propósito: o aviso "não consegui conferir contrato" é uma
+// promessa de que o TOM está olhando contrato, e prometer o que não se mede é pior que o silêncio.
+function mensagemDoGrupo({ itens, contrato, contratoErro, unidadeNome, dataBr, comContrato = CONTRATO_NA_PAUTA } = {}) {
   const lista = itens || [];
   if (!lista.length) return null;
   const n = lista.length;
@@ -311,7 +342,7 @@ function mensagemDoGrupo({ itens, contrato, contratoErro, unidadeNome, dataBr } 
     + 'A lista completa está no painel do grupo.';
   // Linha EM BRANCO entre os dois: é o "separadinho" que o dono pediu. No WhatsApp é o que faz
   // o olho ver duas demandas e não um bolo só.
-  const blocoContrato = _blocoDeContrato({ contrato, contratoErro, dataBr });
+  const blocoContrato = comContrato ? _blocoDeContrato({ contrato, contratoErro, dataBr }) : null;
   const corpo = blocoContrato ? `${blocoAnamnese}\n\n${blocoContrato}` : blocoAnamnese;
   // A LINHA DO LEMBRETE (pedido do Alf, 04/09). Vem no FIM e depois de uma linha em branco: ela
   // não pertence a nenhum dos dois blocos — é o que o TOM vai fazer com eles pelo resto do dia.
@@ -423,7 +454,12 @@ const ORDEM_PENDENCIAS = ['anamnese', 'contrato'];
 // `hora` (inclusive). É o primeiro lembrete do dia de cada unidade — ver o comentário do texto,
 // logo abaixo. Comparação de string funciona porque a hora vem sempre "HH:MM" com zero à
 // esquerda (horaDaAula garante isso); um "9:00" quebraria a ordem e o corte ao mesmo tempo.
-function alunosDaHora({ anamnese, contrato, hora, recuperacao = false } = {}) {
+// `comContrato` é o MESMO interruptor da mensagem da manhã (CONTRATO_NA_PAUTA, lá em cima), com a
+// mesma porta pro teste. Aqui o efeito não é de bloco, é de LISTA: com ele desligado, quem estava
+// sendo cobrado SÓ por contrato sai do lembrete, e quem tinha os dois rótulos volta a ter um só
+// ("anamnese"). O recorte continua CHEGANDO na função — quem chama não precisa saber da reversão
+// pra estar certo, e é isto que faz religar amanhã ser uma linha, não uma cirurgia.
+function alunosDaHora({ anamnese, contrato, hora, recuperacao = false, comContrato = CONTRATO_NA_PAUTA } = {}) {
   if (!hora) return [];   // sem hora não há "próxima hora" — nada a dizer
   const porChave = new Map();
   const somar = (lista, pendencia) => {
@@ -441,7 +477,7 @@ function alunosDaHora({ anamnese, contrato, hora, recuperacao = false } = {}) {
     }
   };
   somar(anamnese, 'anamnese');
-  somar(contrato, 'contrato');
+  if (comContrato) somar(contrato, 'contrato');
   // HORÁRIO e, dentro da mesma hora, ordem alfabética. No lembrete normal a hora é única, então
   // isto se degrada exatamente na ordem alfabética de sempre — nada muda ali. Na recuperação é o
   // que faz a mensagem se ler na ordem em que o dia aconteceu: quem já está na escola primeiro.
@@ -524,4 +560,8 @@ module.exports = {
   mensagemDoGrupo, PRIMEIROS_NO_ZAP,
   mensagemDeFimDeDia, FALTARAM_NO_ZAP,
   alunosDaHora, lembreteDaProximaHora, LINHA_LEMBRETE_HORA,
+  // O interruptor da reversão do contrato sai daqui pro dispatcher e pro ritual lerem o MESMO
+  // valor: um `false` redigitado em cada ponta faria a reversão voltar pela metade no dia em que
+  // alguém religasse só um lado — e a metade que ficasse ligada seria justamente a que cobra.
+  CONTRATO_NA_PAUTA,
 };

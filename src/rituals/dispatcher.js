@@ -4552,28 +4552,37 @@ async function run(opts = {}) {
             // `now.dow` e não uma conta própria: ele e `now.ymd` saem da MESMA chamada de Intl
             // em nowSaoPaulo(), então não têm como divergir. Uma aritmética de data local aqui
             // reabriria o LOCALYMD-UTC-SHIFT que _diaSemanaBrt documenta no ritual.
+            // REVERSÃO DO CONTRATO (Alf, 04/09): o interruptor é pura.CONTRATO_NA_PAUTA, e o
+            // porquê inteiro — a auditoria do Emusys, e a condição pra religar — mora em cima da
+            // constante, em services/anamnese-pauta.js. Enquanto ele for false a consulta nem
+            // ACONTECE: é uma RPC de 6-8s por unidade por dia jogada fora, e pior, uma leitura de
+            // um critério que a casa já sabe que não mede o que promete. O bloco `try` inteiro
+            // fica de pé, do jeito que volta. A mensagem também ignora contrato por conta própria
+            // (mesmo interruptor, dentro de mensagemDoGrupo) — as duas guardas leem o MESMO valor.
             let contrato = [];
             let contratoErro = null;
-            try {
-              const { data: baseContrato, error: erroContrato } = await laReportClient.rpc(
-                'get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: false });
-              if (erroContrato) {
-                contratoErro = erroContrato.message;
-                console.error(`[Pauta] fala: consulta de contrato falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroContrato.message}`);
-              } else {
-                // filtrarPorRecorte é a ÚNICA definição de cada pendência nesta casa — a mesma
-                // que a montagem usa pra 'anamnese'. Uma cópia do critério de contrato aqui
-                // faria a mensagem e o card do LA Report discordarem, e ninguém confiaria em
-                // nenhum dos dois.
-                contrato = pura.pautaDoDia(
-                  situAl.filtrarPorRecorte(baseContrato || [], 'contrato'), now.dow);
+            if (pura.CONTRATO_NA_PAUTA) {
+              try {
+                const { data: baseContrato, error: erroContrato } = await laReportClient.rpc(
+                  'get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: false });
+                if (erroContrato) {
+                  contratoErro = erroContrato.message;
+                  console.error(`[Pauta] fala: consulta de contrato falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroContrato.message}`);
+                } else {
+                  // filtrarPorRecorte é a ÚNICA definição de cada pendência nesta casa — a mesma
+                  // que a montagem usa pra 'anamnese'. Uma cópia do critério de contrato aqui
+                  // faria a mensagem e o card do LA Report discordarem, e ninguém confiaria em
+                  // nenhum dos dois.
+                  contrato = pura.pautaDoDia(
+                    situAl.filtrarPorRecorte(baseContrato || [], 'contrato'), now.dow);
+                }
+              } catch (eContrato) {
+                // A pauta de anamnese já está pronta na mão: uma exceção na consulta de contrato
+                // não pode derrubar a mensagem inteira da unidade. O bloco sai dizendo que não
+                // conferiu, e o de anamnese sai igual ao de sempre.
+                contratoErro = (eContrato && eContrato.message) || String(eContrato);
+                console.error(`[Pauta] fala: consulta de contrato lançou (${situAl.nomeDaUnidade(unidadeId)}): ${contratoErro}`);
               }
-            } catch (eContrato) {
-              // A pauta de anamnese já está pronta na mão: uma exceção na consulta de contrato
-              // não pode derrubar a mensagem inteira da unidade. O bloco sai dizendo que não
-              // conferiu, e o de anamnese sai igual ao de sempre.
-              contratoErro = (eContrato && eContrato.message) || String(eContrato);
-              console.error(`[Pauta] fala: consulta de contrato lançou (${situAl.nomeDaUnidade(unidadeId)}): ${contratoErro}`);
             }
 
             const [, m, d2] = now.ymd.split('-');
@@ -4584,8 +4593,12 @@ async function run(opts = {}) {
             if (!texto) continue;
             // O marcador precisa distinguir "zero sem contrato hoje" de "não consegui conferir":
             // são a mesma ausência de bloco pra quem só olha o texto, e coisas opostas pra quem
-            // audita por marker_logs.
-            sufixoReason = `itens=${itens.length} contrato=${contratoErro ? 'erro' : contrato.length}`;
+            // audita por marker_logs. Com a reversão em pé não há o que distinguir — e um
+            // `contrato=0` eterno no marcador seria uma AFIRMAÇÃO sobre um número que ninguém foi
+            // medir, que é exatamente o que a reversão existe pra tirar do ar.
+            sufixoReason = pura.CONTRATO_NA_PAUTA
+              ? `itens=${itens.length} contrato=${contratoErro ? 'erro' : contrato.length}`
+              : `itens=${itens.length}`;
           }
 
           // Correção B (revisão do coordenador, 04/09) — o "irmão" do Important 1: mesmo com a

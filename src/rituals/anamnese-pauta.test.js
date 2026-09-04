@@ -1562,7 +1562,15 @@ test('lembrete: fala SÓ de quem chega na próxima hora, não da lista do dia', 
   assert.doesNotMatch(r.texto, /Carla Dias/);
 });
 
-test('lembrete: as DUAS pendências do mesmo aluno viram uma linha com rótulo combinado', async () => {
+// ── A REVERSÃO DO BLOCO DE CONTRATO (Alf, 04/09) ─────────────────────────────────────────────
+// A auditoria de hoje no Emusys mostrou que o recorte 'contrato' se apoia em
+// `data_inicio_contrato` — derivado da data da primeira aula, preenchido desde a criação da
+// matrícula — e não no booleano `contrato_atual.contrato_assinado`, que é o que a cobrança
+// promete medir. Enquanto o campo certo não chega ao LA Report, o ritual não alimenta o recorte:
+// o interruptor é CONTRATO_NA_PAUTA, em services/anamnese-pauta.js. Este teste é o que prova que
+// a REVERSÃO chegou até a ponta que fala com o grupo — o rótulo combinado continua travado, byte
+// a byte, no teste irmão de services/anamnese-pauta.test.js (que passa `comContrato: true`).
+test('reversão: quem estava na lista SÓ por contrato não aparece mais, e os dois rótulos viram um', async () => {
   const r = await rodarLembrete({
     alunos: [
       alunoDaHora('Levi Freire', '15:00', { anamnese: false, contrato: false }),
@@ -1571,8 +1579,18 @@ test('lembrete: as DUAS pendências do mesmo aluno viram uma linha com rótulo c
   });
   assert.strictEqual(r.texto,
     '⏰ *Próxima hora — 15:00*\n'
-    + '· Gabriela da Silva (Canto) — *contrato*\n'
-    + '· Levi Freire (Canto) — *anamnese e contrato*');
+    + '· Levi Freire (Canto) — *anamnese*');
+  assert.deepStrictEqual(r.alunos.map((a) => a.pessoa.nome), ['Levi Freire'],
+    'Gabriela só devia contrato — sem o critério, ela sai da cobrança');
+});
+
+test('reversão: hora em que só havia pendência de contrato não gera mensagem nenhuma', async () => {
+  const r = await rodarLembrete({
+    alunos: [alunoDaHora('Gabriela da Silva', '15:00', { contrato: false })],
+  });
+  assert.strictEqual(r.texto, null, 'silêncio, não um cabeçalho sozinho num grupo real');
+  assert.strictEqual(r.motivo, null, 'e é zero por SAÚDE — o dispatcher grava skipped, não fallback');
+  assert.deepStrictEqual(r.alunos, []);
 });
 
 test('lembrete: hora sem ninguém pendente NÃO vira mensagem — e o motivo é null (zero por saúde)', async () => {
@@ -1640,17 +1658,16 @@ test('lembrete de recuperação: a primeira passada do dia pega quem chegou na h
     ],
   });
   assert.strictEqual(r.motivo, null);
+  // Sem o recorte de contrato (reversão de 04/09): Gabriela, que só devia contrato, sai da faixa,
+  // e Levi fica com um rótulo só. A faixa em si — do começo do dia até a hora seguinte — não mudou.
   assert.strictEqual(r.texto,
     '⏰ *Do começo do dia até as 10:00*\n'
     + '\n'
     + '🕗 *08:00*\n'
     + '· Arthur Bezerra (Canto) — *anamnese*\n'
     + '\n'
-    + '🕘 *09:00*\n'
-    + '· Gabriela da Silva (Canto) — *contrato*\n'
-    + '\n'
     + '🕙 *10:00*\n'
-    + '· Levi Freire (Canto) — *anamnese e contrato*');
+    + '· Levi Freire (Canto) — *anamnese*');
   assert.doesNotMatch(r.texto, /Zeca/, 'a recuperação é uma FAIXA, não a lista do dia inteiro');
 });
 

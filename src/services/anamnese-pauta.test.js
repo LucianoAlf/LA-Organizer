@@ -228,6 +228,13 @@ test('o marcador da quebra é o relógio DAQUELA hora, não um relógio genéric
 // ── O BLOCO DE CONTRATO (pedido do Alf, 04/09) ───────────────────────────────────────────────
 // "anamnese e contrato sem assinar são duas demandas extremamente importantes que precisam ser
 // colocadas ali de forma separada. Não pode vir dentro do mesmo bolo, tem que estar separadinho."
+//
+// REVERSÃO DE 04/09 (auditoria no Emusys): o critério que alimenta este bloco não mede o que ele
+// promete, e o bloco saiu do ar — CONTRATO_NA_PAUTA é o interruptor, e o porquê inteiro está em
+// cima dele, em services/anamnese-pauta.js. Estes testes continuam travando a copy BYTE A BYTE,
+// passando `comContrato: true` explicitamente: é a prova de que o bloco que volta amanhã (com o
+// campo certo) volta EXATAMENTE como o dono aprovou, e não reescrito de memória. Os testes da
+// reversão em si — o que sai HOJE, com o interruptor desligado — vêm logo depois desta série.
 const CONTRATO = [
   { pessoa: { nome: 'Arthur Bezerra' }, hora: '08:00', curso: 'Bateria' },
   { pessoa: { nome: 'Bento Alves' }, hora: '11:00', curso: 'Violão' },
@@ -235,7 +242,7 @@ const CONTRATO = [
 
 test('a copy dos DOIS blocos, byte a byte — separados por linha em branco', () => {
   const m = mensagemDoGrupo({
-    itens: ITENS, contrato: CONTRATO, unidadeNome: 'Recreio', dataBr: 'qua 10/09',
+    itens: ITENS, contrato: CONTRATO, comContrato: true, unidadeNome: 'Recreio', dataBr: 'qua 10/09',
   });
   assert.strictEqual(m,
     '📋 *Anamnese — hoje (qua 10/09)*\n'
@@ -253,7 +260,7 @@ test('a copy dos DOIS blocos, byte a byte — separados por linha em branco', ()
 });
 
 test('dia sem pendência de contrato NÃO imprime bloco de contrato', () => {
-  const m = mensagemDoGrupo({ itens: ITENS, contrato: [], unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: [], comContrato: true, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
   assert.doesNotMatch(m, /Contrato/, 'bloco vazio não aparece');
   // e o que sobra é exatamente a mensagem de sempre
   assert.strictEqual(m, mensagemDoGrupo({ itens: ITENS, unidadeNome: 'Recreio', dataBr: 'qua 10/09' }));
@@ -263,7 +270,7 @@ test('dia sem pendência de contrato NÃO imprime bloco de contrato', () => {
 // tem ninguém sem contrato" — uma afirmação. Fonte fora tem que DIZER que está fora.
 test('fonte de contrato fora NÃO vira zero — diz que não conseguiu conferir', () => {
   const m = mensagemDoGrupo({
-    itens: ITENS, contrato: [], contratoErro: 'timeout', unidadeNome: 'Recreio', dataBr: 'qua 10/09',
+    itens: ITENS, contrato: [], contratoErro: 'timeout', comContrato: true, unidadeNome: 'Recreio', dataBr: 'qua 10/09',
   });
   assert.match(m, /✍️ \*Contrato — hoje \(qua 10\/09\)\*/, 'o bloco aparece mesmo sem lista');
   assert.match(m, /não consegui conferir/i);
@@ -274,7 +281,7 @@ test('contrato longo corta nos primeiros e ensina a pedir a lista inteira', () =
   const muitos = ['Ana', 'Bia', 'Caio', 'Duda', 'Elis'].map((nome, i) => ({
     pessoa: { nome }, hora: `${String(9 + i).padStart(2, '0')}:00`, curso: 'Canto',
   }));
-  const m = mensagemDoGrupo({ itens: ITENS, contrato: muitos, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: muitos, comContrato: true, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
   assert.match(m, /5 alunos com aula hoje ainda sem data de contrato/);
   assert.match(m, /Os primeiros:\n🕘 \*09:00\* — Ana\n🕙 \*10:00\* — Bia\n🕚 \*11:00\* — Caio/);
   assert.doesNotMatch(m, /Duda/, 'contrato usa o mesmo teto do bloco de anamnese');
@@ -285,8 +292,8 @@ test('contrato longo corta nos primeiros e ensina a pedir a lista inteira', () =
 
 test('item torto no bloco de contrato não vaza "undefined" nem derruba a mensagem', () => {
   const tortos = [{ hora: '08:00' }, { pessoa: { nome: 'Sem Hora' } }];
-  assert.doesNotThrow(() => mensagemDoGrupo({ itens: ITENS, contrato: tortos, dataBr: 'qua 10/09' }));
-  const m = mensagemDoGrupo({ itens: ITENS, contrato: tortos, dataBr: 'qua 10/09' });
+  assert.doesNotThrow(() => mensagemDoGrupo({ itens: ITENS, contrato: tortos, comContrato: true, dataBr: 'qua 10/09' }));
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: tortos, comContrato: true, dataBr: 'qua 10/09' });
   assert.doesNotMatch(m, /undefined/);
 });
 
@@ -295,11 +302,44 @@ test('item torto no bloco de contrato não vaza "undefined" nem derruba a mensag
 // primeira linha, a guarda ficaria cega e a mensagem poderia sair duas vezes num grupo real.
 test('o bloco de contrato NÃO muda a primeira linha — a guarda de duplicata depende dela', () => {
   const semC = mensagemDoGrupo({ itens: ITENS, dataBr: 'qua 10/09' }).split('\n')[0];
-  const comC = mensagemDoGrupo({ itens: ITENS, contrato: CONTRATO, dataBr: 'qua 10/09' }).split('\n')[0];
-  const comErro = mensagemDoGrupo({ itens: ITENS, contratoErro: 'x', dataBr: 'qua 10/09' }).split('\n')[0];
+  const comC = mensagemDoGrupo({ itens: ITENS, contrato: CONTRATO, comContrato: true, dataBr: 'qua 10/09' }).split('\n')[0];
+  const comErro = mensagemDoGrupo({ itens: ITENS, contratoErro: 'x', comContrato: true, dataBr: 'qua 10/09' }).split('\n')[0];
   assert.strictEqual(comC, semC);
   assert.strictEqual(comErro, semC);
 });
+
+// ── A REVERSÃO DO BLOCO DE CONTRATO (Alf, 04/09) ─────────────────────────────────────────────
+// A auditoria de hoje no Emusys mostrou que o recorte 'contrato' se apoia em `data_inicio_contrato`
+// — campo derivado da data da primeira aula, preenchido desde a criação da matrícula — e não no
+// booleano `contrato_atual.contrato_assinado`, que é o que a frase "sem assinar" promete medir.
+// Enquanto o campo certo não chega ao LA Report, a mensagem volta ao escopo de ANTES: só anamnese.
+//
+// O que estes testes travam é o DEFAULT — o que produção usa, porque nem o dispatcher nem o ritual
+// passam `comContrato`. Se alguém religar o interruptor sem o campo certo, eles quebram na cara.
+test('reversão: com o interruptor desligado a manhã sai SÓ com anamnese, byte a byte', () => {
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: CONTRATO, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  assert.strictEqual(m,
+    '📋 *Anamnese — hoje (qua 10/09)*\n'
+    + '4 alunos com aula hoje ainda sem anamnese. Os primeiros:\n'
+    + '🕗 *08:00* — Arthur Bezerra\n'
+    + '🕘 *09:00* — Maria Isabel · Davi Reis\n'
+    + 'A lista completa está no painel do grupo.\n'
+    + '\n'
+    + 'De hora em hora eu aviso aqui quem chega na hora seguinte.');
+});
+
+// O "não consegui conferir contrato" some junto. Ele é uma PROMESSA de que o TOM está olhando
+// contrato — e enquanto o critério está suspenso, essa promessa é falsa: prometer conferir o que
+// nem se mede é pior que o silêncio.
+test('reversão: nem o aviso de "não consegui conferir contrato" sobrevive ao interruptor desligado', () => {
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: [], contratoErro: 'timeout', dataBr: 'qua 10/09' });
+  assert.doesNotMatch(m, /Contrato|conferir/i);
+  assert.strictEqual(m, mensagemDoGrupo({ itens: ITENS, dataBr: 'qua 10/09' }),
+    'com o bloco desligado a mensagem é IDÊNTICA à de antes de o bloco existir');
+});
+
+// O outro lado da reversão — o lembrete de hora em hora — está no fim da seção do lembrete,
+// depois que `alunosDaHora` e o helper ITEM existem neste arquivo.
 
 test('item torto (sem pessoa ou sem hora) não derruba a mensagem nem vaza "undefined"', () => {
   const itens = [
@@ -420,7 +460,7 @@ const { alunosDaHora, lembreteDaProximaHora, LINHA_LEMBRETE_HORA } = require('./
 const ITEM = (nome, hora, curso) => ({ pessoa: { nome, pessoa_chave: 'pk-' + nome }, hora, curso });
 
 test('a linha do lembrete é a ÚLTIMA da mensagem da manhã — e não toca a primeira', () => {
-  const m = mensagemDoGrupo({ itens: ITENS, contrato: CONTRATO, dataBr: 'qua 10/09' });
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: CONTRATO, comContrato: true, dataBr: 'qua 10/09' });
   const linhas = m.split('\n');
   assert.strictEqual(linhas[linhas.length - 1], LINHA_LEMBRETE_HORA);
   // A primeira linha é a chave da guarda de duplicata do dispatcher — a linha nova não pode
@@ -443,6 +483,7 @@ test('quem tem as DUAS pendências vira UMA linha com rótulo combinado', () => 
   const r = alunosDaHora({
     anamnese: [ITEM('Levi Freire', '15:00', 'Bateria')],
     contrato: [ITEM('Levi Freire', '15:00', 'Bateria')],
+    comContrato: true,
     hora: '15:00',
   });
   assert.strictEqual(r.length, 1, 'é a mesma pessoa chegando na mesma hora — duas linhas confundem');
@@ -453,6 +494,7 @@ test('o mesmo NOME em pessoas diferentes não colapsa numa linha só', () => {
   const r = alunosDaHora({
     anamnese: [{ pessoa: { nome: 'Maria', pessoa_chave: 'pk-1' }, hora: '15:00', curso: 'Canto' }],
     contrato: [{ pessoa: { nome: 'Maria', pessoa_chave: 'pk-2' }, hora: '15:00', curso: 'Violão' }],
+    comContrato: true,
     hora: '15:00',
   });
   assert.strictEqual(r.length, 2, 'uma unidade tem dezenas de "Maria" — quem é chave é pessoa_chave');
@@ -462,6 +504,7 @@ test('o lembrete trava a copy aprovada — string inteira, byte a byte', () => {
   const itens = alunosDaHora({
     anamnese: [ITEM('Arthur Bezerra', '15:00', 'Teclado'), ITEM('Levi Freire', '15:00', 'Bateria')],
     contrato: [ITEM('Gabriela da Silva', '15:00', 'Contrabaixo'), ITEM('Levi Freire', '15:00', 'Bateria')],
+    comContrato: true,
     hora: '15:00',
   });
   assert.strictEqual(lembreteDaProximaHora({ itens, hora: '15:00' }),
@@ -478,6 +521,7 @@ test('a pendência sai em negrito, e o negrito abraça o rótulo inteiro', () =>
   const itens = alunosDaHora({
     anamnese: [ITEM('Levi Freire', '15:00', 'Bateria')],
     contrato: [ITEM('Levi Freire', '15:00', 'Bateria')],
+    comContrato: true,
     hora: '15:00',
   });
   const m = lembreteDaProximaHora({ itens, hora: '15:00' });
@@ -530,6 +574,44 @@ test('o lembrete não muta o que recebeu', () => {
   const antes = JSON.stringify(itens);
   lembreteDaProximaHora({ itens, hora: '15:00' });
   assert.strictEqual(JSON.stringify(itens), antes);
+});
+
+// ── A REVERSÃO DO CONTRATO, DO LADO DO LEMBRETE (Alf, 04/09) ─────────────────────────────────
+// Mesmo interruptor da mensagem da manhã (CONTRATO_NA_PAUTA, em services/anamnese-pauta.js). Aqui
+// o efeito é de LISTA, não de bloco: quem estava sendo cobrado só por contrato sai da lista, e
+// quem tinha os dois rótulos volta a ter um só. O default é o que produção usa — nem o ritual nem
+// o dispatcher passam `comContrato`.
+test('reversão: o lembrete ignora o recorte de contrato — quem estava lá SÓ por contrato some', () => {
+  const r = alunosDaHora({
+    anamnese: [ITEM('Arthur Bezerra', '15:00', 'Teclado')],
+    contrato: [ITEM('Gabriela da Silva', '15:00', 'Contrabaixo'), ITEM('Arthur Bezerra', '15:00', 'Teclado')],
+    hora: '15:00',
+  });
+  assert.deepStrictEqual(r.map((x) => x.pessoa.nome), ['Arthur Bezerra'],
+    'Gabriela entrava na lista só por contrato — sem o critério, ela não entra');
+  assert.deepStrictEqual(r[0].pendencias, ['anamnese'],
+    'quem tinha os DOIS rótulos fica com anamnese, não com "anamnese e contrato"');
+});
+
+test('reversão: hora que só tinha gente por contrato não vira mensagem nenhuma', () => {
+  const itens = alunosDaHora({
+    anamnese: [],
+    contrato: [ITEM('Gabriela da Silva', '15:00', 'Contrabaixo')],
+    hora: '15:00',
+  });
+  assert.deepStrictEqual(itens, []);
+  assert.strictEqual(lembreteDaProximaHora({ itens, hora: '15:00' }), null,
+    'silêncio, e não um cabeçalho sozinho num grupo real');
+});
+
+test('reversão: a recuperação também não cobra contrato', () => {
+  const itens = alunosDaHora({
+    anamnese: [ITEM('Ana', '08:00', 'Canto')],
+    contrato: [ITEM('Bento', '09:00', 'Violão')],
+    hora: '10:00', recuperacao: true,
+  });
+  assert.strictEqual(lembreteDaProximaHora({ itens, hora: '10:00', recuperacao: true }),
+    '⏰ *Do começo do dia até as 10:00*\n· 08:00 Ana (Canto) — *anamnese*');
 });
 
 // ── O HORÁRIO DE ABERTURA DE CADA UNIDADE (correção 04/09) ───────────────────────────────────
@@ -659,7 +741,7 @@ test('recuperação: o cabeçalho diz a FAIXA, e cada linha carrega a hora do al
   const itens = alunosDaHora({
     anamnese: [ITEM('Arthur Bezerra', '08:00', 'Teclado'), ITEM('Levi Freire', '10:00', 'Bateria')],
     contrato: [ITEM('Levi Freire', '10:00', 'Bateria'), ITEM('Gabriela da Silva', '09:00', 'Contrabaixo')],
-    hora: '10:00', recuperacao: true,
+    comContrato: true, hora: '10:00', recuperacao: true,
   });
   assert.strictEqual(lembreteDaProximaHora({ itens, hora: '10:00', recuperacao: true }),
     '⏰ *Do começo do dia até as 10:00*\n'
