@@ -1571,8 +1571,8 @@ test('lembrete: as DUAS pendências do mesmo aluno viram uma linha com rótulo c
   });
   assert.strictEqual(r.texto,
     '⏰ *Próxima hora — 15:00*\n'
-    + '· Gabriela da Silva (Canto) — contrato\n'
-    + '· Levi Freire (Canto) — anamnese e contrato');
+    + '· Gabriela da Silva (Canto) — *contrato*\n'
+    + '· Levi Freire (Canto) — *anamnese e contrato*');
 });
 
 test('lembrete: hora sem ninguém pendente NÃO vira mensagem — e o motivo é null (zero por saúde)', async () => {
@@ -1642,9 +1642,15 @@ test('lembrete de recuperação: a primeira passada do dia pega quem chegou na h
   assert.strictEqual(r.motivo, null);
   assert.strictEqual(r.texto,
     '⏰ *Do começo do dia até as 10:00*\n'
-    + '· 08:00 Arthur Bezerra (Canto) — anamnese\n'
-    + '· 09:00 Gabriela da Silva (Canto) — contrato\n'
-    + '· 10:00 Levi Freire (Canto) — anamnese e contrato');
+    + '\n'
+    + '🕗 *08:00*\n'
+    + '· Arthur Bezerra (Canto) — *anamnese*\n'
+    + '\n'
+    + '🕘 *09:00*\n'
+    + '· Gabriela da Silva (Canto) — *contrato*\n'
+    + '\n'
+    + '🕙 *10:00*\n'
+    + '· Levi Freire (Canto) — *anamnese e contrato*');
   assert.doesNotMatch(r.texto, /Zeca/, 'a recuperação é uma FAIXA, não a lista do dia inteiro');
 });
 
@@ -1654,7 +1660,7 @@ test('lembrete de recuperação: da SEGUNDA passada em diante não repete quem j
     alunoDaHora('Levi Freire', '11:00', { anamnese: false }),
   ];
   const r = await rodarLembrete({ hora: '11:00', alunos });   // sem recuperacao: o comportamento de hoje
-  assert.strictEqual(r.texto, '⏰ *Próxima hora — 11:00*\n· Levi Freire (Canto) — anamnese');
+  assert.strictEqual(r.texto, '⏰ *Próxima hora — 11:00*\n· Levi Freire (Canto) — *anamnese*');
   assert.doesNotMatch(r.texto, /Arthur/, 'ele já saiu na recuperação — repetir 11 vezes é o ruído que mata a leitura');
 });
 

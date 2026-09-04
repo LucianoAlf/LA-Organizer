@@ -81,11 +81,18 @@ const rodarBloco = new Function(
 const UNIDADES = ['u-recreio', 'u-barra', 'u-cg'];
 const NOMES = { 'u-recreio': 'Recreio', 'u-barra': 'Barra', 'u-cg': 'Campo Grande' };
 const YMD = '2026-09-04';
-const TEXTO = (hora) => `⏰ *Próxima hora — ${hora}*\n· Ana (Canto) — anamnese`;
-// O texto da RECUPERACAO: cabecalho de FAIXA e hora em cada linha. Ele existe aqui porque a
-// guarda de duplicata do bloco casa pelo PRIMEIRO caractere ate o fim da primeira linha — se o
-// cabecalho novo nao for visto por ela, a faixa sai duas vezes num grupo real de WhatsApp.
-const TEXTO_RECUP = (hora) => `⏰ *Do começo do dia até as ${hora}*\n· 08:00 Ana (Canto) — anamnese`;
+// Os dois textos abaixo sao FIXTURES no formato real (arrumacao de 04/09: separado por horario,
+// pendencia em negrito). Nao precisam bater byte a byte com o modulo puro — quem trava a copy e
+// services/anamnese-pauta.test.js — mas ficam no formato de verdade de proposito: um fixture com
+// cara antiga faria alguem ler este arquivo e achar que o texto de producao ainda e aquele.
+const TEXTO = (hora) => `⏰ *Próxima hora — ${hora}*\n· Ana (Canto) — *anamnese*`;
+// O texto da RECUPERACAO: cabecalho de FAIXA, blocos por hora abaixo dele. Ele existe aqui porque
+// a guarda de duplicata do bloco casa pelo PRIMEIRO caractere ate o fim da primeira linha — se o
+// cabecalho novo nao for visto por ela, a faixa sai duas vezes num grupo real de WhatsApp. Repare
+// que o agrupamento comeca DEPOIS da primeira linha: e isso que mantem a guarda enxergando.
+const TEXTO_RECUP = (hora) => `⏰ *Do começo do dia até as ${hora}*\n`
+  + `\n🕗 *08:00*\n· Ana (Canto) — *anamnese*\n`
+  + `\n🕘 *09:00*\n· Bento (Violão) — *contrato*`;
 
 async function semBarulho(fn, saida) {
   const original = { log: console.log, warn: console.warn, error: console.error };

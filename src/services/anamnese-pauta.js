@@ -192,9 +192,10 @@ function separarPorDegrau(itens, mapaFalhas) {
 // ── A MENSAGEM (Task 4) ──────────────────────────────────────────────────────────────────
 const PRIMEIROS_NO_ZAP = 3;
 
-// "HH:MM Nome · HH:MM Nome". UM lugar só: os dois blocos da manhã e a lista da noite usam o
-// MESMO formato, e uma segunda cópia divergiria no dia em que alguém trocasse o '·' por vírgula
-// em um dos lados e não no outro.
+// "HH:MM Nome · HH:MM Nome". Hoje sobrou pro RELATÓRIO DA NOITE só: os blocos da manhã passaram
+// a sair separados por horário (ver _linhasPorHora, logo abaixo). O relatório da noite ficou como
+// estava de propósito — ali a lista é de quem FALTOU, no máximo três nomes, e a hora é detalhe
+// de contexto, não o eixo pelo qual alguém age. Agrupar lá seria estrutura sem leitor.
 // Item torto (sem pessoa, sem hora) não pode derrubar a mensagem da unidade inteira nem vazar a
 // palavra "undefined" pro zap que a equipe lê — '?' e '--:--' são feios, mas muito melhores que
 // um TypeError na hora de falar ou um "undefined" na frente da equipe.
@@ -205,6 +206,54 @@ function _horariosENomes(lista, quantos) {
 
 function _alunosComAula(n) {
   return `${n} aluno${n > 1 ? 's' : ''} com aula hoje`;
+}
+
+// ── ARRUMAÇÃO POR HORÁRIO (pedido do Alf, 04/09) ─────────────────────────────────────────────
+// "esse tipo de texto corrido assim é difícil. O ideal é vir separadinho, por horário. Semântico,
+// grifando qual é a pendência, botando em negrito. Assim fica uma massaroca, a galera nem lê."
+//
+// O EIXO É A HORA, e não o aluno, porque é quando a pessoa AGE: às 09:00 chegam três alunos, a
+// secretaria vai buscar esses três de uma vez. Repetir "09:00" em cada linha é justamente o que
+// faz a mensagem virar bolo — a hora sobe pra um cabeçalho e some das linhas.
+//
+// NADA AQUI MUDA REGRA: quem entra na mensagem, quem fica de fora, o silêncio da hora vazia e o
+// "não consegui conferir" continuam decididos exatamente onde estavam. Isto é arrumação de texto.
+
+// O marcador da quebra é o RELÓGIO DA PRÓPRIA HORA — 09:00 sai com o relógio das 9. Sai de
+// codepoint e não de emoji digitado: a tabela Unicode é contígua (U+1F550 = 1h … U+1F55B = 12h,
+// U+1F55C = 1h30 … U+1F567 = 12h30) e calcular é a única forma de nunca imprimir um relógio que
+// contradiz o número escrito ao lado. Hora ilegível (item torto) cai no relógio de parede, que
+// não afirma horário nenhum — melhor que um relógio marcando uma hora inventada.
+function _marcadorDaHora(hora) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hora || ''));
+  if (!m) return String.fromCodePoint(0x1F570, 0xFE0F);
+  const h12 = (Number(m[1]) + 11) % 12;               // 0 = 1h, 11 = 12h
+  return String.fromCodePoint(0x1F550 + h12 + (Number(m[2]) >= 30 ? 12 : 0));
+}
+
+// Agrupa PRESERVANDO a ordem em que os itens chegaram — quem chama já ordenou por horário, e
+// re-ordenar aqui esconderia um erro de ordenação lá em cima em vez de deixá-lo aparecer.
+// Item sem hora vira '--:--' e fica onde estava: some da mensagem seria perder gente em silêncio.
+function _agruparPorHora(itens) {
+  const grupos = new Map();
+  for (const i of (itens || [])) {
+    const h = (i && i.hora) || '--:--';
+    if (!grupos.has(h)) grupos.set(h, []);
+    grupos.get(h).push(i);
+  }
+  return [...grupos.entries()].map(([hora, lista]) => ({ hora, itens: lista }));
+}
+
+// A forma COMPACTA, usada nos blocos da manhã: uma linha por HORÁRIO, com os nomes daquela hora.
+// Por que compacta e não em blocos como o lembrete: aqui cada item é só um nome (a pendência já
+// está no cabeçalho do bloco, "Anamnese"/"Contrato"), e a manhã carrega DOIS blocos mais a linha
+// da promessa. Em blocos verticais, três nomes virariam nove linhas — o oposto de ler rápido.
+// No lembrete cada linha carrega a pendência do aluno e precisa de linha própria; aqui, não.
+function _linhasPorHora(lista, quantos) {
+  return _agruparPorHora((lista || []).slice(0, quantos))
+    .map((g) => `${_marcadorDaHora(g.hora)} *${g.hora}* — `
+      + g.itens.map((i) => (i && i.pessoa && i.pessoa.nome) || '?').join(' · '))
+    .join('\n');
 }
 
 // ── O BLOCO DE CONTRATO (pedido do Alf, 04/09) ───────────────────────────────────────────────
@@ -235,8 +284,10 @@ function _blocoDeContrato({ contrato, contratoErro, dataBr }) {
   const lista = contrato || [];
   if (!lista.length) return null;
   const n = lista.length;
-  const corpo = `${cabecalho}\n${_alunosComAula(n)} ainda sem data de contrato.\n`
-    + `${n > PRIMEIROS_NO_ZAP ? 'Os primeiros' : 'Hoje'}: ${_horariosENomes(lista, PRIMEIROS_NO_ZAP)}`;
+  // A lista sai SEPARADA POR HORÁRIO (04/09), igual à do bloco de anamnese. O ':' fecha a linha
+  // da contagem e a lista desce — "Hoje:" no meio de uma frase que já diz "hoje" era repetição.
+  const corpo = `${cabecalho}\n${_alunosComAula(n)} ainda sem data de contrato`
+    + `${n > PRIMEIROS_NO_ZAP ? '. Os primeiros:' : ':'}\n${_linhasPorHora(lista, PRIMEIROS_NO_ZAP)}`;
   return n > PRIMEIROS_NO_ZAP
     ? `${corpo}\nMe peça a lista de contrato que eu mando ela inteira.`
     : corpo;
@@ -250,10 +301,13 @@ function mensagemDoGrupo({ itens, contrato, contratoErro, unidadeNome, dataBr } 
   const lista = itens || [];
   if (!lista.length) return null;
   const n = lista.length;
-  const cabeca = _horariosENomes(lista, PRIMEIROS_NO_ZAP);
+  // SEPARADO POR HORÁRIO (04/09). A primeira linha continua sendo o cabeçalho — a guarda de
+  // duplicata do dispatcher casa `like('content', texto.split('\n')[0] + '%')`, e a arrumação
+  // acontece toda da segunda linha pra baixo, onde ela não alcança.
+  const cabeca = _linhasPorHora(lista, PRIMEIROS_NO_ZAP);
   const blocoAnamnese = `📋 *Anamnese — hoje (${dataBr})*\n`
-    + `${_alunosComAula(n)} ainda sem anamnese.\n`
-    + `${n > PRIMEIROS_NO_ZAP ? 'Os primeiros' : 'Hoje'}: ${cabeca}\n`
+    + `${_alunosComAula(n)} ainda sem anamnese${n > PRIMEIROS_NO_ZAP ? '. Os primeiros:' : ':'}\n`
+    + `${cabeca}\n`
     + 'A lista completa está no painel do grupo.';
   // Linha EM BRANCO entre os dois: é o "separadinho" que o dono pediu. No WhatsApp é o que faz
   // o olho ver duas demandas e não um bolo só.
@@ -419,26 +473,40 @@ function alunosDaHora({ anamnese, contrato, hora, recuperacao = false } = {}) {
 // e quem ainda vai chegar. Os dois cabeçalhos são distintos e nenhum é prefixo do outro: a guarda
 // de duplicata do dispatcher casa `like('content', primeiraLinha%)`, e um prefixo comum a deixaria
 // cega justo na mensagem nova. Os dois levam a HORA, que é o que separa um slot do outro.
+//
+// SEPARADO POR HORÁRIO E COM A PENDÊNCIA EM NEGRITO (pedido do Alf, 04/09): "o ideal é vir
+// separadinho, por horário. Semântico, grifando qual é a pendência, botando em negrito." O que
+// está em negrito é o que a secretaria vai PEDIR ao aluno — é a única coisa acionável da linha.
+//
+// O CABEÇALHO DE HORA SÓ APARECE QUANDO HÁ MAIS DE UMA HORA NA MENSAGEM. Com uma hora só, ele
+// repetiria o que o cabeçalho de cima já diz e custaria duas linhas (a dele e a em branco) pra
+// não dizer nada — numa hora com um aluno, isso é pior que a linha única. O lembrete normal cai
+// sempre nesse caso (alunosDaHora filtra pela hora exata); a recuperação cai nele nos dias em que
+// a faixa varrida tem gente de uma hora só, e aí a hora continua na linha, como estava.
 function lembreteDaProximaHora({ itens, hora, recuperacao = false } = {}) {
   if (!hora) return null;
-  const linhas = [];
-  for (const i of (itens || [])) {
-    // Item sem pendência nenhuma não vira linha: "· Fulano — " não diz nada e é pior que ausência.
-    const rotulo = (i && i.pendencias || []).join(' e ');
-    if (!rotulo) continue;
-    const nome = (i.pessoa && i.pessoa.nome) || '?';
-    // No lembrete normal a hora já está no cabeçalho e é a mesma pra todo mundo — repetir em
-    // cada linha seria ruído. Na recuperação ela é a única coisa que distingue as linhas.
-    const quando = recuperacao ? `${i.hora || '--:--'} ` : '';
-    linhas.push(`· ${quando}${nome}${i.curso ? ` (${i.curso})` : ''} — ${rotulo}`);
-  }
+  // Item sem pendência nenhuma não vira linha: "· Fulano — " não diz nada e é pior que ausência.
+  const validos = (itens || []).filter((i) => ((i && i.pendencias) || []).length);
   // Hora sem ninguém pendente NÃO gera mensagem: silêncio ali é notícia boa. Quem distingue "zero
   // por saúde" de "zero por falha" é o marcador que o dispatcher grava, não a ausência de texto.
-  if (!linhas.length) return null;
+  if (!validos.length) return null;
   const cabecalho = recuperacao
     ? `⏰ *Do começo do dia até as ${hora}*`
     : `⏰ *Próxima hora — ${hora}*`;
-  return [cabecalho, ...linhas].join('\n');
+  const linha = (i, comHora) => {
+    const nome = (i.pessoa && i.pessoa.nome) || '?';
+    const quando = comHora ? `${i.hora || '--:--'} ` : '';
+    return `· ${quando}${nome}${i.curso ? ` (${i.curso})` : ''} — *${i.pendencias.join(' e ')}*`;
+  };
+  const grupos = _agruparPorHora(validos);
+  if (grupos.length < 2) return [cabecalho, ...validos.map((i) => linha(i, recuperacao))].join('\n');
+  // Linha EM BRANCO entre os blocos: é ela que dá o respiro no celular — sem ela o agrupamento
+  // só acrescenta linhas e a mensagem continua sendo um bolo, que é a queixa original.
+  const blocos = grupos.map((g) => [
+    `${_marcadorDaHora(g.hora)} *${g.hora}*`,
+    ...g.itens.map((i) => linha(i, false)),
+  ].join('\n'));
+  return `${cabecalho}\n\n${blocos.join('\n\n')}`;
 }
 
 module.exports = {

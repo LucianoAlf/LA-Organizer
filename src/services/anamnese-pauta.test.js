@@ -169,7 +169,8 @@ test('a mensagem diz o número e SÓ os primeiros horários', () => {
   const m = mensagemDoGrupo({ itens: ITENS, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
   assert.match(m, /4 alunos/);
   assert.match(m, /qua 10\/09/);
-  assert.match(m, /08:00 Arthur Bezerra/);
+  // separado POR HORÁRIO (04/09): a hora sobe pra um marcador em negrito e some das linhas
+  assert.match(m, /🕗 \*08:00\* — Arthur Bezerra/);
   // quem tem aula às 14h não precisa aparecer às 7h30
   assert.doesNotMatch(m, /Alice Cagnin/, 'só os 3 primeiros — 43 nomes ninguém lê num zap');
   assert.match(m, /painel/, 'aponta pro painel, onde a lista inteira está');
@@ -196,11 +197,32 @@ test('a mensagem trava a copy aprovada — string inteira, byte a byte', () => {
   const m = mensagemDoGrupo({ itens: ITENS, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
   assert.strictEqual(m,
     '📋 *Anamnese — hoje (qua 10/09)*\n'
-    + '4 alunos com aula hoje ainda sem anamnese.\n'
-    + 'Os primeiros: 08:00 Arthur Bezerra · 09:00 Maria Isabel · 09:00 Davi Reis\n'
+    + '4 alunos com aula hoje ainda sem anamnese. Os primeiros:\n'
+    + '🕗 *08:00* — Arthur Bezerra\n'
+    + '🕘 *09:00* — Maria Isabel · Davi Reis\n'
     + 'A lista completa está no painel do grupo.\n'
     + '\n'
     + 'De hora em hora eu aviso aqui quem chega na hora seguinte.');
+});
+
+// A queixa que gerou esta arrumação (04/09): "esse tipo de texto corrido assim é difícil. O ideal
+// é vir separadinho, por horário." O que prova a correção não é a existência do agrupamento, é a
+// AUSÊNCIA da repetição: com dois alunos às 09:00, a hora aparece UMA vez, não duas.
+test('a manhã não repete o horário linha a linha — é isso que fazia a massaroca', () => {
+  const m = mensagemDoGrupo({ itens: ITENS, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  assert.strictEqual(m.split('09:00').length - 1, 1, 'dois alunos às 09:00, um cabeçalho de hora só');
+  assert.match(m, /🕘 \*09:00\* — Maria Isabel · Davi Reis/);
+});
+
+// O relógio sai da PRÓPRIA hora (codepoint calculado): um relógio marcando outra hora ao lado do
+// número escrito é o tipo de descuido que faz a equipe parar de confiar na mensagem.
+test('o marcador da quebra é o relógio DAQUELA hora, não um relógio genérico', () => {
+  const m = mensagemDoGrupo({
+    itens: [{ pessoa: { nome: 'Ana' }, hora: '08:00' }, { pessoa: { nome: 'Bia' }, hora: '14:00' }],
+    dataBr: 'qua 10/09',
+  });
+  assert.match(m, /🕗 \*08:00\*/, '08:00 sai com o relógio das 8');
+  assert.match(m, /🕑 \*14:00\*/, '14:00 sai com o relógio das 2 — a mesma posição do ponteiro');
 });
 
 // ── O BLOCO DE CONTRATO (pedido do Alf, 04/09) ───────────────────────────────────────────────
@@ -217,13 +239,15 @@ test('a copy dos DOIS blocos, byte a byte — separados por linha em branco', ()
   });
   assert.strictEqual(m,
     '📋 *Anamnese — hoje (qua 10/09)*\n'
-    + '4 alunos com aula hoje ainda sem anamnese.\n'
-    + 'Os primeiros: 08:00 Arthur Bezerra · 09:00 Maria Isabel · 09:00 Davi Reis\n'
+    + '4 alunos com aula hoje ainda sem anamnese. Os primeiros:\n'
+    + '🕗 *08:00* — Arthur Bezerra\n'
+    + '🕘 *09:00* — Maria Isabel · Davi Reis\n'
     + 'A lista completa está no painel do grupo.\n'
     + '\n'
     + '✍️ *Contrato — hoje (qua 10/09)*\n'
-    + '2 alunos com aula hoje ainda sem data de contrato.\n'
-    + 'Hoje: 08:00 Arthur Bezerra · 11:00 Bento Alves\n'
+    + '2 alunos com aula hoje ainda sem data de contrato:\n'
+    + '🕗 *08:00* — Arthur Bezerra\n'
+    + '🕚 *11:00* — Bento Alves\n'
     + '\n'
     + 'De hora em hora eu aviso aqui quem chega na hora seguinte.');
 });
@@ -252,7 +276,7 @@ test('contrato longo corta nos primeiros e ensina a pedir a lista inteira', () =
   }));
   const m = mensagemDoGrupo({ itens: ITENS, contrato: muitos, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
   assert.match(m, /5 alunos com aula hoje ainda sem data de contrato/);
-  assert.match(m, /Os primeiros: 09:00 Ana · 10:00 Bia · 11:00 Caio/);
+  assert.match(m, /Os primeiros:\n🕘 \*09:00\* — Ana\n🕙 \*10:00\* — Bia\n🕚 \*11:00\* — Caio/);
   assert.doesNotMatch(m, /Duda/, 'contrato usa o mesmo teto do bloco de anamnese');
   // Contrato NÃO tem painel (a pauta não cria tarefa de contrato — spec §8), então o único
   // caminho pra lista inteira é pedir pro TOM. Se a mensagem não ensinar, ninguém descobre.
@@ -442,9 +466,32 @@ test('o lembrete trava a copy aprovada — string inteira, byte a byte', () => {
   });
   assert.strictEqual(lembreteDaProximaHora({ itens, hora: '15:00' }),
     '⏰ *Próxima hora — 15:00*\n'
-    + '· Arthur Bezerra (Teclado) — anamnese\n'
-    + '· Gabriela da Silva (Contrabaixo) — contrato\n'
-    + '· Levi Freire (Bateria) — anamnese e contrato');
+    + '· Arthur Bezerra (Teclado) — *anamnese*\n'
+    + '· Gabriela da Silva (Contrabaixo) — *contrato*\n'
+    + '· Levi Freire (Bateria) — *anamnese e contrato*');
+});
+
+// "grifando qual é a pendência, botando em negrito" (Alf, 04/09). O negrito não é enfeite: a
+// pendência é a única coisa ACIONÁVEL da linha — é o que a secretaria vai pedir ao aluno.
+// Negrito no WhatsApp é *asterisco*, e o bridge não reescreve nada: o que sai daqui é o que chega.
+test('a pendência sai em negrito, e o negrito abraça o rótulo inteiro', () => {
+  const itens = alunosDaHora({
+    anamnese: [ITEM('Levi Freire', '15:00', 'Bateria')],
+    contrato: [ITEM('Levi Freire', '15:00', 'Bateria')],
+    hora: '15:00',
+  });
+  const m = lembreteDaProximaHora({ itens, hora: '15:00' });
+  assert.match(m, /— \*anamnese e contrato\*$/, 'um grifo só no rótulo inteiro, não um por palavra');
+});
+
+// O lembrete normal fala de UMA hora só, e ela já está no cabeçalho. Um cabeçalho de seção aqui
+// custaria duas linhas (a dele e a em branco) pra repetir o que a linha de cima já disse — numa
+// hora com um aluno, isso é pior que a linha única. Estrutura só quando ela paga o espaço.
+test('hora única não ganha cabeçalho de seção — o de cima já diz a hora', () => {
+  const itens = alunosDaHora({ anamnese: [ITEM('Ana', '15:00', 'Canto')], contrato: [], hora: '15:00' });
+  const m = lembreteDaProximaHora({ itens, hora: '15:00' });
+  assert.strictEqual(m.split('\n').length, 2, 'cabeçalho + a linha do aluno, nada mais');
+  assert.doesNotMatch(m, /\n\n/, 'sem linha em branco: não há bloco nenhum a separar');
 });
 
 test('hora sem ninguém pendente NÃO vira mensagem — silêncio ali é notícia boa', () => {
@@ -474,7 +521,7 @@ test('aluno sem curso não vira parêntese vazio, e item torto não vaza "undefi
     hora: '15:00',
   });
   const m = lembreteDaProximaHora({ itens, hora: '15:00' });
-  assert.strictEqual(m, '⏰ *Próxima hora — 15:00*\n· Sem Curso — anamnese');
+  assert.strictEqual(m, '⏰ *Próxima hora — 15:00*\n· Sem Curso — *anamnese*');
   assert.doesNotMatch(m, /undefined|\(\)/);
 });
 
@@ -616,15 +663,29 @@ test('recuperação: o cabeçalho diz a FAIXA, e cada linha carrega a hora do al
   });
   assert.strictEqual(lembreteDaProximaHora({ itens, hora: '10:00', recuperacao: true }),
     '⏰ *Do começo do dia até as 10:00*\n'
-    + '· 08:00 Arthur Bezerra (Teclado) — anamnese\n'
-    + '· 09:00 Gabriela da Silva (Contrabaixo) — contrato\n'
-    + '· 10:00 Levi Freire (Bateria) — anamnese e contrato');
+    + '\n'
+    + '🕗 *08:00*\n'
+    + '· Arthur Bezerra (Teclado) — *anamnese*\n'
+    + '\n'
+    + '🕘 *09:00*\n'
+    + '· Gabriela da Silva (Contrabaixo) — *contrato*\n'
+    + '\n'
+    + '🕙 *10:00*\n'
+    + '· Levi Freire (Bateria) — *anamnese e contrato*');
+});
+
+// Uma hora só na faixa: o cabeçalho de seção não paga o espaço (ver o teste irmão no lembrete
+// normal). A hora volta pra linha, que é onde ela cabe sem custar duas linhas.
+test('recuperação com UMA hora só volta à linha única — cabeçalho não paga o espaço', () => {
+  const itens = alunosDaHora({ anamnese: [ITEM('Ana', '08:00', 'Canto')], contrato: [], hora: '10:00', recuperacao: true });
+  assert.strictEqual(lembreteDaProximaHora({ itens, hora: '10:00', recuperacao: true }),
+    '⏰ *Do começo do dia até as 10:00*\n· 08:00 Ana (Canto) — *anamnese*');
 });
 
 test('recuperação: o lembrete normal NÃO ganhou hora na linha — lá ela já está no cabeçalho', () => {
   const itens = alunosDaHora({ anamnese: [ITEM('Ana', '15:00', 'Canto')], contrato: [], hora: '15:00' });
   assert.strictEqual(lembreteDaProximaHora({ itens, hora: '15:00' }),
-    '⏰ *Próxima hora — 15:00*\n· Ana (Canto) — anamnese');
+    '⏰ *Próxima hora — 15:00*\n· Ana (Canto) — *anamnese*');
 });
 
 // A guarda de duplicata do dispatcher casa `like('content', primeiraLinha%)`. Se o cabeçalho da
@@ -643,6 +704,21 @@ test('recuperação: o cabeçalho novo é COBERTO pela guarda de duplicata (dist
     hora: '11:00', recuperacao: true,
   }).split('\n')[0];
   assert.notStrictEqual(recup, outraHora);
+
+  // O PONTO MAIS FÁCIL DE QUEBRAR com o agrupamento por horário (04/09): a mensagem AGRUPADA tem
+  // linha em branco e cabeçalho de hora, e nada disso pode encostar na linha 1 — se o cabeçalho de
+  // 🕗 *08:00* subisse pro topo, ou se a mensagem começasse pela linha em branco, a guarda casaria
+  // um prefixo que muda de dia pra dia e ficaria cega justo na mensagem que acabou de mudar.
+  const agrupado = lembreteDaProximaHora({
+    itens: alunosDaHora({
+      anamnese: [ITEM('Ana', '08:00', 'Canto'), ITEM('Bento', '09:00', 'Violão'), ITEM('Célia', '10:00', 'Piano')],
+      contrato: [], hora: '10:00', recuperacao: true,
+    }),
+    hora: '10:00', recuperacao: true,
+  });
+  assert.ok(agrupado.includes('\n\n🕗 *08:00*'), 'a mensagem deste teste é mesmo a agrupada');
+  assert.strictEqual(agrupado.split('\n')[0], recup,
+    'agrupada ou não, a linha 1 é o MESMO cabeçalho — é ela que a guarda de duplicata casa');
 });
 
 test('recuperação: faixa sem ninguém pendente continua sendo SILÊNCIO, não mensagem vazia', () => {
