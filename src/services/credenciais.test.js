@@ -100,3 +100,69 @@ test('getCredenciaisPara: admin com lista vazia nao fica cacheado como publico (
   assert.equal(out2.isAdmin, true, 'agora retorna admin verdadeiro');
   assert.equal(out2.creds[0].campos[0].valor, 'secret123');
 });
+
+const { upsertCredencial, deleteCredencial } = require('./credenciais');
+
+test('upsertCredencial: sucesso devolve ok e id', async () => {
+  rpcImpl = async () => ({ data: 'uuid-novo', error: null });
+  const r = await upsertCredencial(ADMIN, { nome: 'X', campos: [] });
+  assert.equal(r.ok, true);
+  assert.equal(r.id, 'uuid-novo');
+  assert.equal(r.erro, null);
+});
+
+test('upsertCredencial: forbidden do banco vira erro, nao excecao', async () => {
+  rpcImpl = async () => ({ data: null, error: { message: 'forbidden', code: '42501' } });
+  const r = await upsertCredencial(COMUM, { nome: 'X', campos: [] });
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'forbidden');
+});
+
+test('upsertCredencial: excecao nao lanca', async () => {
+  rpcImpl = async () => { throw new Error('rede caiu'); };
+  const r = await upsertCredencial(ADMIN, { nome: 'X', campos: [] });
+  assert.equal(r.ok, false);
+  assert.equal(r.id, null);
+});
+
+test('upsertCredencial: rejeicao non-Error nao lanca', async () => {
+  rpcImpl = async () => { throw null; };
+  const r = await upsertCredencial(ADMIN, { nome: 'X', campos: [] });
+  assert.equal(r.ok, false);
+});
+
+test('upsertCredencial: id nulo do colaborador nem chama a RPC', async () => {
+  rpcCalls = 0;
+  const r = await upsertCredencial(null, { nome: 'X', campos: [] });
+  assert.equal(rpcCalls, 0);
+  assert.equal(r.ok, false);
+});
+
+test('upsertCredencial: envia p_categoria na chamada da RPC', async () => {
+  let params = null;
+  rpcImpl = async (_fn, p) => { params = p; return { data: 'uuid-novo', error: null }; };
+  await upsertCredencial(ADMIN, { nome: 'X', categoria: 'plataforma', campos: [] });
+  assert.equal(params.p_categoria, 'plataforma');
+  await upsertCredencial(ADMIN, { nome: 'X', campos: [] });
+  assert.equal(params.p_categoria, null, 'ausente vira null — quem decide o default e a RPC');
+});
+
+test('deleteCredencial: sucesso', async () => {
+  rpcImpl = async () => ({ data: true, error: null });
+  const r = await deleteCredencial(ADMIN, 'cred-1');
+  assert.equal(r.ok, true);
+});
+
+test('deleteCredencial: forbidden vira erro', async () => {
+  rpcImpl = async () => ({ data: null, error: { message: 'forbidden' } });
+  const r = await deleteCredencial(COMUM, 'cred-1');
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'forbidden');
+});
+
+test('deleteCredencial: sem credId nem chama a RPC', async () => {
+  rpcCalls = 0;
+  const r = await deleteCredencial(ADMIN, null);
+  assert.equal(rpcCalls, 0);
+  assert.equal(r.ok, false);
+});

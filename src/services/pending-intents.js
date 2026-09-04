@@ -22,7 +22,7 @@ const { detectUserConfirmation } = require('./user-confirmation');
 // (o ramo já tinha interceptado o else-if) e o reagendamento virava NOOP — pior que o bug que
 // ele conserta. Ninguém foi atingido (o LLM não chegou a emitir a flag). Ao adicionar um
 // executor determinístico novo, mexer NAS DUAS.
-const VALID_KINDS = new Set(['task_creation','event_creation','approval_pending','confirmation','finance_source','invoice_import','reschedule_confirm','event_create_confirm','bill_from_boleto']);
+const VALID_KINDS = new Set(['task_creation','event_creation','approval_pending','confirmation','finance_source','invoice_import','reschedule_confirm','event_create_confirm','bill_from_boleto','credencial_write']);
 const VALID_RESOLUTIONS = new Set(['confirmed','denied','expired','superseded']);
 const DEFAULT_EXPIRY_HOURS = 24;
 

@@ -48,4 +48,57 @@ async function getCredenciaisPara(collaboratorId) {
   }
 }
 
-module.exports = { getCredenciaisPara, _resetCache, CACHE_TTL_MS };
+function _msgErro(e) {
+  if (!e) return 'erro_desconhecido';
+  if (typeof e === 'string') return e;
+  return e.message ? String(e.message) : String(e);
+}
+
+// Escrita. O gate de is_system_admin esta NA RPC — estas funcoes nao decidem
+// permissao, so transportam. Nunca lancam: erro vira {ok:false, erro}.
+async function upsertCredencial(collaboratorId, dados) {
+  if (!collaboratorId || !dados) return { ok: false, id: null, erro: 'parametros_invalidos' };
+  try {
+    const supabase = require('../supabase/client');
+    const { data, error } = await supabase.rpc('upsert_credencial', {
+      p_collaborator_id: collaboratorId,
+      p_cred_id: dados.id || null,
+      p_nome: dados.nome || null,
+      p_categoria: dados.categoria || null,
+      p_servico: dados.servico || null,
+      p_projeto: dados.projeto || null,
+      p_url_ref: dados.url_ref || null,
+      p_observacoes: dados.observacoes || null,
+      p_campos: Array.isArray(dados.campos) ? dados.campos : [],
+    });
+    if (error) {
+      console.warn('[Credenciais] upsert erro:', _msgErro(error));
+      return { ok: false, id: null, erro: _msgErro(error) };
+    }
+    return { ok: true, id: data || null, erro: null };
+  } catch (e) {
+    console.warn('[Credenciais] upsert falhou:', _msgErro(e));
+    return { ok: false, id: null, erro: _msgErro(e) };
+  }
+}
+
+async function deleteCredencial(collaboratorId, credId) {
+  if (!collaboratorId || !credId) return { ok: false, erro: 'parametros_invalidos' };
+  try {
+    const supabase = require('../supabase/client');
+    const { data, error } = await supabase.rpc('delete_credencial', {
+      p_collaborator_id: collaboratorId,
+      p_cred_id: credId,
+    });
+    if (error) {
+      console.warn('[Credenciais] delete erro:', _msgErro(error));
+      return { ok: false, erro: _msgErro(error) };
+    }
+    return { ok: data === true, erro: data === true ? null : 'nao_encontrada' };
+  } catch (e) {
+    console.warn('[Credenciais] delete falhou:', _msgErro(e));
+    return { ok: false, erro: _msgErro(e) };
+  }
+}
+
+module.exports = { getCredenciaisPara, _resetCache, CACHE_TTL_MS, upsertCredencial, deleteCredencial };
