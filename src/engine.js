@@ -11318,7 +11318,7 @@ async function processMessage(phone, text, raw = {}) {
     const { hasPedirCredenciaisMarker } = require('./lib/pedir-credenciais');
     if (hasPedirCredenciaisMarker(reply)) {
       const { getCredenciaisPara } = require('./services/credenciais');
-      const { formatListaPublica, formatCredencialAdmin } = require('./lib/credenciais-format');
+      const { formatListaPublica, formatCredencialAdmin, rodapeVisibilidade } = require('./lib/credenciais-format');
       const { isAdmin, creds } = await getCredenciaisPara(collab.id);
       _credenciaisNoTurno = true; // resposta a partir daqui vem da RPC de credenciais
       console.log(`[PedirCredenciais] marker detectado — admin=${isAdmin} itens=${creds.length}`);
@@ -11344,10 +11344,23 @@ async function processMessage(phone, text, raw = {}) {
           + `Se o que ele pediu não estiver nesta lista, diga de forma simples e direta que essa credencial não está cadastrada. `
           + `Nunca complete com conhecimento próprio, nem sugira endereço, endpoint, link ou valor que não veio na lista acima — mesmo que pareça que você sabe a resposta. `
           + `Não mencione banco de dados, tabela ou qualquer detalhe técnico interno. `
+          + (isAdmin
+            ? `O 🌐 antes do nome marca as credenciais que TODO o time também enxerga (só o nome e o link — nunca os campos); as sem 🌐 só você e a diretoria veem. Mantenha o 🌐 nos nomes que você citar. `
+            : '')
           + `Não emita nenhum marker nesta resposta.`;
         const segunda = await ai.chat(credSys, msgs);
         const textoSegundo = String(segunda?.text || '').trim();
         reply = textoSegundo || bloco;
+
+        // LAOR-2 item 1 — rodape DETERMINISTICO. O 🌐 dentro do bloco depende do modelo
+        // preservar a marcacao ao reescrever, e ele pode simplesmente nao preservar. Este
+        // rodape e colado aqui, pelo engine, com os nomes por extenso: a informacao chega
+        // inteira mesmo quando o globo some. So aparece em LISTAGEM (>=2 nomes citados) —
+        // numa pergunta pontual ("qual a senha do Canva?") seria ruido em todo turno.
+        if (isAdmin) {
+          const _rodape = rodapeVisibilidade(creds, reply);
+          if (_rodape) reply = `${reply}\n\n${_rodape}`;
+        }
       }
     }
   } catch (e) {

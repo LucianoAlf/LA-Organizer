@@ -99,3 +99,70 @@ test('formatCredencialAdmin: credencial sem campos nao quebra', () => {
   const out = formatCredencialAdmin({ nome: 'Vazia', url_ref: null, observacoes: null, campos: null });
   assert.match(out, /Vazia/);
 });
+
+// =====================================================================
+// LAOR-2 item 1 — o admin precisa VER o que o time enxerga
+// Origem (04/09): Hugo pediu "quais links voce tem", recebeu as 46 (correto, e admin) e nao
+// tinha como saber que o time so ve 3. Estado invisivel nao e estado revisavel — foi por isso
+// que as 3 marcadas ficaram congeladas desde 07/08.
+// =====================================================================
+const {
+  rodapeVisibilidade, contarNomesNaResposta, MAX_NOMES_RODAPE,
+} = require('./credenciais-format');
+
+const PUB = (nome) => ({ nome, visivel_tom: true, url_ref: 'https://x' });
+const PRIV = (nome) => ({ nome, visivel_tom: false, url_ref: 'https://x' });
+const TRES = [PUB('LA Performance Report — ERP principal'), PUB('Chatwoot — CRM da empresa'), PRIV('Canva — criativos')];
+
+test('globo marca so as publicas', () => {
+  assert.match(formatCredencialAdmin(PUB('LA Performance Report')), /^\*🌐 LA Performance Report\*/);
+  assert.ok(!/🌐/.test(formatCredencialAdmin(PRIV('Canva'))), 'marcou uma restrita como publica');
+});
+
+test('visivel_tom ausente (RPC antiga) NAO marca — fail-closed', () => {
+  // Se a migration nao tiver rodado, o campo vem undefined. Marcar por omissao diria ao
+  // admin que o time ve coisa que o time nao ve.
+  assert.ok(!/🌐/.test(formatCredencialAdmin({ nome: 'X' })));
+  assert.ok(!/🌐/.test(formatCredencialAdmin({ nome: 'X', visivel_tom: 'true' })), 'string aceita como boolean');
+});
+
+test('rodape aparece em listagem e nomeia as publicas', () => {
+  const r = rodapeVisibilidade(TRES, 'Tenho o LA Performance Report, o Chatwoot e o Canva.');
+  assert.match(r, /2 de 3/);
+  assert.match(r, /LA Performance Report/);
+  assert.match(r, /Chatwoot/);
+});
+
+test('rodape NAO aparece em pergunta pontual (seria ruido todo turno)', () => {
+  assert.strictEqual(rodapeVisibilidade(TRES, 'A senha do Canva é xyz.'), '');
+});
+
+test('rodape sobrevive ao modelo reescrever: acento, caixa e nome sem o sufixo', () => {
+  // O 2o passe reescreve com as proprias palavras — "... — ERP principal" some quase sempre.
+  const r = rodapeVisibilidade(TRES, 'os sistemas sao LA PERFORMANCE REPORT e CHATWOOT');
+  assert.match(r, /2 de 3/);
+});
+
+test('nenhuma publica tambem e informacao — e a mais surpreendente', () => {
+  const so_privadas = [PRIV('Canva'), PRIV('Notion'), PRIV('Figma')];
+  const r = rodapeVisibilidade(so_privadas, 'Tenho Canva, Notion e Figma.');
+  assert.match(r, /Nenhuma dessas o time enxerga/);
+});
+
+test('lista longa de publicas e truncada com "e mais N"', () => {
+  const muitas = [];
+  for (let i = 0; i < MAX_NOMES_RODAPE + 3; i++) muitas.push(PUB(`Sistema ${i}`));
+  const r = rodapeVisibilidade(muitas, muitas.map(c => c.nome).join(', '));
+  assert.match(r, /e mais 3/);
+  assert.ok(!r.includes(`Sistema ${MAX_NOMES_RODAPE}`), 'nao truncou a lista de nomes');
+});
+
+test('entradas degeneradas nao quebram nem inventam rodape', () => {
+  assert.strictEqual(rodapeVisibilidade(null, 'x'), '');
+  assert.strictEqual(rodapeVisibilidade([], 'x'), '');
+  assert.strictEqual(rodapeVisibilidade([PUB('A')], 'A'), '', 'uma credencial so nao e listagem');
+  assert.strictEqual(rodapeVisibilidade(TRES, ''), '');
+  assert.strictEqual(rodapeVisibilidade(TRES, null), '');
+  assert.strictEqual(contarNomesNaResposta([{ nome: 'ab' }, { nome: 'cd' }], 'ab cd'), 0,
+    'nome curto demais casaria em qualquer texto');
+});

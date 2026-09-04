@@ -7,6 +7,8 @@ import { PageHeader } from '../components/PageHeader';
 import { LoadingState } from '../components/LoadingState';
 import { showToast } from '../components/Toast';
 import { CustomSelect } from '../components/CustomSelect';
+import { Checkbox } from '../components/Checkbox';
+import { estadoVisibilidadeTom, LABEL_VISIVEL_TOM } from '../lib/visibilidadeTom';
 import type { Categoria, Status } from './GovernancaPage';
 
 type Campo = { label: string; valor: string; sensivel: boolean };
@@ -22,6 +24,7 @@ type CredFull = {
   url_ref: string | null;
   status: Status;
   observacoes: string | null;
+  visivel_tom: boolean | null;
 };
 
 const CATEGORIA_OPTIONS: { value: Categoria; label: string }[] = [
@@ -68,6 +71,7 @@ export function GovernancaDetalhe() {
   const [responsavel, setResponsavel] = useState('');
   const [urlRef,      setUrlRef]      = useState('');
   const [observacoes, setObservacoes] = useState('');
+  const [visivelTom,  setVisivelTom]  = useState(false);
   const [campos,      setCampos]      = useState<Campo[]>([]);
   const [revealed,    setRevealed]    = useState<Set<number>>(new Set());
 
@@ -81,6 +85,8 @@ export function GovernancaDetalhe() {
       setResponsavel(cred.responsavel ?? '');
       setUrlRef(cred.url_ref ?? '');
       setObservacoes(cred.observacoes ?? '');
+      // === true de proposito: null (registro antigo) e undefined nao podem virar marcado.
+      setVisivelTom(cred.visivel_tom === true);
       setCampos(Array.isArray(cred.campos) ? cred.campos : []);
     }
   }, [cred]);
@@ -124,6 +130,9 @@ export function GovernancaDetalhe() {
           responsavel: responsavel.trim() || null,
           url_ref:     urlRef.trim() || null,
           observacoes: observacoes.trim() || null,
+          // Sem link a flag nunca vale (a RPC exige url_ref); nao deixar ligada em registro
+          // onde ela nao tem efeito, senao 'reaparece' sozinha quando alguem puser um link.
+          visivel_tom: visivelTom && !!urlRef.trim(),
           campos:      camposValidos,
         })
         .eq('id', id!);
@@ -157,6 +166,7 @@ export function GovernancaDetalhe() {
   if (!cred) return <div className="p-md text-danger">Credencial não encontrada.</div>;
 
   const inputCls = 'w-full bg-bg-elevated border border-border rounded-lg px-3 py-2.5 text-body-md focus-ring outline-none';
+  const visibilidade = estadoVisibilidadeTom(urlRef, status);
 
   return (
     <div className="space-y-lg pb-xl">
@@ -214,6 +224,17 @@ export function GovernancaDetalhe() {
               <label className="text-body-sm text-fg-muted">Link / Referência</label>
               <input type="text" value={urlRef} onChange={e => setUrlRef(e.target.value)} className={inputCls} />
             </div>
+          </div>
+
+          {/* LAOR-2 item 2 — unico lugar onde da pra dizer o que o time enxerga. */}
+          <div className="pt-1">
+            <Checkbox
+              checked={visivelTom && visibilidade.podeMarcar}
+              onChange={setVisivelTom}
+              disabled={!visibilidade.podeMarcar}
+              label={LABEL_VISIVEL_TOM}
+              hint={visibilidade.hint}
+            />
           </div>
         </section>
 

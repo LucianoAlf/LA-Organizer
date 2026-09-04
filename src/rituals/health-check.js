@@ -670,8 +670,27 @@ async function checkGitParidade() {
   return avaliarParidade(lerEstadoGit());
 }
 
+// LAOR-2 item 4 — as credenciais tem DUAS portas independentes (is_system_admin no TOM,
+// role='director' no PWA) e nenhuma consulta a outra. Divergencia = concessao de acesso a
+// senha que ninguem decidiu. So da pra VIGIAR, e este relatorio ja vai pros diretores.
+// Falha-aberta: sem a leitura, nao inventa alarme (a funcao pura devolve ok pra lista vazia).
+async function checkPortasCredenciais() {
+  const { avaliarPortas } = require('../lib/portas-credenciais');
+  const { data, error } = await supabase
+    .from('collaborators')
+    .select('full_name, role, is_system_admin')
+    .eq('is_active', true)
+    .or('role.eq.director,is_system_admin.eq.true');
+  if (error) {
+    // Erro nao pode virar "ok" silencioso: sem a leitura ninguem sabe se divergiu.
+    return { status: 'error', detail: `Não consegui ler as portas de credencial: ${error.message}` };
+  }
+  return avaliarPortas(data || []);
+}
+
 const ALL_CHECKS = [
   ['git_paridade',           checkGitParidade],
+  ['portas_credenciais',     checkPortasCredenciais],
   ['dream_recent',           checkDreamRecent],
   ['weekly_summary',         checkWeeklySummary],
   ['memories_embedding',     checkMemoriesEmbedding],
@@ -817,4 +836,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes };
+module.exports = { runHealthCheck, checkPortasCredenciais, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes };

@@ -115,6 +115,7 @@ export type CredRow = {
   status: Status;
   campos: Campo[] | null;
   observacoes: string | null;
+  visivel_tom: boolean | null;
 };
 
 type CredFull = CredRow & { campos: Campo[]; url_ref: string | null; observacoes: string | null };
@@ -232,7 +233,7 @@ export function GovernancaPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('governance_credentials')
-        .select('id, nome, categoria, servico, projeto, responsavel, campos_count, status, campos, observacoes')
+        .select('id, nome, categoria, servico, projeto, responsavel, campos_count, status, campos, observacoes, visivel_tom')
         .order('categoria').order('nome');
       if (error) throw error;
       return data as CredRow[];
@@ -519,7 +520,14 @@ export function GovernancaPage() {
                       {/* Nome */}
                       <td className="px-4 py-2.5">
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-[13px] font-medium text-fg">{c.nome}</span>
+                          <span className="text-[13px] font-medium text-fg">
+                            {/* LAOR-2: marca o que o time inteiro tambem enxerga (so nome e
+                                link). Aqui, na lista, e onde a curadoria das 46 acontece. */}
+                            {c.visivel_tom === true && (
+                              <span title="O TOM passa esse link pro time inteiro" className="mr-1">🌐</span>
+                            )}
+                            {c.nome}
+                          </span>
                           {c.servico && <span className="text-[11px] text-fg-muted">{c.servico}</span>}
                         </div>
                       </td>

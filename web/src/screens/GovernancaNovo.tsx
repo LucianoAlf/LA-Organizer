@@ -5,6 +5,8 @@ import { supabase } from '../lib/supabase';
 import { PageHeader } from '../components/PageHeader';
 import { showToast } from '../components/Toast';
 import { CustomSelect } from '../components/CustomSelect';
+import { Checkbox } from '../components/Checkbox';
+import { estadoVisibilidadeTom, LABEL_VISIVEL_TOM } from '../lib/visibilidadeTom';
 import type { Categoria, Status } from './GovernancaPage';
 
 type Campo = { label: string; valor: string; sensivel: boolean };
@@ -38,6 +40,8 @@ export function GovernancaNovo() {
   const [responsavel, setResponsavel] = useState('');
   const [urlRef,      setUrlRef]      = useState('');
   const [observacoes, setObservacoes] = useState('');
+  // LAOR-2: nasce FALSE, igual ao default da coluna e ao que a RPC de escrita do TOM grava.
+  const [visivelTom,  setVisivelTom]  = useState(false);
   const [campos,      setCampos]      = useState<Campo[]>([{ label: '', valor: '', sensivel: false }]);
   const [revealed,    setRevealed]    = useState<Set<number>>(new Set());
 
@@ -84,6 +88,9 @@ export function GovernancaNovo() {
         responsavel: responsavel.trim() || null,
         url_ref:     urlRef.trim() || null,
         observacoes: observacoes.trim() || null,
+        // Sem link nao ha o que o time receba: grava false pra nao deixar a flag ligada
+        // num registro onde ela nunca vai valer (e reaparecer sozinha se alguem puser link).
+        visivel_tom: visivelTom && !!urlRef.trim(),
         campos:      camposValidos,
       });
       if (error) throw error;
@@ -97,6 +104,7 @@ export function GovernancaNovo() {
   }
 
   const inputCls = 'w-full bg-bg-elevated border border-border rounded-lg px-3 py-2.5 text-body-md focus-ring outline-none';
+  const visibilidade = estadoVisibilidadeTom(urlRef, status);
 
   return (
     <div className="space-y-lg pb-xl">
@@ -159,6 +167,18 @@ export function GovernancaNovo() {
               <label className="text-body-sm text-fg-muted">Link / Referência</label>
               <input type="text" value={urlRef} onChange={e => setUrlRef(e.target.value)} placeholder="URL do Notion..." className={inputCls} />
             </div>
+          </div>
+
+          {/* LAOR-2 item 2 — ate 04/09 `visivel_tom` so existia como coluna: nao havia como
+              marcar nem no app nem falando com o TOM, e as 3 ligadas vieram de migration. */}
+          <div className="pt-1">
+            <Checkbox
+              checked={visivelTom && visibilidade.podeMarcar}
+              onChange={setVisivelTom}
+              disabled={!visibilidade.podeMarcar}
+              label={LABEL_VISIVEL_TOM}
+              hint={visibilidade.hint}
+            />
           </div>
         </section>
 
