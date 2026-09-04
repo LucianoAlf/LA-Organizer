@@ -11,6 +11,12 @@ test('mdParaWhatsapp: bold markdown vira bold whatsapp', () => {
   assert.equal(mdParaWhatsapp('isso e **importante**'), 'isso e *importante*');
 });
 
+test('mdParaWhatsapp: heading com bold inline produz exatamente um par de asteriscos', () => {
+  assert.equal(mdParaWhatsapp('# **Bold Heading**'), '*Bold Heading*');
+  assert.equal(mdParaWhatsapp('## **Atencao:** texto normal'), '*Atencao: texto normal*');
+  assert.equal(mdParaWhatsapp('# Prefixo **negrito** sufixo'), '*Prefixo negrito sufixo*');
+});
+
 test('mdParaWhatsapp: callouts viram prefixo legivel', () => {
   assert.match(mdParaWhatsapp('> [!critico]\n> cuidado'), /⚠️/);
   assert.match(mdParaWhatsapp('> [!nota]\n> veja'), /📌/);
@@ -32,6 +38,21 @@ test('formatListaPublica: ignora item sem url e respeita cap', () => {
   const muitos = Array.from({ length: MAX_ITENS + 5 }, (_, i) => ({ nome: `S${i}`, url_ref: `https://x/${i}` }));
   const linhas = formatListaPublica(muitos).split('\n').filter(l => l.startsWith('- '));
   assert.equal(linhas.length, MAX_ITENS);
+});
+
+test('formatListaPublica: nao vaza servico, observacoes, ou campos sensivel', () => {
+  const out = formatListaPublica([{
+    nome: 'Sistema A',
+    url_ref: 'https://sistema-a.com',
+    servico: 'Google Cloud',
+    observacoes: '# Config importante\n**Nao compartilhar**',
+    campos: [{ label: 'Senha', valor: 'SEGREDO_NAO_PODE_VAZAR', sensivel: true }]
+  }]);
+  assert.match(out, /Sistema A/);
+  assert.match(out, /https:\/\/sistema-a\.com/);
+  assert.doesNotMatch(out, /Google Cloud/, 'nao expoe servico');
+  assert.doesNotMatch(out, /Config importante/, 'nao expoe observacoes');
+  assert.doesNotMatch(out, /SEGREDO_NAO_PODE_VAZAR/, 'nao expoe campos');
 });
 
 test('formatCredencialAdmin: mostra nome, url e campos', () => {

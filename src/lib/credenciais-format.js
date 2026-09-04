@@ -12,8 +12,8 @@ function mdParaWhatsapp(md) {
     .replace(/^>\s*\[!critico\]\s*/gim, '⚠️ ')
     .replace(/^>\s*\[!atencao\]\s*/gim, '⚠️ ')
     .replace(/^>\s*\[!nota\]\s*/gim, '📌 ')
-    .replace(/^#{1,6}\s*(.+)$/gm, '*$1*')   // headings → bold
-    .replace(/\*\*(.+?)\*\*/g, '*$1*')      // bold md → bold wa
+    .replace(/\*\*(.+?)\*\*/g, '*$1*')      // bold md → bold wa (PRIMEIRO)
+    .replace(/^#{1,6}\s*(.+)$/gm, (_m, txt) => `*${txt.replace(/\*+/g, '').trim()}*`)   // headings → bold (remove * do conteúdo)
     .replace(/^>\s?/gm, '')                 // resto das citacoes
     .replace(/^\s*[-*]\s+/gm, '- ')         // bullets normalizados
     .replace(/\|/g, ' ')                    // tabelas viram texto corrido
