@@ -122,6 +122,24 @@ const PAUTA_ANAMNESE_FECHA_TIME = '23:00';
 // services/anamnese-pauta.js: horaDeFimDeDiaDaUnidade() e horariosDeFimDeDiaDoDia(), ao lado da
 // tabela da abertura. Deixar a constante aqui como copia seria pior que remove-la: dois horarios
 // pra mesma unidade, e um deles mentindo.
+// ATE QUE HORAS O RELATORIO DE FIM DE DIA INSISTE (conserto 04/09, a noite).
+// Ele nao sai mais num slot unico de 15 min. Na estreia da Barra a fonte caiu por poucos minutos
+// dentro desse slot, saiu a mensagem degradada, a fonte voltou dez minutos depois — e nao havia
+// mais tick nenhum olhando. Agora a unidade insiste enquanto o relatorio DE VERDADE nao chegou ao
+// grupo dela. Dois tetos, por motivos diferentes:
+//   JANELA_MIN (relativo, +2h da hora da propria unidade) — impede insistir muito depois de a casa
+//   dela esvaziar. Sabado a Barra fecha 15:30 e para 17:30; so com teto absoluto ela martelaria
+//   ate as 22:00 de um sabado, falando pra predio vazio.
+//   TETO (absoluto, 22:00) — as 23:00 roda o FECHAMENTO (PAUTA_ANAMNESE_FECHA_TIME), que rele a
+//   fonte e grava o resultado do dia; relatorio entrando as 22:55 chega junto com ele e perde o
+//   sentido. Uma hora de margem, nao cinco minutos, porque um tick carrega ate 3 leituras de 6-8s.
+// PIOR CASO MEDIDO, por unidade e por dia, e so enquanto ela NAO entregou: a Barra (19:30) tenta
+// dos slots 19:30 a 21:30 e o cron bate de 5 em 5 min => 27 leituras da fonte espalhadas por 2h14.
+// Recreio e Campo Grande (20:30) batem no teto absoluto: slots 20:30 a 22:00 => 21 leituras. Quem
+// JA entregou paga ZERO leituras: a guarda de conteudo (uma consulta barata em
+// group_chat_messages) roda ANTES da RPC, e no tick seguinte ao 'skipped' nem ela roda mais.
+const PAUTA_ANAMNESE_FIMDIA_JANELA_MIN = 120;
+const PAUTA_ANAMNESE_FIMDIA_TETO = '22:00';
 // A lista do dia PRECISA encolher (pedido do Alf, 04/09). Sem esta passada, quem preenche a
 // anamnese no tablet as 10h fica na tela ate as 23:00 e a equipe cobra quem ja fez. De 2 em 2
 // horas, das 09:00 as 21:00: a primeira aula e 08:00 (a de 09:00 pega a turma da manha) e a
@@ -4921,8 +4939,27 @@ async function run(opts = {}) {
   // em UTC. Duas leituras do dia no mesmo tick poderiam divergir — esta reusa a de la
   // (LOCALYMD-UTC-SHIFT).
   const _pautaHorasFimDia = _pautaAbertura.horariosDeFimDeDiaDoDia(_pautaDiaSemana);
+  // A JANELA, e não mais o INSTANTE (conserto 04/09, à noite). Esta condição era
+  // `timeToSlot(h) === slotNow`: o bloco abria em UM slot de 15 min e fechava. Na estreia da Barra
+  // a leitura de anamnese_pauta caiu por poucos minutos exatamente dentro desse slot; o ritual
+  // mandou, honestamente, o "não consegui conferir"; dez minutos depois a fonte voltou — e já não
+  // havia tick nenhum olhando. A equipe da Barra ficou sem o relatório do dia por uma falha de
+  // segundos. "O mais importante é mandar de novo. Se ele não conseguiu, tem que tentar de novo"
+  // (Alf). Agora o bloco fica ABERTO da hora da unidade até o teto, e quem decide se ainda há o
+  // que fazer é a GUARDA DE CONTEÚDO lá dentro (o que está no grupo), não o relógio.
+  //
+  // O teto é DUPLO de propósito, e os dois lados existem por motivos diferentes:
+  //  - RELATIVO (+2h da hora da própria unidade): impede a unidade de insistir muito depois de a
+  //    casa dela esvaziar. No sábado a Barra fecha 15:30 e para de tentar 17:30 — um teto só
+  //    absoluto faria ela martelar até as 22:00 de um sábado, falando pra prédio vazio, que é
+  //    exatamente o que horaDeFimDeDiaDaUnidade() existe pra impedir.
+  //  - ABSOLUTO (PAUTA_ANAMNESE_FIMDIA_TETO): às 23:00 roda o FECHAMENTO, que relê a fonte e grava
+  //    o resultado do dia. Relatório entrando às 22:55 chega junto com o fechamento e perde o
+  //    sentido. Uma hora inteira de margem, e não cinco minutos, porque um tick carrega até 3
+  //    leituras de 6-8s: parar bem antes é mais barato que atropelar o bloco que DECIDE o dia.
   if (opts.force === 'pauta_anamnese_fimdia'
-      || _pautaHorasFimDia.some((h) => timeToSlot(h) === slotNow)) {
+      || _pautaHorasFimDia.some((h) => slotNow >= timeToSlot(h)
+        && slotNow <= Math.min(timeToSlot(h) + PAUTA_ANAMNESE_FIMDIA_JANELA_MIN, timeToSlot(PAUTA_ANAMNESE_FIMDIA_TETO)))) {
     try {
       const { relatorioDeFimDeDia } = require('./anamnese-pauta');
       const situAl = require('../services/situacao-aluno');
@@ -4944,17 +4981,37 @@ async function run(opts = {}) {
           }
           continue;
         }
-        if (opts.force !== 'pauta_anamnese_fimdia' && timeToSlot(horaDoFecho) !== slotNow) continue;
+        // A JANELA DESTA unidade. `slotNow < inicio` é a amarra que o bloco aberto por janela
+        // poderia ter perdido: o bloco abre às 19:30 por causa da Barra, e sem esta linha o
+        // Recreio (20:30) entraria junto e falaria uma hora antes da hora dele, com aula ainda
+        // acontecendo. O fim é o menor entre a janela de insistência da unidade e o teto absoluto.
+        const _slotFechoUnidade = timeToSlot(horaDoFecho);
+        const _slotTetoUnidade = Math.min(
+          _slotFechoUnidade + PAUTA_ANAMNESE_FIMDIA_JANELA_MIN,
+          timeToSlot(PAUTA_ANAMNESE_FIMDIA_TETO),
+        );
+        if (opts.force !== 'pauta_anamnese_fimdia'
+            && (slotNow < _slotFechoUnidade || slotNow > _slotTetoUnidade)) continue;
         // try/catch POR UNIDADE: mesmo motivo do bloco das 06:00 — uma unidade com problema (ou
         // um grupo sem vínculo) não pode calar o relatório das outras duas.
         try {
           const chaveFim = `pauta_fimdia:${unidadeId}:${now.ymd}`;
-          // Só EXECUTED/SKIPPED travam a retentativa: 'fallback' significa "deu errado, tenta de
-          // novo" nesta casa, e sem este filtro um envio que falhasse travaria a chave do dia
-          // igual a um sucesso — o relatório se perderia até amanhã.
+          // SÓ 'skipped' trava a chave do dia — e 'executed' SAIU desta lista de propósito.
+          //
+          // 'executed' é o REGISTRO SOBRE a entrega, e o registro é justamente o que erra: em
+          // 04/09 a Barra ficou com um 'executed' gravado enquanto o grupo tinha só a mensagem
+          // degradada. Enquanto ele travasse a chave, nenhuma retentativa aconteceria, e o
+          // conserto desta janela morreria na primeira linha. A AUTORIDADE SOBRE "já entreguei" é
+          // o ARTEFATO — a mensagem no grupo — e ela é consultada logo abaixo. Perder 'executed'
+          // aqui não abre buraco: quem já entregou de verdade é barrado pela guarda de conteúdo,
+          // que grava 'skipped' e fecha a chave a partir daí.
+          //
+          // 'skipped' continua travando porque nesta rotina ele só nasce de desfechos TERMINAIS:
+          // "relatório real já está no grupo" e "ninguém entrou na pauta hoje". 'fallback' nunca
+          // travou — é o rótulo de "deu errado, tenta de novo".
           const { data: jaMandou, error: erroJaMandou } = await supabase.from('marker_logs')
             .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFim}%`)
-            .in('result', ['executed', 'skipped']).limit(1);
+            .in('result', ['skipped']).limit(1);
           if (erroJaMandou) {
             console.error(`[Pauta] fim de dia: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaMandou.message}`);
             continue;
@@ -4972,13 +5029,77 @@ async function run(opts = {}) {
             continue;
           }
 
+          // A CHECAGEM BARATA VEM ANTES DA LEITURA CARA. relatorioDeFimDeDia() bate na fonte e
+          // leva 6-8s; com a janela aberta por até 2h, uma unidade que JÁ entregou pagaria essa
+          // leitura a cada tick só pra descobrir que não tem nada a fazer. O texto degradado e o
+          // cabeçalho saem da função PURA e não dependem da fonte, então dá pra perguntar ao GRUPO
+          // "o relatório de hoje já está aí?" antes de gastar a RPC. Quem já entregou não paga.
+          //
+          // O TEXTO DEGRADADO DE HOJE, derivado da MESMA função pura que o ritual usa pra montá-lo
+          // — nunca redigitado aqui. Uma cópia da frase nasceria divergente no dia em que alguém
+          // mexesse no texto, e a guarda ficaria cega em silêncio: o pior jeito de uma guarda
+          // morrer.
+          const [, mesFimBr, diaFimBr] = String(now.ymd).split('-');
+          const textoDegradadoFim = _pautaAbertura.mensagemDeFimDeDia({ erro: true, dataBr: `${diaFimBr}/${mesFimBr}` });
+          // O cabeçalho é o MESMO nos dois textos (uma const só, dentro de mensagemDeFimDeDia) — e
+          // é exatamente por isso que ele sozinho não decide nada: serve pra RECORTAR as mensagens
+          // de hoje, e o CONTEÚDO inteiro é que classifica. Ele começa por 🌙 e a fala da manhã por
+          // 📋, então nenhum dos dois é prefixo do outro — é o que impede o relatório da noite de
+          // bloquear a pauta da manhã (e vice-versa) no LIKE por conteúdo.
+          const cabecalhoFim = String(textoDegradadoFim).split('\n')[0];
+          const hojeInicioFimISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+          // `content` junto do id, e limite acima de 1: a decisão depende do QUE está no grupo, não
+          // só de existir alguma coisa lá. Com limit(1) eu poderia enxergar só a mensagem degradada
+          // e não o relatório real que veio depois dela — e mandaria o real uma segunda vez.
+          const lerEnviadasHojeFim = (cabecalho) => supabase.from('group_chat_messages')
+            .select('id, content')
+            .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
+            .gte('created_at', hojeInicioFimISO)
+            .like('content', `${cabecalho}%`)
+            .limit(10);
+          // A classificação é DESEQUILIBRADA de propósito: só conta como degradado o que bate
+          // EXATAMENTE o texto degradado de hoje; qualquer outro conteúdo com este cabeçalho é
+          // tratado como relatório de verdade e BLOQUEIA o envio. Errar pro lado de não mandar
+          // custa um relatório — visível, com marcador 'fallback' pra quem audita. Errar pro outro
+          // lado manda relatório repetido num grupo de WhatsApp real, com gente lendo.
+          const classificarEnviadasFim = (linhas) => ({
+            real: (linhas || []).some((m) => String(m.content || '') !== textoDegradadoFim),
+            degradado: (linhas || []).some((m) => String(m.content || '') === textoDegradadoFim),
+          });
+          const { data: jaEnviadoFim, error: erroJaEnviadoFim } = await lerEnviadasHojeFim(cabecalhoFim);
+          if (erroJaEnviadoFim) {
+            console.error(`[Pauta] fim de dia: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviadoFim.message}`);
+            const { error: erroMarkerChk } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveFim} checagem de duplicata falhou: ${erroJaEnviadoFim.message}`.slice(0, 120),
+            });
+            if (erroMarkerChk) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChk.message}`);
+            continue;
+          }
+          let jaTemRelatorioReal = classificarEnviadasFim(jaEnviadoFim).real;
+          const jaTemDegradado = classificarEnviadasFim(jaEnviadoFim).degradado;
+          if (jaTemRelatorioReal) {
+            // O dia acabou pra esta unidade: o relatório de verdade está no grupo. 'skipped' fecha
+            // a chave e, do próximo tick em diante, nem esta consulta roda — a unidade que já
+            // entregou sai da janela pelo caminho mais barato que existe. (É também o caso antigo
+            // "envio ok, marcador de um tick anterior falhou".)
+            const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
+              reason: `${chaveFim} relatório já enviado (achado por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
+            });
+            if (erroMarkerSkip) console.error(`[Pauta] fim de dia: marker_logs insert (duplicata) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
+            continue;
+          }
+
+          // Só quem AINDA NÃO ENTREGOU chega aqui e paga a leitura da fonte.
           const rel = await relatorioDeFimDeDia({
             supabase, laReport: laReportClient, unidadeId, hoje: now.ymd,
           });
           if (!rel.texto) {
             // Dois silêncios diferentes, e o marcador tem que distingui-los:
             //  - motivo null  = ninguém entrou na pauta hoje (domingo, feriado). Saúde: grava
-            //    'skipped' e para de tentar no resto do slot.
+            //    'skipped', que fecha a chave e tira a unidade da janela — insistir 2h por um dia
+            //    sem pauta seria pagar a RPC 27 vezes pra reconfirmar um silêncio saudável.
             //  - motivo cheio = o `hoje` chegou torto (única forma de cair aqui com motivo).
             //    'fallback' é o rótulo honesto e deixa o próximo tick tentar.
             const { error: erroMarkerVazio } = await supabase.from('marker_logs').insert({
@@ -4991,71 +5112,45 @@ async function run(opts = {}) {
             continue;
           }
 
-          // Mesma guarda de artefato da fala da manhã, pelo mesmo motivo: se a mensagem ENTRA e o
-          // marker_logs falha logo depois, não sobra linha nenhuma e o próximo tick mandaria de
-          // novo num grupo de WhatsApp REAL com gente lendo. A guarda olha o que foi GRAVADO, não
-          // o registro sobre o que foi gravado — porque o registro é exatamente o que pode falhar
-          // calado. O cabeçalho sai de `texto.split('\n')[0]`, NUNCA redigitado: texto consultado
-          // divergindo do texto enviado faria a guarda nascer cega.
-          //
-          // Ele começa por 🌙 e a fala da manhã por 📋, então nenhum dos dois é prefixo do outro —
-          // é o que impede o relatório da noite de bloquear a pauta da manhã (e vice-versa) no
-          // LIKE por conteúdo.
-          const cabecalhoFim = String(rel.texto).split('\n')[0];
-          // O TEXTO DEGRADADO DE HOJE, derivado da MESMA função pura que o ritual usou pra
-          // montá-lo — nunca redigitado aqui. Ele existe porque o relatório de verdade e o "não
-          // consegui conferir" COMPARTILHAM o cabeçalho: uma guarda que só olha o cabeçalho vê os
-          // dois como a mesma mensagem, e aí a retentativa que o 'fallback' abaixo libera bateria
-          // na própria mensagem degradada e nunca a substituiria pelo relatório real — o conserto
-          // se anularia sozinho. Uma cópia da frase aqui nasceria divergente no dia em que alguém
-          // mexesse no texto, e a guarda ficaria cega em silêncio: o pior jeito de uma guarda morrer.
-          const [, mesFimBr, diaFimBr] = String(now.ymd).split('-');
-          const textoDegradadoFim = _pautaAbertura.mensagemDeFimDeDia({ erro: true, dataBr: `${diaFimBr}/${mesFimBr}` });
-          const hojeInicioFimISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
-          // `content` junto do id, e limite acima de 1: a decisão agora depende do QUE está no
-          // grupo, não só de existir alguma coisa lá. Com limit(1) eu poderia enxergar só a
-          // mensagem degradada e não o relatório real que veio depois dela — e mandaria o real
-          // uma segunda vez.
-          const { data: jaEnviadoFim, error: erroJaEnviadoFim } = await supabase.from('group_chat_messages')
-            .select('id, content')
-            .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
-            .gte('created_at', hojeInicioFimISO)
-            .like('content', `${cabecalhoFim}%`)
-            .limit(10);
-          if (erroJaEnviadoFim) {
-            console.error(`[Pauta] fim de dia: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviadoFim.message}`);
-            const { error: erroMarkerChk } = await supabase.from('marker_logs').insert({
-              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveFim} checagem de duplicata falhou: ${erroJaEnviadoFim.message}`.slice(0, 120),
-            });
-            if (erroMarkerChk) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChk.message}`);
-            continue;
+          // TRAVA DE ÚLTIMA HORA contra a única premissa desta guarda: que o relatório real e o
+          // degradado compartilham o cabeçalho. Hoje eles compartilham (uma const só na função
+          // pura) e o harness prova isso. Se um dia deixarem, a consulta barata lá em cima teria
+          // procurado o cabeçalho ERRADO, não enxergaria o relatório real já entregue — e mandaria
+          // outro a cada tick da janela, num grupo de WhatsApp com gente lendo. Então, antes de
+          // enviar, pergunto de novo com o cabeçalho do texto que EU VOU MANDAR. Custa uma
+          // consulta só no dia em que a premissa cair; nos outros dias, zero.
+          const cabecalhoRealFim = String(rel.texto).split('\n')[0];
+          if (cabecalhoRealFim !== cabecalhoFim) {
+            console.warn(`[Pauta] fim de dia: cabeçalho do relatório real divergiu do degradado (${situAl.nomeDaUnidade(unidadeId)}) — reconferindo o grupo antes de enviar`);
+            const { data: reconferido, error: erroReconferir } = await lerEnviadasHojeFim(cabecalhoRealFim);
+            if (erroReconferir) {
+              console.error(`[Pauta] fim de dia: reconferência de duplicata falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroReconferir.message}`);
+              const { error: erroMarkerRec } = await supabase.from('marker_logs').insert({
+                marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+                reason: `${chaveFim} reconferência de duplicata falhou: ${erroReconferir.message}`.slice(0, 120),
+              });
+              if (erroMarkerRec) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerRec.message}`);
+              continue;
+            }
+            jaTemRelatorioReal = classificarEnviadasFim(reconferido).real;
           }
-          // A classificação é DESEQUILIBRADA de propósito: só conta como degradado o que bate
-          // EXATAMENTE o texto degradado de hoje; qualquer outro conteúdo com este cabeçalho é
-          // tratado como relatório de verdade e BLOQUEIA o envio. Errar pro lado de não mandar
-          // custa um relatório — visível, com marcador 'fallback' pra quem audita. Errar pro outro
-          // lado manda relatório repetido num grupo de WhatsApp real, com gente lendo.
-          const enviadasHojeFim = jaEnviadoFim || [];
-          const jaTemRelatorioReal = enviadasHojeFim.some((m) => String(m.content || '') !== textoDegradadoFim);
-          const jaTemDegradado = enviadasHojeFim.some((m) => String(m.content || '') === textoDegradadoFim);
           const relDegradado = Boolean(rel.motivo);
           if (jaTemRelatorioReal || (jaTemDegradado && relDegradado)) {
             // Dois desfechos diferentes, e o `result` não pode achatá-los num só:
-            //  - já existe relatório REAL no grupo: o dia acabou, 'skipped' fecha a chave (é o
-            //    caso que esta guarda já cobria — envio ok, marcador de um tick anterior falhou);
+            //  - já existe relatório REAL no grupo (só chega aqui pela reconferência acima): o dia
+            //    acabou, 'skipped' fecha a chave;
             //  - só existe o DEGRADADO e eu continuo degradado: repetir "não consegui conferir" a
             //    cada tick seria ruído no grupo, então calo — mas 'skipped' aqui fecharia o dia
             //    com o degradado como resposta final, que é exatamente o defeito de 04/09.
-            //    'fallback' cala agora e deixa o próximo tick tentar de novo.
-            const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
+            //    'fallback' cala agora e deixa o próximo tick da janela tentar de novo.
+            const { error: erroMarkerSkip2 } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE',
               result: jaTemRelatorioReal ? 'skipped' : 'fallback',
               reason: (jaTemRelatorioReal
                 ? `${chaveFim} relatório já enviado (achado por conteúdo — marcador de um tick anterior deve ter falhado)`
                 : `${chaveFim} degradado já no grupo, esperando a fonte voltar: ${rel.motivo}`).slice(0, 120),
             });
-            if (erroMarkerSkip) console.error(`[Pauta] fim de dia: marker_logs insert (duplicata) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
+            if (erroMarkerSkip2) console.error(`[Pauta] fim de dia: marker_logs insert (duplicata) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip2.message}`);
             continue;
           }
 
@@ -5082,9 +5177,10 @@ async function run(opts = {}) {
             //  1) o sensor mente — quem audita marker_logs vê um dia executado com zeros,
             //     indistinguível de um dia em que ninguém preencheu nada; "zero por falha" igual
             //     a "zero por saúde" é a classe de bug que esta casa mais sangra;
-            //  2) 'executed' TRAVA a chave de idempotência (a consulta lá em cima filtra
-            //     result IN (executed, skipped) justamente pra que 'fallback' deixe o tick
-            //     seguinte tentar), então o relatório do dia se perdeu por uma falha de segundos.
+            //  2) 'executed' travava a chave de idempotência e o relatório do dia se perdia por
+            //     uma falha de segundos. (Hoje 'executed' nem trava mais: a chave só fecha com
+            //     'skipped', e quem manda é a guarda de conteúdo. Mas o rótulo honesto continua
+            //     sendo o que o sensor precisa pra não mentir.)
             // O caminho vizinho (sem texto) já fazia certo com `rel.motivo ? 'fallback' :
             // 'skipped'` — era só o caminho de ENVIO que tinha esquecido de olhar o motivo.
             result: relDegradado ? 'fallback' : 'executed',
