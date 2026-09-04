@@ -19,11 +19,90 @@ const opsAgent = require('./ops-agent');
 const { paraWhatsApp, dividirParaWhatsApp } = require('../utils/wa-format');
 
 const HISTORY_LIMIT = 30;
-const POOL_LIMIT = 30;
+// GROUPCHAT-POOL-TRUNCADO-VIRA-AUSENCIA (auditoria 04/09, 10:36) — o TOM afirmou que três
+// anamneses "não estavam no pool ativo". Estavam: `pending`, e só fecharam às 11:01. Ele ainda
+// inventou o motivo ("já saíram da lista"), o dono acreditou e ensinou o time errado. O mesmo
+// corte produziu "a próxima que vence logo: 18:00" havendo pendente desde as 11h.
+//
+// O teto era 30. MEDIDO hoje, grupo a grupo: o maior pool ativo real tem 46 tarefas
+// (Administração Recreio); ADM CG tem 26 e Barra 25. E a feature nova cria a pauta do dia
+// inteiro num lote só — até 48 filhas por unidade. 30 corta o maior grupo pela metade HOJE, e
+// cortaria qualquer grupo em dia de pauta cheia. 120 é ~2,6× o maior medido e cabe uma pauta
+// inteira somada ao backlog existente, sem virar prompt gigante (a linha de pool é curta).
+const POOL_LIMIT = 120;
 const ACTIONS_DELIM = '‹‹ACTIONS››'; // separador prosa ↔ ações estruturadas (parseado no front)
+// Teto de marcadores do MESMO tipo por turno. Existe pra não virar rajada de N consultas ao LA
+// Report (ou N escritas) por causa de uma alucinação; 5 cobre o pedido real ("a ficha desses
+// três aqui") com folga. Acima do teto o TOM DIZ que não deu, em vez de sumir com o pedido.
+const MARKER_TETO = 5;
 
 function displayName(c) {
   return (c?.preferred_name || c?.full_name || '').split(' ')[0] || 'alguém';
+}
+
+// ORDEM DO POOL. `created_at DESC` é a ordem errada para uma lista que responde "o que está em
+// aberto no grupo": a pergunta que o time faz é sempre O QUE VENCE PRIMEIRO (é por isso que
+// existe cobrança). E com a pauta nascendo em lote, `created_at` vira quase hora-invertida —
+// a tarefa das 09:00 nasce depois da das 19:00 e cai no fim da fila. Aqui a ordem é a da
+// pergunta: prazo mais próximo primeiro, atrasada antes de tudo, sem prazo por último (não
+// tem cobrança pendurada, então não pode empurrar pra fora do corte quem vence hoje).
+// Desempate por `created_at` CRESCENTE: dentro do mesmo dia, o que entrou primeiro na agenda.
+function ordenarPoolPorVencimento(tasks) {
+  return [...(tasks || [])].sort((a, b) => {
+    const da = a && a.due_date ? String(a.due_date) : null;
+    const db = b && b.due_date ? String(b.due_date) : null;
+    if (da && db && da !== db) return da < db ? -1 : 1;
+    if (da && !db) return -1;
+    if (!da && db) return 1;
+    const ca = String((a && a.created_at) || '');
+    const cb = String((b && b.created_at) || '');
+    return ca < cb ? -1 : ca > cb ? 1 : 0;
+  });
+}
+
+// O CORTE DECLARADO. Qualquer teto é finito, então aumentar o número não resolve sozinho: se
+// a lista chegou recortada, o TOM precisa SABER — senão ele lê "não está na lista" e conclui
+// "não existe", que é literalmente o que aconteceu. Devolve o quanto ficou de fora pra virar
+// aviso no prompt. Zero por saúde (`truncado=0`) e zero por corte nunca mais são iguais.
+function recortarPool(tasks, limite) {
+  const lista = tasks || [];
+  const teto = Number.isFinite(limite) && limite > 0 ? limite : POOL_LIMIT;
+  return { pool: lista.slice(0, teto), total: lista.length, truncado: Math.max(0, lista.length - teto) };
+}
+
+// GROUPCHAT-MARKER-SINGULAR-EM-LOTE (04/09) — marcador de payload SINGULAR emitido N vezes.
+// O contrato do prompt manda "um aluno POR marcador", então pedir a ficha de 3 alunos OBRIGA
+// 3 marcadores; o motor lia com `match` sem /g dentro de um `if` (não de um laço) e limpava
+// com `replace` sem /g. Resultado real: 1 ficha entregue e 2 marcadores CRUS no grupo do
+// WhatsApp e no painel. Aqui a LEITURA e a LIMPEZA saem do MESMO laço — o que for lido e o que
+// for descartado somem juntos, sempre. O excedente acima do teto é DEVOLVIDO (não engolido):
+// raspar em silêncio deixaria o aluno sem ficha e o defeito invisível, que é a troca ruim.
+// Puro: o motor é uma função gigante e não dá teste; isto dá.
+function extrairMarkers(reply, nome, teto) {
+  const texto = String(reply == null ? '' : reply);
+  const re = new RegExp(`<<${nome}>>([\\s\\S]*?)<<END>>`, 'gi');
+  const todos = Array.from(texto.matchAll(re)).map((m) => m[1]);
+  const limite = Number.isFinite(teto) && teto > 0 ? teto : todos.length;
+  const limpo = texto.replace(re, '').trim();
+  return { blocos: todos.slice(0, limite), excedente: Math.max(0, todos.length - limite), total: todos.length, limpo };
+}
+
+// SANITIZADOR DE SAÍDA POR FORMA. As quatro camadas que limpavam o texto (ai/sanitize,
+// buildTomContent, bridge-out, MessageBubble) limpavam por marcador NOMEADO — ninguém
+// perguntava "sobrou algum <<ALGUMA_COISA>> aqui?". Isso fecha também uma segunda classe: os
+// marcadores da rota 1:1 que o motor de grupo nem conhece e vazariam inteiros.
+const MARKER_RESIDUAL_RE = /<<([A-Z_]{3,})>>[\s\S]*?<<END>>/g;
+// Resposta cortada no meio (teto de tokens) deixa o marcador ABERTO, sem <<END>>: o par acima
+// não casa e o lixo sai igual. Como `<<PALAVRA_MAIUSCULA>>` não existe em prosa humana, raspar
+// do abridor até o fim é seguro — e só roda depois que os pares já saíram.
+const MARKER_ABERTO_RE = /<<([A-Z_]{3,})>>[\s\S]*$/;
+function rasparMarkersResiduais(texto) {
+  const s = String(texto == null ? '' : texto);
+  const nomes = [];
+  let out = s.replace(MARKER_RESIDUAL_RE, (_m, nome) => { nomes.push(nome); return ''; });
+  const aberto = out.match(MARKER_ABERTO_RE);
+  if (aberto) { nomes.push(aberto[1]); out = out.replace(MARKER_ABERTO_RE, ''); }
+  return { texto: out.replace(/\n{3,}/g, '\n\n').trim(), nomes };
 }
 
 // FATIA 2 — o que vai como "memoria de longo prazo" no prompt. Ate 2 memorias ativas o grupo
@@ -53,12 +132,21 @@ async function loadContext(supabase, groupId, senderCollabId) {
     // ver molde E instância e cobrar em dobro — mas disparava também quando NÃO HÁ instância,
     // e aí escondia trabalho real. Agora o molde vem, e quem some é só o que tem instância viva
     // (decidido abaixo, com consulta ao banco).
+    // A ORDEM DO BANCO tem que ser a mesma da pergunta, senão o corte de página já decide
+    // errado antes de qualquer sort em memória: com `created_at DESC` + limite, as tarefas das
+    // 09:00 de um lote de pauta simplesmente NÃO VOLTAVAM da consulta (posições 45-47 de 30).
+    // nullsFirst:false põe o "sem prazo" no fim, onde ele não rouba vaga de quem vence hoje.
     supabase.from('tasks').select('id, title, status, due_date, created_at, is_group, parent_task_id, description, created_by, recurrence_rule, recurrence_parent_id, is_recurrence_template, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
       .eq('assigned_group_id', groupId)
       .neq('status', 'cancelled')
-      .order('created_at', { ascending: false }).limit(POOL_LIMIT * 2),
+      .order('due_date', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true }).limit(POOL_LIMIT * 2),
     supabase.from('group_chat_messages').select('role, content, media_extracted_text, sender_id, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)').eq('group_id', groupId).order('created_at', { ascending: false }).limit(HISTORY_LIMIT),
-    supabase.from('collaborators').select('*').eq('id', senderCollabId).maybeSingle(),
+    // Remetente desconhecido (sender_id NULL) chega aqui como null: `.eq('id', null)` é consulta
+    // malformada, então nem se faz. Ver GROUPCHAT-SENDER-NULL-DESCARTE-MUDO no watcher.
+    senderCollabId
+      ? supabase.from('collaborators').select('*').eq('id', senderCollabId).maybeSingle()
+      : Promise.resolve({ data: null }),
     // FATIA 2 — leitura da memoria de grupo. Devolve array puro (nao { data }), por isso fica no
     // FIM: a destruturacao acima e posicional.
     require('./group-memory').carregarMemoriasDoGrupo(supabase, groupId),
@@ -85,7 +173,7 @@ async function loadContext(supabase, groupId, senderCollabId) {
       .not('status', 'in', '("done","cancelled")');
     _comInstancia = new Set((_inst || []).map((r) => String(r.recurrence_parent_id)));
   }
-  const pool = escondeMoldeComInstancia(
+  const poolFiltrado = escondeMoldeComInstancia(
     // VERDADE ÚNICA (Fatia 2): esconde a filha-BLUEPRINT (marcador intrínseco + rule==null) do
     // pool que o TOM vê — era double-count com a filha-instância (mesmo título/data). Preciso de
     // propósito: NÃO toca o MOLDE (rule!=null), que segue governado por escondeMoldeComInstancia
@@ -97,15 +185,26 @@ async function loadContext(supabase, groupId, senderCollabId) {
     // o que sumiu com o "Relatório Mensal Financeiro" (venc. 05, criado 06) da Rose.
     .filter((t) => ehMoldeRecorrente(t)
       || categorize(t.due_date, poolToday, t.created_at ? spYmd(new Date(t.created_at)) : null) !== 'retroativa')
-    .slice(0, POOL_LIMIT)
     .map((t) => ({ ...t, packageTitle: (t.parent_task_id && poolParentTitleById.get(t.parent_task_id)) || null }));
+  // O corte vem DEPOIS dos filtros e ordenado pela pergunta do time (ver ordenarPoolPorVencimento),
+  // e ele se DECLARA: `poolTruncado` sobe pro prompt pra o TOM nunca afirmar ausência a partir de
+  // lista recortada. O sort em memória é de propósito redundante com o `order` do banco — o
+  // banco pode devolver ordem diferente depois de um join, e a fila do corte não pode depender disso.
+  const { pool, total: poolTotal, truncado: poolTruncado } = recortarPool(ordenarPoolPorVencimento(poolFiltrado), POOL_LIMIT);
+  // Sensor: sem esta linha, "grupo com 20 tarefas" e "grupo com 300 das quais eu vi 120" ficam
+  // idênticos no log — e foi exatamente por não enxergar o corte que o TOM inventou o motivo.
+  if (poolTruncado > 0) console.warn(`[GroupChat][POOL-TRUNCADO] grupo=${groupId} mostrando=${pool.length} de=${poolTotal} fora=${poolTruncado}`);
   const history = (histRows || []).reverse().map((m) => ({
     who: m.role === 'tom' ? 'TOM' : displayName(m.sender),
     role: m.role,
     content: m.media_extracted_text ? `${m.content || ''} [mídia: ${m.media_extracted_text}]`.trim() : (m.content || ''),
   }));
 
-  return { group, members, pool, poolToday, history, senderName: displayName(senderRow), collab: senderRow || null,
+  return { group, members, pool, poolToday, poolTotal, poolTruncado, history,
+    // Sem colaborador não se inventa nome: "alguém do grupo" é a verdade, e o prompt já diz
+    // ao TOM que ele não reconhece quem falou.
+    senderName: senderRow ? displayName(senderRow) : 'alguém do grupo',
+    collab: senderRow || null,
     memoriasDoGrupo: memoriasDoGrupo || null };
 }
 
@@ -189,7 +288,13 @@ async function postOpsResult(supabase, groupId, texto) {
   return ultimo;
 }
 
-async function processGroupChatMessage({ supabase, groupId, senderCollabId, text }) {
+async function processGroupChatMessage({ supabase, groupId, senderCollabId, text, remetenteDesconhecido }) {
+  // A PORTA DE EXECUÇÃO. Ver GROUPCHAT-SENDER-NULL-DESCARTE-MUDO no watcher: o turno de
+  // CONVERSA passa sem identidade, o de ESCRITA não. Aqui a regra é uma linha só, calculada
+  // do que o banco resolveu (nunca do texto): sem colaborador, nenhum marker de domínio é
+  // aplicado. Não confio na flag que veio de fora — `senderCollabId` é a evidência.
+  const podeExecutar = !!senderCollabId;
+  const semRemetente = !podeExecutar || remetenteDesconhecido === true;
   // ── CANAL DE OPS (grupo LA ORGANIZER - TOM) ────────────────────────────────────────────
   // Neste grupo o TOM não é assistente: é o agente de engenharia do Alf e do Hugo, com
   // ferramentas reais (Bash/Read/Write/Edit no repo, banco via script, git). Roda em Opus 5,
@@ -238,9 +343,12 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   // Um "sim"/"não" seco do MESMO remetente resolve a pendência (apagar ficha OU encerrar série).
   // Determinístico: NÃO confia no LLM pro threading "sim/não" (lição dos rituais de fechamento).
   try {
-    const { data: pend } = await supabase.from('group_chat_pending_confirms')
+    // Sem remetente conhecido não há pendência de NINGUÉM pra resolver — e um "sim" de
+    // desconhecido jamais pode apagar ficha ou encerrar série de outra pessoa.
+    const { data: pend } = podeExecutar ? await supabase.from('group_chat_pending_confirms')
       .select('*').eq('group_id', groupId).eq('sender_collab_id', senderCollabId)
-      .in('op', ['delete_note', 'end_series', 'derecur_series']).gt('expires_at', new Date().toISOString()).maybeSingle();
+      .in('op', ['delete_note', 'end_series', 'derecur_series']).gt('expires_at', new Date().toISOString()).maybeSingle()
+      : { data: null };
     if (pend) {
       const verdict = groupNotes.decideConfirm(pend, text);
       if (verdict === 'execute') {
@@ -293,6 +401,8 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     notesContext: notesCtx, // base de conhecimento do grupo (índice + body das fixadas)
     credentialContext: credCtx, // credenciais que casam com o pedido deste turno (secrets decifrados)
     dateAnchor: buildBrtDateAnchor(), // hoje + tabela de datas (BRT) — LLM não calcula weekday e erra
+    poolTotal: ctx.poolTotal, poolTruncado: ctx.poolTruncado, // o corte se declara (POOL-TRUNCADO)
+    remetenteDesconhecido: semRemetente, // conversa sim, escrita não (SENDER-NULL)
   });
 
   let response;
@@ -323,8 +433,41 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   const collab = ctx.collab;
   const engine = require('../engine'); // lazy: engine já carregado no processo; evita ciclo na carga
 
-  const stripBlock = (re) => { reply = (reply || '').replace(re, '').trim(); };
+  // stripBlock com /g: sem a flag, o `replace` tirava só a PRIMEIRA ocorrência e a segunda
+  // saía inteira no WhatsApp (04/09). Quem chama passa a regex já global; esta função garante.
+  const stripBlock = (re) => {
+    const g = re.flags.includes('g') ? re : new RegExp(re.source, `${re.flags}g`);
+    reply = (reply || '').replace(g, '').trim();
+  };
   const noCollab = (kind, label) => actions.push({ kind, status: 'fail', label: label || '', detail: 'não identifiquei quem pediu' });
+
+  // ─── PORTA DE EXECUÇÃO (GROUPCHAT-SENDER-NULL) ────────────────────────────
+  // Chokepoint ÚNICO: sem remetente conhecido, nenhum marker de ESCRITA é aplicado. Leitura
+  // (situação do aluno, relatório) segue liberada — é conversa, e conversa não precisa de
+  // identidade. O que precisa é assinatura: criar tarefa para alguém, dar baixa, delegar,
+  // aprovar lição. Em vez de calar (o defeito que estamos consertando) ou de agir às cegas
+  // (o segundo pior), o TOM DIZ que não reconhece quem falou e pede a identificação.
+  const MARKERS_DE_ESCRITA = ['TASK_UPDATE', 'TASK_GROUP', 'TASK_SERIES', 'GROUP_NOTE',
+    'PROJECT_CREATE', 'EVENT_CREATE', 'CHECKPOINT_BATCH', 'CHECKLIST_ACTION', 'NOTE_ACTION', 'LICOES'];
+  if (semRemetente) {
+    const barrados = [];
+    for (const nome of MARKERS_DE_ESCRITA) {
+      const r = extrairMarkers(reply, nome);
+      if (r.total) { barrados.push(nome); reply = r.limpo; }
+    }
+    if (barrados.length) {
+      actions.push({ kind: 'task', status: 'ask', label: 'Antes de eu registrar isso',
+        detail: 'não reconheci quem falou aqui (esse número não está no cadastro) — me diz quem é você, ou peça pra alguém já cadastrado repetir o pedido, que eu registro na hora' });
+      console.warn(`[GroupChat] escrita BARRADA por remetente desconhecido grupo=${groupId}: ${barrados.join(',')}`);
+      try {
+        const { error: _e } = await supabase.from('marker_logs').insert({
+          collaborator_id: null, marker_type: 'GROUP_SENDER', result: 'rejected',
+          reason: `escrita barrada, remetente desconhecido: ${barrados.join(',')}`.slice(0, 120),
+        });
+        if (_e) console.error(`[GroupChat] sensor de escrita barrada falhou: ${_e.message}`);
+      } catch (e) { console.error('[GroupChat] sensor de escrita barrada erro:', e.message); }
+    }
+  }
 
   // ─── TAREFA (pool do grupo) ───────────────────────────────────────────────
   try {
@@ -371,11 +514,13 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
 
   // ─── PACOTE / GRUPO DE TAREFAS (pai + subtarefas) ─────────────────────────
   // <<TASK_GROUP>>{action:create|add_subtasks,...}<<END>> → motor src/services/task-groups.js
-  const tgMatch = reply.match(/<<TASK_GROUP>>([\s\S]*?)<<END>>/i);
-  if (tgMatch) {
-    stripBlock(/<<TASK_GROUP>>[\s\S]*?<<END>>/i);
+  // Laço, não `if`: dois pacotes num turno viravam um pacote + um marcador cru no grupo.
+  const tgTodos = extrairMarkers(reply, 'TASK_GROUP', MARKER_TETO);
+  if (tgTodos.total) reply = tgTodos.limpo;
+  if (tgTodos.excedente) actions.push({ kind: 'task', status: 'fail', label: 'Pacote', detail: `pedi demais de uma vez — ${tgTodos.excedente} não entrou(ram), me manda em outra mensagem` });
+  for (const tgBruto of tgTodos.blocos) {
     let payload = null;
-    try { payload = JSON.parse(tgMatch[1].trim()); } catch (_) { payload = null; }
+    try { payload = JSON.parse(tgBruto.trim()); } catch (_) { payload = null; }
     if (!payload || (payload.action !== 'create' && payload.action !== 'add_subtasks')) {
       actions.push({ kind: 'task', status: 'fail', label: 'Pacote', detail: 'marker malformado' });
     } else {
@@ -436,10 +581,11 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   // <<TASK_SERIES>>{action:end|derecur|revive, title}<<END>> — group-only. 'end' e 'derecur'
   // CONFIRMAM (pré-passo); 'revive' é direto. 'derecur' = para de repetir MAS mantém o ciclo
   // corrente (Fatia 3). NÃO passa pelo validateTaskAction do engine (blast radius zero).
-  const tsMatch = reply.match(/<<TASK_SERIES>>([\s\S]*?)<<END>>/i);
-  if (tsMatch) {
-    stripBlock(/<<TASK_SERIES>>[\s\S]*?<<END>>/i);
-    let ps = null; try { ps = JSON.parse(tsMatch[1].trim()); } catch (_) { ps = null; }
+  const tsTodos = extrairMarkers(reply, 'TASK_SERIES', MARKER_TETO);
+  if (tsTodos.total) reply = tsTodos.limpo;
+  if (tsTodos.excedente) actions.push({ kind: 'task', status: 'fail', label: 'Série', detail: `pedi demais de uma vez — ${tsTodos.excedente} não entrou(ram), me manda em outra mensagem` });
+  for (const tsBruto of tsTodos.blocos) {
+    let ps = null; try { ps = JSON.parse(tsBruto.trim()); } catch (_) { ps = null; }
     if (!ps || !['end', 'derecur', 'revive'].includes(ps.action)) {
       actions.push({ kind: 'task', status: 'fail', label: 'Série', detail: 'marker malformado' });
     } else if (ps.action === 'end' || ps.action === 'derecur') {
@@ -474,10 +620,11 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
 
   // ─── ANOTAÇÃO DO GRUPO (base de conhecimento) ─────────────────────────────
   // <<GROUP_NOTE>>{action:create|append,...}<<END>> → src/services/group-notes.js
-  const gnMatch = reply.match(/<<GROUP_NOTE>>([\s\S]*?)<<END>>/i);
-  if (gnMatch) {
-    stripBlock(/<<GROUP_NOTE>>[\s\S]*?<<END>>/i);
-    let p = null; try { p = JSON.parse(gnMatch[1].trim()); } catch (_) { p = null; }
+  const gnTodos = extrairMarkers(reply, 'GROUP_NOTE', MARKER_TETO);
+  if (gnTodos.total) reply = gnTodos.limpo;
+  if (gnTodos.excedente) actions.push({ kind: 'note', status: 'fail', label: 'Anotação', detail: `pedi demais de uma vez — ${gnTodos.excedente} não entrou(ram), me manda em outra mensagem` });
+  for (const gnBruto of gnTodos.blocos) {
+    let p = null; try { p = JSON.parse(gnBruto.trim()); } catch (_) { p = null; }
     const GN_ACTIONS = ['create', 'append', 'update', 'delete', 'restore'];
     if (!p || !GN_ACTIONS.includes(p.action)) {
       actions.push({ kind: 'note', status: 'fail', label: 'Anotação', detail: 'marker malformado' });
@@ -553,13 +700,22 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   // A LLM interpreta a pergunta e emite o marker; QUEM ESCREVE OS NÚMEROS É O CÓDIGO.
   // Zero regex de roteamento (decisão do Alf 02/09: "eu fujo de regex") e zero chance de
   // confabular — ele nunca redige o número, igual ao <<GROUP_REPORT>>.
-  const situMatch = reply.match(/<<SITUACAO_ALUNO>>([\s\S]*?)<<END>>/i);
-  if (situMatch) {
-    stripBlock(/<<SITUACAO_ALUNO>>[\s\S]*?<<END>>/i);
+  // LAÇO, não `if` (04/09, grupo Barra): o contrato do prompt é "um aluno POR marcador", então
+  // pedir ficha de 3 alunos OBRIGA 3 marcadores — e o motor processava 1 e deixava 2 CRUS no
+  // WhatsApp. O raspador de resíduo sozinho esconderia a falha (o aluno seguiria sem ficha,
+  // agora em silêncio), por isso as DUAS camadas: aqui se processa, lá se garante que nada vaza.
+  const situTodos = extrairMarkers(reply, 'SITUACAO_ALUNO', MARKER_TETO);
+  if (situTodos.total) reply = situTodos.limpo;
+  if (situTodos.excedente) {
+    actions.push({ kind: 'situacao', status: 'ask', label: 'Fichas demais de uma vez',
+      detail: `consigo puxar ${MARKER_TETO} fichas por mensagem — me manda os outros ${situTodos.excedente} numa próxima que eu trago` });
+    console.warn(`[GroupChat] situacao grupo=${groupId}: ${situTodos.total} fichas pedidas, teto=${MARKER_TETO}`);
+  }
+  for (const situBruto of situTodos.blocos) {
     try {
       const situ = require('./situacao-aluno');
       let p = {};
-      try { p = JSON.parse(situMatch[1].trim()) || {}; } catch (_) { p = {}; }
+      try { p = JSON.parse(situBruto.trim()) || {}; } catch (_) { p = {}; }
       // A unidade dita na fala vence a do grupo: no Sucesso do Aluno, que atravessa as três,
       // é a fala que diz de quem se está falando. Sem nenhuma das duas, PERGUNTA.
       const unidadeId = situ.resolverUnidade(p.unidade) || (ctx.group && ctx.group.la_report_unidade_id);
@@ -770,7 +926,20 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   } catch (e) { console.error('[GroupChat] note err:', e.message); }
 
   // ─── SILÊNCIO + MONTAGEM ──────────────────────────────────────────────────
-  const content = buildTomContent(reply, actions);
+  // O `onResidual` fecha o par do raspador: ele arranca, isto REGISTRA. Sem a linha em
+  // marker_logs, "nenhum marcador vazou hoje" e "vazou e foi raspado 40 vezes" ficam iguais.
+  const residuaisDoTurno = [];
+  const content = buildTomContent(reply, actions, { onResidual: (n) => residuaisDoTurno.push(...n) });
+  if (residuaisDoTurno.length) {
+    try {
+      const { error: _e } = await supabase.from('marker_logs').insert({
+        collaborator_id: senderCollabId || null,
+        marker_type: 'MARKER_RESIDUAL', result: 'fallback',
+        reason: `raspado na saida do grupo: ${residuaisDoTurno.join(',')}`.slice(0, 120),
+      });
+      if (_e) console.error(`[GroupChat] sensor de residual falhou: ${_e.message}`);
+    } catch (e) { console.error('[GroupChat] sensor de residual erro:', e.message); }
+  }
   if (!content) return null; // nada a dizer (silêncio real — sem prosa e sem ação)
 
   // GROUP-NOTE-CONFAB — SENSOR. O chokepoint acima corrige a fala, mas sem registro ninguém
@@ -821,16 +990,26 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
 // devolve — aí com medição por trás.
 const NOTA_DO_SISTEMA_RE = /_?⚠️?\s*Na real n[ãa]o consegui registrar isso agora[^\n]*/gi;
 
-function buildTomContent(rawReply, actions) {
+function buildTomContent(rawReply, actions, opts) {
   const acts = Array.isArray(actions) ? actions : [];
   const bruto = String(rawReply || '');
   const modeloEscreveuNota = NOTA_DO_SISTEMA_RE.test(bruto);
   NOTA_DO_SISTEMA_RE.lastIndex = 0; // regex com /g guarda estado entre chamadas
   if (modeloEscreveuNota) console.log('[GroupChat] nota honesta veio DO MODELO — arrancada');
-  const cleaned = bruto
+  const semNota = bruto
     .replace(/<<SILENCIO>>/gi, '')
     .replace(NOTA_DO_SISTEMA_RE, '')
     .trim();
+  // PONTO ÚNICO DE SAÍDA — sanitizador por FORMA (04/09). Qualquer `<<ALGUMA_COISA>>…<<END>>`
+  // que tenha sobrado morre aqui, tenha o motor conhecido o marcador ou não. Isso é a rede,
+  // não o conserto: o conserto são os laços lá em cima, e o sensor abaixo é o que impede a
+  // rede de virar mordaça (vazamento raspado em silêncio = zero indistinguível de saúde).
+  const { texto: cleaned, nomes: residuais } = rasparMarkersResiduais(semNota);
+  if (residuais.length) {
+    console.error(`[GroupChat] MARKER RESIDUAL raspado na saída: ${residuais.join(',')}`);
+    try { if (opts && typeof opts.onResidual === 'function') opts.onResidual(residuais); }
+    catch (e) { console.error('[GroupChat] sensor de residual erro:', e.message); }
+  }
   const hasFailure = acts.some((a) => a && a.status === 'fail');
   // PEDIR informação não é FALHAR (achado na bateria E2E de 02/09). Quando o que falta é um
   // dado que só a pessoa tem — qual unidade, qual aluno —, a resposta é uma PERGUNTA. Vestir
@@ -863,13 +1042,27 @@ function buildTomContent(rawReply, actions) {
     const persistiuOuVaiPersistir = acts.some((a) => a && (a.status === 'ok' || a.status === 'pending' || a.status === 'ask'));
     if (!persistiuOuVaiPersistir) {
       try {
-        const { enforceNoMarkerHonesty } = require('../lib/optimistic-confirm');
+        const { enforceNoMarkerHonesty, isReportedStateClaim } = require('../lib/optimistic-confirm');
         const rc = require('./reply-classify');
         const antes = prose;
+        // ALARME FALSO (04/09, 10:30:56 e 10:35:30) — duas respostas puramente INFORMATIVAS e
+        // CORRETAS levaram colada a nota "não consegui registrar". A guarda exige "nada foi
+        // persistido" + alegação de conclusão, e nada foi persistido porque NÃO HAVIA NADA A
+        // PERSISTIR: o Alf perguntou, o TOM leu a lista e respondeu. O que fez a guarda ler
+        // aquilo como confabulação foi o particípio de OUTRA PESSOA ("todas criadas *pela
+        // Krissya*") e a inferência hedgeada ("o que indica que ... provavelmente"). Nenhuma
+        // das duas é o TOM falando da própria escrita — e a guarda existe só pra isso.
+        // Alarme falso destrói o sinal do alarme verdadeiro: a informação estava certa e a nota
+        // mandou o time desconfiar dela. Veto NARROW, com cinto de segurança dentro de
+        // isReportedStateClaim (qualquer 1ª pessoa ou ✅ na fala desarma o veto e a guarda
+        // dispara como sempre).
+        const relato = isReportedStateClaim(prose);
+        if (relato) console.log('[GroupChat] chokepoint VETADO: fala relata estado de terceiro/inferência, não escrita própria');
         prose = enforceNoMarkerHonesty(prose, {
           nothingPersisted: true,
           infoGathering: rc.hasTrailingQuestion(prose) || rc.isInfoGatheringReply(prose),
           contentSolicitation: rc.isContentSolicitationReply(prose),
+          reportedState: relato,
           markerAttempted: false,
           awaitingConfirm: false,
         });
@@ -910,4 +1103,5 @@ function friendlyTaskFail(why) {
   return MAP[why] || 'não consegui registrar';
 }
 
-module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM, buildTomContent, friendlyTaskFail, postOpsResult, GroupPostError };
+module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM, buildTomContent, friendlyTaskFail, postOpsResult, GroupPostError,
+  ordenarPoolPorVencimento, recortarPool, extrairMarkers, rasparMarkersResiduais, POOL_LIMIT, MARKER_TETO };

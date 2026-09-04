@@ -208,3 +208,144 @@ test('a nota do modelo não engana o chokepoint a ponto de sumir com a resposta'
     [{ kind: 'situacao', status: 'ok', label: 'x' }]);
   assert.match(c, /Já te mando a lista completa/);
 });
+
+// =====================================================================================
+// DEFEITO 2 — O POOL DE 30 FAZ O TOM AFIRMAR AUSENCIA A PARTIR DE LISTA TRUNCADA
+// (auditoria 04/09, 10:36). O TOM disse que tres anamneses "nao estavam no pool ativo".
+// Estavam: `pending`, e so fecharam as 11:01. Ele ainda inventou o motivo ("ja sairam da
+// lista"). Raiz: o pool lia 30 tarefas ordenadas por `created_at DESC`, e a pauta do dia
+// nasce num LOTE SO (ate 48 filhas por unidade) — a ordem por criacao vira quase
+// hora-invertida e as tarefas das 09:00 caem nas posicoes 45-47, fora do corte.
+// =====================================================================================
+const { ordenarPoolPorVencimento, recortarPool, extrairMarkers, POOL_LIMIT } = require('./group-chat-engine');
+
+test('o pool ordena por QUEM VENCE PRIMEIRO, nao por quem foi criada por ultimo', () => {
+  // Lote unico: created_at quase igual e em ordem inversa da agenda (foi o que aconteceu).
+  const lote = [
+    { id: 'c', title: '19:00 Arthur', due_date: '2026-09-04', created_at: '2026-09-04T11:00:00Z' },
+    { id: 'a', title: '09:00 Felipe', due_date: '2026-09-04', created_at: '2026-09-04T11:00:02Z' },
+    { id: 'b', title: 'atrasada de ontem', due_date: '2026-09-03', created_at: '2026-09-04T11:00:01Z' },
+  ];
+  const ord = ordenarPoolPorVencimento(lote).map((t) => t.id);
+  assert.deepEqual(ord, ['b', 'c', 'a'], 'atrasada primeiro; dentro do mesmo dia, a mais antiga de criacao');
+});
+
+test('tarefa SEM prazo vai pro fim (nao empurra o que vence hoje pra fora do corte)', () => {
+  const ord = ordenarPoolPorVencimento([
+    { id: 'sem', title: 'x', due_date: null, created_at: '2026-09-04T09:00:00Z' },
+    { id: 'com', title: 'y', due_date: '2026-09-30', created_at: '2026-09-01T09:00:00Z' },
+  ]).map((t) => t.id);
+  assert.deepEqual(ord, ['com', 'sem']);
+});
+
+test('o TETO cabe o maior grupo real (medido hoje: 46 abertas) e a pauta do dia (48/unidade)', () => {
+  assert.ok(POOL_LIMIT >= 96, `teto ${POOL_LIMIT} volta a truncar o grupo real — medi 46 abertas + 48 filhas de pauta`);
+});
+
+test('TRUNCAMENTO E VISIVEL: quem recorta DIZ que recortou', () => {
+  const muitas = Array.from({ length: 200 }, (_, i) => ({ id: `t${i}`, title: `T${i}`, due_date: '2026-09-04' }));
+  const r = recortarPool(muitas, 120);
+  assert.equal(r.pool.length, 120);
+  assert.equal(r.total, 200);
+  assert.equal(r.truncado, 80, 'o motor precisa saber QUANTAS ficaram de fora pra nunca dizer "nao existe"');
+});
+
+test('sem truncamento, truncado=0 (zero por saude tem que soar diferente de zero por corte)', () => {
+  const r = recortarPool([{ id: 'x', title: 'X' }], 120);
+  assert.equal(r.truncado, 0);
+  assert.equal(r.total, 1);
+});
+
+// =====================================================================================
+// DEFEITO 3 — VAZAMENTO DE MARCADOR CRU NO WHATSAPP (04/09, grupo Barra).
+// Duas mensagens reais sairam com <<SITUACAO_ALUNO>>{...}<<END>> literal no grupo e no
+// painel. Raiz dupla: (1) o `match` sem /g dentro de um `if` (nao de um laco) lia so o
+// PRIMEIRO marcador, e o prompt exige "um aluno POR marcador" — pedir ficha de 3 alunos
+// OBRIGA 3 marcadores; (2) nao existia sanitizador de saida por FORMA: as quatro camadas
+// que limpam o texto limpam por marcador NOMEADO, ninguem pergunta "sobrou algum <<X>>?".
+// =====================================================================================
+test('extrairMarkers le TODOS os marcadores repetidos (o `if` lia so o primeiro)', () => {
+  const r = extrairMarkers('a\n<<SITUACAO_ALUNO>>{"aluno":"A"}<<END>>\nb\n<<SITUACAO_ALUNO>>{"aluno":"B"}<<END>>', 'SITUACAO_ALUNO', 5);
+  assert.equal(r.total, 2);
+  assert.deepEqual(r.blocos, ['{"aluno":"A"}', '{"aluno":"B"}']);
+  assert.equal(r.limpo, 'a\n\nb', 'a leitura e a limpeza saem do MESMO laco');
+});
+
+test('extrairMarkers respeita o teto E devolve o excedente (raspar em silencio esconde a falha)', () => {
+  const txt = Array.from({ length: 8 }, (_, i) => `<<SITUACAO_ALUNO>>{"aluno":"A${i}"}<<END>>`).join('\n');
+  const r = extrairMarkers(txt, 'SITUACAO_ALUNO', 5);
+  assert.equal(r.blocos.length, 5);
+  assert.equal(r.excedente, 3);
+  assert.doesNotMatch(r.limpo, /<</, 'o excedente sai do texto tambem — nunca vaza');
+});
+
+test('SANITIZADOR POR FORMA: marcador residual desconhecido nao chega no WhatsApp', () => {
+  const c = buildTomContent('Claro, Alf! 👇\n\n<<SITUACAO_ALUNO>>{"aluno":"Manuela"}<<END>>',
+    [{ kind: 'situacao', status: 'ok', label: 'Ficha: Felipe' }]);
+  assert.doesNotMatch(c, /<<SITUACAO_ALUNO>>|<<END>>/, 'marcador cru vazou pro grupo real em 04/09');
+  assert.match(c, /Claro, Alf/, 'a fala do TOM sobrevive');
+});
+
+test('marcador da rota 1:1 que o motor de grupo nem conhece tambem e raspado', () => {
+  const c = buildTomContent('Pronto!\n<<REMINDER_CREATE>>{"x":1}<<END>>', [{ kind: 'task', status: 'ok', label: 'T' }]);
+  assert.doesNotMatch(c, /<</);
+});
+
+test('marcador TRUNCADO (sem END, resposta cortada no meio) tambem e raspado', () => {
+  const c = buildTomContent('Aqui vai 👇\n<<SITUACAO_ALUNO>>{"aluno":"Man', [{ kind: 'situacao', status: 'ok', label: 'x' }]);
+  assert.doesNotMatch(c, /<<SITUACAO_ALUNO>>/);
+});
+
+test('SENSOR: o raspador avisa quem chama (senao o vazamento vira zero silencioso)', () => {
+  const vistos = [];
+  buildTomContent('oi\n<<SITUACAO_ALUNO>>{"a":1}<<END>>\n<<GROUP_NOTE>>{"b":2}<<END>>',
+    [{ kind: 'situacao', status: 'ok', label: 'x' }], { onResidual: (n) => vistos.push(...n) });
+  assert.deepEqual(vistos.sort(), ['GROUP_NOTE', 'SITUACAO_ALUNO']);
+});
+
+test('ZERO-REGRESSAO: texto sem marcador nenhum nao aciona o sensor', () => {
+  const vistos = [];
+  buildTomContent('Bom dia, pessoal!', [], { onResidual: (n) => vistos.push(...n) });
+  assert.equal(vistos.length, 0);
+});
+
+test('ZERO-REGRESSAO: o delimitador de ACTIONS nao e confundido com marcador', () => {
+  const c = buildTomContent('Feito!', [{ kind: 'task', status: 'ok', label: 'T' }]);
+  assert.ok(c.includes(ACTIONS_DELIM));
+});
+
+// =====================================================================================
+// DEFEITO 4 — A GUARDA DE HONESTIDADE GRITA EM FALSO (04/09, 10:30:56 e 10:35:30).
+// Duas respostas puramente INFORMATIVAS e CORRETAS levaram colada a nota
+// "Na real nao consegui registrar isso agora". A guarda exige "nada foi persistido" +
+// alegacao de conclusao — e nada foi persistido porque NAO HAVIA NADA A PERSISTIR.
+// O que separa os dois casos: nas falas abaixo o participio descreve trabalho de OUTRA
+// PESSOA ("criadas pela Krissya") ou uma INFERENCIA ("o que indica que ... provavelmente"),
+// nunca uma escrita do proprio TOM. Ele so respondeu uma pergunta.
+// =====================================================================================
+test('CASO REAL 10:35:30 — "todas criadas pela Krissya" e relato, nao promessa quebrada', () => {
+  const c = buildTomContent(
+    'Sim, Alf! Ainda tem 27 anamneses abertas de hoje — todas criadas pela Krissya pra alunos com aula hoje, de 08h as 20h.',
+    []);
+  assert.doesNotMatch(c, /não consegui registrar/i, 'a informacao estava CERTA e a nota mandou o time desconfiar dela');
+  assert.match(c, /27 anamneses abertas/, 'e a frase nao pode ser apagada junto');
+});
+
+test('CASO REAL 10:30:56 — inferencia hedgeada sobre o que outra pessoa fez', () => {
+  const c = buildTomContent(
+    'Eles nao aparecem mais nas pendentes — o que indica que todas as anamneses ja foram concluidas (provavelmente quando a Krissya passou por elas hoje de manha).',
+    []);
+  assert.doesNotMatch(c, /não consegui registrar/i);
+  assert.match(c, /nao aparecem mais nas pendentes/, 'a frase informativa nao pode ser apagada junto');
+});
+
+test('A GUARDA NAO ENFRAQUECE: TOM afirmando a PROPRIA escrita segue pego', () => {
+  assert.match(buildTomContent('Anotado aqui pra contexto.', []), /não consegui registrar/i);
+  assert.match(buildTomContent('Criei as 3 tarefas pra Krissya.', []), /não consegui registrar/i);
+  assert.match(buildTomContent('✅ Todas as 3 anamneses concluidas.', []), /não consegui registrar/i);
+});
+
+test('A GUARDA NAO ENFRAQUECE: passiva SEM agente de terceiro segue pega', () => {
+  // "foram criadas" sem dizer POR QUEM continua sendo o TOM se atribuindo a escrita.
+  assert.match(buildTomContent('Todas as tarefas foram criadas.', []), /não consegui registrar/i);
+});
