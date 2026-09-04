@@ -118,6 +118,14 @@ const PAUTA_ANAMNESE_FIMDIA_POR_UNIDADE = { 'Recreio': '20:30', 'Barra': '19:30'
 // ninguem como faltoso, nunca grava na escada e nunca fala no grupo: e arrumacao silenciosa da
 // tela. Quem DECIDE o dia continua sendo o fechamento das 23:00.
 const PAUTA_ANAMNESE_REFRESH_TIMES = ['09:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00'];
+// LEMBRETE DE HORA EM HORA (pedido do Alf, 04/09). Cada tick fala da PROXIMA hora: as 09:00 fala
+// de quem chega as 10:00, as 19:00 de quem chega as 20:00 (a ultima aula do dia). Nunca da lista
+// do dia inteiro — repetida 11 vezes ela vira ruido, a equipe para de ler, e aí a mensagem que
+// importa morre junto. Medido nos dados de 04/09: 2 a 7 alunos por horario de aula.
+// Nao comeca antes das 09:00 porque a primeira aula e as 08:00 e quem chega ate ai ja esta na
+// mensagem de abertura da unidade. Quem faz cada unidade entrar na hora certa NAO e esta lista e
+// sim o marcador da abertura dela (Recreio 08:00, Barra 09:00, Campo Grande 10:00) — ver o bloco.
+const PAUTA_ANAMNESE_LEMBRETE_TIMES = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
 const OPS_DIGEST_TIME = '07:30';                // Every day — achados da auditoria no grupo de ops (após triagem das 5h)
@@ -3769,7 +3777,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh' && opts.force !== 'pauta_anamnese_fimdia') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh' && opts.force !== 'pauta_anamnese_fimdia' && opts.force !== 'pauta_anamnese_lembrete') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -4612,6 +4620,199 @@ async function run(opts = {}) {
         }
       }
     } catch (e) { console.error('[Pauta] fala erro (fora do loop por unidade):', e.message); }
+  }
+
+  // 09:00-19:00, de HORA em HORA — o lembrete da PROXIMA hora no grupo da unidade.
+  //
+  // Pedido do Alf (04/09). A mensagem da manha diz o dia inteiro; esta diz quem esta CHEGANDO
+  // agora. Repetir a lista do dia 11 vezes vira ruido e a equipe para de ler — e uma equipe que
+  // parou de ler nao le nem a mensagem da manha. O que serve no meio do expediente e o punhado de
+  // gente que entra na proxima hora (2 a 7 alunos, medido).
+  //
+  // POR QUE ELE VEM DEPOIS DO BLOCO DA FALA. As 09:00 os dois caem no mesmo slot, e a Barra abre
+  // as 09:00: se o lembrete rodasse antes, ele cobraria a unidade no mesmo tick em que a pauta do
+  // dia dela ainda nao saiu. Quem mexer nesta ordem reabre exatamente isso.
+  //
+  // ANAMNESE E CONTRATO JUNTOS, com rotulo por aluno — ao contrario da mensagem da manha, onde o
+  // dono pediu blocos separados. Nao e incoerencia: la sao duas listas do dia inteiro com gente
+  // diferente; aqui e a MESMA pessoa chegando na MESMA hora, e dois blocos fariam a secretaria
+  // procurar o mesmo aluno duas vezes pra descobrir que era um so.
+  //
+  // O TOM NUNCA ESCREVE NO LA REPORT — nem baixa de anamnese, nem de contrato. Ele le e cobra;
+  // quem escreve e a fonte. A tela de baixa de contrato no LA Report e obra do dono.
+  const _pautaLembreteHora = PAUTA_ANAMNESE_LEMBRETE_TIMES.find((h) => timeToSlot(h) === slotNow);
+  if (opts.force === 'pauta_anamnese_lembrete' || _pautaLembreteHora) {
+    try {
+      const { lembreteDaProximaHora } = require('./anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      // A hora BASE e o slot; a hora FALADA e a seguinte. Sob --force nenhuma hora da lista casa o
+      // slot: usa a hora corrente, pra que o force tambem respeite a chave do dia+hora — mesmo
+      // comportamento dos outros blocos da pauta.
+      const _lembreteBase = Number((_pautaLembreteHora || String(now.hour)).toString().slice(0, 2));
+      const _lembreteProxima = `${String(_lembreteBase + 1).padStart(2, '0')}:00`;
+      // Só sob --force numa hora absurda (23h): nao existe "proxima hora" e falar de "24:00" seria
+      // inventar. Lista vazia em vez de `continue`/`return` pra nao alterar o fluxo do dispatcher.
+      const _lembreteUnidades = _lembreteBase + 1 > 23 ? [] : situAl.UNIDADES_IDS;
+      if (_lembreteBase + 1 > 23) {
+        console.warn(`[Pauta] lembrete: nao existe hora seguinte a ${_lembreteBase}h — nao falo no escuro`);
+      }
+      for (const unidadeId of _lembreteUnidades) {
+        // try/catch por UNIDADE, DENTRO do laco — mesmo motivo dos outros blocos da pauta: um dado
+        // ruim de uma unidade nao pode calar as outras duas no mesmo tick.
+        try {
+          // Idempotencia por unidade E POR HORA: o cron bate cada slot 3x, e sao 11 slots por dia.
+          // Com a chave do dia, o lembrete das 09:00 travaria os dez seguintes; sem chave nenhuma,
+          // a mesma mensagem sairia 3x em cada slot num grupo real de WhatsApp.
+          const chaveLembrete = `pauta_lembrete:${unidadeId}:${now.ymd}:${_lembreteProxima}`;
+          // So EXECUTED/SKIPPED travam a retentativa: 'fallback' significa "deu errado, tenta de
+          // novo" e precisa poder rodar de novo dentro do slot. Mesmo filtro dos outros blocos.
+          const { data: jaLembrou, error: erroJaLembrou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveLembrete}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaLembrou) {
+            console.error(`[Pauta] lembrete: checagem de idempotencia falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaLembrou.message}`);
+            continue;  // falha-fechada: nao sei se ja falei nesta hora, nao arrisco repetir
+          }
+          if (jaLembrou && jaLembrou.length) continue;
+
+          // CADA UNIDADE SO COMECA A COBRAR DEPOIS DA MENSAGEM DE ABERTURA DELA. Campo Grande abre
+          // as 10:00 e nao pode receber cobranca as 09:00 sem ter recebido a pauta do dia — seria
+          // o TOM cobrando uma lista que ninguem viu. A prova de que a abertura saiu e o marcador
+          // do bloco da fala (`pauta_fala:<unidade>:<ymd>`, gravado so DEPOIS do envio ou de achar
+          // a mensagem no grupo). Nao e um relogio: e o mesmo par executed|skipped de "desfecho
+          // resolvido" que a idempotencia usa no arquivo inteiro. Se a LEITURA falhar, nao falo —
+          // cobrar no escuro num grupo real e pior que calar.
+          //
+          // Checado ANTES do grupo e ANTES da RPC: a unidade que ainda nao abriu nao gasta a
+          // consulta de 6-8s.
+          const chaveAbertura = `pauta_fala:${unidadeId}:${now.ymd}`;
+          const { data: jaAbriu, error: erroJaAbriu } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveAbertura}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaAbriu) {
+            console.error(`[Pauta] lembrete: checagem da abertura da unidade falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaAbriu.message}`);
+            continue;
+          }
+          if (!jaAbriu || !jaAbriu.length) {
+            // 'skipped' e nao 'fallback': pra ESTA hora o desfecho esta RESOLVIDO (a unidade ainda
+            // nao abriu; a hora seguinte tem chave propria e volta a tentar). Fosse fallback, um
+            // domingo — em que nenhuma unidade fala — gravaria 3 linhas por tick, 99 no dia.
+            // E o marcador tem que existir: "fiquei quieto porque a unidade nao abriu" e
+            // "nao rodei" nao podem ser indistinguiveis pra quem for investigar o silencio.
+            const { error: erroMarkerSemAbertura } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
+              reason: `${chaveLembrete} sem abertura da unidade hoje — nao cobro ainda`.slice(0, 120),
+            });
+            if (erroMarkerSemAbertura) console.error(`[Pauta] lembrete: marker_logs insert (sem abertura) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSemAbertura.message}`);
+            continue;
+          }
+
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] lembrete: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[Pauta] lembrete: nenhum grupo com wa_group_jid vinculado a unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
+
+          // Quem le a fonte e monta o texto e o ritual (SO LEITURA, sem supabase). Aqui e so
+          // orquestracao: idempotencia, guardas e envio.
+          const r = await lembreteDaProximaHora({
+            laReport: laReportClient, unidadeId, hoje: now.ymd, hora: _lembreteProxima,
+          });
+          if (r.motivo) {
+            // FONTE FORA DO AR: nao fala. Nunca "ninguem pendente" quando na verdade nao deu pra
+            // apurar — isso e afirmar um numero que ninguem mediu, 11 vezes por dia, em tres
+            // grupos reais. 'fallback' porque a hora ainda pode ser salva no proximo tick (5 min).
+            console.error(`[Pauta] lembrete ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+            const { error: erroMarkerFonte } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveLembrete} erro=${r.motivo}`.slice(0, 120),
+            });
+            if (erroMarkerFonte) console.error(`[Pauta] lembrete: marker_logs insert (fallback) tambem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerFonte.message}`);
+            continue;
+          }
+          if (!r.texto) {
+            // HORA SEM NINGUEM PENDENTE: nao manda mensagem. Silencio ali e noticia boa. Mas o
+            // marcador SAI mesmo assim — "zero por saude" e "zero por falha" nao podem ser
+            // indistinguiveis, e a diferenca entre os dois esta aqui: 'skipped' sem `erro=`.
+            const { error: erroMarkerVazio } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
+              reason: `${chaveLembrete} ninguem pendente chegando`.slice(0, 120),
+            });
+            if (erroMarkerVazio) console.error(`[Pauta] lembrete: marker_logs insert (silencio) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerVazio.message}`);
+            continue;
+          }
+
+          // GUARDA DE DUPLICATA POR CONTEUDO — a mesma do bloco da fala, e pelo mesmo motivo: o
+          // marcador pode falhar DEPOIS do envio, e aí nao fica linha nenhuma; o proximo tick nao
+          // acha marcador e manda o mesmo lembrete de novo, num grupo de WhatsApp real com gente
+          // lendo. Log nao previne; so uma guarda no ARTEFATO previne.
+          //
+          // O cabecalho vem de `texto.split('\n')[0]`, NUNCA redigitado — e ele carrega a HORA
+          // (`⏰ *Proxima hora — 16:00*`), que e o que separa um slot do outro: um cabecalho sem
+          // hora faria o lembrete das 16:00 casar o das 15:00 e nunca sair.
+          const cabecalhoLembrete = String(r.texto).split('\n')[0];
+          const inicioDoDiaISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+          const { data: jaNoGrupo, error: erroJaNoGrupo } = await supabase.from('group_chat_messages')
+            .select('id')
+            .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
+            .gte('created_at', inicioDoDiaISO)
+            .like('content', `${cabecalhoLembrete}%`)
+            .limit(1);
+          if (erroJaNoGrupo) {
+            // Nao sei se ja falei — nao arrisco falar de novo no escuro.
+            console.error(`[Pauta] lembrete: checagem de mensagem ja enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaNoGrupo.message}`);
+            const { error: erroMarkerChk } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveLembrete} checagem de duplicata falhou: ${erroJaNoGrupo.message}`.slice(0, 120),
+            });
+            if (erroMarkerChk) console.error(`[Pauta] lembrete: marker_logs insert (fallback) tambem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChk.message}`);
+            continue;
+          }
+          if (jaNoGrupo && jaNoGrupo.length) {
+            // Achou o artefato: um tick anterior ja mandou este lembrete e so o marcador falhou.
+            const { error: erroMarkerJa } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
+              reason: `${chaveLembrete} ja enviado (achado por conteudo — marcador anterior falhou)`.slice(0, 120),
+            });
+            if (erroMarkerJa) console.error(`[Pauta] lembrete: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerJa.message}`);
+            continue;
+          }
+
+          const { error: erroEnvio } = await supabase.from('group_chat_messages').insert({
+            group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: r.texto, channel: 'app',
+          });
+          if (erroEnvio) {
+            // A mensagem NAO saiu. 'executed' aqui travaria a hora; 'fallback' deixa o proximo
+            // tick tentar de novo (e a consulta de idempotencia acima so trava em executed/skipped).
+            console.error(`[Pauta] lembrete: envio falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroEnvio.message}`);
+            const { error: erroMarkerEnvio } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveLembrete} envio falhou: ${erroEnvio.message}`.slice(0, 120),
+            });
+            if (erroMarkerEnvio) console.error(`[Pauta] lembrete: marker_logs insert (fallback) tambem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerEnvio.message}`);
+            continue;
+          }
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE', result: 'executed',
+            reason: `${chaveLembrete} alunos=${(r.alunos || []).length}`.slice(0, 120),
+          });
+          if (erroMarker) {
+            // A mensagem JA SAIU pro grupo real e o marcador que travaria a retentativa nao
+            // gravou. A guarda de conteudo acima e quem impede o reenvio no proximo tick; este log
+            // alto existe pra alguem descobrir a tempo se ela tambem falhar.
+            console.error(`[Pauta] lembrete: ATENCAO — lembrete enviado mas marker_logs nao gravou (${situAl.nomeDaUnidade(unidadeId)}), risco de reenvio no proximo tick: ${erroMarker.message}`);
+          }
+        } catch (eUnidade) {
+          console.error(`[Pauta] lembrete ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
+      }
+    } catch (e) { console.error('[Pauta] lembrete erro (fora do loop por unidade):', e.message); }
   }
 
   // FIM DO DIA, por unidade (Barra 19:30, Campo Grande e Recreio 20:30) — o relatório do dia no
