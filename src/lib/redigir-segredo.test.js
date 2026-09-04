@@ -447,3 +447,144 @@ test('R5 limite conhecido: rotulo sozinho sem valor devolve achou=false', () => 
   assert.equal(r.texto, 'Senha:');
   assert.equal(r.achou, false, 'nada foi redigido -- achou nao e "a mensagem fala de credencial"');
 });
+
+// --- Round 6: enfase/aspas ao redor do rotulo + rotulo de duas palavras ---
+// O texto de "[Imagem analisada]" e gerado por modelo, e modelo formata rotulo
+// em markdown. "**Senha:** 250178Alf#" indo em claro para conversation_history
+// e para marker_logs.reason (que o relatorio das 7h transmite por WhatsApp) e o
+// caminho principal da feature, nao uma borda.
+
+test('R6: enfase markdown dupla na mesma linha', () => {
+  const r = redigirSegredos('**Senha:** hunter2');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('hunter2'), 'valor nao pode vazar');
+});
+
+test('R6: enfase markdown dupla com valor na linha seguinte', () => {
+  const r = redigirSegredos('**Senha:**\nhunter2');
+  assert.equal(r.texto, '**Senha:**\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R6: enfase markdown simples', () => {
+  const r = redigirSegredos('*Senha:*\nhunter2');
+  assert.equal(r.texto, '*Senha:*\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R6: aspas ao redor do rotulo', () => {
+  const r = redigirSegredos('"Senha:"\nhunter2');
+  assert.equal(r.texto, '"Senha:"\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R6: underscore ao redor do rotulo (era o pior caso: mascarava o _ e vazava)', () => {
+  const r = redigirSegredos('_Senha:_\nhunter2');
+  assert.equal(r.texto, '_Senha:_\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R6: crase (code span) ao redor do rotulo', () => {
+  const r = redigirSegredos('`Senha:`\nhunter2');
+  assert.equal(r.texto, '`Senha:`\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R6: enfase so de um lado', () => {
+  for (const t of ['**Senha:\nhunter2', 'Senha:**\nhunter2', '*Senha:\nhunter2', 'Senha:"\nhunter2']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(t)}`);
+    assert.ok(!r.texto.includes('hunter2'), `deveria mascarar: ${JSON.stringify(t)}`);
+  }
+});
+
+test('R6: rotulo de duas palavras separado do separador (api key)', () => {
+  const r = redigirSegredos('a minha api key e:\nsk-abc123');
+  assert.equal(r.texto, 'a minha api key e:\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R6: api_key e apikey nao adjacentes continuam funcionando', () => {
+  for (const t of ['a minha api_key e:\nsk-abc123', 'minha apikey e:\nsk-abc123', 'a minha api-key e:\nsk-abc123']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(t)}`);
+    assert.ok(!r.texto.includes('sk-abc123'), `deveria mascarar: ${JSON.stringify(t)}`);
+  }
+});
+
+test('R6: rotulo de duas palavras com enfase', () => {
+  const r = redigirSegredos('a minha **api key** e:\nsk-abc123');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('sk-abc123'));
+});
+
+// --- Round 6: travas (a regra nao pode virar redacao universal) -----------
+
+test('R6 trava: as quatro frases de conversa real seguem byte a byte identicas', () => {
+  const intactas = [
+    'qual a senha do chatwoot?',
+    'a chave da porta esta emprestada com o joao',
+    'me manda o link da anamnese por favor',
+    'Deixa eu te contar um segredo:\nvi ela na academia ontem'
+  ];
+  for (const t of intactas) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `deveria sair identico: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false, `nao deveria sinalizar: ${JSON.stringify(t)}`);
+  }
+});
+
+test('R6 trava: enfase sem rotulo conhecido nao arma', () => {
+  for (const t of ['**Endereco:**\nrua x', '"Login:"\nadmin', '_Observacao:_\nteste']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `nao deveria mascarar: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});
+
+test('R6 trava: idempotencia -- redigir o texto ja redigido nao arma o modo', () => {
+  const uma = redigirSegredos('senha: abc123\nfalou');
+  assert.equal(uma.texto, 'senha: ***\nfalou');
+  const duas = redigirSegredos(uma.texto);
+  assert.equal(duas.texto, 'senha: ***\nfalou', 'a mascara nao pode ser lida como "sem valor" e armar o modo');
+});
+
+// --- Round 6: varredura adversarial de enfase -----------------------------
+
+test('R6 adversarial: rotulos empilhados com enfase', () => {
+  const r = redigirSegredos('**Senha:**\n**Token:**\nhunter2');
+  assert.equal(r.texto, '**Senha:**\n***\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R6 adversarial: dois campos com enfase na mesma linha', () => {
+  const r = redigirSegredos('**senha:** abc123 **token:** xyz789');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('abc123'), 'primeiro valor nao pode vazar');
+  assert.ok(!r.texto.includes('xyz789'), 'segundo valor nao pode vazar');
+  assert.match(r.texto, /token/i, 'o rotulo do segundo campo nao pode ser engolido');
+});
+
+test('R6 adversarial: enfase dentro do valor', () => {
+  const a = redigirSegredos('senha: **hunter2**');
+  assert.equal(a.achou, true);
+  assert.ok(!a.texto.includes('hunter2'));
+  const b = redigirSegredos('Senha:\n**hunter2**');
+  assert.equal(b.texto, 'Senha:\n***');
+  assert.equal(b.achou, true);
+});
+
+test('R6 adversarial: enfase + print de tela de login', () => {
+  const r = redigirSegredos('[Imagem analisada]\n**Usuario:** admin\n**Senha:** Tr0ub4dor&3');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('Tr0ub4dor&3'));
+  assert.match(r.texto, /\[Imagem analisada\]/);
+});
+
+test('R6 adversarial: linha so de enfase nao arma nada', () => {
+  for (const t of ['**\nhunter2', '***\nhunter2', '":"\nhunter2', '**:**\nhunter2']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `nao deveria mascarar: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});

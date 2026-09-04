@@ -70,6 +70,22 @@
 // o modo sem mascarar nada -- saida byte a byte identica, achou=false.
 //
 // ---------------------------------------------------------------------------
+// ROUND 6 -- enfase markdown e rotulo de duas palavras
+// ---------------------------------------------------------------------------
+// O texto de "[Imagem analisada]" e gerado por modelo, e modelo formata rotulo
+// em markdown -- '**Senha:** 250178Alf#' e o caminho principal da feature, nao
+// uma borda. Duas mudancas: (a) a fronteira do rotulo aceita enfase e aspas
+// (* ` " _), nas duas maquinas, e a enfase de FECHAMENTO depois do separador
+// conta como "nao tem valor depois" (e o que faz '**Senha:**' armar em vez de
+// mascarar o '**' e deixar o valor da linha seguinte passar); (b) a linha
+// candidata reconhece o rotulo de duas palavras ('api key') em qualquer
+// posicao, nao so colado ao separador.
+// A enfase de fechamento so vale se houver enfase de ABERTURA antes do
+// separador. Sem essa exigencia 'senha: ***' -- texto JA redigido -- seria
+// lido como rotulo sem valor, armaria o modo e comeria a linha seguinte a cada
+// nova passagem. Com ela, redigir duas vezes estabiliza.
+//
+// ---------------------------------------------------------------------------
 // LIMITES CONHECIDOS -- sao decisao, nao descuido. Nao "conserte" sem medir.
 // ---------------------------------------------------------------------------
 // 1. 'Senha\nhunter2' (sem separador nenhum) nao arma: sem separador nao ha
@@ -80,8 +96,13 @@
 // 3. Rotulo sozinho sem nada para mascarar devolve achou=false ('Senha:').
 //    "achou" significa "algo foi redigido", nao "a mensagem fala de credencial"
 //    -- quem consumir como a segunda coisa vai errar.
-// Os tres exigiriam afrouxar o gatilho de um jeito que reabre sobre-redacao em
-// prosa, e sao formas de mensagem bem menos provaveis que as ja cobertas.
+// 4. JSON de UMA linha vaza: '{"senha": "hunter2"}' -- a aspa fica ENTRE o
+//    rotulo e o separador, e o round 6 so aceita enfase ANTES do rotulo, nao
+//    entre ele e o ":". Em varias linhas ('"senha":\n"hunter2"') funciona.
+// 5. Tabela markdown sem ":" vaza: '| Senha | hunter2 |' -- "|" nao e
+//    separador. Com ":" ('| Senha: | hunter2 |') mascara normalmente.
+// Todos exigiriam afrouxar o gatilho de um jeito que reabre sobre-redacao em
+// prosa, e sao formas de mensagem menos provaveis que as ja cobertas.
 
 const MASCARA = '***';
 
@@ -116,19 +137,59 @@ function _tokenValido(tok) {
 // caractere) de proposito: se fosse capturada e consumida, o candidato
 // seguinte na mesma linha perderia a fronteira que o candidato anterior
 // "comeu". Separador: ":", "=", ";" ou um espaco/tab (aceita zero ou mais
-// espacos/tabs soltos antes dele).
-const RE_CAMPO = /(?:^|(?<=[\s(\[]))(api[ _-]?key|[A-Za-z0-9_-]+)[ \t]*([:=;]|[ \t])/gi;
+// espacos/tabs soltos antes dele). ROUND 6: a fronteira aceita enfase, senao
+// "**Senha:** hunter2" (formato que o modelo produz na analise de imagem)
+// nao casa em lugar nenhum e o valor vai em claro para o log.
+const RE_CAMPO = /(?:^|(?<=[\s(\[*`"_]))(api[ _-]?key|[A-Za-z0-9_-]+)[ \t]*([:=;]|[ \t])/gi;
 
-// Linha candidata a rotulo: termina em separador de pontuacao e nada depois.
-const RE_LINHA_CANDIDATA = /[:=;][ \t]*$/;
+// Valor que e so enfase de fechamento ("**", "*", "`", "\"", "_") conta como
+// "nao tem valor depois" -- e o que faz "**Senha:**" armar o modo em vez de
+// mascarar o "**" e deixar o valor da linha seguinte passar. A MASCARA e a
+// excecao: "senha: ***" (texto ja redigido) tem de continuar sendo um valor,
+// senao redigir duas vezes arma o modo e come a linha seguinte.
+const RE_SO_ENFASE = /^[*`"_\s]+$/;
+
+function _soEnfase(v) {
+  return !v.includes(MASCARA) && RE_SO_ENFASE.test(v);
+}
+
+// Tira enfase/pontuacao das bordas de uma palavra, para comparar rotulo de
+// duas palavras ("**api key**:" -> "api" + "key").
+const RE_ENFASE_BORDA = /^[*`"_]+|[*`"_:=;,.]+$/g;
+
+function _limpaEnfase(palavra) {
+  return palavra.replace(RE_ENFASE_BORDA, '');
+}
+
+const RE_ENFASE_FINAL = /[ \t]*[*`"_]+[ \t]*$/;
+
+// Linha candidata a rotulo: termina em separador de pontuacao e nada depois
+// alem de espaco -- ou de enfase de FECHAMENTO, e nesse caso so vale se
+// existir enfase de ABERTURA antes do separador ("**Senha:**" vale). Sem essa
+// exigencia, "senha: ***" (texto ja redigido) seria lido como rotulo sem
+// valor, armaria o modo e comeria a linha seguinte a cada nova passagem.
+function _ehLinhaCandidata(linha) {
+  const t = linha.replace(/[ \t]+$/, '');
+  if (/[:=;]$/.test(t)) return true;
+  const semFinal = t.replace(RE_ENFASE_FINAL, '');
+  if (!/[:=;]$/.test(semFinal)) return false;
+  return /[*`"_]/.test(semFinal);
+}
 
 // Round 5 -- SO PARA ARMAR o modo (a deteccao de mesma linha continua olhando
 // apenas o token adjacente ao separador). Numa linha candidata, qualquer
 // palavra que contenha um rotulo conhecido basta: e o que pega 'A senha e:' e
 // 'Minha senha eh:', onde o token colado ao ":" e "e"/"eh".
+// Round 6 -- o mesmo para o rotulo de DUAS palavras: "api key" em qualquer
+// posicao da linha, nao so colado ao separador ('a minha api key e:').
 function _linhaArmaModo(linha) {
-  if (!RE_LINHA_CANDIDATA.test(linha)) return false;
-  return linha.trim().split(/\s+/).some(_tokenValido);
+  if (!_ehLinhaCandidata(linha)) return false;
+  const palavras = linha.trim().split(/\s+/);
+  if (palavras.some(_tokenValido)) return true;
+  for (let i = 0; i + 1 < palavras.length; i += 1) {
+    if (_tokenValido(`${_limpaEnfase(palavras[i])} ${_limpaEnfase(palavras[i + 1])}`)) return true;
+  }
+  return false;
 }
 
 function _ehPergunta(v) {
@@ -199,9 +260,10 @@ function _processaLinha(linha) {
     const v = valorRaw.trim();
     const sepOut = /\s/.test(campo.sepChar) ? ' ' : `${campo.sepChar} `;
 
-    if (!v) {
+    if (!v || _soEnfase(v)) {
       // Rotulo conhecido + pontuacao + nada depois: o valor vem nas proximas
       // linhas (print de tela de login, campo digitado em mensagens separadas).
+      // "Nada depois" inclui a enfase de fechamento ("**Senha:**").
       if (sepEhPontuacao && !proximo) pendente = true;
       out += linha.slice(campo.start, valorEnd);
       pos = valorEnd;
