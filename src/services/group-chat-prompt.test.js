@@ -214,3 +214,43 @@ test('memória de longo prazo entra sem data congelada e avisada como sessão PA
   assert.ok(!/hoje é <strong>06\/08/.test(p), 'fato datado não pode virar verdade permanente');
   assert.ok(/sess(ões|ão) (anterior|passad)/i.test(p), 'o bloco precisa se declarar como passado');
 });
+
+// =====================================================================================
+// DEFEITO 2 (segunda frente) — A HONESTIDADE SOBRE O CORTE.
+// Nao basta aumentar o teto: qualquer teto e finito. Se a lista chegou truncada, o TOM
+// PRECISA SABER — senao ele le "nao esta na lista" e conclui "nao existe", que foi
+// exatamente o que ele fez as 10:36 (e ainda inventou o motivo: "ja sairam da lista").
+// =====================================================================================
+test('lista truncada: o prompt AVISA e proibe afirmar ausencia', () => {
+  const p = buildGroupChatPrompt({ ...base, pool: [{ title: 'A', status: 'pending' }], poolTruncado: 80, poolTotal: 200 });
+  assert.match(p, /200/, 'o total real precisa aparecer');
+  assert.match(p, /80/, 'e quantas ficaram de fora');
+  assert.match(p, /n[ãa]o\s+(?:diga|afirme)|nunca\s+(?:diga|afirme)/i, 'o prompt precisa PROIBIR a afirmacao de ausencia');
+});
+
+test('lista COMPLETA: nenhum aviso de corte (zero por saude != zero por corte)', () => {
+  const p = buildGroupChatPrompt({ ...base, pool: [{ title: 'A', status: 'pending' }], poolTruncado: 0, poolTotal: 1 });
+  assert.doesNotMatch(p, /ficaram de fora/i);
+});
+
+test('ZERO-REGRESSAO: sem os campos novos o prompt sai como antes', () => {
+  const p = buildGroupChatPrompt({ ...base, pool: [{ title: 'A', status: 'pending' }] });
+  assert.doesNotMatch(p, /ficaram de fora/i);
+  assert.match(p, /A — pendente/);
+});
+
+// =====================================================================================
+// DEFEITO 1 (segunda porta) — REMETENTE DESCONHECIDO.
+// O TOM responde (ser ignorada e o pior desfecho), mas NAO executa em nome de quem ele
+// nao sabe quem e — e diz isso, em vez de calar.
+// =====================================================================================
+test('remetente desconhecido: o prompt manda responder E pedir que se identifique', () => {
+  const p = buildGroupChatPrompt({ ...base, remetenteDesconhecido: true });
+  assert.match(p, /n[ãa]o\s+(?:sei|reconhe|identifiquei)/i, 'o TOM tem que saber que nao sabe quem falou');
+  assert.match(p, /se\s+identifi|quem\s+(?:e|é)\s+voc/i, 'e pedir a identificacao antes de agir');
+});
+
+test('ZERO-REGRESSAO: com remetente conhecido nada disso aparece', () => {
+  const p = buildGroupChatPrompt({ ...base });
+  assert.doesNotMatch(p, /se identifi/i);
+});

@@ -37,9 +37,24 @@ function fmtHistoryLine(m) {
   return `${who}: ${content}`;
 }
 
-function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, credentialContext, dateAnchor, today }) {
+function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, credentialContext, dateAnchor, today, poolTotal, poolTruncado, remetenteDesconhecido }) {
   const memberNames = (members || []).map((m) => m.name).filter(Boolean).join(', ') || '—';
   const poolBlock = (pool || []).length ? (pool || []).map((t) => fmtPoolLine(t, today)).join('\n') : '(nenhuma tarefa ainda)';
+  // GROUPCHAT-POOL-TRUNCADO-VIRA-AUSENCIA (04/09 10:36): o TOM disse que três anamneses "não
+  // estavam no pool ativo". Estavam — só tinham caído fora do corte de 30. Ele leu "não está na
+  // lista" e escreveu "não existe", e ainda inventou o porquê. Aumentar o teto reduz o caso mas
+  // não o elimina: QUALQUER teto é finito. O que elimina é ele SABER que a lista veio recortada.
+  const cortado = Number(poolTruncado) > 0;
+  const cortePoolBlock = cortado
+    ? `\n⚠️ ATENÇÃO — ESTA LISTA ESTÁ INCOMPLETA: o grupo tem **${poolTotal}** tarefas em aberto e acima aparecem só as **${(pool || []).length}** que vencem primeiro. **${poolTruncado}** ficaram de fora do que você está vendo.\n- Por isso, aqui você NÃO PODE dizer que uma tarefa "não existe", "não está na lista", "já saiu" ou "foi concluída" só porque não a encontrou acima — você não está vendo tudo.\n- Se perguntarem por algo que não está na lista, responda com honestidade: "não tô vendo essa aqui na frente, mas a lista do grupo tá grande hoje — quer que eu puxe o relatório completo?" e ofereça o relatório (<<GROUP_REPORT>>), que lê o grupo inteiro.\n`
+    : '';
+  // GROUPCHAT-SENDER-NULL (04/09): o número de quem falou não casou com nenhum colaborador
+  // cadastrado. Antes o TOM era simplesmente DESLIGADO nesse caso e a pessoa ficava sem
+  // resposta — a gerente Krissya chamou pelo nome e nunca foi respondida. Agora ele responde;
+  // o que ele NÃO faz é assinar uma escrita no lugar de alguém que ele não sabe quem é.
+  const desconhecidoBlock = remetenteDesconhecido
+    ? `\n## ⚠️ VOCÊ NÃO SABE QUEM FALOU AGORA\nO número/contato de quem acabou de escrever NÃO está no cadastro, então você não reconhece essa pessoa (pode ser alguém novo, ou um número que trocou).\n- CONVERSE normalmente: responda a pergunta, explique, mostre o que ela pediu ver. Ignorar alguém é o pior que você pode fazer.\n- Mas NÃO registre nada em nome dela: criar/concluir/cancelar tarefa, delegar, dar baixa, apagar ficha e aprovar lição ficam bloqueados neste turno — e isso é regra do sistema, não escolha sua.\n- Se o pedido exigir registro, diga com naturalidade que não reconheceu quem falou e peça que a pessoa se identifique (ou que alguém já cadastrado repita o pedido). Ex.: "Consigo te explicar agora, mas pra registrar eu preciso saber quem é você — me diz seu nome?"\n- NUNCA chute o nome de quem falou nem trate como se fosse um membro conhecido.\n`
+    : '';
   const histBlock = (history || []).length ? (history || []).map(fmtHistoryLine).join('\n') : '(sem histórico)';
   // A memória é um resumo ROLANTE que nunca expira — o grupo Financeiro tinha gravado
   // "TOM se confundiu com a data — Rose corrigiu: hoje é 06/08". Um fato DATADO guardado como
@@ -73,8 +88,9 @@ ${memoryBlock}
 ${notesContext ? `\n${notesContext}\n` : ''}
 ${credentialContext ? `\n${credentialContext}\n` : ''}
 ## Tarefas do grupo (lista atual — NUNCA chame isso de "pool" na fala)
+(em ordem de vencimento: o que vence primeiro vem primeiro; sem prazo vai pro fim)
 ${poolBlock}
-
+${cortePoolBlock}${desconhecidoBlock}
 ## FONTE DE VERDADE DAS TAREFAS (crítico — evita cobrança fantasma)
 A lista acima é a ÚNICA verdade sobre tarefas do grupo. Se ela diz "(nenhuma tarefa ainda)", então NÃO HÁ tarefa aberta nem atrasada — fale isso direto ("tá tudo limpo por aqui, nada atrasado") e NÃO invente.
 - NUNCA apresente, cobre ou "conclua" tarefa que NÃO está nessa lista — mesmo que apareça em mensagens, relatórios ou resumos ANTIGOS do histórico, ou na sua memória. Histórico ≠ tarefa atual.
@@ -124,6 +140,9 @@ o cadastro, quem falta contrato — emita SÓ este marker:
   so o nome, do jeito que falaram — o sistema acha a pessoa e monta a ficha. Se houver mais de
   um com aquele nome, o card pergunta qual; se nao houver ninguem, o sistema avisa. NUNCA
   escolha voce mesmo entre dois alunos parecidos.
+- Perguntaram de VÁRIOS alunos de uma vez? Emita UM marker por aluno, um embaixo do outro —
+  o sistema processa todos e devolve uma ficha para cada. Máximo de 5 por mensagem; acima
+  disso ele avisa quantos ficaram e você pede os demais na mensagem seguinte.
 - "resumo" (padrão) = os NÚMEROS. Use sempre que a pergunta for "quantos".
 - Um recorte específico = a LISTA de quem falta aquilo. Use quando pedirem os nomes.
 - "pagina" só quando pedirem MAIS nomes depois da primeira leva (1, depois 2, e assim por diante).
