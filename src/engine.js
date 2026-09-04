@@ -62,6 +62,7 @@ const { friendlyInventoryError } = require('./lib/inventory-error-message');
 const { decideTaskDoneFromQuote } = require('./services/taskdone-quote');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
 const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, registerBatchDupConflict, pickEventDupMenu, buildDupChoice1Reply } = require('./lib/dup-choice');
+const { redigirSegredos } = require('./lib/redigir-segredo');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { normalizeHabitAliases } = require('./utils/habit-field-alias');
 const { normalizeHabitFrequency } = require('./utils/habit-frequency');
@@ -8864,7 +8865,19 @@ async function processMessage(phone, text, raw = {}) {
   // resposta do recipient em COORDINATION_RESPONSE, sem vazar scaffolding interno.
   const inboundVerbatimText = text;
   const _phoneTail = String(phone).slice(-4);
-  console.log(`[Engine] processMessage START phone=${_phoneTail} text="${String(text).slice(0, 60).replace(/\n/g, ' ')}"`);
+  // Redacao no log START (03/09 fix round 1) — este console.log roda ANTES do bloco de
+  // redacao mais abaixo e é o primeiro rastro de toda mensagem que entra, persistido no
+  // PM2 do VPS. Sem isso, os 60 primeiros chars da mensagem crua (senha cabe inteira)
+  // vazavam pro log antes de qualquer mascaramento existir. Fail-closed: se redigirSegredos
+  // falhar aqui, ainda estamos fora de qualquer try — não deixamos a excecao subir e
+  // derrubar a mensagem inteira antes mesmo do colaborador ser resolvido.
+  let _textStartLog;
+  try { _textStartLog = redigirSegredos(text).texto; }
+  catch (e) {
+    _textStartLog = '[redacao falhou — texto omitido]';
+    console.warn(`[Redacao] falha ao redigir texto do START log phone=${_phoneTail}: ${e.message}`);
+  }
+  console.log(`[Engine] processMessage START phone=${_phoneTail} text="${String(_textStartLog).slice(0, 60).replace(/\n/g, ' ')}"`);
   // Sprint 10: telemetria operacional. Acumulada durante o pipeline e gravada
   // em tom_metrics no fim. Falha silenciosa via metricsService.
   const _metrics = {
@@ -8932,15 +8945,19 @@ async function processMessage(phone, text, raw = {}) {
   // das 7h transmite esse trecho por WhatsApp. `text` aqui ja inclui a analise
   // de imagem injetada pelo webhook, entao print de senha tambem e coberto.
   // Deterministico de proposito: nao depende de o modelo reconhecer a credencial.
-  const { redigirSegredos } = require('./lib/redigir-segredo');
-  const _red = redigirSegredos(text);
-  const textForLogs = _red.texto;
-  if (_red.achou) console.log('[Redacao] valor sensivel mascarado no texto que vai para os logs');
-  // Copia da mensagem crua ANTES de qualquer reatribuicao de `text` (~9483, 10291,
-  // 10587 anexam blocos [CONTEXTO INTERNO] mais adiante). Uma task futura precisa
-  // do texto original do colaborador para detectar confirmacao — no texto inchado
-  // com contexto o detector devolve null.
-  const _textInboundRaw = String(text || '');
+  // Fail-closed (fix round 1): este bloco fica fora de qualquer try — se redigirSegredos
+  // lancasse sem protecao, a excecao subiria por processMessage/turnClaim/shutdown ate
+  // queue.enqueue, que engole o erro e deixa o colaborador SEM resposta nenhuma. Por isso
+  // o catch nunca cai pro `text` cru: na falha, loga um marcador explicito e segue.
+  let textForLogs;
+  try {
+    const _red = redigirSegredos(text);
+    textForLogs = _red.texto;
+    if (_red.achou) console.log('[Redacao] valor sensivel mascarado no texto que vai para os logs');
+  } catch (e) {
+    textForLogs = '[redacao falhou — texto omitido]';
+    console.warn(`[Redacao] falha ao redigir texto de entrada collab=${collab.id}: ${e.message}`);
+  }
   await logConversation(collab.id, 'inbound', textForLogs, _inboundWaId);
 
   // ---- Pending intents: lê UMA vez por mensagem (compartilhado finance_source + Sprint 30.3) ----
