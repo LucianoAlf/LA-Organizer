@@ -104,6 +104,13 @@ const PAUTA_ANAMNESE_MONTA_TIME = '06:00';
 // Alf em 04/09. A chave e o nome que situacao-aluno.nomeDaUnidade() devolve.
 const PAUTA_ANAMNESE_FALA_POR_UNIDADE = { 'Recreio': '08:00', 'Barra': '09:00', 'Campo Grande': '10:00' };
 const PAUTA_ANAMNESE_FECHA_TIME = '23:00';
+// RELATORIO DE FIM DE DIA (pedido do Alf, 04/09): "no final do dia ele manda uma lista do que foi
+// feito ali no dia. Alunos que tiveram na escola e nao preencheram a anamnese." Horarios dados
+// por ele, por unidade — depois da ultima aula de cada uma, e NAO as 23:00: as 23h nao tem
+// ninguem na escola pra ler. Chave e o nome que situacao-aluno.nomeDaUnidade() devolve, igual ao
+// mapa da fala. Slots sao de 15 min (timeToSlot), entao :30 cai certo.
+// Ele so LE: quem fecha filha, fecha container e grava a escada continua sendo o bloco das 23:00.
+const PAUTA_ANAMNESE_FIMDIA_POR_UNIDADE = { 'Recreio': '20:30', 'Barra': '19:30', 'Campo Grande': '20:30' };
 // A lista do dia PRECISA encolher (pedido do Alf, 04/09). Sem esta passada, quem preenche a
 // anamnese no tablet as 10h fica na tela ate as 23:00 e a equipe cobra quem ja fez. De 2 em 2
 // horas, das 09:00 as 21:00: a primeira aula e 08:00 (a de 09:00 pega a turma da manha) e a
@@ -3762,7 +3769,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh' && opts.force !== 'pauta_anamnese_fimdia') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -4332,6 +4339,9 @@ async function run(opts = {}) {
     try {
       const pura = require('../services/anamnese-pauta');
       const situAl = require('../services/situacao-aluno');
+      // Entrou nesta fala com o bloco de contrato (04/09): a lista de contrato vem da FONTE, não
+      // do painel, porque a pauta não cria tarefa de contrato. Ver o comentário longo lá embaixo.
+      const { laReportClient } = require('../services/la-report-client');
       for (const unidadeId of situAl.UNIDADES_IDS) {
         // Cada unidade fala na SUA hora (Recreio 08:00, Barra 09:00, Campo Grande 10:00). O bloco
         // abre quando QUALQUER uma bate o slot, entao aqui sai quem nao e a da vez.
@@ -4465,10 +4475,60 @@ async function run(opts = {}) {
             }
             if (!itens.length) continue;
 
+            // CONTRATO EM BLOCO SEPARADO (pedido do Alf, 04/09): "anamnese e contrato sem
+            // assinar são duas demandas extremamente importantes que precisam ser colocadas ali
+            // de forma separada. Não pode vir dentro do mesmo bolo."
+            //
+            // A pauta LISTA contrato e NÃO cria tarefa de contrato — spec §8: "contrato já tem
+            // dono: o Clayton cria na mão com horário de assinatura combinado, e duas fontes
+            // criando a mesma tarefa colidem". Informar é seguro; criar tarefa duplicada não é.
+            //
+            // Consequência direta disso: a lista de contrato NÃO pode sair do painel como a de
+            // anamnese (não existe filha nenhuma pra ler). Ela nasce da FONTE, aqui, na hora de
+            // falar. É uma RPC a mais por slot, não três: só a unidade da vez chega até aqui —
+            // as outras duas já saíram no `continue` do horário lá em cima.
+            //
+            // Falha da consulta NÃO vira lista vazia. Bloco ausente se lê como "hoje ninguém
+            // está sem contrato", que é uma AFIRMAÇÃO; `contratoErro` faz a mensagem dizer que
+            // não conferiu. Nunca afirmar número que não foi medido vale aqui como no resto.
+            //
+            // `now.dow` e não uma conta própria: ele e `now.ymd` saem da MESMA chamada de Intl
+            // em nowSaoPaulo(), então não têm como divergir. Uma aritmética de data local aqui
+            // reabriria o LOCALYMD-UTC-SHIFT que _diaSemanaBrt documenta no ritual.
+            let contrato = [];
+            let contratoErro = null;
+            try {
+              const { data: baseContrato, error: erroContrato } = await laReportClient.rpc(
+                'get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: false });
+              if (erroContrato) {
+                contratoErro = erroContrato.message;
+                console.error(`[Pauta] fala: consulta de contrato falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroContrato.message}`);
+              } else {
+                // filtrarPorRecorte é a ÚNICA definição de cada pendência nesta casa — a mesma
+                // que a montagem usa pra 'anamnese'. Uma cópia do critério de contrato aqui
+                // faria a mensagem e o card do LA Report discordarem, e ninguém confiaria em
+                // nenhum dos dois.
+                contrato = pura.pautaDoDia(
+                  situAl.filtrarPorRecorte(baseContrato || [], 'contrato'), now.dow);
+              }
+            } catch (eContrato) {
+              // A pauta de anamnese já está pronta na mão: uma exceção na consulta de contrato
+              // não pode derrubar a mensagem inteira da unidade. O bloco sai dizendo que não
+              // conferiu, e o de anamnese sai igual ao de sempre.
+              contratoErro = (eContrato && eContrato.message) || String(eContrato);
+              console.error(`[Pauta] fala: consulta de contrato lançou (${situAl.nomeDaUnidade(unidadeId)}): ${contratoErro}`);
+            }
+
             const [, m, d2] = now.ymd.split('-');
-            texto = pura.mensagemDoGrupo({ itens, unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}` });
+            texto = pura.mensagemDoGrupo({
+              itens, contrato, contratoErro,
+              unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}`,
+            });
             if (!texto) continue;
-            sufixoReason = `itens=${itens.length}`;
+            // O marcador precisa distinguir "zero sem contrato hoje" de "não consegui conferir":
+            // são a mesma ausência de bloco pra quem só olha o texto, e coisas opostas pra quem
+            // audita por marker_logs.
+            sufixoReason = `itens=${itens.length} contrato=${contratoErro ? 'erro' : contrato.length}`;
           }
 
           // Correção B (revisão do coordenador, 04/09) — o "irmão" do Important 1: mesmo com a
@@ -4552,6 +4612,143 @@ async function run(opts = {}) {
         }
       }
     } catch (e) { console.error('[Pauta] fala erro (fora do loop por unidade):', e.message); }
+  }
+
+  // FIM DO DIA, por unidade (Barra 19:30, Campo Grande e Recreio 20:30) — o relatório do dia no
+  // grupo. Pedido do Alf (04/09): "no final do dia ele manda uma lista do que foi feito ali no
+  // dia. Alunos que tiveram na escola e não preencheram a anamnese. 'Semana que vem eu vou
+  // lembrar de novo.'" A Fabíola completou: "no final do dia fazer essa checagem do que eles
+  // fizeram."
+  //
+  // Ele SÓ LÊ. Não fecha filha, não fecha container, não grava em anamnese_pauta — quem decide o
+  // dia continua sendo o bloco das 23:00 logo abaixo. Duas passadas gravando o mesmo resultado
+  // fariam a escada divergir de si mesma, e às 19:30 o dia nem acabou (ainda tem aula às 20:00).
+  // A trava disso mora no ritual (relatorioDeFimDeDia) e tem teste com fakes de escrita.
+  if (opts.force === 'pauta_anamnese_fimdia'
+      || Object.values(PAUTA_ANAMNESE_FIMDIA_POR_UNIDADE).some((h) => timeToSlot(h) === slotNow)) {
+    try {
+      const { relatorioDeFimDeDia } = require('./anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        const horaDoFecho = PAUTA_ANAMNESE_FIMDIA_POR_UNIDADE[situAl.nomeDaUnidade(unidadeId)];
+        if (!horaDoFecho) {
+          // Unidade nova sem horário definido: não falo no escuro, mas também não calo sobre isso.
+          console.warn(`[Pauta] fim de dia: unidade sem horario definido (${unidadeId}) -- nao vou falar`);
+          continue;
+        }
+        if (opts.force !== 'pauta_anamnese_fimdia' && timeToSlot(horaDoFecho) !== slotNow) continue;
+        // try/catch POR UNIDADE: mesmo motivo do bloco das 06:00 — uma unidade com problema (ou
+        // um grupo sem vínculo) não pode calar o relatório das outras duas.
+        try {
+          const chaveFim = `pauta_fimdia:${unidadeId}:${now.ymd}`;
+          // Só EXECUTED/SKIPPED travam a retentativa: 'fallback' significa "deu errado, tenta de
+          // novo" nesta casa, e sem este filtro um envio que falhasse travaria a chave do dia
+          // igual a um sucesso — o relatório se perderia até amanhã.
+          const { data: jaMandou, error: erroJaMandou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFim}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaMandou) {
+            console.error(`[Pauta] fim de dia: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaMandou.message}`);
+            continue;
+          }
+          if (jaMandou && jaMandou.length) continue;
+
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] fim de dia: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[Pauta] fim de dia: nenhum grupo com wa_group_jid vinculado à unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
+
+          const rel = await relatorioDeFimDeDia({
+            supabase, laReport: laReportClient, unidadeId, hoje: now.ymd,
+          });
+          if (!rel.texto) {
+            // Dois silêncios diferentes, e o marcador tem que distingui-los:
+            //  - motivo null  = ninguém entrou na pauta hoje (domingo, feriado). Saúde: grava
+            //    'skipped' e para de tentar no resto do slot.
+            //  - motivo cheio = o `hoje` chegou torto (única forma de cair aqui com motivo).
+            //    'fallback' é o rótulo honesto e deixa o próximo tick tentar.
+            const { error: erroMarkerVazio } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE',
+              result: rel.motivo ? 'fallback' : 'skipped',
+              reason: `${chaveFim} ${rel.motivo || 'sem pauta hoje — nada a relatar'}`.slice(0, 120),
+            });
+            if (erroMarkerVazio) console.error(`[Pauta] fim de dia: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerVazio.message}`);
+            if (rel.motivo) console.error(`[Pauta] fim de dia ${situAl.nomeDaUnidade(unidadeId)}: ${rel.motivo}`);
+            continue;
+          }
+
+          // Mesma guarda de artefato da fala da manhã, pelo mesmo motivo: se a mensagem ENTRA e o
+          // marker_logs falha logo depois, não sobra linha nenhuma e o próximo tick mandaria de
+          // novo num grupo de WhatsApp REAL com gente lendo. A guarda olha o que foi GRAVADO, não
+          // o registro sobre o que foi gravado — porque o registro é exatamente o que pode falhar
+          // calado. O cabeçalho sai de `texto.split('\n')[0]`, NUNCA redigitado: texto consultado
+          // divergindo do texto enviado faria a guarda nascer cega.
+          //
+          // Ele começa por 🌙 e a fala da manhã por 📋, então nenhum dos dois é prefixo do outro —
+          // é o que impede o relatório da noite de bloquear a pauta da manhã (e vice-versa) no
+          // LIKE por conteúdo.
+          const cabecalhoFim = String(rel.texto).split('\n')[0];
+          const hojeInicioFimISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+          const { data: jaEnviadoFim, error: erroJaEnviadoFim } = await supabase.from('group_chat_messages')
+            .select('id')
+            .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
+            .gte('created_at', hojeInicioFimISO)
+            .like('content', `${cabecalhoFim}%`)
+            .limit(1);
+          if (erroJaEnviadoFim) {
+            console.error(`[Pauta] fim de dia: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviadoFim.message}`);
+            const { error: erroMarkerChk } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveFim} checagem de duplicata falhou: ${erroJaEnviadoFim.message}`.slice(0, 120),
+            });
+            if (erroMarkerChk) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChk.message}`);
+            continue;
+          }
+          if (jaEnviadoFim && jaEnviadoFim.length) {
+            const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
+              reason: `${chaveFim} relatório já enviado (achado por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
+            });
+            if (erroMarkerSkip) console.error(`[Pauta] fim de dia: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
+            continue;
+          }
+
+          const { error: erroMsgFim } = await supabase.from('group_chat_messages').insert({
+            group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: rel.texto, channel: 'app',
+          });
+          if (erroMsgFim) {
+            // A mensagem NÃO saiu: 'fallback' pra o próximo tick tentar de novo. Gravar
+            // 'executed' aqui travaria a chave do dia e o relatório se perderia em silêncio.
+            console.error(`[Pauta] fim de dia: envio falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMsgFim.message}`);
+            const { error: erroMarkerFb } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveFim} envio falhou: ${erroMsgFim.message}`.slice(0, 120),
+            });
+            if (erroMarkerFb) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerFb.message}`);
+            continue;
+          }
+          const { error: erroMarkerFim } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE', result: 'executed',
+            reason: `${chaveFim} ok=${rel.preencheram} falta=${rel.faltaram.length} semver=${rel.semVerificacao}`.slice(0, 120),
+          });
+          if (erroMarkerFim) {
+            // Mensagem JÁ no grupo real e o marcador que travaria a retentativa não gravou: o
+            // próximo tick não acha marcador e manda de novo. A guarda de artefato acima é quem
+            // segura isso — este log alto existe pra alguém descobrir a tempo mesmo assim.
+            console.error(`[Pauta] fim de dia: ATENÇÃO — relatório enviado mas marker_logs não gravou (${situAl.nomeDaUnidade(unidadeId)}), risco de reenvio no próximo tick: ${erroMarkerFim.message}`);
+          }
+        } catch (eUnidade) {
+          console.error(`[Pauta] fim de dia ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
+      }
+    } catch (e) { console.error('[Pauta] fim de dia erro (fora do loop por unidade):', e.message); }
   }
 
   // 23:00 — fecha o recado do dia (filhas + container) depois da última aula (20:00). Lê a
