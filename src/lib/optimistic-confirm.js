@@ -326,6 +326,41 @@ function hasWeakCompletionClaim(text) {
   return String(text).split('\n').some(_isWeakCompletionClaimLine);
 }
 
+// CHOKEPOINT-FALSEFIRE-ESTADO-RELATADO (grupos Barra e Recreio, 04/09 10:30:56 e 10:35:30) —
+// a guarda colou "⚠️ Na real não consegui registrar isso agora" em DUAS respostas puramente
+// informativas e CORRETAS, e ainda apagou a frase que carregava a informação. Falas reais:
+//
+//   "Ainda tem 27 anamneses abertas de hoje — todas criadas PELA KRISSYA pra alunos com aula"
+//   "…o que indica que as anamneses já foram concluídas (PROVAVELMENTE quando a Krissya…)"
+//
+// A primeira caiu por TOTALIZER ("todas") + verbo ("criadas"); nas duas, o particípio descreve
+// trabalho de OUTRA PESSOA ou uma inferência do TOM sobre o mundo — nunca uma escrita dele.
+// `nothingPersisted` ali era o estado CORRETO, não um sintoma: não havia NADA a persistir,
+// porque a pessoa fez uma PERGUNTA e ele respondeu lendo a lista.
+//
+// O princípio já estava escrito no módulo (ver FIRST_PERSON_DONE_RE: "o particípio pode
+// descrever estado alheio ... e esse precisa sobreviver") — só nunca tinha sido aplicado aos
+// gates de TOTALIZER/EMOJI, que não exigem 1ª pessoa nem verbo no início da linha.
+//
+// A guarda NÃO enfraquece, por três travas:
+//  (1) CINTO: qualquer sinal de que o TOM fala da PRÓPRIA escrita — verbo em 1ª pessoa
+//      ("criei/registrei/fechei") ou emoji de sucesso — desarma o veto na hora, fala inteira.
+//  (2) TODAS as linhas que a guarda acusou precisam ser de relato. Uma linha honesta ao lado
+//      não absolve a linha vizinha que afirma escrita.
+//  (3) O agente de terceiro tem que ser um NOME PRÓPRIO ("pela Krissya"), não um genérico
+//      ("pelo sistema") — atribuir a máquina é justamente como um confab se esconderia.
+const AGENTE_TERCEIRO_RE = /\bpel[ao]s?\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ][\p{L}]+/u;
+const INFERENCIA_RE = /\b(?:o\s+que\s+indica\s+que|provavelmente|dev(?:e|em)\s+ter|pelo\s+visto|pelo\s+jeito|parece\s+que|aparentemente|imagino\s+que|suponho)\b/iu;
+function isReportedStateClaim(text) {
+  const s = String(text == null ? '' : text);
+  if (!s.trim()) return false;
+  if (FIRST_PERSON_DONE_RE.test(s)) return false;   // (1) cinto: ele falou da própria escrita
+  if (SUCCESS_EMOJI_RE.test(s)) return false;        // (1) cinto: ✅ é assinatura de execução
+  const acusadas = s.split('\n').filter(_isCompletionClaimLine);
+  if (!acusadas.length) return false;
+  return acusadas.every((l) => AGENTE_TERCEIRO_RE.test(l) || INFERENCIA_RE.test(l)); // (2)+(3)
+}
+
 // enforceNoMarkerHonesty — Camada 1: se a fala afirma conclusão mas NADA persistiu no
 // turno, rebaixa pra honesta. PURO. Sinais vêm do engine (nunca adivinhados do texto).
 // Caminho 2 / Fatia 0 — modo VELOCÍMETRO: com opts2.meta===true retorna {reply, fired, sense}
@@ -446,6 +481,11 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   // Reafirmar o que o próprio TOM acabou de gravar não é confab (Dudu 18/08). markerAttempted
   // mantém o freio: marker tentado-e-rejeitado neste turno é ação na mesa que FALHOU.
   if (strong && o.restatesRecentWrite && !o.markerAttempted) strong = false;
+  // CHOKEPOINT-FALSEFIRE-ESTADO-RELATADO (04/09): a fala RELATA o que outra pessoa fez, ou
+  // INFERE estado do mundo — não afirma escrita própria. Ver isReportedStateClaim. Opt ausente
+  // ⇒ veto inerte ⇒ zero-regressão pro 1:1, que segue com o tuning de meses intocado.
+  // `markerAttempted` mantém o freio: marker tentado-e-rejeitado é ação na mesa que FALHOU.
+  if (strong && o.reportedState && !o.markerAttempted) strong = false;
   const weak = !strong && !o.infoGathering && !!o.pendingActionRecent
     && !o.userProgressStatus && !o.restatesRecentWrite && hasWeakCompletionClaim(reply);
   if (!strong && !weak) return wrap(reply, false);
@@ -457,4 +497,4 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
 // NO_MARKER_HONEST_NOTE sai exportado (20/08): o guard de reação-sozinha (lib/reacao-muda)
 // precisa da MESMA frase. Duplicar a string criaria um segundo espelho da voz do TOM pra
 // apodrecer — a voz tem uma fonte só.
-module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply, restatesRecentWrite, NO_MARKER_HONEST_NOTE };
+module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply, restatesRecentWrite, isReportedStateClaim, NO_MARKER_HONEST_NOTE };

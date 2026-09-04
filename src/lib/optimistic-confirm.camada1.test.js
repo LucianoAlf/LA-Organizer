@@ -107,3 +107,55 @@ test('meta: fired=false em ✅ decorativo (protege a voz)', () => {
 test('retrocompat: sem meta retorna string (não objeto)', () => {
   assert.strictEqual(typeof enforceNoMarkerHonesty('✅ Lançado', PERSIST_NO), 'string');
 });
+
+// =====================================================================================
+// CHOKEPOINT-FALSEFIRE-ESTADO-RELATADO (04/09) — a guarda gritava em falso quando o TOM
+// RELATAVA o que outra pessoa fez ou INFERIA estado do mundo. O veto e OPT-IN: sem o opt,
+// nada muda para o 1:1 (que carrega tuning de meses). Ver isReportedStateClaim.
+// =====================================================================================
+const { isReportedStateClaim } = require('./optimistic-confirm');
+
+test('relato: participio com AGENTE de terceiro nomeado ("pela Krissya")', () => {
+  assert.strictEqual(isReportedStateClaim('Ainda tem 27 anamneses abertas — todas criadas pela Krissya pra hoje.'), true);
+});
+
+test('relato: inferencia hedgeada ("o que indica que ... provavelmente")', () => {
+  assert.strictEqual(isReportedStateClaim('O que indica que todas as anamneses ja foram concluidas (provavelmente quando a Krissya passou por elas).'), true);
+});
+
+test('CINTO 1: 1a pessoa desarma o veto — "criei" e o TOM falando da PROPRIA escrita', () => {
+  assert.strictEqual(isReportedStateClaim('Criei todas as tarefas pedidas pela Krissya.'), false);
+});
+
+test('CINTO 1: emoji de sucesso desarma o veto', () => {
+  assert.strictEqual(isReportedStateClaim('✅ Todas concluidas pela Krissya.'), false);
+});
+
+test('CINTO 2: uma linha honesta ao lado NAO absolve a linha que afirma escrita', () => {
+  assert.strictEqual(isReportedStateClaim('Todas criadas pela Krissya.\nTodas as suas tarefas foram fechadas.'), false);
+});
+
+test('CINTO 3: agente GENERICO ("pelo sistema") nao conta — e como um confab se esconderia', () => {
+  assert.strictEqual(isReportedStateClaim('Todas as tarefas foram criadas pelo sistema.'), false);
+});
+
+test('sem alegacao de conclusao nenhuma, nao ha o que vetar', () => {
+  assert.strictEqual(isReportedStateClaim('Bom dia, pessoal!'), false);
+  assert.strictEqual(isReportedStateClaim(''), false);
+});
+
+test('OPT-IN: sem o opt reportedState a guarda dispara exatamente como antes', () => {
+  const fala = 'Ainda tem 27 anamneses abertas — todas criadas pela Krissya pra hoje.';
+  assert.match(enforceNoMarkerHonesty(fala, PERSIST_NO), /não consegui registrar/i);
+});
+
+test('com o opt ligado, a resposta informativa passa intacta', () => {
+  const fala = 'Ainda tem 27 anamneses abertas — todas criadas pela Krissya pra hoje.';
+  assert.strictEqual(enforceNoMarkerHonesty(fala, { ...PERSIST_NO, reportedState: true }), fala);
+});
+
+test('marker TENTADO-e-rejeitado mantem o freio mesmo com reportedState', () => {
+  const fala = 'Ainda tem 27 anamneses abertas — todas criadas pela Krissya pra hoje.';
+  assert.match(enforceNoMarkerHonesty(fala, { ...PERSIST_NO, reportedState: true, markerAttempted: true }),
+    /não consegui registrar/i);
+});
