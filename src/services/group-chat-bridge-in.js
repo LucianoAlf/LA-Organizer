@@ -21,11 +21,21 @@ function isGroupMessage(body) {
 function extractGroupJid(body) {
   return getData(body)?.chatid || null;
 }
+// Identidade CRUA do remetente, sem o que não é identidade.
+// O WhatsApp entrega o remetente como "<id>[:<aparelho>]@<dominio>". O ":<aparelho>" aparece
+// quando a pessoa fala de um celular/desktop VINCULADO — é o número do APARELHO, não dela.
+// Tirar "todo caractere não-dígito" (como era antes) EMENDAVA o aparelho no id: um lid de 15
+// dígitos virava 17 e não casava mais com o lid de 15 do /group/info. Foi assim que a "Fê ✨"
+// mandou 10 mensagens numa manhã e nenhuma teve autor (Administração Recreio, 04/09).
+function idDoRemetente(raw) {
+  const local = String(raw || '').split('@')[0].split(':')[0];
+  return local.replace(/\D/g, '') || null;
+}
+
 // Número do PARTICIPANTE que mandou (no grupo, o remetente é data.sender, não o chatid).
-// Em @lid (id linkado do WhatsApp) os dígitos não casam com telefone → cai no match por NOME.
+// Em @lid (id linkado do WhatsApp) os dígitos não são telefone → quem resolve é o degrau do lid.
 function extractSenderPhone(body) {
-  const raw = String(getData(body)?.sender || '').replace(/\D/g, '');
-  return raw || null;
+  return idDoRemetente(getData(body)?.sender);
 }
 
 // Normaliza um nome p/ comparação: minúsculas, sem acento, só alfanumérico + espaço.
@@ -68,19 +78,47 @@ function matchMemberByPhone(phone, members) {
 // perfil do WhatsApp, e quem se apresenta lá com outro nome ("Fernanda ADM Recreio" pra quem é
 // "Fefê" no cadastro) entrava SEM AUTOR — a falha muda de sempre. O casamento segue ancorado no
 // começo do nome e restrito aos MEMBROS do grupo, então alias não abre porta pra estranho.
+//
+// ONDE ESTÁ A LINHA DO RISCO (revisão 04/09). O emoji/acento/caixa já morrem no normalizeName —
+// "Anne ✨" vira "anne". O que faltava era o caminho INVERSO: o perfil traz só o COMEÇO do nome
+// ("Anne" para quem é "Anne Susan"). Isso entrou, mas com duas travas:
+//   1) o casamento invertido só vale no LIMITE DE PALAVRA ("anne susan" começa com "anne "), e
+//   2) só quando UMA ÚNICA pessoa casa — "Ana" com "Ana Paula" e "Ana Beatriz" no mesmo grupo
+//      fica SEM AUTOR de propósito.
+// O que NÃO entrou: casar por pedaço DENTRO da palavra. "Fê" é começo de "Fefê", mas também de
+// "Fernanda", "Felipe", "Fernando" — duas letras de um perfil qualquer não podem carregar a
+// identidade de uma pessoa real, porque autor errado abre execução em nome de quem não pediu.
+// Quem resolve a Fefê é o TELEFONE (degrau do lid); pro nome, o rastro avisa o dono, que
+// cadastra "Fê" como alias — porta revisada por humano.
 function matchMemberByName(senderName, members) {
   const s = normalizeName(senderName);
   if (!s) return null;
-  let best = null, bestLen = 0;
+  const candidatosDe = (m) => [m.preferred_name, m.full_name, ...(Array.isArray(m.aliases) ? m.aliases : [])];
+
+  // (1) O nome do perfil COMEÇA com o nome do cadastro ("Rose_Gerente Recreio" → "Rose").
+  let best = null, bestLen = 0, empate = false;
   for (const m of members || []) {
-    const apelidos = Array.isArray(m.aliases) ? m.aliases : [];
-    for (const cand of [m.preferred_name, m.full_name, ...apelidos]) {
+    for (const cand of candidatosDe(m)) {
       const c = normalizeName(cand);
       if (!c) continue;
-      if ((s === c || s.startsWith(c + ' ')) && c.length > bestLen) { best = m.id; bestLen = c.length; }
+      if (s !== c && !s.startsWith(c + ' ')) continue;
+      if (c.length > bestLen) { best = m.id; bestLen = c.length; empate = false; }
+      else if (c.length === bestLen && best && best !== m.id) empate = true; // duas PESSOAS empatadas
     }
   }
-  return best;
+  if (empate) return null; // empate entre pessoas diferentes: calar é melhor que chutar
+  if (best) return best;
+
+  // (2) Caminho inverso: o perfil traz só o começo ("Anne" → "Anne Susan"). Único ou nada.
+  if (s.length < 2) return null;
+  const donos = new Set();
+  for (const m of members || []) {
+    for (const cand of candidatosDe(m)) {
+      const c = normalizeName(cand);
+      if (c && c.startsWith(s + ' ')) donos.add(m.id);
+    }
+  }
+  return donos.size === 1 ? [...donos][0] : null;
 }
 
 function firstName(name) {
@@ -94,16 +132,30 @@ function resolveMentions(text, lidToName) {
   return String(text).replace(/@(\d{5,})/g, (m, lid) => (lidToName[lid] ? `@${lidToName[lid]}` : m));
 }
 
-// Cache curto dos participantes por JID (evita bater /group/info a cada menção).
+// Cache curto dos participantes por JID (evita bater /group/info a cada menção). 5 minutos.
+// NÃO guarda lista vazia: uma resposta vazia é quase sempre soluço da UAZAPI, e guardá-la
+// cegava o degrau do lid por 5 minutos inteiros sem ninguém saber.
 const _partCache = new Map(); // jid -> { at, parts }
 async function getParticipantsCached(fetchFn, jid) {
   const hit = _partCache.get(jid);
   const now = Date.now();
   if (hit && now - hit.at < 5 * 60 * 1000) return hit.parts;
   const parts = await fetchFn(jid);
-  _partCache.set(jid, { at: now, parts });
+  if (Array.isArray(parts) && parts.length) _partCache.set(jid, { at: now, parts });
   return parts;
 }
+// Cadastro inteiro em cache curto, usado SÓ pra CONFERIR identidade (nunca pra decidir).
+let _cadastroCache = { at: 0, rows: null };
+async function cadastroParaConferencia(supabase) {
+  const now = Date.now();
+  if (_cadastroCache.rows && now - _cadastroCache.at < 5 * 60 * 1000) return _cadastroCache.rows;
+  const { data } = await supabase.from('collaborators').select('id, full_name, preferred_name, aliases');
+  if (data && data.length) _cadastroCache = { at: now, rows: data };
+  return data || [];
+}
+
+// Só pros testes: os caches são de módulo e vivem junto com o processo.
+function _limpaCacheParticipantes() { _partCache.clear(); _cadastroCache = { at: 0, rows: null }; }
 
 // Colaboradores que são membros do grupo (id, nomes, phone) — reusado p/ identidade e menções.
 async function loadGroupMembers(supabase, groupId) {
@@ -114,6 +166,23 @@ async function loadGroupMembers(supabase, groupId) {
   const { data: cols } = await supabase.from('collaborators')
     .select('id, full_name, preferred_name, phone, aliases').in('id', ids);
   return cols || [];
+}
+
+// Procura no CADASTRO INTEIRO por telefone. Telefone é identificador DURO: não muda quando a
+// pessoa edita o perfil e não se repete entre pessoas — por isso ele pode olhar além de
+// work_group_members (o degrau 1, por telefone, já olha o cadastro todo; o degrau do lid olhava
+// só os membros e ficava, sem motivo, mais fraco que ele com a MESMA evidência).
+// Sem esta ponte, quem está no grupo do WhatsApp mas ainda não tem linha em work_group_members
+// fica invisível pra sempre mesmo com o telefone batendo — medido no ADM Barra em 04/09.
+// Exige casamento ÚNICO: dois cadastros no mesmo número é dado sujo, e aí calar é o certo.
+async function achaNoCadastroPorTelefone(supabase, telefone) {
+  const alvo = new Set(chavesTelefone(telefone));
+  if (!alvo.size) return { id: null, ambiguo: false };
+  const { data } = await supabase.from('collaborators').select('id, phone');
+  const ids = [...new Set((data || [])
+    .filter((c) => chavesTelefone(c.phone).some((k) => alvo.has(k)))
+    .map((c) => c.id))];
+  return { id: ids.length === 1 ? ids[0] : null, ambiguo: ids.length > 1 };
 }
 
 // Extrai os wa_message_id apagados de um evento messages_update. DEFENSIVO: só retorna id
@@ -175,7 +244,8 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
     // fora da Fase 1 — o guard garante isso por CÓDIGO, não por combinado.
     const _remetenteQA = extractSenderPhone(body);
     if (_remetenteQA && !qaIsolation.permiteGrupo(_remetenteQA)) {
-      console.warn(`[QA] mensagem de perfil de teste em grupo — descartada (${_remetenteQA})`);
+      // Só os 4 últimos dígitos: log não carrega dado pessoal, e 4 dígitos já distinguem perfis.
+      console.warn(`[QA] mensagem de perfil de teste em grupo — descartada (final ${_remetenteQA.slice(-4)})`);
       return { handled: true };
     }
     const jid = extractGroupJid(body);
@@ -202,11 +272,17 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
     const phone = extractSenderPhone(body);
     const hasMention = /@\d{5,}/.test(text);
     let sender_id = null;
+    // TRILHA: cada degrau escreve aqui POR QUE não resolveu. Sem isso, 10 mensagens de uma
+    // gerente atravessaram uma manhã inteira sem autor e ninguém ficou sabendo (04/09).
+    // Nunca guarda telefone/lid — só o motivo. Dado pessoal não entra em log.
+    const trilha = [];
     // 1) por telefone (1:1 normal). Em grupo o participante quase sempre vem em @lid → falha.
+    if (!phone) trilha.push('telefone:evento sem remetente');
     if (phone) {
       const { data: collab } = await supabase.from('collaborators')
         .select('id').or(`phone.eq.${phone},phone.eq.${phone.replace(/^55/, '')}`).maybeSingle();
       sender_id = collab?.id || null;
+      if (!sender_id) trilha.push('telefone:remetente nao e telefone conhecido (grupo em modo lid)');
     }
     // Membros do grupo (carregados 1x) — p/ identidade por telefone/nome E p/ menções.
     let members = null;
@@ -218,16 +294,69 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
     // sem autor, e sem autor o TOM não processa — ele ficou MUDO pra ele. O par (lid, phone)
     // já vem de /group/info e o cache já existe; só não era usado pra identidade.
     // Número não muda com o humor de quem edita o perfil.
-    if (!sender_id && phone && helpers.getGroupParticipants && members && members.length) {
+    // O `members.length` saiu da porta de entrada: grupo sem membro cadastrado ainda pode ter
+    // o remetente no cadastro geral, e barrar aqui matava o degrau antes de ele tentar.
+    if (!sender_id && phone && helpers.getGroupParticipants) {
       try {
         const parts = await getParticipantsCached(helpers.getGroupParticipants, jid);
-        const hit = (parts || []).find((p) => String(p.lid || '').replace(/\D/g, '') === phone);
-        if (hit && hit.phone) sender_id = matchMemberByPhone(hit.phone, members);
-      } catch (_) { /* melhor-esforço: se falhar, cai no nome logo abaixo */ }
+        if (!Array.isArray(parts) || !parts.length) {
+          trilha.push('lid:/group/info devolveu lista de participantes VAZIA');
+        } else {
+          // Normaliza o lid do participante do mesmo jeito que o do remetente (o ":aparelho"
+          // pode aparecer dos dois lados) — a comparação tem que ser entre iguais.
+          const hit = parts.find((p) => idDoRemetente(p.lid) === phone);
+          if (!hit) trilha.push('lid:remetente nao esta na lista de participantes do grupo');
+          else if (!hit.phone) trilha.push('lid:participante sem telefone no /group/info');
+          else {
+            sender_id = matchMemberByPhone(hit.phone, members);
+            if (!sender_id) {
+              const noCadastro = await achaNoCadastroPorTelefone(supabase, hit.phone);
+              if (noCadastro.ambiguo) trilha.push('lid:telefone AMBIGUO — mais de um cadastro no mesmo numero');
+              else if (noCadastro.id) {
+                sender_id = noCadastro.id;
+                console.warn(`[Bridge-in] identidade por TELEFONE fora de work_group_members: grupo=${group.id} perfil=${JSON.stringify(waName)} colaborador=${sender_id} — vale a pena incluir no grupo do app`);
+              } else trilha.push('lid:telefone do participante nao esta no cadastro');
+            }
+          }
+        }
+      } catch (e) {
+        // Antes era `catch (_) {}`: o degrau podia estar morto há dias sem deixar marca.
+        trilha.push(`lid:falhou (${e.message})`);
+        console.warn(`[Bridge-in] degrau do lid falhou grupo=${group.id}: ${e.message}`);
+      }
     }
 
+    const veioDoTelefone = !!sender_id; // degrau 1 ou degrau do lid: evidência DURA
+
     // 2) fallback de identidade por NOME (resolve avatar/nome no app + destrava o watcher).
-    if (!sender_id && waName && members) sender_id = matchMemberByName(waName, members);
+    if (!sender_id && waName && members) {
+      sender_id = matchMemberByName(waName, members);
+      if (!sender_id) trilha.push('nome:perfil do WhatsApp nao casa com nome/apelido de nenhum membro');
+    } else if (!sender_id && !waName) trilha.push('nome:evento sem nome de perfil');
+
+    // CONFLITO DE IDENTIDADE: o telefone aponta uma pessoa e o nome do perfil aponta OUTRA,
+    // também cadastrada. NÃO muda o autor — telefone é a evidência dura e mudar por causa do
+    // nome era justamente o erro que a gente saiu de. Mas grita, porque isso é cadastro sujo:
+    // medido em 04/09, o número gravado na linha de "Krissya" é o número do perfil "Anne", e
+    // as mensagens da Anne entram como Krissya. Sem este aviso o TOM fala em nome de quem não
+    // pediu e ninguém enxerga.
+    if (sender_id && veioDoTelefone && waName) {
+      try {
+        const porNome = matchMemberByName(waName, await cadastroParaConferencia(supabase));
+        if (porNome && porNome !== sender_id) {
+          console.warn(`[Bridge-in] CONFLITO DE IDENTIDADE grupo=${group.id} perfil=${JSON.stringify(waName)} — `
+            + `telefone aponta colaborador=${sender_id} e o nome do perfil aponta=${porNome}. `
+            + 'Autor fica pelo TELEFONE; o cadastro precisa de conferência humana.');
+        }
+      } catch (e) { console.warn(`[Bridge-in] conferencia de identidade falhou: ${e.message}`); }
+    }
+
+    // O SILÊNCIO NUNCA MAIS: toda mensagem que termina sem autor deixa rastro com quem tentou
+    // falar, em qual grupo e em que degrau a cadeia parou. Vale pra texto E pra mídia.
+    if (!sender_id) {
+      console.warn(`[Bridge-in] SEM AUTOR grupo=${group.id} perfil=${JSON.stringify(waName || '(sem nome de perfil)')} `
+        + `parou_em=${JSON.stringify(trilha[trilha.length - 1] || 'nenhum degrau rodou')} trilha=${JSON.stringify(trilha.join(' > '))}`);
+    }
 
     // MÍDIA: baixa da UAZAPI → sobe no bucket group-chat → insere. O watcher (extractMediaText)
     // transcreve áudio / analisa imagem → TOM entende. Degrada gracioso: falha → loga e pula.
@@ -265,7 +394,7 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
         const lidToName = {};
         for (const p of parts) { const nm = phoneToName.get(p.phone); if (nm) lidToName[p.lid] = nm; }
         text = resolveMentions(text, lidToName);
-      } catch (e) { /* menção é cosmética — segue com o texto cru */ }
+      } catch (e) { console.warn(`[Bridge-in] mencoes nao resolvidas grupo=${group.id}: ${e.message}`); }
     }
 
     await supabase.from('group_chat_messages').insert({
@@ -286,4 +415,4 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
   }
 }
 
-module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, matchMemberByPhone, chavesTelefone, normalizeName, resolveMentions, firstName, mediaKindFromBody, parseDeletedWaIds, maybeHandleGroupDelete };
+module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, idDoRemetente, matchMemberByName, matchMemberByPhone, achaNoCadastroPorTelefone, chavesTelefone, normalizeName, resolveMentions, firstName, mediaKindFromBody, parseDeletedWaIds, maybeHandleGroupDelete, getParticipantsCached, _limpaCacheParticipantes };
