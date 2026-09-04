@@ -14,6 +14,14 @@ const repoPadrao = require('../services/anamnese-pauta-repo');
 // acima do teto o raciocínio é o mesmo, só que na ponta de cima.
 const TETO_FILHAS = 120;
 
+// Teto da VARREDURA das pautas de dias anteriores (passada da noite, abaixo): no máximo 7 dias
+// pra trás e 5 containers por passada. Sem teto, uma volta de férias — ou o dia em que alguém
+// religar o ritual depois de um mês parado — viraria centenas de UPDATEs linha a linha dentro
+// de um tick de 5 minutos do cron, já que cada container tem até TETO_FILHAS filhas. O que
+// sobrar é varrido na noite seguinte: o entulho fica LIMITADO, não zerado num tick só.
+const VARREDURA_DIAS = 7;
+const VARREDURA_MAX_CONTAINERS = 5;
+
 // `hoje` chega em "YYYY-MM-DD", já no dia certo em BRT (é o formato de nowSaoPaulo().ymd).
 // Quebramos a string em dígitos e construímos a data em UTC EXPLÍCITO com Date.UTC + getUTCDay.
 // NUNCA `new Date(hoje).getDay()`: essa forma faz o motor ler "YYYY-MM-DD" como MEIA-NOITE UTC
@@ -27,13 +35,19 @@ function _diaSemanaBrt(hoje) {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
+// Prefixo do título do container — ÚNICO lugar onde este texto existe. _tituloDoContainer
+// (abaixo) e a varredura das pautas velhas (_listarContainersVelhosAbertos) leem daqui: se cada
+// um escrevesse o seu, a varredura procuraria um texto que a criação não usa, não acharia
+// container nenhum, e o entulho que ela existe pra limpar ficaria invisível.
+const PREFIXO_CONTAINER = '📋 Anamnese — quem tem aula hoje · ';
+
 // Título do CONTAINER da pauta do dia. Ponto ÚNICO de verdade: é chamado tanto pra CONSULTAR se
 // já existe (guarda de duplicata, abaixo) quanto pra CRIAR. Se cada lado montasse o texto
 // inline, os dois poderiam divergir por um espaço ou um emoji e a guarda ficaria cega pro
 // próprio container — o bug de duplicata a cada retry do cron voltaria calado.
 function _tituloDoContainer(hoje) {
   const [, mesStr, diaStr] = String(hoje || '').split('-');
-  return `📋 Anamnese — quem tem aula hoje · ${diaStr}/${mesStr}`;
+  return `${PREFIXO_CONTAINER}${diaStr}/${mesStr}`;
 }
 
 // Já existe container da pauta pra este (groupId, hoje)? Por quê isto existe: createTaskGroup
@@ -87,7 +101,13 @@ async function montarPautaDaUnidade({ supabase, laReport, unidadeId, groupId, cr
     // Sensor próprio: "não criei porque já tinha" tem que ser TEXTUALMENTE diferente de "não
     // criei porque falhou" (RPC, teto, escrita) — senão quem lê o resultado não distingue os
     // casos, que é exatamente o problema que motivou esta rodada de correção.
-    return { criou: false, total: 0, escalados: 0, motivo: 'pauta já montada hoje', itens: [] };
+    // IMPORTANT 3 (revisão de costura, 04/09): `jaExistia` é o sinal que o dispatcher mapeia
+    // pra `skipped`. Sem ele, o ACERTO desta guarda era carimbado `fallback` — que nesta casa
+    // significa "deu errado, tenta de novo": quem lia marker_logs via falha onde nada falhou, e
+    // como fallback não trava a chave do dia, a unidade re-rodava em todo tick restante do
+    // slot. O motivo textual continua sendo o sensor de quem lê o RETORNO; jaExistia é o sensor
+    // de quem grava o MARCADOR.
+    return { criou: false, total: 0, escalados: 0, motivo: 'pauta já montada hoje', itens: [], jaExistia: true };
   }
 
   // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria
@@ -125,6 +145,15 @@ async function montarPautaDaUnidade({ supabase, laReport, unidadeId, groupId, cr
   // separarPorDegrau já trata `null` como "ninguém escala" (nunca escalar no escuro). Trocar
   // por `new Map()` aqui anularia essa trava e faria a casa escalar gente sem prova de falha.
   const mapa = await repo.contarFalhas(supabase, { unidadeId, pessoas: itens.map((i) => i.pessoa.pessoa_chave) });
+  // IMPORTANT 1 (revisão de costura, 04/09): não escalar no escuro é o comportamento CERTO —
+  // o que faltava era o sensor. Sem isto o ritual devolvia motivo null e o marcador dizia
+  // `executed ... escalados=0`, idêntico a um dia saudável em que ninguém está no 2º ou 3º
+  // degrau: a escada inteira desligada, e nada no log pra distinguir. A pauta AINDA é criada
+  // (o dia de trabalho não pode sumir porque o histórico não pôde ser lido); o que muda é o
+  // marcador passar a dizer a verdade — fallback, não executed.
+  const avisoEscada = mapa === null
+    ? 'não consegui ler a escada (histórico de faltas): montei a pauta sem escalar ninguém'
+    : null;
   const { pauta, escalados } = pura.separarPorDegrau(itens, mapa);
 
   // Chamada que ESCREVE não pode explodir pra fora: um throw aqui subiria até o catch genérico
@@ -134,9 +163,25 @@ async function montarPautaDaUnidade({ supabase, laReport, unidadeId, groupId, cr
   // guarda #0; mesmo assim devolvemos o motivo real em vez de deixar a exception subir crua e
   // quebrar o contrato de retorno documentado ({criou,total,escalados,motivo,itens}).
   try {
-    await repo.registrarAparicoes(supabase, {
+    // CRITICAL 2 (revisão de costura, 04/09): o repositório NÃO lança em erro do Supabase
+    // (anamnese-pauta-repo.js) — loga e devolve {gravadas:0, erro}. Este try/catch existia e
+    // DESCARTAVA o retorno; ninguém ligava os dois. O caminho que isso abria era o pior desta
+    // feature: as filhas nascem no painel, anamnese_pauta fica com ZERO linhas, o marcador da
+    // manhã diz `executed total=48`, e às 23:00 pessoasDoDia devolve [] → ramo "zero por
+    // saúde" → o marcador da noite diz `executed ok=0 falta=0 semver=0`. Os DOIS passos dizem
+    // sucesso, o dia some da escada, e as 48 filhas + o container nunca fecham — com um
+    // console.error de rastro. É a MESMA falha que gravarResultado já corrigiu um andar abaixo
+    // (UPDATE que não casa linha nenhuma não é "gravei"); tinha sobrevivido um andar acima, na
+    // escrita que alimenta aquela.
+    const { erro } = await repo.registrarAparicoes(supabase, {
       unidadeId, dia: hoje, pessoas: itens.map((i) => i.pessoa.pessoa_chave),
     });
+    if (erro) {
+      return {
+        criou: false, total: pauta.length, escalados: escalados.length, itens: [],
+        motivo: `falha ao registrar aparições de hoje: ${erro}`,
+      };
+    }
   } catch (e) {
     return {
       criou: false, total: pauta.length, escalados: escalados.length, itens: [],
@@ -166,8 +211,11 @@ async function montarPautaDaUnidade({ supabase, laReport, unidadeId, groupId, cr
     };
   }
 
+  // `motivo: avisoEscada` — null no dia saudável (e aí o marcador é executed), preenchido
+  // quando a escada não pôde ser lida. Os retornos de FALHA acima já carregam motivo próprio,
+  // e um desfecho que já é fallback não fica mais verdadeiro somando um segundo aviso.
   return {
-    criou: true, total: pauta.length, escalados: escalados.length, motivo: null,
+    criou: true, total: pauta.length, escalados: escalados.length, motivo: avisoEscada,
     itens: pauta, escaladosItens: escalados,
   };
 }
@@ -248,6 +296,35 @@ async function _listarFilhasPendentes(sb, { containerId }) {
   return { filhas: data || [], erro: null };
 }
 
+// "hoje" menos N dias, sempre em UTC EXPLÍCITO (Date.UTC + toISOString), nunca aritmética com
+// data local — mesma armadilha de _diaSemanaBrt lá em cima (LOCALYMD-UTC-SHIFT): sob
+// TZ=America/Sao_Paulo uma conta local devolveria o dia anterior e a varredura pegaria um dia a
+// mais/a menos em silêncio.
+function _ymdMenosDias(hoje, dias) {
+  const [y, m, d] = String(hoje || '').split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d) - (dias * 86400000)).toISOString().slice(0, 10);
+}
+
+// Containers de pauta de dias ANTERIORES que ficaram abertos (uma noite em que a fonte caiu, ou
+// em que o ritual não chegou a rodar). Mesmo trio de filtros da guarda da manhã — grupo,
+// is_group, título — só que `due_date` estritamente MENOR que hoje e com teto de dias/linhas.
+// O título vem de PREFIXO_CONTAINER, nunca redigitado: uma cópia da string aqui faria esta
+// consulta procurar um texto que a criação não usa.
+async function _listarContainersVelhosAbertos(sb, { groupId, hoje, desde, limite }) {
+  const { data, error } = await sb.from('tasks').select('id, due_date')
+    .eq('assigned_group_id', groupId).eq('is_group', true).eq('status', 'pending')
+    .like('title', `${PREFIXO_CONTAINER}%`)
+    .lt('due_date', hoje).gte('due_date', desde)
+    .order('due_date', { ascending: true }).limit(limite);
+  if (error) return { containers: null, erro: error.message }; // null: NÃO é "nenhuma pauta velha"
+  return { containers: data || [], erro: null };
+}
+
+// Nota das filhas varridas de dias anteriores. Curta e honesta: NÃO afirma que a pessoa deixou
+// de preencher — o dia passou sem ninguém conferir a fonte, e a fonte de HOJE não sabe o que
+// era verdade ontem.
+const NOTA_DIA_VELHO = 'dia encerrado sem verificação — pauta de dia anterior fechada na varredura';
+
 async function _fecharFilha(sb, { id, status, notes }) {
   const payload = { status };
   if (status === 'done') payload.completed_at = new Date().toISOString();
@@ -280,7 +357,94 @@ async function _fecharContainer(sb, { containerId }) {
 // `motivo` continua sendo o sensor único de por que algo NÃO aconteceu.
 async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, hoje, deps = {} }) {
   const repo = deps.repo || repoPadrao;
+  const acharContainer = deps.acharContainer || _acharContainerParaFechar;
+  const listarFilhasPendentes = deps.listarFilhasPendentes || _listarFilhasPendentes;
+  const fecharFilha = deps.fecharFilha || _fecharFilha;
+  const fecharContainer = deps.fecharContainer || _fecharContainer;
+  const listarContainersVelhos = deps.listarContainersVelhos || _listarContainersVelhosAbertos;
   const semFechamento = { filhasFechadasComoFeitas: 0, filhasFechadasComoNaoFeitas: 0, containerFechado: false };
+
+  // Divergência entre o que esta passada TENTOU gravar e o que REALMENTE entrou no banco não
+  // pode ser engolida: se algum UPDATE não casar linha nenhuma, isso sai no motivo em vez de
+  // desaparecer dentro de um contador que finge sucesso. `avisos` recebe também qualquer
+  // problema do fechamento do recado e da varredura (abaixo) — um único sensor pra tudo que não
+  // é o caminho feliz. Declarados no topo porque a varredura, que vem antes de tudo, já escreve
+  // neles.
+  const avisos = [];
+  const falhasGravacao = [];
+  function motivoFinal(base) {
+    const partes = [...(base ? [base] : []), ...avisos];
+    if (falhasGravacao.length) {
+      partes.push(`${falhasGravacao.length} gravação(ões) não confirmada(s) no banco: ${falhasGravacao.join(', ')}`);
+    }
+    return partes.length ? partes.join('; ') : null;
+  }
+
+  // ── VARREDURA DAS PAUTAS DE DIAS ANTERIORES ────────────────────────────────────────────────
+  // CRITICAL 3 (revisão de costura, 04/09): quando a RPC da noite caía, o ritual gravava
+  // sem_verificacao e voltava SEM fechar — container e filhas ficavam `pending`. E nada, em
+  // lugar nenhum, revisitava um dia anterior: esta passada só olha `dia = hoje` / `due_date =
+  // hoje`, e como os slots são de 15 min a retentativa do mesmo dia tinha no máximo 3 ticks —
+  // uma queda de 15 minutos custava o dia inteiro, PRA SEMPRE. O estrago não fica no painel da
+  // pauta: createTaskGroup carimba toda filha com context 'work', data_classification 'real',
+  // status 'pending' e assigned_to null, que é exatamente o WHERE dos relatórios de atrasadas
+  // (CEO, limit 80; líderes, limit 200; os dois ordenados por due_date CRESCENTE). Uma noite
+  // ruim = até 102 filhas que envelhecem, viram as atrasadas MAIS ANTIGAS do sistema, consomem
+  // a janela de 80 inteira e expulsam trabalho real do digest — o oposto exato da aposta
+  // central do desenho ("a pauta do dia é descartável; nada se acumula no painel").
+  //
+  // Roda ANTES de qualquer retorno antecipado de propósito: limpar não pode depender de hoje ter
+  // pauta (domingo, ou uma manhã que falhou) nem da fonte responder — a varredura não consulta a
+  // fonte. Fecha as filhas velhas como NÃO-FEITAS (`cancelled`), porque não dá pra afirmar quem
+  // preencheu num dia que já passou lendo a fonte de HOJE, e NÃO grava nada em anamnese_pauta:
+  // dia sem medição não conta na escada — a regra sagrada desta feature. O container vai a
+  // `done` pelo mesmo _fecharContainer do fechamento de hoje, onde 'done' já significa "o recado
+  // do dia está fechado" (é assim mesmo quando todas as filhas foram canceladas), nunca "todo
+  // mundo preencheu".
+  let containersVelhosFechados = 0;
+  let filhasVelhasFechadas = 0;
+  if (groupId) {
+    try {
+      const { containers, erro } = await listarContainersVelhos(supabase, {
+        groupId, hoje, desde: _ymdMenosDias(hoje, VARREDURA_DIAS), limite: VARREDURA_MAX_CONTAINERS,
+      });
+      if (erro) {
+        avisos.push(`não consegui varrer as pautas de dias anteriores: ${erro}`);
+      } else {
+        for (const velho of (containers || [])) {
+          const { filhas, erro: erroFilhas } = await listarFilhasPendentes(supabase, { containerId: velho.id });
+          if (erroFilhas) {
+            avisos.push(`não consegui ler as filhas da pauta de ${velho.due_date}: ${erroFilhas}`);
+            continue;
+          }
+          let todasFecharam = true;
+          for (const filha of (filhas || [])) {
+            if (await fecharFilha(supabase, { id: filha.id, status: 'cancelled', notes: NOTA_DIA_VELHO })) {
+              filhasVelhasFechadas++;
+            } else {
+              todasFecharam = false;
+              avisos.push(`não consegui fechar a filha "${filha.title}" da pauta de ${velho.due_date}`);
+            }
+          }
+          // Fechar o container com uma filha órfã aberta esconderia essa filha PRA SEMPRE: a
+          // varredura acha CONTAINERS, não filhas soltas. Deixar aberto é o que faz a noite
+          // seguinte tentar de novo — o container custa uma linha nos relatórios de atrasadas,
+          // a órfã escondida custa uma linha por aluno, todo dia.
+          if (!todasFecharam) {
+            avisos.push(`deixei a pauta de ${velho.due_date} aberta: alguma filha não fechou`);
+          } else if (await fecharContainer(supabase, { containerId: velho.id })) {
+            containersVelhosFechados++;
+          } else {
+            avisos.push(`não consegui fechar a pauta de ${velho.due_date}`);
+          }
+        }
+      }
+    } catch (e) {
+      // Serviço de limpeza não pode derrubar o fechamento de HOJE, que é o que alimenta a escada.
+      avisos.push(`falha ao varrer as pautas de dias anteriores: ${(e && e.message) || String(e)}`);
+    }
+  }
+  const varredura = { containersVelhosFechados, filhasVelhasFechadas };
 
   const pessoas = await repo.pessoasDoDia(supabase, { unidadeId, dia: hoje });
   if (pessoas === null) {
@@ -289,32 +453,22 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
     // dois diagnósticos errados nesta casa (03/09) volta agora do lado da passada da noite.
     return {
       fechou: false, preencheu: 0, naoPreencheu: 0, semVerificacao: 0,
-      motivo: 'não consegui ler quem entrou na pauta de hoje', ...semFechamento,
+      motivo: motivoFinal('não consegui ler quem entrou na pauta de hoje'), ...semFechamento, ...varredura,
     };
   }
   if (!pessoas.length) {
     // Ninguém entrou na pauta hoje — saúde, não falha. Motivo null é o mesmo sensor de "zero
     // por saúde" usado no resto deste arquivo.
-    return { fechou: false, preencheu: 0, naoPreencheu: 0, semVerificacao: 0, motivo: null, ...semFechamento };
+    return {
+      fechou: false, preencheu: 0, naoPreencheu: 0, semVerificacao: 0,
+      motivo: motivoFinal(null), ...semFechamento, ...varredura,
+    };
   }
 
-  // Divergência entre o que esta passada TENTOU gravar e o que REALMENTE entrou no banco não
-  // pode ser engolida: se algum UPDATE não casar linha nenhuma, isso sai no motivo em vez de
-  // desaparecer dentro de um contador que finge sucesso. `avisos` recebe também qualquer
-  // problema do fechamento do recado (abaixo) — um único sensor pra tudo que não é o feliz.
-  const avisos = [];
-  const falhasGravacao = [];
   async function gravar(pessoaChave, resultado) {
     const ok = await repo.gravarResultado(supabase, { unidadeId, dia: hoje, pessoaChave, resultado });
     if (!ok) falhasGravacao.push(pessoaChave);
     return ok;
-  }
-  function motivoFinal(base) {
-    const partes = [...(base ? [base] : []), ...avisos];
-    if (falhasGravacao.length) {
-      partes.push(`${falhasGravacao.length} gravação(ões) não confirmada(s) no banco: ${falhasGravacao.join(', ')}`);
-    }
-    return partes.length ? partes.join('; ') : null;
   }
 
   // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
@@ -325,7 +479,13 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
   // Dia que a NOSSA infra derrubou não conta contra o aluno: senão a 3ª aparição da escada
   // chega por culpa nossa e a equipe cobra quem já tinha preenchido. FALHA-FECHADA: sem fonte
   // não dá pra dizer quem preencheu, então NADA se fecha — fechar no escuro marcaria
-  // `cancelled` em quem preencheu. O container fica aberto e o dia seguinte tenta de novo.
+  // `cancelled` em quem preencheu.
+  // CORREÇÃO (revisão de costura, 04/09): o comentário que estava aqui dizia "o container fica
+  // aberto e o dia seguinte tenta de novo" — e isso era FALSO. Esta passada só consulta
+  // `dia = hoje` / `due_date = hoje`: nada revisitava um dia anterior. Quem fecha o container
+  // de uma noite ruim é a VARREDURA no topo desta função, numa noite seguinte — como não-feito
+  // e sem gravar nada em anamnese_pauta, porque a fonte de HOJE não sabe o que era verdade
+  // ontem.
   if (error) {
     let semVerificacao = 0;
     for (const pk of pessoas) {
@@ -333,8 +493,8 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
     }
     return {
       fechou: true, preencheu: 0, naoPreencheu: 0, semVerificacao,
-      motivo: motivoFinal(`consulta do LA Report falhou no fechamento: ${error.message} — container fica aberto pra tentar de novo amanhã`),
-      ...semFechamento,
+      motivo: motivoFinal(`consulta do LA Report falhou no fechamento: ${error.message} — container de hoje fica aberto até a varredura de uma noite seguinte`),
+      ...semFechamento, ...varredura,
     };
   }
 
@@ -356,11 +516,6 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
   // Fecha o RECADO do dia: filhas viram done/cancelled, container vira done. Envolto em
   // try/catch pra uma falha aqui nunca derrubar o que já foi gravado em anamnese_pauta acima —
   // a verdade da escada já está segura; só o painel de tarefas fica pendente de retry.
-  const acharContainer = deps.acharContainer || _acharContainerParaFechar;
-  const listarFilhasPendentes = deps.listarFilhasPendentes || _listarFilhasPendentes;
-  const fecharFilha = deps.fecharFilha || _fecharFilha;
-  const fecharContainer = deps.fecharContainer || _fecharContainer;
-
   let filhasFechadasComoFeitas = 0;
   let filhasFechadasComoNaoFeitas = 0;
   let containerFechado = false;
@@ -381,7 +536,12 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
         for (const filha of filhas) {
           const decisao = _decidirFechoDaFilha(filha.title, semAnamnesePorNome, todosPorNome);
           const ok = await fecharFilha(supabase, { id: filha.id, status: decisao.status, notes: decisao.notes });
+          // IMPORTANT 2 (revisão de costura, 04/09): sem este `else` a falha era MUDA — o
+          // contador simplesmente não subia, `motivo` ficava null, o marcador dizia `executed`
+          // e a filha ficava `pending` pra sempre, virando o entulho que a varredura acima
+          // existe pra limpar. Nomeia a filha: "alguma coisa falhou" não dá pra investigar.
           if (ok) { if (decisao.status === 'done') filhasFechadasComoFeitas++; else filhasFechadasComoNaoFeitas++; }
+          else avisos.push(`não consegui fechar a filha "${filha.title}"`);
         }
         containerFechado = !!(await fecharContainer(supabase, { containerId }));
         if (!containerFechado) avisos.push('fechei as filhas mas não consegui fechar o container');
@@ -393,8 +553,11 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
 
   return {
     fechou: true, preencheu, naoPreencheu, semVerificacao, motivo: motivoFinal(null),
-    filhasFechadasComoFeitas, filhasFechadasComoNaoFeitas, containerFechado,
+    filhasFechadasComoFeitas, filhasFechadasComoNaoFeitas, containerFechado, ...varredura,
   };
 }
 
-module.exports = { montarPautaDaUnidade, fecharPautaDaUnidade, TETO_FILHAS };
+module.exports = {
+  montarPautaDaUnidade, fecharPautaDaUnidade,
+  TETO_FILHAS, VARREDURA_DIAS, VARREDURA_MAX_CONTAINERS,
+};

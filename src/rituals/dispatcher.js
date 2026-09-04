@@ -4149,14 +4149,28 @@ async function run(opts = {}) {
           });
           const { error: erroMarker } = await supabase.from('marker_logs').insert({
             marker_type: 'PAUTA_ANAMNESE',
-            result: r.criou ? 'executed' : (r.motivo ? 'fallback' : 'skipped'),
-            reason: `${chaveDia} total=${r.total} escalados=${r.escalados}${r.motivo ? ' erro=' + r.motivo : ''}`.slice(0, 120),
+            // IMPORTANT 3 + IMPORTANT 1 (revisão de costura, 04/09). A ordem é o conteúdo:
+            // 1) `jaExistia` é DESFECHO RESOLVIDO — a guarda de duplicata acertou, nada falhou —
+            //    e vira `skipped`. Antes virava `fallback`, que nesta casa significa "deu
+            //    errado, tenta de novo": quem lia marker_logs via falha onde não houve, e como
+            //    fallback não trava a chave do dia, a unidade re-rodava em todo tick restante do
+            //    slot.
+            // 2) depois `motivo`, que agora pode vir preenchido MESMO com criou=true (a escada
+            //    que não pôde ser lida — Important 1). Aí o marcador tem que dizer fallback:
+            //    `executed ... escalados=0` era idêntico a um dia saudável em que ninguém está
+            //    no 2º ou 3º degrau. O custo é um tick a mais (o próximo cai na guarda de
+            //    duplicata e fecha a chave com skipped), e é barato perto de uma escada
+            //    desligada em silêncio.
+            result: r.jaExistia ? 'skipped' : (r.motivo ? 'fallback' : (r.criou ? 'executed' : 'skipped')),
+            reason: `${chaveDia} total=${r.total} escalados=${r.escalados}${r.motivo ? (r.jaExistia ? ' nota=' : ' erro=') + r.motivo : ''}`.slice(0, 120),
           });
           // Global Constraint: todo error de chamada Supabase é checado. Risco menor que na fala
           // — montarPautaDaUnidade já tem guarda própria contra retentativa (_pacoteJaExiste) —
           // mas uma falha muda de log continua sendo uma falha muda.
           if (erroMarker) console.error(`[Pauta] montagem: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarker.message}`);
-          if (r.motivo) console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+          // Só é erro o que de fato deu errado: "pauta já montada hoje" (o acerto da guarda de
+          // duplicata) num console.error faria a equipe caçar um problema que não existe.
+          if (r.motivo && !r.jaExistia) console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
         } catch (eUnidade) {
           console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
         }
@@ -4165,8 +4179,11 @@ async function run(opts = {}) {
   }
 
   // 07:30 — o recado no grupo (mesmo slot do ops_digest — zap às 6h da manhã é invasivo).
-  // Separado da montagem de propósito: se a montagem falhar, o marker dela já registra o
-  // motivo; aqui simplesmente não há filhas pra ler, e o bloco fica em silêncio (saúde, não erro).
+  // Separado da montagem de propósito. CORREÇÃO (revisão de costura, 04/09): o comentário que
+  // estava aqui dizia que, quando a montagem falha, "aqui simplesmente não há filhas pra ler e o
+  // bloco fica em silêncio (saúde, não erro)" — e era isso que fazia a spec §7 não ser cumprida.
+  // Silêncio é saúde SÓ quando a montagem chegou ao fim e não havia aluno hoje; quando ela não
+  // montou, o grupo é avisado (ver o bloco do CRITICAL 1 lá dentro).
   if (opts.force === 'pauta_anamnese_fala' || timeToSlot(PAUTA_ANAMNESE_FALA_TIME) === slotNow) {
     try {
       const pura = require('../services/anamnese-pauta');
@@ -4217,37 +4234,89 @@ async function run(opts = {}) {
             console.error(`[Pauta] fala: consulta das filhas falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroFilhas.message}`);
             continue;
           }
-          if (!filhas || !filhas.length) continue;
+          // CRITICAL 1 (revisão de costura, 04/09): a spec §7 manda AVISAR no grupo quando a
+          // fonte cai de manhã — "não cria pacote e DIZ no grupo que não conseguiu montar a
+          // pauta" — e o §9 repete como critério de aceite ("nenhum pacote criado, aviso no
+          // grupo, sem_verificacao gravado"). O que existia aqui era um `continue` seco com um
+          // comentário declarando que silêncio é saúde: numa manhã em que a fonte caísse, os
+          // TRÊS grupos reais recebiam NADA e a equipe não distinguia "não tem aluno hoje" de
+          // "nossa fonte está fora" — exatamente a patologia que esta feature existe pra matar.
+          //
+          // Como distinguir os dois casos sem inventar: pelo marcador da MONTAGEM daquele dia,
+          // com a mesma semântica de "desfecho resolvido" que a idempotência usa em todos os
+          // blocos daqui. executed|skipped = a montagem chegou ao fim; se ela terminou e não há
+          // filhas, é porque não há aluno hoje, e aí silêncio É saúde. Nenhuma linha resolvida =
+          // ou só fallback, ou marcador nenhum: nos dois casos a pauta NÃO foi montada e o grupo
+          // precisa saber. Se a LEITURA do marcador falhar, não falamos: falar errado num grupo
+          // real é pior que calar.
+          let texto = null;
+          let chaveMsg = chaveFala;
+          let sufixoReason = '';
+          if (!filhas || !filhas.length) {
+            const chaveDia = `pauta_anamnese:${unidadeId}:${now.ymd}`;
+            const { data: montou, error: erroMontou } = await supabase.from('marker_logs')
+              .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveDia}%`)
+              .in('result', ['executed', 'skipped']).limit(1);
+            if (erroMontou) {
+              console.error(`[Pauta] fala: checagem do marcador da montagem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMontou.message}`);
+              continue;
+            }
+            if (montou && montou.length) continue;  // montou e não há aluno hoje: silêncio é saúde
 
-          // Falha FECHADA (Pequeno 1, revisão do coordenador): título que não bate o formato NÃO
-          // vira "nome" — a filha é PULADA, com log. O `.replace()` de antes, sem match, devolvia
-          // o título INTEIRO como nome (fails open) — texto que a equipe LÊ no zap; um título
-          // torto tem que sumir da mensagem, não virar um nome esquisito nela. Aceita hora de 1
-          // dígito, igual ao helper de origem (_extrairNomeDaFilha, rituals/anamnese-pauta.js) —
-          // mesma regra, não reinventar. Corta o resto no primeiro ` (` ou no primeiro ` ⚠`, o
-          // que vier antes — sem curso, o título da 2ª aparição é "HH:MM Anamnese — Nome ⚠️ 2ª
-          // semana — não preencheu na anterior" e cortar só em ` (` deixaria o aviso colado no nome.
-          const itens = [];
-          for (const f of filhas) {
-            const matchTitulo = /^(\d{1,2}):(\d{2}) Anamnese — (.+)$/.exec(String(f.title || ''));
-            if (!matchTitulo) {
-              console.warn(`[Pauta] fala: título fora do formato esperado (${situAl.nomeDaUnidade(unidadeId)}), pulando filha: "${f.title}"`);
+            // Chave PRÓPRIA pro aviso, não a da fala normal: se a montagem se curar num tick
+            // seguinte do mesmo slot, a mensagem de verdade ainda tem que poder sair. Esta
+            // consulta é o que impede o aviso de sair uma vez por tick.
+            const chaveAviso = `pauta_fala_aviso:${unidadeId}:${now.ymd}`;
+            const { data: jaAvisou, error: erroJaAvisou } = await supabase.from('marker_logs')
+              .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveAviso}%`)
+              .in('result', ['executed', 'skipped']).limit(1);
+            if (erroJaAvisou) {
+              console.error(`[Pauta] fala: checagem do aviso já enviado falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaAvisou.message}`);
               continue;
             }
-            const resto = matchTitulo[3];
-            const marcas = [' (', ' ⚠'].map((marca) => resto.indexOf(marca)).filter((i) => i !== -1);
-            const nome = (marcas.length ? resto.slice(0, Math.min(...marcas)) : resto).trim();
-            if (!nome) {
-              console.warn(`[Pauta] fala: nome vazio depois do corte (${situAl.nomeDaUnidade(unidadeId)}), pulando filha: "${f.title}"`);
-              continue;
+            if (jaAvisou && jaAvisou.length) continue;
+
+            // O cabeçalho é DIFERENTE do da mensagem normal de propósito: a guarda de duplicata
+            // abaixo casa por PREFIXO de conteúdo, e um cabeçalho igual faria o aviso bloquear a
+            // pauta de verdade que se curasse depois (ou o contrário). Frase sóbria: quem lê é a
+            // equipe da escola, não um engenheiro — diz o que aconteceu e o que vem depois.
+            const [, mA, dA] = now.ymd.split('-');
+            texto = `📋 *Anamnese — pauta de hoje (${dA}/${mA})*\n`
+              + 'Não consegui montar a pauta de hoje — assim que der certo, ela aparece no painel e eu aviso por aqui.';
+            chaveMsg = chaveAviso;
+            sufixoReason = 'aviso: nao consegui montar a pauta';
+          } else {
+            // Falha FECHADA (Pequeno 1, revisão do coordenador): título que não bate o formato NÃO
+            // vira "nome" — a filha é PULADA, com log. O `.replace()` de antes, sem match, devolvia
+            // o título INTEIRO como nome (fails open) — texto que a equipe LÊ no zap; um título
+            // torto tem que sumir da mensagem, não virar um nome esquisito nela. Aceita hora de 1
+            // dígito, igual ao helper de origem (_extrairNomeDaFilha, rituals/anamnese-pauta.js) —
+            // mesma regra, não reinventar. Corta o resto no primeiro ` (` ou no primeiro ` ⚠`, o
+            // que vier antes — sem curso, o título da 2ª aparição é "HH:MM Anamnese — Nome ⚠️ 2ª
+            // semana — não preencheu na anterior" e cortar só em ` (` deixaria o aviso colado no nome.
+            const itens = [];
+            for (const f of filhas) {
+              const matchTitulo = /^(\d{1,2}):(\d{2}) Anamnese — (.+)$/.exec(String(f.title || ''));
+              if (!matchTitulo) {
+                console.warn(`[Pauta] fala: título fora do formato esperado (${situAl.nomeDaUnidade(unidadeId)}), pulando filha: "${f.title}"`);
+                continue;
+              }
+              const resto = matchTitulo[3];
+              const marcas = [' (', ' ⚠'].map((marca) => resto.indexOf(marca)).filter((i) => i !== -1);
+              const nome = (marcas.length ? resto.slice(0, Math.min(...marcas)) : resto).trim();
+              if (!nome) {
+                console.warn(`[Pauta] fala: nome vazio depois do corte (${situAl.nomeDaUnidade(unidadeId)}), pulando filha: "${f.title}"`);
+                continue;
+              }
+              itens.push({ hora: `${matchTitulo[1].padStart(2, '0')}:${matchTitulo[2]}`, pessoa: { nome } });
             }
-            itens.push({ hora: `${matchTitulo[1].padStart(2, '0')}:${matchTitulo[2]}`, pessoa: { nome } });
+            if (!itens.length) continue;
+
+            const [, m, d2] = now.ymd.split('-');
+            texto = pura.mensagemDoGrupo({ itens, unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}` });
+            if (!texto) continue;
+            sufixoReason = `itens=${itens.length}`;
           }
-          if (!itens.length) continue;
-
-          const [, m, d2] = now.ymd.split('-');
-          const texto = pura.mensagemDoGrupo({ itens, unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}` });
-          if (!texto) continue;
 
           // Correção B (revisão do coordenador, 04/09) — o "irmão" do Important 1: mesmo com a
           // Correção A, sobra o caso em que a mensagem ENTRA e o marker_logs falha logo depois —
@@ -4277,7 +4346,7 @@ async function run(opts = {}) {
             console.error(`[Pauta] fala: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviada.message}`);
             const { error: erroMarkerChkFallback } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveFala} checagem de duplicata falhou: ${erroJaEnviada.message}`.slice(0, 120),
+              reason: `${chaveMsg} checagem de duplicata falhou: ${erroJaEnviada.message}`.slice(0, 120),
             });
             if (erroMarkerChkFallback) console.error(`[Pauta] fala: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChkFallback.message}`);
             continue;
@@ -4287,7 +4356,7 @@ async function run(opts = {}) {
             // Não envia de novo — só fecha o marcador que faltou.
             const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
-              reason: `${chaveFala} mensagem já enviada (achada por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
+              reason: `${chaveMsg} mensagem já enviada (achada por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
             });
             if (erroMarkerSkip) console.error(`[Pauta] fala: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
             continue;
@@ -4310,13 +4379,13 @@ async function run(opts = {}) {
             console.error(`[Pauta] fala: envio da mensagem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMsg.message}`);
             const { error: erroMarkerFallback } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveFala} envio falhou: ${erroMsg.message}`.slice(0, 120),
+              reason: `${chaveMsg} envio falhou: ${erroMsg.message}`.slice(0, 120),
             });
             if (erroMarkerFallback) console.error(`[Pauta] fala: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerFallback.message}`);
             continue;
           }
           const { error: erroMarker } = await supabase.from('marker_logs').insert({
-            marker_type: 'PAUTA_ANAMNESE', result: 'executed', reason: `${chaveFala} itens=${itens.length}`.slice(0, 120),
+            marker_type: 'PAUTA_ANAMNESE', result: 'executed', reason: `${chaveMsg} ${sufixoReason}`.slice(0, 120),
           });
           if (erroMarker) {
             // A mensagem JÁ SAIU pro grupo real e o marcador que travaria a retentativa não
@@ -4376,8 +4445,12 @@ async function run(opts = {}) {
           // filhasFechadasComoFeitas/filhasFechadasComoNaoFeitas/containerFechado (Task 6) vão no
           // reason, dentro do limite de tamanho — é o único jeito de auditar o fechamento do
           // RECADO (painel) sem abrir o banco, distinto do fechamento da ESCADA (ok/falta/semver).
+          // `v=containers/filhas` só aparece quando a varredura de dias anteriores (Critical 3)
+          // realmente fechou alguma coisa: numa noite normal ela é 0/0 e o reason (limitado a
+          // 120 chars) não pode gastar espaço com zero.
           const reasonFecha = `${chaveFecha} ok=${r.preencheu} falta=${r.naoPreencheu} semver=${r.semVerificacao} `
-            + `fok=${r.filhasFechadasComoFeitas} fnao=${r.filhasFechadasComoNaoFeitas} cont=${r.containerFechado}`;
+            + `fok=${r.filhasFechadasComoFeitas} fnao=${r.filhasFechadasComoNaoFeitas} cont=${r.containerFechado}`
+            + (r.containersVelhosFechados ? ` v=${r.containersVelhosFechados}/${r.filhasVelhasFechadas}` : '');
           const { error: erroMarker } = await supabase.from('marker_logs').insert({
             marker_type: 'PAUTA_ANAMNESE',
             result: r.motivo ? 'fallback' : 'executed',
