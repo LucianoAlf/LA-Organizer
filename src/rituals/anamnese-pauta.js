@@ -22,6 +22,30 @@ const TETO_FILHAS = 120;
 const VARREDURA_DIAS = 7;
 const VARREDURA_MAX_CONTAINERS = 5;
 
+// ── DISJUNTOR DA PASSADA DO MEIO DO DIA (brecha 2, 04/09) ───────────────────────────────────
+// A única falha desta feature que não tinha defesa nenhuma: se a fonte um dia disser que TODO
+// MUNDO preencheu — um incidente de DADO, não uma mudança de schema que quebraria a leitura — a
+// passada do meio do dia fecha as 48/27/27 filhas em silêncio, carimba `executed`, não fala com
+// ninguém, e o primeiro sinal humano é o painel vazio. É "zero por FALHA idêntico a zero por
+// SAÚDE", a classe de bug que esta casa mais sangra, do lado que ninguém tinha olhado.
+//
+// POR QUE DOIS GATILHOS, E NÃO SÓ A PORCENTAGEM. Volume medido: 27 a 48 filhas por unidade por
+// dia, pico 80 (Campo Grande, 03/09). Uma regra só percentual ("mais de 60% de uma vez") pareceria
+// suficiente até o slot das 21:00, quando sobram poucos pendentes e fechar 4 de 5 (80%) é
+// exatamente o que a lista DEVE fazer no último slot do dia: o disjuntor travaria a pauta na hora
+// em que ela termina de encolher, todo santo dia, e viraria ruído que alguém desligaria. Uma regra
+// só absoluta ("mais de 15 de uma vez") erra do outro lado: numa unidade que abre com 48 pendentes,
+// 20 fechados ao longo de um slot de 2h é um dia movimentado, não um incidente — 41% da lista.
+// O incidente de dado tem as DUAS assinaturas ao mesmo tempo: muita gente E quase todo mundo.
+// Daí `> 15 filhas` E `> 60% dos pendentes`, que juntos só disparam no que nenhuma manhã normal
+// produz (16 de 26, 30 de 30, 48 de 48) e nunca no lote pequeno nem no dia cheio.
+//
+// 15 e 0,6 e não 20 e 0,8: o custo de um falso positivo é BAIXO (a lista deixa de encolher por um
+// slot de 2h e o fechamento das 23:00 resolve lendo a fonte de novo, com o dia encerrado), e o
+// custo de um falso negativo é ALTO (o painel do dia some e ninguém sabe). Erramos pro lado barato.
+const REFRESH_LOTE_MAXIMO = 15;
+const REFRESH_FRACAO_MAXIMA = 0.6;
+
 // `hoje` chega em "YYYY-MM-DD", já no dia certo em BRT (é o formato de nowSaoPaulo().ymd).
 // Quebramos a string em dígitos e construímos a data em UTC EXPLÍCITO com Date.UTC + getUTCDay.
 // NUNCA `new Date(hoje).getDay()`: essa forma faz o motor ler "YYYY-MM-DD" como MEIA-NOITE UTC
@@ -620,7 +644,15 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
 //   • o CONTAINER nunca fecha. Fechar o container tiraria a pauta inteira da tela antes da
 //     última aula (20:00) — exatamente o oposto do que este pedido quer;
 //   • ambíguo, sem correspondência e título torto são "não sei AINDA" → a filha fica EXATAMENTE
-//     como está, e o fechamento das 23:00 resolve com a fonte da noite.
+//     como está, e o fechamento das 23:00 resolve com a fonte da noite;
+//   • um FECHAMENTO EM MASSA (fonte dizendo que todo mundo preencheu) não fecha nada — ver o
+//     disjuntor no meio da função e o raciocínio dos números nas constantes lá em cima.
+//
+// SOBRE O DESFECHO (brecha 1, 04/09): quem lê `motivo` é o dispatcher, e ele mapeia QUALQUER
+// motivo pra `fallback` — que, por desenho, não trava a chave de idempotência do slot. Então
+// `motivo` aqui não é "lugar de contar problema": é a decisão de RE-RODAR a unidade inteira, com
+// a RPC de 6-8s junto. Falha ao fechar UMA filha, com outras fechando, é contador
+// (`falhasAoFechar`) + console.error — nunca motivo.
 //
 // A DECISÃO em si não é reimplementada: chamamos o MESMO _decidirFechoDaFilha da noite e só
 // agimos no `done`. Duas leituras de "quem preencheu" divergiriam, e a divergência apareceria
@@ -630,7 +662,10 @@ async function atualizarPautaDaUnidade({ supabase, laReport, unidadeId, groupId,
   const listarFilhasPendentes = deps.listarFilhasPendentes || _listarFilhasPendentes;
   const fecharFilha = deps.fecharFilha || _fecharFilha;
 
-  const parado = { atualizou: false, fechadas: 0, continuamPendentes: 0, naoDecididas: 0 };
+  // `falhasAoFechar` entra aqui pra que TODO retorno desta função tenha o campo: o dispatcher
+  // imprime esse contador no reason do marcador, e um `undefined` intermitente no log é pior que
+  // um zero — quem audita não distingue "não falhou nada" de "esse caminho nem conta".
+  const parado = { atualizou: false, fechadas: 0, continuamPendentes: 0, naoDecididas: 0, falhasAoFechar: 0 };
 
   // Sem grupo não dá pra achar container nenhum: `.eq('assigned_group_id', undefined)` no
   // PostgREST não devolve "zero linhas", devolve erro ou lixo. Falha-fechada com sensor próprio
@@ -685,8 +720,11 @@ async function atualizarPautaDaUnidade({ supabase, laReport, unidadeId, groupId,
     const semAnamnesePorNome = _mapaPorNome(situ.filtrarPorRecorte(data || [], 'anamnese'));
     const todosPorNome = _mapaPorNome(data || []);
 
-    const avisos = [];
-    let fechadas = 0;
+    // PRIMEIRA PASSADA: só DECIDE, não escreve nada. O disjuntor logo abaixo (brecha 2) precisa
+    // da conta FECHADA de quantas filhas sairiam da tela ANTES do primeiro UPDATE — se ele
+    // contasse enquanto escreve, "não fechei ninguém" já seria mentira na hora de dizer: metade
+    // da pauta teria sumido do painel e não há como desfazer um `done`.
+    const aFechar = [];
     let continuamPendentes = 0;
     let naoDecididas = 0;
     for (const filha of (filhas || [])) {
@@ -698,35 +736,90 @@ async function atualizarPautaDaUnidade({ supabase, laReport, unidadeId, groupId,
         // = "não sei quem é" (ambíguo/sem correspondência/torto). Contadores separados porque
         // "não fechei ninguém porque ninguém preencheu ainda" e "não fechei porque não sei quem
         // são" são fatos diferentes, e um sensor só pros dois esconderia um bug de parsing de
-        // título por dias. Nenhum dos dois é FALHA: não entram em `avisos`, senão o marcador
+        // título por dias. Nenhum dos dois é FALHA: nenhum vira `motivo`, senão o marcador
         // viraria fallback e a RPC de 6-8s re-rodaria 3x em cada slot todo santo dia.
         continuamPendentes++;
         if (decisao.notes) naoDecididas++;
         continue;
       }
+      aFechar.push(filha);
+    }
+
+    // DISJUNTOR DE FECHAMENTO EM MASSA (brecha 2) — o raciocínio dos números está em cima das
+    // constantes. Aqui só a mecânica, e ela tem uma regra: não fecha NADA. Fechar "só até o
+    // teto" seria o pior dos mundos — meia pauta esvaziada, sem critério de quem ficou, e nada
+    // pra desfazer. O backstop é o fechamento das 23:00: ele relê a fonte com o dia encerrado,
+    // decide sobre todo mundo e grava a escada. Um dia inteiro sem encolher a lista é caro; um
+    // painel esvaziado por engano, e ninguém sabendo, é irreversível.
+    //
+    // `pendentes` é o total de filhas PENDENTES que a leitura devolveu neste slot, não o
+    // tamanho da pauta da manhã: a fração tem que ser sobre o que ainda está na tela AGORA,
+    // senão o slot das 21:00 (onde já sobrou pouca gente) seria medido contra as 48 da manhã e a
+    // proporção nunca dispararia. Multiplicação em vez de divisão: evita divisão por zero no dia
+    // sem filha pendente, onde os dois lados já são falsos de qualquer jeito.
+    const pendentes = (filhas || []).length;
+    if (aFechar.length > REFRESH_LOTE_MAXIMO && aFechar.length > pendentes * REFRESH_FRACAO_MAXIMA) {
+      const pct = Math.round((aFechar.length / pendentes) * 100);
+      // Sensor PRÓPRIO: a palavra "disjuntor" não aparece em nenhum outro motivo deste arquivo.
+      // Se ele saísse com o texto de outra guarda, quem lê marker_logs não distinguiria "a fonte
+      // caiu" de "a fonte respondeu uma coisa absurda" — que é exatamente a diferença que faz
+      // alguém ir olhar o LA Report em vez de olhar a rede.
+      const motivo = `disjuntor do meio do dia: ${aFechar.length} de ${pendentes} filhas pendentes (${pct}%) `
+        + `fechariam de uma vez, acima de ${REFRESH_LOTE_MAXIMO} E de ${Math.round(REFRESH_FRACAO_MAXIMA * 100)}% `
+        + '— não fechei ninguém; o fechamento das 23:00 relê a fonte e decide';
+      // Alto de propósito: é a única forma de um humano descobrir hoje, e não pelo painel vazio.
+      console.error(`[Pauta] ${motivo}`);
+      return { ...parado, continuamPendentes: pendentes, naoDecididas, motivo };
+    }
+
+    // SEGUNDA PASSADA: agora sim escreve.
+    let fechadas = 0;
+    const naoFecharam = [];
+    for (const filha of aFechar) {
       // `status: 'done'` LITERAL, jamais `decisao.status`. É o que torna estruturalmente
       // impossível esta passada escrever `cancelled` — a única leitura de `decisao` que sobrevive
-      // daqui pra baixo é o `!== 'done'` acima. `notes` fica de fora: a filha sai da tela porque
-      // o aluno preencheu, e isso é o caminho normal, não uma exceção que precise de bilhete.
+      // daqui pra baixo é o `!== 'done'` da primeira passada. `notes` fica de fora: a filha sai da
+      // tela porque o aluno preencheu, e isso é o caminho normal, não uma exceção que precise de
+      // bilhete.
       if (await fecharFilha(supabase, { id: filha.id, status: 'done', notes: null })) {
         fechadas++;
       } else {
-        // Sem este `else` a falha era MUDA: contador não sobe, motivo fica null, o marcador diz
-        // `executed` e TRAVA o slot — a filha some do radar até as 23:00. Mesmo raciocínio do
-        // IMPORTANT 2 no fechamento da noite. Nomeia a filha: "alguma coisa falhou" não dá pra
-        // investigar. E ela conta como pendente porque é o que ela DE FATO continua sendo.
+        // BRECHA 1 (04/09): isto era `avisos.push(...)`, e qualquer aviso virava `motivo` → o
+        // dispatcher mapeia todo motivo pra `fallback` → e `fallback`, por desenho, NÃO trava a
+        // chave de idempotência do slot. Uma única filha que nunca fecha (linha apagada entre o
+        // SELECT e o UPDATE, RLS, trigger recusando) fazia a unidade INTEIRA re-rodar: 3 RPCs de
+        // 6-8s por slot × 7 slots = 21 consultas por unidade por dia, em vez de 7. É exatamente o
+        // desperdício que a chave por slot existe pra matar.
+        //
+        // Agora a falha vira CONTADOR (`falhasAoFechar`, que o dispatcher imprime no reason) e o
+        // console.error abaixo guarda o rastro INDIVIDUAL — que é o que salva a depuração; um
+        // contador agregado não diz QUAL filha travou. O que a falha não pode mais fazer é
+        // reabrir o slot quando o trabalho de fato aconteceu.
         continuamPendentes++;
-        avisos.push(`não consegui fechar a filha "${filha.title}" na atualização do meio do dia`);
+        naoFecharam.push(filha.title);
+        console.error(`[Pauta] atualização do meio do dia: não consegui fechar a filha "${filha.title}" (id=${filha.id})`);
       }
     }
 
+    // Cuidado pra não jogar o SINAL fora junto com o ruído: se NENHUMA filha fechou e houve
+    // falha, não houve trabalho nenhum — só erro. Aí `fallback` é a verdade e retentar é o certo.
+    // Com pelo menos uma fechada, o slot fez o que tinha que fazer e o desfecho é `executed`.
+    // A amostra de nomes é cortada em 3 porque o reason do marcador tem 120 caracteres: o rastro
+    // completo, filha por filha, já saiu no console.error acima.
+    const amostra = naoFecharam.slice(0, 3).map((t) => `"${t}"`).join(', ');
+    const motivoFalhas = fechadas === 0 && naoFecharam.length
+      ? `nenhuma filha fechou na atualização do meio do dia e ${naoFecharam.length} falharam ao fechar: `
+        + `${amostra}${naoFecharam.length > 3 ? ` e mais ${naoFecharam.length - 3}` : ''}`
+      : null;
+
     return {
       atualizou: true, fechadas, continuamPendentes, naoDecididas,
-      // motivo null no dia saudável (inclusive quando ninguém preencheu ainda e quando alguém
-      // está ambíguo) — é o sensor de "zero por saúde" usado no arquivo inteiro, e o que
-      // distingue "não fechei ninguém porque ninguém preencheu" de "não fechei porque a fonte
-      // caiu" (que sempre sai como string).
-      motivo: avisos.length ? avisos.join('; ') : null,
+      falhasAoFechar: naoFecharam.length,
+      // motivo null no dia saudável (inclusive quando ninguém preencheu ainda, quando alguém está
+      // ambíguo, e agora também quando uma filha travou mas outras fecharam) — é o sensor de
+      // "zero por saúde" usado no arquivo inteiro, e o que distingue "não fechei ninguém porque
+      // ninguém preencheu" de "não fechei porque a fonte caiu" (que sempre sai como string).
+      motivo: motivoFalhas,
     };
   } catch (e) {
     // Arrumação silenciosa da tela não pode explodir pra fora e derrubar o tick: o catch por
@@ -741,4 +834,8 @@ module.exports = {
   // do dia. Uma implementação só, de propósito — ver o comentário da função.
   montarPautaDaUnidade, fecharPautaDaUnidade, varrerPautasVelhas, atualizarPautaDaUnidade,
   TETO_FILHAS, VARREDURA_DIAS, VARREDURA_MAX_CONTAINERS,
+  // Os dois gatilhos do disjuntor saem daqui pra que o teste prove a FRONTEIRA (15 não dispara,
+  // 16 dispara) contra o valor real, e não contra um número redigitado no teste — uma cópia lá
+  // faria a suíte continuar verde no dia em que alguém mexesse no valor daqui.
+  REFRESH_LOTE_MAXIMO, REFRESH_FRACAO_MAXIMA,
 };

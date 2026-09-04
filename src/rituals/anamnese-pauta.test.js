@@ -769,7 +769,9 @@ test('todas as filhas de hoje fecharam → o container fecha, como sempre', asyn
 // de EPISTEMOLOGIA: às 23:00 o dia acabou e é preciso decidir sobre todo mundo; às 14:00 o dia
 // ainda está correndo e quem não preencheu ainda pode preencher às 19:00. Por isso a única
 // escrita permitida é `done`, e "não sei ainda" é sempre "não mexe" — nunca uma decisão.
-const { atualizarPautaDaUnidade } = require('./anamnese-pauta');
+const {
+  atualizarPautaDaUnidade, REFRESH_LOTE_MAXIMO, REFRESH_FRACAO_MAXIMA,
+} = require('./anamnese-pauta');
 
 function depsRefresh({
   rpcErro = null, alunos = [],
@@ -1025,8 +1027,151 @@ test('atualização: cada desfecho tem motivo TEXTUALMENTE distinto', async () =
     (await rodarRefresh(depsRefresh({ rpcErro: { message: 'timeout' }, filhasPendentes: filha }))).motivo,
     (await rodarRefresh(depsRefresh({ erroListarFilhas: 'boom', alunos: [aluno('Ana', '09:00', true)] }))).motivo,
     (await rodarRefresh(depsRefresh({}), { groupId: null })).motivo,
+    // Brecha 2: o disjuntor de fechamento em massa é uma GUARDA NOVA, e cada guarda desta casa
+    // tem sensor próprio. 30 de 30 pendentes fechariam de uma vez — acima dos dois gatilhos.
+    (await rodarRefresh(depsRefresh({
+      alunos: Array.from({ length: 30 }, (_, i) => aluno(`P${i}`, '09:00', true)),
+      filhasPendentes: Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+    }))).motivo,
+    // Brecha 1: "nenhuma fechou E houve falha" também é desfecho próprio — não houve trabalho,
+    // só erro. Não pode sair com o mesmo texto de nenhum dos outros.
+    (await rodarRefresh(depsRefresh({
+      alunos: [aluno('Ana', '09:00', true)], filhasPendentes: filha, fecharFilhaOk: () => false,
+    }))).motivo,
   ];
   assert.ok(motivos.every((m) => typeof m === 'string' && m.length),
     'todo desfecho que NÃO é o caminho feliz precisa de motivo');
   assert.strictEqual(new Set(motivos).size, motivos.length, 'motivos repetidos = sensores cegos');
+});
+
+// ── BRECHA 1: filha travada não pode reabrir o slot inteiro ──────────────────────────────────
+// O dispatcher mapeia QUALQUER `motivo` pra `fallback`, e `fallback` (por desenho) NÃO trava a
+// chave de idempotência do slot. Enquanto a falha de UMA filha virava motivo, uma linha apagada
+// entre o SELECT e o UPDATE — ou uma RLS, ou um trigger recusando — custava 3 RPCs de 6-8s por
+// slot × 7 slots = 21 consultas por unidade por dia, em vez de 7. O trabalho ACONTECEU (as
+// outras filhas fecharam); o desfecho é `executed` e a falha vira contador, não sensor de retry.
+test('atualização: filha travada com outras fechando → executed (motivo null) e a falha vai pro CONTADOR', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', true), aluno('Cid', '10:00', true)],
+    filhasPendentes: [
+      { id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' },
+      { id: 'f-bia', title: '08:00 Anamnese — Bia (Canto)' },
+      { id: 'f-cid', title: '10:00 Anamnese — Cid (Canto)' },
+    ],
+    fecharFilhaOk: (arg) => arg.id !== 'f-bia',   // a Bia está travada (linha some, RLS, trigger)
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.atualizou, true);
+  assert.strictEqual(r.fechadas, 2, 'Ana e Cid saíram da tela — o trabalho do slot aconteceu');
+  assert.strictEqual(r.falhasAoFechar, 1, 'a falha da Bia tem contador PRÓPRIO, e ele precisa existir');
+  assert.strictEqual(r.continuamPendentes, 1, 'a Bia de fato continua na tela');
+  assert.strictEqual(r.motivo, null,
+    'motivo preenchido = fallback no dispatcher = chave do slot destravada = 21 RPCs por unidade por dia');
+});
+
+// O sinal não pode ser jogado fora junto com o ruído: se NENHUMA filha fechou e houve falha,
+// não houve trabalho nenhum — só erro. Aí `fallback` é a verdade, e retentar é o certo.
+test('atualização: NENHUMA fechou e houve falha → motivo (fallback), porque não houve trabalho', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', true)],
+    filhasPendentes: [
+      { id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' },
+      { id: 'f-bia', title: '08:00 Anamnese — Bia (Canto)' },
+    ],
+    fecharFilhaOk: () => false,
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.fechadas, 0);
+  assert.strictEqual(r.falhasAoFechar, 2);
+  assert.ok(r.motivo, 'zero trabalho + erro é FALHA: tem que voltar como fallback e retentar');
+  assert.ok(/Ana/.test(r.motivo) && /Bia/.test(r.motivo), 'as filhas travadas precisam ser NOMEADAS');
+  assert.notStrictEqual(r.semPauta, true, 'falha nunca pode virar desfecho resolvido');
+});
+
+// ── BRECHA 2: disjuntor de fechamento em massa ───────────────────────────────────────────────
+// A única falha desta feature sem defesa nenhuma: se a fonte um dia disser que TODO MUNDO
+// preencheu (incidente de dado, não mudança de schema), a passada do meio do dia esvazia o
+// painel das três unidades em silêncio, carimba `executed`, e o primeiro sinal humano é a tela
+// vazia. "Zero por FALHA idêntico a zero por SAÚDE" — a classe de bug que esta casa mais sangra.
+test('atualização: fechamento em massa acima do teto → NÃO fecha NADA, fallback com motivo próprio', async () => {
+  const n = 30;
+  const d = depsRefresh({
+    alunos: Array.from({ length: n }, (_, i) => aluno(`P${i}`, '09:00', true)),
+    filhasPendentes: Array.from({ length: n }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(d.filhasFechadas.length, 0,
+    'não fecha NENHUMA — meia pauta esvaziada é pior que nenhuma, e não dá pra desfazer depois');
+  assert.strictEqual(r.fechadas, 0);
+  assert.strictEqual(r.atualizou, false);
+  assert.ok(r.motivo && /disjuntor/i.test(r.motivo), 'sensor próprio: nenhum outro motivo do arquivo fala em disjuntor');
+  assert.notStrictEqual(r.semPauta, true, 'é FALHA (fallback), não "não tem pauta hoje"');
+});
+
+// O teto tem que ser DOIS gatilhos ao mesmo tempo. Só proporção erraria em lote pequeno (o teste
+// seguinte); só número absoluto erraria aqui — 20 filhas de uma vez é muito, mas 20 de 48 é um
+// dia movimentado numa unidade que abre com 48 pendentes, não um incidente de dado.
+test('atualização: fechamento GRANDE mas dentro do teto proporcional fecha normalmente', async () => {
+  const preencheram = 20; const pendentes = 48;
+  const alunos = Array.from({ length: pendentes }, (_, i) => aluno(`P${i}`, '09:00', i < preencheram));
+  const d = depsRefresh({
+    alunos,
+    filhasPendentes: Array.from({ length: pendentes }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.fechadas, preencheram, '20 de 48 (41%) é dia movimentado, não incidente');
+  assert.strictEqual(d.filhasFechadas.length, preencheram);
+  assert.strictEqual(r.motivo, null, 'dia movimentado não pode virar fallback e re-rodar a RPC 3x no slot');
+});
+
+// O caso que mata a porcentagem sozinha: às 21:00 sobra pouca gente pendente, e fechar 4 de 5
+// (80%) é o comportamento NORMAL do último slot do dia. Um disjuntor só percentual travaria a
+// pauta justamente na hora em que ela deve terminar de encolher.
+test('atualização: 4 de 5 (80%) NÃO dispara o disjuntor — proporção alta em lote pequeno é saúde', async () => {
+  const alunos = Array.from({ length: 5 }, (_, i) => aluno(`P${i}`, '20:00', i < 4));
+  const d = depsRefresh({
+    alunos,
+    filhasPendentes: Array.from({ length: 5 }, (_, i) => ({ id: `f-${i}`, title: `20:00 Anamnese — P${i}` })),
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.fechadas, 4, '80% num lote de 5 é o slot das 21:00 fazendo exatamente o que deve');
+  assert.strictEqual(r.continuamPendentes, 1);
+  assert.strictEqual(r.motivo, null);
+});
+
+// A fronteira exata, escrita como teste pra que mexer nos números quebre algo visível em vez de
+// mudar o comportamento em produção em silêncio.
+test('atualização: os dois gatilhos do disjuntor são EXPORTADOS e o teto é "> teto E > fração"', async () => {
+  assert.strictEqual(typeof REFRESH_LOTE_MAXIMO, 'number');
+  assert.strictEqual(typeof REFRESH_FRACAO_MAXIMA, 'number');
+  // Exatamente no teto absoluto (16 = REFRESH_LOTE_MAXIMO + 1 dispara; 15 não), com 100% —
+  // prova que o número absoluto manda mesmo quando a proporção é total.
+  const noLimite = REFRESH_LOTE_MAXIMO;
+  const d1 = depsRefresh({
+    alunos: Array.from({ length: noLimite }, (_, i) => aluno(`P${i}`, '09:00', true)),
+    filhasPendentes: Array.from({ length: noLimite }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+  });
+  const r1 = await rodarRefresh(d1);
+  assert.strictEqual(r1.fechadas, noLimite, `${noLimite} de ${noLimite} (100%) NÃO dispara: o gatilho é "mais de ${noLimite}"`);
+  assert.strictEqual(r1.motivo, null);
+
+  const acima = REFRESH_LOTE_MAXIMO + 1;
+  const d2 = depsRefresh({
+    alunos: Array.from({ length: acima }, (_, i) => aluno(`P${i}`, '09:00', true)),
+    filhasPendentes: Array.from({ length: acima }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+  });
+  const r2 = await rodarRefresh(d2);
+  assert.strictEqual(r2.fechadas, 0, `${acima} de ${acima} passa dos DOIS gatilhos e trava`);
+});
+
+// A ordem importa: o disjuntor decide ANTES de qualquer UPDATE. Se ele contasse depois de
+// escrever, "não fecha nada" seria mentira — metade da pauta já teria ido embora.
+test('atualização: o disjuntor decide ANTES de escrever — nenhuma filha é tocada antes da conta', async () => {
+  const n = 40;
+  const d = depsRefresh({
+    alunos: Array.from({ length: n }, (_, i) => aluno(`P${i}`, '09:00', true)),
+    filhasPendentes: Array.from({ length: n }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+  });
+  await rodarRefresh(d);
+  assert.deepStrictEqual(d.filhasFechadas, [], 'zero chamadas de fecharFilha, não "algumas e aí parou"');
 });
