@@ -112,20 +112,48 @@ const VALOR_PLACEHOLDER_RE = /^\s*(?:\[?\s*(?:n[oa]\s+json|no\s+arquivo|ver\s+js
  *
  * @returns {string|null} o label do primeiro campo suspeito, ou null
  */
+function _valorIncompleto(valor) {
+  if (typeof valor !== 'string') return false;
+  return VALOR_MASCARADO_RE.test(valor)
+    || VALOR_CORTADO_RE.test(valor)
+    || VALOR_PLACEHOLDER_RE.test(valor);
+}
+
 function temValorMascarado(acao) {
   if (!acao || !Array.isArray(acao.campos)) return null;
   for (const c of acao.campos) {
-    if (!c || typeof c.valor !== 'string') continue;
-    if (VALOR_MASCARADO_RE.test(c.valor)
-      || VALOR_CORTADO_RE.test(c.valor)
-      || VALOR_PLACEHOLDER_RE.test(c.valor)) {
-      return String(c.label || 'campo').trim();
-    }
+    if (c && _valorIncompleto(c.valor)) return String(c.label || 'campo').trim();
   }
   return null;
 }
 
+/**
+ * Tira da acao os campos cujo valor nao e o valor de verdade, e diz quais foram.
+ *
+ * Ate 04/09 um campo incompleto derrubava a acao INTEIRA e o turno virava "manda esse campo
+ * de novo". O Hugo reprovou: "tem que evitar o maximo de atrito possivel". E ele esta certo —
+ * a propriedade que importa e o valor cortado NAO SER GRAVADO, nao a credencial inteira ser
+ * recusada. Entao o campo ruim sai, o resto segue pra confirmacao normal, e a pessoa decide
+ * no mesmo passo: confirma sem ele, ou manda o valor completo.
+ *
+ * Em `update` isso e ainda melhor que recusar: o campo removido nao entra no payload, entao o
+ * valor que ja esta gravado SOBREVIVE — em vez de virar "..." por cima de uma senha boa.
+ *
+ * @returns {{acao: object, incompletos: string[]}} acao sem os campos ruins + labels tirados
+ */
+function separarCamposIncompletos(acao) {
+  if (!acao || !Array.isArray(acao.campos)) return { acao, incompletos: [] };
+  const bons = [];
+  const incompletos = [];
+  for (const c of acao.campos) {
+    if (c && _valorIncompleto(c.valor)) incompletos.push(String(c.label || 'campo').trim());
+    else bons.push(c);
+  }
+  if (!incompletos.length) return { acao, incompletos: [] };
+  return { acao: { ...acao, campos: bons }, incompletos };
+}
+
 module.exports = {
-  parseCredencialAction, stripCredencialAction, temValorMascarado,
+  parseCredencialAction, stripCredencialAction, temValorMascarado, separarCamposIncompletos,
   ACOES_VALIDAS, CATEGORIAS_VALIDAS, VALOR_MASCARADO_RE, VALOR_CORTADO_RE, VALOR_PLACEHOLDER_RE,
 };

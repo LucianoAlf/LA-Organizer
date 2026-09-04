@@ -11736,9 +11736,17 @@ Output AGORA, apenas o marker:`;
   // seguinte, quando a pessoa responde. E o padrao do financeiro (1,3% de falha), oposto ao
   // do TASK_UPDATE (14%), que deixa o modelo escolher o alvo.
   try {
-    const { parseCredencialAction, stripCredencialAction } = require('./lib/credencial-action');
+    const { parseCredencialAction, stripCredencialAction, separarCamposIncompletos } = require('./lib/credencial-action');
     const _temMarker = /<<CREDENCIAL_ACTION>>/i.test(String(reply || ''));
-    const _acao = parseCredencialAction(reply);
+    // CAMPO INCOMPLETO SAI, O RESTO PASSA (04/09). Antes um valor cortado/mascarado derrubava
+    // a acao inteira e o turno virava "manda esse campo de novo" — atrito a toa. A propriedade
+    // que importa e o valor ruim NAO SER GRAVADO, nao a credencial ser recusada. Aqui ele e
+    // separado UMA vez, no topo, pra que todo o resto do executor (duplicata, reuso, resumo,
+    // payload da intent) ja trabalhe com a acao limpa. Os labels tirados viram um aviso no
+    // comeco da confirmacao, e a pessoa decide no mesmo passo: confirma assim, ou manda o
+    // valor completo.
+    const _parsed = parseCredencialAction(reply);
+    const { acao: _acao, incompletos: _camposIncompletos } = separarCamposIncompletos(_parsed);
 
     // APAGA A INBOUND DO TURNO (04/09). O gatilho e a PRESENCA do marker — parseado ou
     // nao, admin ou nao — porque nos tres casos a mensagem de entrada carregou credencial
@@ -11789,27 +11797,10 @@ Output AGORA, apenas o marker:`;
       const { getCredenciaisPara } = require('./services/credenciais');
       const { isAdmin, creds } = await getCredenciaisPara(collab.id);
 
-      const { temValorMascarado } = require('./lib/credencial-action');
-      const _labelMascarado = temValorMascarado(_acao);
-
       if (!isAdmin) {
         // Negativa que NAO revela a existencia da funcionalidade de credenciais.
         await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'nao_admin', null);
         reply = 'Isso eu não consigo te ajudar por aqui — fala com o Luciano.';
-      } else if (_labelMascarado) {
-        // Caso Hugo 04/09 15:40: o modelo imitou a confirmacao do engine — inclusive o
-        // ●●●●●● — e propos gravar a mascara como se fosse a senha. Gravar isso criaria uma
-        // credencial que PARECE certa na tela e nao serve pra nada; e o tipo de estrago que
-        // so aparece no dia em que alguem precisa do acesso. Fail-closed e explicito.
-        //
-        // 04/09 (2a porta): print truncado. A visao devolveu "1041658696311-rdtd1q0..." e
-        // "no JSON" como se fossem os valores. Mesmo estrago, mesma guarda — por isso a copy
-        // aqui fala em "incompleto", que cobre cortado, escondido e placeholder.
-        await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', `valor_mascarado:${_labelMascarado}`, null);
-        console.warn(`[CredencialAction] campo "${_labelMascarado}" veio incompleto — nada gravado`);
-        _metrics.awaiting_user_confirm = true;   // o turno responde com pergunta
-        reply = `O valor de *${_labelMascarado}* chegou incompleto aqui — veio cortado ou escondido, `
-          + `não o valor inteiro. Manda esse campo em texto que eu cadastro na hora.`;
       } else {
         const { acharDuplicatas, acharAlvo, acharReusoDeSegredo } = require('./lib/credencial-duplicata');
         const { formatAvisoReuso } = require('./lib/credenciais-format');
@@ -11923,6 +11914,25 @@ Output AGORA, apenas o marker:`;
               { modo: _acao.action, proposta: _acao, alvo_id: alvo.id, alvo_nome: alvo.nome }, reply);
             if (!_ok) reply = FALHA_PENDENCIA;
           }
+        }
+
+        // AVISO DOS CAMPOS TIRADOS. Vai por FORA dos ramos de proposito: os 5 caminhos acima
+        // (create, duplicata, alvo inexistente, ambiguo, exato) terminam numa pergunta, e o
+        // aviso e o mesmo nos cinco. Emoldura a resposta — o que nao deu no comeco, a saida
+        // no fim — deixando o "Confirma?" do ramo no meio, onde ele ja estava.
+        //
+        // FALHA_PENDENCIA e a excecao: ali nada ficou pendente, entao anunciar o que "vai
+        // ficar de fora" seria mentira sobre uma escrita que nao vai acontecer.
+        if (_camposIncompletos.length && reply && reply !== FALHA_PENDENCIA) {
+          const _lista = _camposIncompletos.map(l => `*${l}*`).join(', ');
+          const _plural = _camposIncompletos.length > 1;
+          await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped',
+            `campo_incompleto:${_camposIncompletos.length}`, null);
+          console.warn(`[CredencialAction] campo(s) fora por valor incompleto: ${_camposIncompletos.join(', ')}`);
+          reply = `⚠️ ${_lista} ${_plural ? 'chegaram cortados' : 'chegou cortado'} aqui `
+            + `(print costuma truncar), então ${_plural ? 'não vão' : 'não vai'} junto.\n\n`
+            + `${reply}\n\n`
+            + `_Se quiser ${_plural ? 'os campos' : 'o campo'} também, é só mandar em texto._`;
         }
       }
     }
