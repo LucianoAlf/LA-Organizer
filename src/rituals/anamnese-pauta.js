@@ -842,11 +842,96 @@ async function atualizarPautaDaUnidade({ supabase, laReport, unidadeId, groupId,
   }
 }
 
+// ── O RELATÓRIO DE FIM DE DIA (pedido do Alf, 04/09) ─────────────────────────────────────────
+// "no final do dia ele manda uma lista do que foi feito ali no dia. Alunos que tiveram na escola
+// e não preencheram a anamnese. 'Semana que vem eu vou lembrar de novo.'"
+// Barra 19:30, Campo Grande 20:30, Recreio 20:30 (horários dados pelo Alf).
+//
+// ESTA FUNÇÃO SÓ LÊ. É a regra que a define, e o teste que a trava injeta fakes de escrita e
+// exige lista vazia de chamadas. Ela não grava em anamnese_pauta, não fecha filha, não fecha
+// container: quem DECIDE o dia continua sendo o fechamento das 23:00 (fecharPautaDaUnidade).
+// Duas fontes gravando o mesmo resultado é a receita da escada divergir de si mesma — e às
+// 19:30 o dia nem acabou (ainda tem aula às 20:00 e o aluno pode preencher no caminho).
+//
+// A CONTA é a mesma do fechamento, de propósito: quem entrou na pauta hoje (anamnese_pauta) ×
+// a fonte lida AGORA, classificado por filtrarPorRecorte — a única definição de "sem anamnese"
+// nesta casa. Se este relatório tivesse cópia própria do filtro, um dia a mensagem da manhã e a
+// da noite discordariam sobre a mesma pessoa, e ninguém confiaria em nenhuma das duas.
+async function relatorioDeFimDeDia({ supabase, laReport, unidadeId, hoje, deps = {} }) {
+  const repo = deps.repo || repoPadrao;
+  const vazio = { texto: null, preencheram: 0, faltaram: [], semVerificacao: 0 };
+
+  // Mesma guarda barata do bloco das 06:00: `hoje` torto não pode virar um dia da semana que
+  // case com qualquer aula (null === null) e produzir uma lista inventada num grupo real.
+  const diaSemana = _diaSemanaBrt(hoje);
+  if (!Number.isInteger(diaSemana) || diaSemana < 0 || diaSemana > 6) {
+    return { ...vazio, motivo: `dia da semana inválido para hoje="${hoje}"` };
+  }
+  const [, mes, dia] = String(hoje).split('-');
+  const dataBr = `${dia}/${mes}`;
+
+  const pessoas = await repo.pessoasDoDia(supabase, { unidadeId, dia: hoje });
+  // null é "não consegui LER", [] é "ninguém entrou na pauta hoje". Tratar os dois igual faria o
+  // relatório calar num dia cheio — o silêncio permanente que esta feature inteira existe pra
+  // evitar. Sensor próprio no motivo, nunca igual ao de erro de RPC.
+  if (pessoas === null) {
+    return {
+      ...vazio,
+      texto: pura.mensagemDeFimDeDia({ erro: true, dataBr }),
+      motivo: 'não consegui ler quem entrou na pauta de hoje',
+    };
+  }
+  // Zero por SAÚDE: ninguém teve aula/pendência hoje. Silêncio, e motivo null — nunca uma string
+  // de erro, que é o sensor que distingue "zero por falha" de "zero por saúde" no resto do arquivo.
+  if (!pessoas.length) return { ...vazio, motivo: null };
+
+  // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
+  // linhas" silencioso — aqui isso sairia como "todo mundo preencheu, dia bom", uma mentira
+  // simpática no grupo da unidade.
+  const { data, error } = await laReport.rpc('get_situacao_alunos_v1',
+    { p_unidade_id: unidadeId, p_apenas_pendentes: false });
+  if (error) {
+    return {
+      ...vazio,
+      texto: pura.mensagemDeFimDeDia({ erro: true, dataBr }),
+      motivo: `consulta do LA Report falhou no relatório de fim de dia: ${error.message}`,
+    };
+  }
+
+  const porChave = new Map((data || []).map((p) => [p.pessoa_chave, p]));
+  let preencheram = 0;
+  let semVerificacao = 0;
+  const pendentes = [];
+  for (const pk of pessoas) {
+    const p = porChave.get(pk);
+    if (!p) { semVerificacao += 1; continue; }              // saiu da base ativa: não sei, e digo
+    if (!situ.filtrarPorRecorte([p], 'anamnese').length) { preencheram += 1; continue; }
+    pendentes.push(p);
+  }
+
+  // O horário sai de pautaDoDia — a MESMA função que montou a lista de manhã, então a ordem da
+  // noite é a ordem da manhã. Quem a grade de hoje não reconhece mais (aula trocada durante o
+  // dia) entra DEPOIS, com hora nula: a mensagem imprime '--:--' em vez de sumir com a pessoa.
+  // Perder gente da conta é pior que um traço feio — o número é o que a equipe olha primeiro.
+  const comHorario = pura.pautaDoDia(pendentes, diaSemana);
+  const jaListados = new Set(comHorario.map((i) => i.pessoa.pessoa_chave));
+  const semHorario = pendentes
+    .filter((p) => !jaListados.has(p.pessoa_chave))
+    .map((p) => ({ pessoa: p, hora: null, curso: null }));
+  const faltaram = [...comHorario, ...semHorario];
+
+  return {
+    texto: pura.mensagemDeFimDeDia({ preencheram, faltaram, semVerificacao, dataBr }),
+    preencheram, faltaram, semVerificacao, motivo: null,
+  };
+}
+
 module.exports = {
   // varrerPautasVelhas é exportada porque tem DOIS chamadores: o fechamento das 23:00 (aqui) e o
   // bloco das 06:00 do dispatcher, que limpa o entulho da noite anterior ANTES de montar a pauta
   // do dia. Uma implementação só, de propósito — ver o comentário da função.
   montarPautaDaUnidade, fecharPautaDaUnidade, varrerPautasVelhas, atualizarPautaDaUnidade,
+  relatorioDeFimDeDia,
   TETO_FILHAS, VARREDURA_DIAS, VARREDURA_MAX_CONTAINERS,
   // Os dois gatilhos do disjuntor saem daqui pra que o teste prove a FRONTEIRA (15 não dispara,
   // 16 dispara) contra o valor real, e não contra um número redigitado no teste — uma cópia lá

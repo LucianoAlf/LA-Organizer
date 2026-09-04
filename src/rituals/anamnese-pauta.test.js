@@ -1369,3 +1369,149 @@ test('atualização: o disjuntor decide ANTES de escrever — nenhuma filha é t
   await rodarRefresh(d);
   assert.deepStrictEqual(d.filhasFechadas, [], 'zero chamadas de fecharFilha, não "algumas e aí parou"');
 });
+
+// ── O RELATÓRIO DE FIM DE DIA (pedido do Alf, 04/09) ─────────────────────────────────────────
+// "no final do dia ele manda uma lista do que foi feito ali no dia. Alunos que tiveram na escola
+// e não preencheram a anamnese." Barra 19:30, Campo Grande e Recreio 20:30.
+//
+// Ele LÊ o dia. Não grava na escada, não fecha filha, não fecha container — quem faz isso
+// continua sendo o fechamento das 23:00. Os fakes de ESCRITA abaixo existem exatamente pra
+// provar que ninguém os chama.
+const { relatorioDeFimDeDia } = require('./anamnese-pauta');
+
+function depsRelatorio({ rpcErro = null, alunos = [], daPauta = [], erroPessoas = false } = {}) {
+  const escritas = [];
+  return {
+    escritas,
+    laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
+    repo: {
+      pessoasDoDia: async () => (erroPessoas ? null : daPauta),
+      // Qualquer uma destas sendo chamada é BUG: o relatório é leitura.
+      gravarResultado: async (_sb, arg) => { escritas.push(['gravarResultado', arg]); return true; },
+      registrarAparicoes: async (_sb, arg) => { escritas.push(['registrarAparicoes', arg]); return { gravadas: 0, erro: null }; },
+    },
+    fecharFilha: async (_sb, arg) => { escritas.push(['fecharFilha', arg]); return true; },
+    fecharContainer: async (_sb, arg) => { escritas.push(['fecharContainer', arg]); return true; },
+  };
+}
+
+const rodarRelatorio = (d) => relatorioDeFimDeDia({
+  supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: SEGUNDA, deps: d,
+});
+
+test('fim de dia: conta quem preencheu e NOMEIA quem escapou, lendo a fonte', async () => {
+  const d = depsRelatorio({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', false), aluno('Cid', '10:00', false)],
+    daPauta: ['pk-Ana', 'pk-Bia', 'pk-Cid'],
+  });
+  const r = await rodarRelatorio(d);
+  assert.strictEqual(r.preencheram, 1);
+  assert.strictEqual(r.faltaram.length, 2);
+  assert.strictEqual(r.semVerificacao, 0);
+  assert.match(r.texto, /Hoje 1 dos 3 alunos da pauta preencheram a anamnese/);
+  // Ordem por HORÁRIO, igual à pauta da manhã: 08:00 Bia antes de 10:00 Cid.
+  assert.match(r.texto, /Faltaram 2: 08:00 Bia · 10:00 Cid/);
+  // \bAna\b, não /Ana/: o cabeçalho da própria mensagem é "*Anamnese — ...*" e casaria com o
+  // fragmento solto, transformando este teste num falso vermelho eterno.
+  assert.doesNotMatch(r.texto, /\bAna\b/, 'quem preencheu não vai na lista de quem escapou');
+  assert.match(r.texto, /Semana que vem eu lembro de novo/);
+  assert.strictEqual(r.motivo, null, 'dia normal não tem motivo — motivo é sensor de problema');
+});
+
+// A trava principal desta função: ela não pode encostar em nada que escreve.
+test('fim de dia: NÃO grava na escada, não fecha filha e não fecha container', async () => {
+  const d = depsRelatorio({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', false)],
+    daPauta: ['pk-Ana', 'pk-Bia'],
+  });
+  await rodarRelatorio(d);
+  assert.deepStrictEqual(d.escritas, [], 'o relatório é leitura — quem fecha o dia é o ritual das 23:00');
+});
+
+test('fim de dia: pauta vazia hoje é silêncio, não um relatório de zeros', async () => {
+  const d = depsRelatorio({ daPauta: [] });
+  const r = await rodarRelatorio(d);
+  assert.strictEqual(r.texto, null);
+  assert.strictEqual(r.motivo, null, 'zero por saúde nunca vira string de erro');
+});
+
+// Nunca afirmar número que não foi medido: sem fonte, o relatório DIZ que não apurou.
+test('fim de dia: fonte fora vira "não consegui apurar", nunca zeros', async () => {
+  const d = depsRelatorio({ rpcErro: { message: 'timeout' }, daPauta: ['pk-Ana'] });
+  const r = await rodarRelatorio(d);
+  assert.match(r.texto, /não consegui/i);
+  assert.doesNotMatch(r.texto, /Dia bom/);
+  assert.ok(r.motivo && /timeout/.test(r.motivo), `motivo tem que carregar o erro real: ${r.motivo}`);
+  assert.deepStrictEqual(d.escritas, []);
+});
+
+// pessoasDoDia devolve null quando a LEITURA falha — diferente de "ninguém na pauta hoje" ([]).
+// Confundir os dois faria o relatório calar num dia cheio, e ninguém saberia.
+test('fim de dia: falha ao ler quem entrou na pauta não vira silêncio', async () => {
+  const d = depsRelatorio({ erroPessoas: true });
+  const r = await rodarRelatorio(d);
+  assert.match(r.texto, /não consegui/i);
+  assert.ok(r.motivo && /pauta de hoje/.test(r.motivo), `sensor próprio: ${r.motivo}`);
+});
+
+test('fim de dia: aluno que sumiu da base sai como "não consegui conferir"', async () => {
+  const d = depsRelatorio({
+    alunos: [aluno('Ana', '09:00', true)],
+    daPauta: ['pk-Ana', 'pk-Fantasma'],
+  });
+  const r = await rodarRelatorio(d);
+  assert.strictEqual(r.preencheram, 1);
+  assert.strictEqual(r.faltaram.length, 0);
+  assert.strictEqual(r.semVerificacao, 1);
+  assert.match(r.texto, /1 eu não consegui conferir/);
+});
+
+test('fim de dia: dia em que todo mundo preencheu é dito como dia bom', async () => {
+  const d = depsRelatorio({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', true)],
+    daPauta: ['pk-Ana', 'pk-Bia'],
+  });
+  const r = await rodarRelatorio(d);
+  assert.match(r.texto, /Dia bom: os 2 alunos da pauta preencheram/);
+});
+
+// "sem anamnese" tem UMA definição nesta casa (filtrarPorRecorte). Se o relatório reimplementasse
+// o filtro, um dia a mensagem da manhã e a da noite discordariam sobre a mesma pessoa.
+test('fim de dia: usa a MESMA definição de pendência da manhã, não uma cópia', async () => {
+  const situ = require('../services/situacao-aluno');
+  // Marcado como preenchido pela flag, mas SEM registro: filtrarPorRecorte olha só a flag.
+  const meio = { ...aluno('Meio', '09:00', true), anamnese_flag_sem_registro: true };
+  const d = depsRelatorio({ alunos: [meio], daPauta: ['pk-Meio'] });
+  const r = await rodarRelatorio(d);
+  const pendentePelaFonte = situ.filtrarPorRecorte([meio], 'anamnese').length;
+  assert.strictEqual(r.faltaram.length, pendentePelaFonte,
+    'o relatório tem que concordar com filtrarPorRecorte, seja qual for a resposta dela');
+});
+
+// Aluno que estava na pauta de hoje mas cuja aula não é mais reconhecível hoje (grade mudou no
+// meio do dia) não pode SUMIR da conta: o número é o que a equipe olha primeiro.
+test('fim de dia: faltante sem horário de hoje continua contando', async () => {
+  const semAulaHoje = {
+    nome: 'Zeca', pessoa_chave: 'pk-Zeca', classificacao: 'LA',
+    aulas_resumo: ['Canto — Sábado 11:00'], anamnese_preenchida: false, cadastro_faltando: ['anamnese'],
+  };
+  const d = depsRelatorio({
+    alunos: [aluno('Bia', '08:00', false), semAulaHoje],
+    daPauta: ['pk-Bia', 'pk-Zeca'],
+  });
+  const r = await rodarRelatorio(d);
+  assert.strictEqual(r.faltaram.length, 2, 'a conta não pode perder ninguém por causa da grade');
+  assert.match(r.texto, /Faltaram 2/);
+  assert.match(r.texto, /Zeca/);
+  assert.doesNotMatch(r.texto, /undefined/);
+});
+
+test('fim de dia: hoje torto não deixa o relatório inventar um dia', async () => {
+  const d = depsRelatorio({ daPauta: ['pk-Ana'] });
+  const r = await relatorioDeFimDeDia({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: 'nao-e-data', deps: d,
+  });
+  assert.strictEqual(r.texto, null);
+  assert.ok(r.motivo && /dia da semana/.test(r.motivo), `sensor próprio: ${r.motivo}`);
+  assert.deepStrictEqual(d.escritas, []);
+});
