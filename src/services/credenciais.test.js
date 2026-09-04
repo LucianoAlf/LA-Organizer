@@ -4,9 +4,30 @@ const assert = require('node:assert');
 const clientPath = require.resolve('../supabase/client');
 let rpcCalls = 0;
 let rpcImpl = async () => ({ data: [], error: null });
+
+// Query builder falso pra `.from(...)`: registra a cadeia inteira (tabela, verbo, payload
+// e cada .eq) e resolve pelo `fromImpl` do cenario. Thenable, pra `await` na cadeia
+// funcionar igual ao client de verdade.
+let fromCalls = [];
+let fromImpl = async () => ({ data: [], error: null });
+function fakeQuery(table) {
+  const q = { table, op: null, payload: null, eqs: {}, order: null, limit: null, select: null };
+  fromCalls.push(q);
+  const api = {
+    _q: q,
+    select: (c) => { q.op = q.op || 'select'; q.select = c; return api; },
+    update: (p) => { q.op = 'update'; q.payload = p; return api; },
+    eq: (k, v) => { q.eqs[k] = v; return api; },
+    order: (c, o) => { q.order = { c, o }; return api; },
+    limit: (n) => { q.limit = n; return api; },
+    then: (res, rej) => Promise.resolve(fromImpl(q)).then(res, rej),
+  };
+  return api;
+}
 require.cache[clientPath] = {
   id: clientPath, filename: clientPath, loaded: true, exports: {
     rpc: async (...args) => { rpcCalls++; return rpcImpl(...args); },
+    from: (t) => fakeQuery(t),
   },
 };
 
@@ -198,4 +219,112 @@ test('upsertCredencial: create sem campos segue valido (RPC faz coalesce p/ [] n
   assert.equal(r.ok, true);
   assert.equal(params.p_cred_id, null, 'sem id => insert');
   assert.equal(params.p_campos, null);
+});
+
+// ---------------------------------------------------------------------------
+// apagarInboundDeCredencial — a defesa que nao depende de reconhecer o segredo
+// ---------------------------------------------------------------------------
+const { apagarInboundDeCredencial, MARCA_INBOUND_CREDENCIAL } = require('./credenciais');
+
+function cenarioFrom(impl) {
+  fromCalls = [];
+  fromImpl = impl || (async () => ({ data: [], error: null }));
+}
+function comWarnCapturado(fn) {
+  const warns = [];
+  const orig = console.warn;
+  console.warn = (...a) => { warns.push(a.map(String).join(' ')); };
+  return Promise.resolve(fn()).then(
+    (r) => { console.warn = orig; return { r, warns }; },
+    (e) => { console.warn = orig; throw e; },
+  );
+}
+
+test('apagarInbound: limpa content E media_extracted_text (um print deixa DUAS copias)', async () => {
+  cenarioFrom(async () => ({ data: null, error: null }));
+  const r = await apagarInboundDeCredencial(ADMIN, 'WA-123');
+  assert.equal(r.ok, true);
+  assert.equal(fromCalls.length, 1, 'com whatsapp_message_id nao precisa de select antes');
+  const u = fromCalls[0];
+  assert.equal(u.table, 'conversation_history');
+  assert.equal(u.op, 'update');
+  assert.equal(u.payload.content, MARCA_INBOUND_CREDENCIAL);
+  assert.ok('media_extracted_text' in u.payload, 'nao limpou a analise de imagem — a 2a copia fica de pe');
+  assert.equal(u.payload.media_extracted_text, null);
+});
+
+test('apagarInbound: filtra por collaborator + inbound + whatsapp_message_id quando ele existe', async () => {
+  cenarioFrom(async () => ({ data: null, error: null }));
+  await apagarInboundDeCredencial(ADMIN, 'WA-123');
+  const u = fromCalls[0];
+  assert.equal(u.eqs.collaborator_id, ADMIN);
+  assert.equal(u.eqs.direction, 'inbound');
+  assert.equal(u.eqs.whatsapp_message_id, 'WA-123');
+  assert.ok(!('id' in u.eqs), 'nao deve cair no fallback por id quando ha wa id');
+});
+
+test('apagarInbound: sem wa id, acha a inbound MAIS RECENTE e atualiza SO ela', async () => {
+  // Update sem alvo unico apagaria o historico inteiro da pessoa — por isso o select antes.
+  cenarioFrom(async (q) => (q.op === 'select'
+    ? { data: [{ id: 'linha-9' }], error: null }
+    : { data: null, error: null }));
+  const r = await apagarInboundDeCredencial(ADMIN, null);
+  assert.equal(r.ok, true);
+  assert.equal(fromCalls.length, 2, 'faltou o select do alvo');
+  const [sel, upd] = fromCalls;
+  assert.equal(sel.op, 'select');
+  assert.equal(sel.eqs.direction, 'inbound');
+  assert.deepEqual(sel.order, { c: 'created_at', o: { ascending: false } });
+  assert.equal(sel.limit, 1);
+  assert.equal(upd.op, 'update');
+  assert.equal(upd.eqs.id, 'linha-9');
+  assert.equal(upd.payload.content, MARCA_INBOUND_CREDENCIAL);
+});
+
+test('apagarInbound: erro do banco no UPDATE vira {ok:false} com warn identificado, sem excecao', async () => {
+  cenarioFrom(async () => ({ data: null, error: { message: 'permission denied' } }));
+  const { r, warns } = await comWarnCapturado(() => apagarInboundDeCredencial(ADMIN, 'WA-9'));
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'permission denied');
+  const w = warns.find((x) => /apagarInbound/.test(x));
+  assert.ok(w, 'falha silenciosa — ninguem vai olhar este caminho sozinho');
+  assert.match(w, /11111111/, 'warn sem id do colaborador nao acha o registro');
+  assert.match(w, /WA-9/);
+});
+
+test('apagarInbound: erro do banco no SELECT tambem nao lanca', async () => {
+  cenarioFrom(async (q) => (q.op === 'select' ? { data: null, error: { message: 'boom' } } : { data: null, error: null }));
+  const { r } = await comWarnCapturado(() => apagarInboundDeCredencial(ADMIN, null));
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'boom');
+  assert.equal(fromCalls.length, 1, 'nao pode seguir pro update depois de falhar o select');
+});
+
+test('apagarInbound: nenhuma inbound encontrada vira {ok:false} avisado', async () => {
+  cenarioFrom(async (q) => (q.op === 'select' ? { data: [], error: null } : { data: null, error: null }));
+  const { r, warns } = await comWarnCapturado(() => apagarInboundDeCredencial(ADMIN, null));
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'inbound_nao_encontrada');
+  assert.ok(warns.some((x) => /nenhuma inbound/.test(x)));
+});
+
+test('apagarInbound: rejeicao non-Error (null) nao lanca — fail-safe', async () => {
+  cenarioFrom(async () => { throw null; });
+  const { r } = await comWarnCapturado(() => apagarInboundDeCredencial(ADMIN, 'WA-1'));
+  assert.equal(r.ok, false);
+  assert.ok(r.erro, 'erro precisa ter algum texto');
+});
+
+test('apagarInbound: excecao Error tambem vira {ok:false}', async () => {
+  cenarioFrom(async () => { throw new Error('rede caiu'); });
+  const { r } = await comWarnCapturado(() => apagarInboundDeCredencial(ADMIN, 'WA-1'));
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'rede caiu');
+});
+
+test('apagarInbound: sem collaboratorId nem toca no banco', async () => {
+  cenarioFrom(async () => ({ data: null, error: null }));
+  const r = await apagarInboundDeCredencial(null, 'WA-1');
+  assert.equal(r.ok, false);
+  assert.equal(fromCalls.length, 0);
 });

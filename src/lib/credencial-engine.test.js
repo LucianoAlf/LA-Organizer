@@ -63,9 +63,9 @@ const execSrc = lines.slice(iExec, iExecEnd + 2).join('\n');
 const body = `
 ${helperSrc}
 return async function run(ctx) {
-  const { collab, logMarker, withinConfirmWindow, FRESH_WINDOW_MIN, stripReplyScaffold, _metrics, inboundVerbatimText } = ctx;
+  const { collab, logMarker, withinConfirmWindow, FRESH_WINDOW_MIN, stripReplyScaffold, _metrics, inboundVerbatimText, _inboundWaId } = ctx;
   let reply = ctx.reply;
-  let _credenciaisNoTurno = false;
+  let _credenciaisNoTurno = ctx._credenciaisNoTurno === true;
   let _pendingIntentToResolve = ctx._pendingIntentToResolve;
 ${confirmSrc}
 ${execSrc}
@@ -75,7 +75,7 @@ ${execSrc}
 // ---- stubs ----
 let calls;
 function reset() {
-  calls = { markers: [], upsert: [], del: [], open: [], resolve: [] };
+  calls = { markers: [], upsert: [], del: [], open: [], resolve: [], apagar: [] };
 }
 reset();
 
@@ -100,6 +100,7 @@ function ctxBase(over) {
     collab: { id: 'collab-1' },
     reply: '',
     inboundVerbatimText: '',
+    _inboundWaId: 'WA-TURNO',
     _metrics: {},
     _pendingIntentToResolve: null,
     withinConfirmWindow,
@@ -120,8 +121,12 @@ function credStub(over) {
     getCredenciaisPara: async () => ({ isAdmin: true, creds: [] }),
     upsertCredencial: async (cid, d) => { calls.upsert.push(d); return { ok: true, id: 'cred-novo', erro: null }; },
     deleteCredencial: async (cid, id) => { calls.del.push(id); return { ok: true, erro: null }; },
+    apagarInboundDeCredencial: async (cid, wa) => { calls.apagar.push({ cid, wa }); return { ok: true, erro: null }; },
   }, over);
 }
+// So os markers da ACAO. CREDENCIAL_INBOUND_APAGADA e faxina de historico e entra em
+// todo turno que carrega o marker — nao deve poluir as asseracoes de comportamento.
+const markersAcao = () => calls.markers.filter((m) => m.type === 'CREDENCIAL_ACTION');
 const agora = () => new Date().toISOString();
 const minAtras = (m) => new Date(Date.now() - m * 60000).toISOString();
 const MARKER = (o) => `Beleza!\n<<CREDENCIAL_ACTION>>${JSON.stringify(o)}<<END>>`;
@@ -157,7 +162,7 @@ test('executor: nao-admin recebe negativa que nao revela a funcionalidade', asyn
   assert.strictEqual(calls.upsert.length, 0);
   assert.strictEqual(calls.open.length, 0);
   assert.ok(!/credenci/i.test(r.reply), 'a negativa revelou a funcionalidade: ' + r.reply);
-  assert.deepStrictEqual(calls.markers.map((m) => m.result + ':' + m.reason), ['rejected:nao_admin']);
+  assert.deepStrictEqual(markersAcao().map((m) => m.result + ':' + m.reason), ['rejected:nao_admin']);
 });
 
 test('executor: alvo ambiguo pergunta qual e guarda {id, nome}', async () => {
@@ -181,7 +186,7 @@ test('executor: alvo inexistente pergunta o nome e NAO abre intent', async () =>
   assert.match(r.reply, /Não achei/);
   assert.strictEqual(calls.upsert.length, 0);
   assert.strictEqual(calls.open.length, 0);
-  assert.deepStrictEqual(calls.markers.map((m) => m.reason), ['alvo_nao_encontrado']);
+  assert.deepStrictEqual(markersAcao().map((m) => m.reason), ['alvo_nao_encontrado']);
 });
 
 test('executor: duplicata oferece merge, guarda {id, nome} e nao escreve', async () => {
@@ -210,8 +215,8 @@ test('I-2: marker truncado (sem <<END>>) e cortado — segredo nao chega na tela
   assert.ok(!/hunter2/.test(r.reply), 'segredo ficou na tela: ' + r.reply);
   assert.ok(!/CREDENCIAL_ACTION/.test(r.reply));
   assert.strictEqual(r.reply, 'Fechou, vou cadastrar!');
-  assert.deepStrictEqual(calls.markers.map((m) => m.result + ':' + m.reason), ['rejected:payload_invalido']);
-  assert.strictEqual(calls.markers[0].raw, null, 'raw do logMarker tem de ser null');
+  assert.deepStrictEqual(markersAcao().map((m) => m.result + ':' + m.reason), ['rejected:payload_invalido']);
+  assert.strictEqual(markersAcao()[0].raw, null, 'raw do logMarker tem de ser null');
   assert.strictEqual(calls.upsert.length, 0);
 });
 
@@ -226,7 +231,7 @@ test('executor: payload invalido COM <<END>> tambem registra e limpa', async () 
   cenario(piStub([]), credStub());
   const r = await run(ctxBase({ reply: 'Ok!\n<<CREDENCIAL_ACTION>>{isso nao e json}<<END>>' }));
   assert.ok(!/CREDENCIAL_ACTION/.test(r.reply), 'marker cru na tela: ' + r.reply);
-  assert.deepStrictEqual(calls.markers.map((m) => m.result + ':' + m.reason), ['rejected:payload_invalido']);
+  assert.deepStrictEqual(markersAcao().map((m) => m.result + ':' + m.reason), ['rejected:payload_invalido']);
   assert.strictEqual(calls.upsert.length, 0);
 });
 
@@ -729,4 +734,87 @@ test('todas as chamadas a logMarker passam null no raw (a reply nunca vai pro lo
   await run(ctxBase({ inboundVerbatimText: 'sim' }));
   assert.ok(calls.markers.length > 0);
   for (const m of calls.markers) assert.strictEqual(m.raw, null, `logMarker ${m.type}/${m.result} levou raw`);
+});
+
+// =====================================================================
+// Apagar a inbound do turno — a defesa que nao depende de reconhecer o segredo
+// =====================================================================
+
+test('inbound: gatilho e a PRESENCA do marker, nao a flag do turno (fonte)', () => {
+  // `_credenciaisNoTurno` tambem liga no two-pass de LEITURA (<<PEDIR_CREDENCIAIS>>), onde
+  // a mensagem da pessoa e so uma pergunta: apagar ali destruiria historico util a troco
+  // de nada. O gatilho tem de ser o marker.
+  const m = execSrc.match(/if \((_temMarker|_credenciaisNoTurno)\) \{[\s\S]{0,400}?apagarInboundDeCredencial/);
+  assert.ok(m, 'a chamada de apagarInboundDeCredencial sumiu do executor');
+  assert.strictEqual(m[1], '_temMarker',
+    `gatilho e "${m[1]}" — com _credenciaisNoTurno um turno de LEITURA apagaria a pergunta da pessoa`);
+});
+
+test('inbound: payload VALIDO apaga a inbound e registra com o id do colaborador', async () => {
+  cenario(piStub([]), credStub());
+  await run(ctxBase({ reply: MARKER({ action: 'create', nome: 'Canva', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }) }));
+  assert.deepStrictEqual(calls.apagar, [{ cid: 'collab-1', wa: 'WA-TURNO' }]);
+  const reg = calls.markers.filter((m) => m.type === 'CREDENCIAL_INBOUND_APAGADA');
+  assert.strictEqual(reg.length, 1, 'sem registro nao da pra provar depois que a defesa rodou');
+  assert.strictEqual(reg[0].result, 'executed');
+  assert.strictEqual(reg[0].raw, null);
+});
+
+test('inbound: payload INVALIDO tambem apaga — a mensagem carregou credencial do mesmo jeito', async () => {
+  cenario(piStub([]), credStub());
+  await run(ctxBase({ reply: 'Ok!\n<<CREDENCIAL_ACTION>>{"action":"create","campos":[{"label":"senha","valor":"hunter2"' }));
+  assert.deepStrictEqual(calls.apagar, [{ cid: 'collab-1', wa: 'WA-TURNO' }]);
+});
+
+test('inbound: NAO-admin tambem tem a inbound apagada', async () => {
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: false, creds: [] }) }));
+  const r = await run(ctxBase({ reply: MARKER({ action: 'create', nome: 'X', campos: [{ label: 'Senha', valor: 'p' }] }) }));
+  assert.deepStrictEqual(calls.apagar, [{ cid: 'collab-1', wa: 'WA-TURNO' }],
+    'a mensagem de quem nao e admin tambem nao pode ficar no historico');
+  assert.ok(!/credenci/i.test(r.reply));
+});
+
+test('inbound: turno de LEITURA (PEDIR_CREDENCIAIS) NAO apaga nada', async () => {
+  // Simula o estado depois do two-pass de leitura: a flag do turno ligada, a reply ja
+  // montada a partir da RPC, e NENHUM <<CREDENCIAL_ACTION>> no texto.
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({
+    _credenciaisNoTurno: true,
+    reply: 'O link do Canva é https://canva.com — o login está com o Luciano.',
+  }));
+  assert.strictEqual(calls.apagar.length, 0, 'apagou a pergunta de uma consulta de leitura');
+  assert.strictEqual(calls.markers.length, 0);
+  assert.strictEqual(r.reply, 'O link do Canva é https://canva.com — o login está com o Luciano.');
+});
+
+test('inbound: turno sem marker nenhum NAO apaga nada', async () => {
+  cenario(piStub([]), credStub());
+  await run(ctxBase({ reply: 'Boa! Já anotei aqui.' }));
+  assert.strictEqual(calls.apagar.length, 0);
+});
+
+test('inbound: falha ao apagar NAO derruba o turno e fica registrada como rejected', async () => {
+  cenario(piStub([]), credStub({
+    apagarInboundDeCredencial: async (cid, wa) => { calls.apagar.push({ cid, wa }); return { ok: false, erro: 'permission denied' }; },
+  }));
+  const r = await run(ctxBase({ reply: MARKER({ action: 'create', nome: 'Canva', campos: [] }) }));
+  assert.strictEqual(calls.apagar.length, 1);
+  const reg = calls.markers.filter((m) => m.type === 'CREDENCIAL_INBOUND_APAGADA');
+  assert.strictEqual(reg[0].result, 'rejected');
+  assert.match(reg[0].reason, /permission denied/);
+  assert.match(r.reply, /Confirma\?/, 'a falha da faxina nao pode derrubar a confirmacao');
+});
+
+test('inbound: sem whatsapp_message_id o servico ainda e chamado (ele acha a mais recente)', async () => {
+  cenario(piStub([]), credStub());
+  await run(ctxBase({ _inboundWaId: null, reply: MARKER({ action: 'create', nome: 'X', campos: [] }) }));
+  assert.deepStrictEqual(calls.apagar, [{ cid: 'collab-1', wa: null }]);
+});
+
+test('inbound: CREDENCIAL_INBOUND_APAGADA esta na lista de markers NAO-dominio do engine', () => {
+  // Se ficasse de fora, um `executed` de faxina encheria `marker_emitted` e desarmaria o
+  // chokepoint num turno em que NADA foi persistido (o executor so abre a confirmacao).
+  const linha = ENGINE_SRC_LINES.find((l) => l.includes('const _NON_DOMAIN_MARKERS ='));
+  assert.ok(linha, 'lista _NON_DOMAIN_MARKERS nao encontrada em engine.js');
+  assert.match(linha, /CREDENCIAL_INBOUND_APAGADA/);
 });

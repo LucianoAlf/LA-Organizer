@@ -11628,6 +11628,29 @@ async function processMessage(phone, text, raw = {}) {
     const _temMarker = /<<CREDENCIAL_ACTION>>/i.test(String(reply || ''));
     const _acao = parseCredencialAction(reply);
 
+    // APAGA A INBOUND DO TURNO (04/09). O gatilho e a PRESENCA do marker — parseado ou
+    // nao, admin ou nao — porque nos tres casos a mensagem de entrada carregou credencial
+    // do mesmo jeito. Fica aqui, antes de qualquer ramo, pra nao depender de nenhum deles.
+    //
+    // O gatilho NAO e `_credenciaisNoTurno`: aquela flag tambem liga no two-pass de
+    // LEITURA (<<PEDIR_CREDENCIAIS>>), onde a mensagem da pessoa e so uma pergunta e nao
+    // ha o que apagar — apagar ali seria destruir historico util sem nenhum ganho.
+    //
+    // Aposta diferente da do redator (lib/redigir-segredo.js): ele tenta reconhecer a
+    // FORMA do segredo em texto livre; aqui o engine SABE que o turno carregou credencial
+    // e nao precisa reconhecer nada. Vale mesmo que o redator erre — e ele errou nas onze
+    // rodadas anteriores, sempre com a suite verde.
+    if (_temMarker) {
+      const { apagarInboundDeCredencial } = require('./services/credenciais');
+      const _apagou = await apagarInboundDeCredencial(collab.id, _inboundWaId);
+      // Registrado nos dois lugares: o console pro turno, o marker_logs pra query de
+      // observacao (dá pra provar depois que a defesa rodou, e quantas vezes falhou).
+      await logMarker(collab.id, 'CREDENCIAL_INBOUND_APAGADA', _apagou.ok ? 'executed' : 'rejected',
+        _apagou.ok ? `wa:${_inboundWaId || 'sem_id'}` : `erro:${_apagou.erro} wa:${_inboundWaId || 'sem_id'}`, null);
+      console.log(`[CredencialAction] inbound do turno ${_apagou.ok ? 'apagada' : 'NAO apagada'} — `
+        + `collab=${String(collab.id).slice(0, 8)} wa=${_inboundWaId || '-'}${_apagou.ok ? '' : ` erro=${_apagou.erro}`}`);
+    }
+
     if (_temMarker && !_acao) {
       // parseCredencialAction devolve null para JSON malformado, acao invalida E campo
       // obrigatorio ausente — as tres causas colapsam num null so, e um modulo puro nao tem
@@ -14170,7 +14193,10 @@ async function processMessage(phone, text, raw = {}) {
       .in('result', ['executed', 'rejected'])
       .gte('created_at', sinceIso);
     // Tipos META (não são ação de domínio): fora da conta de "marker tentado".
-    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT'];
+    // CREDENCIAL_INBOUND_APAGADA e faxina de historico, nao acao de dominio: deixa-la aqui
+    // fora encheria `marker_emitted` e desarmaria o chokepoint num turno em que NADA foi
+    // persistido (o executor de credencial so abre a confirmacao).
+    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT','CREDENCIAL_INBOUND_APAGADA'];
     const _isDomainMarker = (t) => t && !_NON_DOMAIN_MARKERS.includes(t);
     const fired = (recentMarkers || []).filter(r => r.result === 'executed' && _isDomainMarker(r.marker_type)).map(r => r.marker_type);
     // FATIA 2 (falso-fire composição): houve marker de DOMÍNIO tentado — executado OU rejeitado —

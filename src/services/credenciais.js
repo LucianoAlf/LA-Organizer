@@ -106,4 +106,80 @@ async function deleteCredencial(collaboratorId, credId) {
   }
 }
 
-module.exports = { getCredenciaisPara, _resetCache, CACHE_TTL_MS, upsertCredencial, deleteCredencial };
+// Marcador que substitui o conteudo da inbound. Explicito de proposito: quem ler o
+// historico depois tem de saber que ali houve mensagem, e que ela foi apagada de caso
+// pensado — nao que o turno nao existiu.
+const MARCA_INBOUND_CREDENCIAL = '[credencial recebida — conteúdo não registrado]';
+
+// Apaga o conteudo da linha inbound do turno que carregou credencial.
+//
+// POR QUE ISTO EXISTE: a outra defesa (redigir-segredo.js) tenta reconhecer a FORMA do
+// segredo em texto livre — espaco de entrada ilimitado, e em onze rodadas seguidas a
+// suite ficou verde e a revisao achou vazamento novo no caminho principal. Aqui a aposta
+// e outra: quando o modelo emite <<CREDENCIAL_ACTION>>, o engine SABE que o turno
+// carregou credencial, sem precisar reconhecer nada. Deterministico, e cobre o caso que
+// mais importa (cadastro real, inclusive por print) mesmo que o redator erre.
+//
+// Os DOIS campos: `logConversation` extrai a analise de imagem/PDF pro
+// `media_extracted_text` (bloco MEDIA-IMG-CONTEXT-LOST), entao um print de senha deixa
+// DUAS copias na mesma linha. Limpar so o `content` deixaria a outra de pe.
+//
+// NUNCA lanca: devolve { ok, erro }. E o {error} do client Supabase e checado — ele NAO
+// lanca em falha de update (mesma armadilha do supersede em openIntent).
+async function apagarInboundDeCredencial(collaboratorId, waMessageId) {
+  if (!collaboratorId) return { ok: false, erro: 'parametros_invalidos' };
+  const _cid = String(collaboratorId).slice(0, 8);
+  try {
+    const supabase = require('../supabase/client');
+    let alvoId = null;
+
+    // Sem o id do WhatsApp (midia sem stanzaID, payload incompleto), o alvo e a inbound
+    // MAIS RECENTE deste colaborador — que e a deste turno, ja gravada antes da chamada
+    // do modelo. Precisa de select antes do update: o client nao aceita order/limit em
+    // update, e um update sem alvo unico apagaria o historico inteiro da pessoa.
+    if (!waMessageId) {
+      const { data, error } = await supabase
+        .from('conversation_history')
+        .select('id')
+        .eq('collaborator_id', collaboratorId)
+        .eq('direction', 'inbound')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (error) {
+        console.warn(`[Credenciais] apagarInbound: falha ao achar a inbound collab=${_cid}:`, _msgErro(error));
+        return { ok: false, erro: _msgErro(error) };
+      }
+      alvoId = data && data[0] && data[0].id;
+      if (!alvoId) {
+        console.warn(`[Credenciais] apagarInbound: nenhuma inbound encontrada collab=${_cid} — segredo pode ter ficado no historico`);
+        return { ok: false, erro: 'inbound_nao_encontrada' };
+      }
+    }
+
+    let q = supabase
+      .from('conversation_history')
+      .update({ content: MARCA_INBOUND_CREDENCIAL, media_extracted_text: null })
+      .eq('collaborator_id', collaboratorId)
+      .eq('direction', 'inbound');
+    q = waMessageId ? q.eq('whatsapp_message_id', waMessageId) : q.eq('id', alvoId);
+    const { error } = await q;
+    if (error) {
+      console.warn(`[Credenciais] apagarInbound: UPDATE falhou collab=${_cid} wa=${waMessageId || '-'} alvo=${alvoId || '-'}:`, _msgErro(error));
+      return { ok: false, erro: _msgErro(error) };
+    }
+    return { ok: true, erro: null };
+  } catch (e) {
+    console.warn(`[Credenciais] apagarInbound: excecao collab=${_cid} wa=${waMessageId || '-'}:`, _msgErro(e));
+    return { ok: false, erro: _msgErro(e) };
+  }
+}
+
+module.exports = {
+  getCredenciaisPara,
+  _resetCache,
+  CACHE_TTL_MS,
+  upsertCredencial,
+  deleteCredencial,
+  apagarInboundDeCredencial,
+  MARCA_INBOUND_CREDENCIAL,
+};
