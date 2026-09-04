@@ -86,7 +86,23 @@
 // nova passagem. Com ela, redigir duas vezes estabiliza.
 //
 // ---------------------------------------------------------------------------
+// ROUND 7 -- aspa entre o token e o separador, e "|" como separador
+// ---------------------------------------------------------------------------
+// Fecha os dois residuos que o round 6 deixou, ambos no caminho por imagem:
+// (a) '{"senha": "hunter2"}' -- a aspa fica ENTRE o token e o ":", e o round 6
+// so aceitava enfase ANTES do rotulo; agora cabe enfase/aspa nos dois lugares.
+// (b) "|" entra como separador E como fronteira, porque tabela markdown e o
+// formato que o modelo escolhe ao descrever print de painel de credenciais --
+// '| Senha | hunter2 |' vazava inteiro.
+// Junto veio uma guarda: com o modo ligado, o cabecalho de separacao da tabela
+// ("|---|---|", "|:-:|:-:|") NAO e mascarado -- destruir a tabela nao protege
+// nada, nenhum segredo tem a forma "so |, - e :". Ele e tratado como linha em
+// branco: nao mascara, nao gasta orcamento, nao fecha o modo.
+//
+// ---------------------------------------------------------------------------
 // LIMITES CONHECIDOS -- sao decisao, nao descuido. Nao "conserte" sem medir.
+// Cada um tem teste em redigir-segredo.test.js fixando o comportamento atual,
+// para que mudar isso seja uma decisao consciente e nao um efeito colateral.
 // ---------------------------------------------------------------------------
 // 1. 'Senha\nhunter2' (sem separador nenhum) nao arma: sem separador nao ha
 //    campo, e aceitar rotulo solto no fim da linha mascararia conversa comum.
@@ -96,11 +112,16 @@
 // 3. Rotulo sozinho sem nada para mascarar devolve achou=false ('Senha:').
 //    "achou" significa "algo foi redigido", nao "a mensagem fala de credencial"
 //    -- quem consumir como a segunda coisa vai errar.
-// 4. JSON de UMA linha vaza: '{"senha": "hunter2"}' -- a aspa fica ENTRE o
-//    rotulo e o separador, e o round 6 so aceita enfase ANTES do rotulo, nao
-//    entre ele e o ":". Em varias linhas ('"senha":\n"hunter2"') funciona.
-// 5. Tabela markdown sem ":" vaza: '| Senha | hunter2 |' -- "|" nao e
-//    separador. Com ":" ('| Senha: | hunter2 |') mascara normalmente.
+// 4. Tabela com o rotulo no CABECALHO e o valor na linha de baixo vaza:
+//    '| Usuario | Senha |\n| admin | hunter2 |'. O cabecalho arma o modo, mas a
+//    linha de valores tem 5+ "palavras" (as barras contam), entao cai na regra
+//    de prosa e fecha o modo sem mascarar. Tratar linha de tabela como nao-prosa
+//    mascararia tabela de conversa comum. O formato '| Senha | hunter2 |' (rotulo
+//    e valor na MESMA linha), que e o mais comum, funciona.
+// 5. Aspas SIMPLES nao sao fronteira: "{'senha': 'hunter2'}" vaza. O apostrofo e
+//    comum em prosa e entrar na classe de fronteira sai caro por pouco ganho.
+// 6. XML e query string nao tem separador reconhecido: '<senha>hunter2</senha>'
+//    e 'https://x.com/?senha=hunter2' saem intactos.
 // Todos exigiriam afrouxar o gatilho de um jeito que reabre sobre-redacao em
 // prosa, e sao formas de mensagem menos provaveis que as ja cobertas.
 
@@ -136,11 +157,16 @@ function _tokenValido(tok) {
 // <token><separador>. A fronteira antes do token e lookbehind (nao consome
 // caractere) de proposito: se fosse capturada e consumida, o candidato
 // seguinte na mesma linha perderia a fronteira que o candidato anterior
-// "comeu". Separador: ":", "=", ";" ou um espaco/tab (aceita zero ou mais
-// espacos/tabs soltos antes dele). ROUND 6: a fronteira aceita enfase, senao
-// "**Senha:** hunter2" (formato que o modelo produz na analise de imagem)
-// nao casa em lugar nenhum e o valor vai em claro para o log.
-const RE_CAMPO = /(?:^|(?<=[\s(\[*`"_]))(api[ _-]?key|[A-Za-z0-9_-]+)[ \t]*([:=;]|[ \t])/gi;
+// "comeu". Separador: ":", "=", ";", "|" ou um espaco/tab.
+// ROUND 6: a fronteira aceita enfase, senao "**Senha:** hunter2" (formato que
+// o modelo produz na analise de imagem) nao casa em lugar nenhum.
+// ROUND 7: (a) entre o token e o separador tambem cabe enfase/aspa, senao
+// '{"senha": "hunter2"}' nao casa -- a aspa fica ENTRE "senha" e ":";
+// (b) "|" entra como separador e como fronteira, porque tabela markdown e o
+// formato que o modelo escolhe ao descrever print de painel de credenciais.
+const RE_CAMPO = /(?:^|(?<=[\s(\[*`"_|]))(api[ _-]?key|[A-Za-z0-9_-]+)[ \t*`"_]*([:=;|]|[ \t])/gi;
+
+const RE_SEP_PONTUACAO = /^[:=;|]$/;
 
 // Valor que e so enfase de fechamento ("**", "*", "`", "\"", "_") conta como
 // "nao tem valor depois" -- e o que faz "**Senha:**" armar o modo em vez de
@@ -190,6 +216,18 @@ function _linhaArmaModo(linha) {
     if (_tokenValido(`${_limpaEnfase(palavras[i])} ${_limpaEnfase(palavras[i + 1])}`)) return true;
   }
   return false;
+}
+
+// Cabecalho de separacao de tabela markdown ("|---|---|", "|:--|--:|"). Com o
+// modo ligado ele nao pode virar valor: mascarar a linha de separacao destroi
+// a tabela sem proteger nada -- nao ha segredo formado so por "|", "-" e ":".
+// Tratado como linha em branco: nao mascara, nao gasta orcamento, nao fecha.
+// So "|", "-", ":" e espaco, com pelo menos um "|" e um "-" -- pega "|---|---|"
+// e a variante de alinhamento "|:-:|:-:|". Nenhum segredo tem essa forma.
+const RE_SEPARADOR_TABELA = /^[|\-: \t]+$/;
+
+function _ehSeparadorTabela(v) {
+  return RE_SEPARADOR_TABELA.test(v) && v.includes('|') && v.includes('-');
 }
 
 function _ehPergunta(v) {
@@ -251,7 +289,7 @@ function _processaLinha(linha) {
 
     out += linha.slice(pos, campo.start);
 
-    const sepEhPontuacao = campo.sepChar === ':' || campo.sepChar === '=' || campo.sepChar === ';';
+    const sepEhPontuacao = RE_SEP_PONTUACAO.test(campo.sepChar);
     // O valor deste campo para no proximo campo valido da mesma linha, nao no
     // fim dela -- senao engole o rotulo seguinte inteiro.
     const proximo = _acharProximoCampo(linha, campo.matchEnd);
@@ -320,8 +358,9 @@ function redigirSegredos(texto) {
     const conteudo = linha.trim();
 
     if (modo) {
-      // Linha em branco: nao mascara, nao gasta orcamento, nao fecha.
-      if (conteudo === '') continue;
+      // Linha em branco (ou cabecalho de separacao de tabela): nao mascara,
+      // nao gasta orcamento, nao fecha.
+      if (conteudo === '' || _ehSeparadorTabela(conteudo)) continue;
 
       // Pergunta: pulada, o modo continua ligado (o valor pode vir depois).
       if (_ehPergunta(conteudo)) {

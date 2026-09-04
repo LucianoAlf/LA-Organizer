@@ -588,3 +588,144 @@ test('R6 adversarial: linha so de enfase nao arma nada', () => {
     assert.equal(r.achou, false);
   }
 });
+
+// --- Round 7: aspa entre token e separador + pipe como separador ---------
+// Os dois caem no caminho por imagem: o texto vem de um modelo, e modelo
+// descreve print de painel de credenciais ora em JSON, ora em tabela markdown.
+
+test('R7: aspa entre o token e o separador (JSON de uma linha)', () => {
+  const r = redigirSegredos('{"senha": "hunter2"}');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('hunter2'), 'valor nao pode vazar');
+});
+
+test('R7: aspa entre o token e o separador com "="', () => {
+  const a = redigirSegredos('"senha" = "x"');
+  assert.equal(a.achou, true);
+  assert.ok(!a.texto.includes('"x"'), 'valor nao pode vazar');
+  const b = redigirSegredos('"senha" = "hunter2"');
+  assert.equal(b.achou, true);
+  assert.ok(!b.texto.includes('hunter2'));
+});
+
+test('R7: JSON multilinha continua mascarando', () => {
+  const r = redigirSegredos('{\n  "senha":\n  "hunter2"\n}');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('hunter2'));
+});
+
+test('R7: pipe como separador (tabela markdown)', () => {
+  const r = redigirSegredos('| Senha | hunter2 |');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('hunter2'), 'valor nao pode vazar');
+});
+
+test('R7: pipe sem espacos', () => {
+  const r = redigirSegredos('|Senha|hunter2|');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('hunter2'));
+});
+
+test('R7: tabela markdown completa mascara a celula do valor', () => {
+  const r = redigirSegredos('| Campo | Valor |\n|---|---|\n| Senha | hunter2 |');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('hunter2'), 'valor nao pode vazar');
+  assert.match(r.texto, /\|---\|---\|/, 'o cabecalho de separacao nao pode ser tocado');
+});
+
+// --- Round 7: travas do pipe (tabela sem rotulo nao pode armar) -----------
+
+test('R7 trava: tabela sem rotulo nenhum sai intacta (| Nome | Valor |)', () => {
+  const t = '| Nome | Valor |';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t);
+  assert.equal(r.achou, false);
+});
+
+test('R7 trava: tabela sem rotulo nenhum sai intacta (| Coluna A | Coluna B |)', () => {
+  const t = '| Coluna A | Coluna B |';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t);
+  assert.equal(r.achou, false);
+});
+
+test('R7 trava: cabecalho de separacao da tabela nao vira rotulo nem valor', () => {
+  const t = '|---|---|';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t);
+  assert.equal(r.achou, false);
+  const comMais = redigirSegredos('| Nome | Valor |\n|---|---|\n| joao | 42 |');
+  assert.equal(comMais.texto, '| Nome | Valor |\n|---|---|\n| joao | 42 |');
+  assert.equal(comMais.achou, false);
+});
+
+test('R7 trava: as quatro frases de conversa real seguem byte a byte identicas', () => {
+  const intactas = [
+    'qual a senha do chatwoot?',
+    'a chave da porta esta emprestada com o joao',
+    'me manda o link da anamnese por favor',
+    'Deixa eu te contar um segredo:\nvi ela na academia ontem'
+  ];
+  for (const t of intactas) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `deveria sair identico: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false, `nao deveria sinalizar: ${JSON.stringify(t)}`);
+  }
+});
+
+test('R7 trava: idempotencia com aspa e pipe -- estabiliza na segunda passagem', () => {
+  const entradas = [
+    'senha: abc123\nfalou',
+    '{"senha": "hunter2"}',
+    '| Senha | hunter2 |',
+    '**Senha:**\nabc123\nfalou pessoal'
+  ];
+  for (const t of entradas) {
+    const p1 = redigirSegredos(t).texto;
+    const p2 = redigirSegredos(p1).texto;
+    const p3 = redigirSegredos(p2).texto;
+    assert.equal(p2, p3, `nao estabilizou: ${JSON.stringify(t)} -> ${JSON.stringify(p2)} / ${JSON.stringify(p3)}`);
+  }
+});
+
+test('R7: cabecalho de separacao nao vira valor nem quando o modo esta ligado', () => {
+  const r = redigirSegredos('| Usuario | Senha |\n|---|---|\n| admin | hunter2 |');
+  assert.match(r.texto, /\|---\|---\|/, 'a linha de separacao nao pode virar mascara');
+  for (const sep of ['|---|---|', '| --- | --- |', '|:---|---:|', '|:-:|:-:|']) {
+    const s = redigirSegredos(`Senha:\n${sep}\nhunter2`);
+    assert.ok(s.texto.includes(sep), `separacao ${sep} nao pode virar mascara`);
+    assert.ok(!s.texto.includes('hunter2'), `e o valor depois dela ainda deve mascarar (${sep})`);
+  }
+});
+
+// --- Round 7: limites conhecidos, com teste fixando o comportamento atual --
+// Documentados no bloco de limites do modulo. Estes testes existem para que
+// uma mudanca futura nesses casos seja consciente, nao acidental.
+
+test('R7 limite conhecido: rotulo no cabecalho e valor na linha de baixo vaza', () => {
+  const t = '| Usuario | Senha |\n| admin | hunter2 |';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'a linha de valores tem 5+ "palavras" -> e prosa -> fecha o modo');
+  assert.equal(r.achou, false);
+});
+
+test('R7 limite conhecido: aspas simples nao contam como fronteira', () => {
+  const t = "{'senha': 'hunter2'}";
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'apostrofo e comum em prosa; nao entrou na classe de fronteira');
+  assert.equal(r.achou, false);
+});
+
+test('R7 limite conhecido: XML e query string nao tem separador reconhecido', () => {
+  for (const t of ['<senha>hunter2</senha>', 'https://x.com/?senha=hunter2']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `limite conhecido: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});
+
+test('R7: sobre-redacao aceita -- pipe em prosa mascara o resto da linha', () => {
+  const r = redigirSegredos('me manda a senha | valeu');
+  assert.equal(r.achou, true, 'lado seguro de errar: mascara demais, nao de menos');
+  assert.ok(!r.texto.includes('valeu'));
+});
