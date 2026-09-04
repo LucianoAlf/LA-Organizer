@@ -51,7 +51,17 @@ function degrau(falhas) {
 
 function tituloDaFilha({ pessoa, hora, curso }, falhas) {
   const base = `${hora} Anamnese — ${pessoa.nome}${curso ? ` (${curso})` : ''}`;
-  return degrau(falhas) === 2 ? `${base} ⚠️ 2ª semana — não preencheu na anterior` : base;
+  const d = degrau(falhas);
+  if (d === 2) return `${base} ⚠️ 2ª semana — não preencheu na anterior`;
+  // Degrau 3 CONTINUA na pauta (ver separarPorDegrau abaixo) — e por isso PRECISA de marca
+  // própria: sem ela se lê idêntico a quem está na 1ª vez, e a equipe repete a abordagem que já
+  // falhou duas vezes. O texto diz o que MUDOU, que é o que interessa pra quem lê (a secretaria,
+  // não um engenheiro): no terceiro encontro o caminho deixou de ser lembrar na aula.
+  // `falhas + 1` porque `falhas` é o histórico ANTES da aparição de hoje — com 2 gravadas, hoje
+  // é a 3ª semana. Começa por ' ⚠' igual ao degrau 2, de propósito: é onde os dois leitores de
+  // título (_extrairNomeDaFilha no ritual e o bloco da fala no dispatcher) cortam o nome.
+  if (d === 3) return `${base} ⚠️ ${(Number(falhas) || 0) + 1}ª semana sem preencher — mande o link da anamnese`;
+  return base;
 }
 
 function tituloDaEscalada(pessoa, falhas) {
@@ -59,15 +69,33 @@ function tituloDaEscalada(pessoa, falhas) {
   return `Mandar link da anamnese — ${pessoa.nome} (${n} semanas sem preencher)`;
 }
 
-// Degrau 3 SAI da pauta: no terceiro encontro o problema deixou de ser "lembrar na aula".
+// Degrau 3 CONTINUA na pauta e TAMBÉM sai em `escalados` — o MESMO item nos dois, de propósito.
+//
+// POR QUÊ (correção 04/09): o desenho original tirava o degrau 3 da pauta porque a tarefa
+// "Mandar link da anamnese" tomaria o lugar dele. Só que essa tarefa é a FATIA 2 e NÃO EXISTE:
+// `tituloDaEscalada` (acima) só é chamado em teste, e `escaladosItens` não é consumido por
+// ninguém. Na prática, a partir da 3ª aparição o aluno DESAPARECIA da pauta sem substituto — a
+// equipe deixava de ver justamente quem mais precisa, e só o marker_logs saberia. É o "12 de 43"
+// que a spec §7 proíbe ("meio pacote é pior que zero"): o time confia na lista e quem sumiu passa
+// batido. Enquanto não houver substituto, NINGUÉM pode sair da lista.
+//
+// `escalados` continua com exatamente os do degrau 3 e com `falhas` junto: quando a fatia 2
+// nascer, ela já tem a lista pronta e não precisa mudar este comportamento de novo.
+//
+// De quebra conserta um número que mentia: a mensagem das 07:30 conta `pauta`, então a partir da
+// 2ª semana ela subnotificava o total de alunos do dia.
+//
 // `mapaFalhas` null (erro de leitura) → todo mundo é 1ª vez. Nunca escalar no escuro.
 function separarPorDegrau(itens, mapaFalhas) {
   const pauta = [];
   const escalados = [];
   for (const item of (itens || [])) {
     const falhas = mapaFalhas ? (mapaFalhas.get(item.pessoa.pessoa_chave) || 0) : 0;
-    if (degrau(falhas) === 3) escalados.push({ ...item, falhas });
-    else pauta.push({ ...item, falhas });
+    // UMA cópia por item, referenciada nas duas listas: é o mesmo aluno do mesmo dia. Duas
+    // cópias divergiriam no dia em que a fatia 2 carimbasse algo no item escalado.
+    const comFalhas = { ...item, falhas };
+    pauta.push(comFalhas);
+    if (degrau(falhas) === 3) escalados.push(comFalhas);
   }
   return { pauta, escalados };
 }

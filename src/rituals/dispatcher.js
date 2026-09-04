@@ -4103,7 +4103,7 @@ async function run(opts = {}) {
   // 06:00 — monta o pacote (container + filhas) com quem tem aula hoje e está sem anamnese.
   if (opts.force === 'pauta_anamnese' || timeToSlot(PAUTA_ANAMNESE_MONTA_TIME) === slotNow) {
     try {
-      const { montarPautaDaUnidade } = require('./anamnese-pauta');
+      const { montarPautaDaUnidade, varrerPautasVelhas } = require('./anamnese-pauta');
       const situAl = require('../services/situacao-aluno');
       const { laReportClient } = require('../services/la-report-client');
       for (const unidadeId of situAl.UNIDADES_IDS) {
@@ -4141,6 +4141,38 @@ async function run(opts = {}) {
             // unidade perder o vínculo la_report_unidade_id, ela sumia da pauta em silêncio.
             console.warn(`[Pauta] montagem: nenhum grupo com wa_group_jid vinculado à unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
             continue;
+          }
+
+          // RESÍDUO 2 (04/09): a varredura das pautas velhas só era chamada dentro do fechamento
+          // das 23:00 — uma passada ATRASADA. A spec §7 é explícita: "na manhã seguinte o pacote
+          // velho é arquivado e sai do caminho". Numa noite em que a RPC cai, o ritual grava
+          // sem_verificacao (certo, ninguém é punido) e NÃO fecha nada: as até 102 filhas ficam
+          // `pending` carimbadas com context 'work', data_classification 'real' e assigned_to
+          // null — o WHERE exato do relatório de atrasadas do CEO (limit 80) e do de aderência
+          // dos líderes (limit 200), os dois por due_date CRESCENTE. Sendo as MAIS ANTIGAS do
+          // sistema, comiam a janela inteira e expulsavam trabalho real do digest por um DIA
+          // ÚTIL inteiro, até a varredura da noite seguinte. Chamando a MESMA função aqui, o
+          // envenenamento dura minutos.
+          //
+          // É a MESMA varrerPautasVelhas do fechamento — nunca uma segunda implementação: duas
+          // limpezas iguais divergem, e a que fica cega é justamente a que ninguém percebe que
+          // parou de limpar.
+          //
+          // ANTES de montar, pra o painel do dia nascer limpo. Não toca o container de HOJE: o
+          // filtro `lt('due_date', hoje)` dentro de _listarContainersVelhosAbertos é estrutural,
+          // então nem o container que a montagem logo abaixo vai criar entra no alcance dela.
+          // E o try/catch existe pra que limpeza NUNCA impeça a montagem — se a varredura cair,
+          // o dia de trabalho da equipe nasce do mesmo jeito.
+          try {
+            const varr = await varrerPautasVelhas({ supabase, groupId: grupo.id, hoje: now.ymd });
+            if (varr.containersVelhosFechados || varr.filhasVelhasFechadas) {
+              console.log(`[Pauta] varredura da manhã ${situAl.nomeDaUnidade(unidadeId)}: ${varr.containersVelhosFechados} pauta(s) velha(s), ${varr.filhasVelhasFechadas} filha(s) fechada(s)`);
+            }
+            for (const aviso of varr.avisos) {
+              console.error(`[Pauta] varredura da manhã ${situAl.nomeDaUnidade(unidadeId)}: ${aviso}`);
+            }
+          } catch (eVarredura) {
+            console.error(`[Pauta] varredura da manhã ${situAl.nomeDaUnidade(unidadeId)}: erro (a montagem segue):`, eVarredura.message);
           }
 
           const r = await montarPautaDaUnidade({

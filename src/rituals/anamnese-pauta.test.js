@@ -87,7 +87,11 @@ test('pauta vazia não cria pacote', async () => {
   assert.strictEqual(d.criadas.length, 0);
 });
 
-test('quem já falhou 2x sai da pauta e vira escalada', async () => {
+// CORREÇÃO 04/09 (resíduo 1): a expectativa era `total: 1` ("só a Ana na pauta do dia") — ela
+// travava o bug. O Cid saía da pauta e NADA tomava o lugar dele: a tarefa "Mandar link" é a
+// fatia 2 e não existe. Expectativa mudada, nenhum assert enfraquecido — o teste ainda ganhou a
+// checagem do TÍTULO, que é onde a equipe enxerga a diferença entre 1ª e 3ª semana.
+test('quem já falhou 2x CONTINUA na pauta, marcado, e também conta como escalado', async () => {
   const d = deps({
     alunos: [aluno('Ana', '09:00', false), aluno('Cid', '10:00', false)],
     falhas: new Map([['pk-Cid', 2]]),
@@ -96,8 +100,13 @@ test('quem já falhou 2x sai da pauta e vira escalada', async () => {
     supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
     hoje: SEGUNDA, deps: d,
   });
-  assert.strictEqual(r.total, 1, 'só a Ana na pauta do dia');
-  assert.strictEqual(r.escalados, 1);
+  assert.strictEqual(r.total, 2, 'ninguém sai da pauta enquanto não houver substituto');
+  assert.strictEqual(r.escalados, 1, 'o Cid continua listado, pronto pra fatia 2');
+  const titulos = d.criadas[0].input.subtasks.map((s) => s.title);
+  assert.strictEqual(titulos.length, 2, 'as duas filhas nascem no painel do grupo');
+  const doCid = titulos.find((t) => t.includes('Cid'));
+  assert.match(doCid, /mande o link da anamnese/,
+    'na tela o degrau 3 tem que dizer o que fazer, senão se lê igual a quem está na 1ª vez');
 });
 
 test('erro ao ler a escada não escala ninguém', async () => {
@@ -642,4 +651,112 @@ test('filha velha que não fecha deixa o container aberto pra varredura da noite
   assert.strictEqual(d.containerFechadoChamadas.length, 0);
   assert.strictEqual(r.containersVelhosFechados, 0);
   assert.ok(r.motivo, 'entulho que sobrou tem que aparecer no motivo, não sumir');
+});
+
+// ── RESÍDUO 2: A MESMA VARREDURA, TAMBÉM DE MANHÃ ───────────────────────────────────────────
+// A varredura só era chamada dentro do fechamento das 23:00 — uma passada ATRASADA. A spec §7 é
+// explícita: "na manhã seguinte o pacote velho é arquivado e sai do caminho". Numa noite em que
+// a RPC cai, o ritual grava sem_verificacao (certo) e NÃO fecha nada: as até 102 filhas ficam
+// `pending` carimbadas com context 'work', data_classification 'real' e assigned_to null — o
+// WHERE exato dos relatórios de atrasadas (CEO limit 80, líderes limit 200, ordenados por
+// due_date CRESCENTE). Sendo as MAIS ANTIGAS, comem a janela inteira e expulsam trabalho real do
+// digest do CEO por um DIA ÚTIL inteiro, até a varredura da noite seguinte.
+// A função é EXTRAÍDA, não copiada: duas implementações da mesma limpeza divergem e uma delas
+// fica cega — e essa é justamente a que ninguém percebe que parou de limpar.
+const { varrerPautasVelhas } = require('./anamnese-pauta');
+
+test('varrerPautasVelhas roda sozinha — a manhã chama a MESMA limpeza da noite', async () => {
+  const d = depsNoite({});
+  comVarredura(d, {
+    containers: [{ id: 'c-ontem', due_date: '2026-09-06' }],
+    filhasPorContainer: { 'c-ontem': [{ id: 'f-velha', title: '08:00 Anamnese — Zé (Canto)' }] },
+  });
+  const v = await varrerPautasVelhas({ supabase: {}, groupId: 'grp', hoje: SEGUNDA, deps: d });
+  assert.strictEqual(v.filhasVelhasFechadas, 1);
+  assert.strictEqual(v.containersVelhosFechados, 1);
+  assert.deepStrictEqual(v.avisos, [], 'varredura limpa não inventa aviso');
+  assert.strictEqual(d.filhasFechadas[0].status, 'cancelled',
+    'não dá pra afirmar quem preencheu num dia que já passou lendo a fonte de HOJE');
+  assert.match(d.filhasFechadas[0].notes, /sem verificação/i);
+  assert.strictEqual(d.gravados.length, 0,
+    'dia sem medição NÃO conta na escada — nem quando a limpeza roda de manhã');
+});
+
+// A varredura da manhã roda ANTES da montagem do dia. Se ela alcançasse `due_date = hoje`,
+// arquivaria o container que a montagem cria no mesmo tick e a equipe abriria o painel vazio. A
+// trava é estrutural, no filtro da consulta: `lt('due_date', hoje)`, estritamente menor.
+test('a varredura NUNCA alcança o container de hoje — o filtro é estritamente menor que hoje', async () => {
+  const chamadas = [];
+  const q = {
+    select: () => q,
+    eq: (c, v) => { chamadas.push(['eq', c, v]); return q; },
+    like: (c, v) => { chamadas.push(['like', c, v]); return q; },
+    lt: (c, v) => { chamadas.push(['lt', c, v]); return q; },
+    gte: (c, v) => { chamadas.push(['gte', c, v]); return q; },
+    order: () => q,
+    limit: async () => ({ data: [], error: null }),
+  };
+  // `deps` vazio de propósito: exercita a consulta REAL (_listarContainersVelhosAbertos), não um
+  // fake — o filtro é o que está sendo testado, e um fake o esconderia.
+  const v = await varrerPautasVelhas({ supabase: { from: () => q }, groupId: 'grp', hoje: SEGUNDA, deps: {} });
+  assert.deepStrictEqual(v.avisos, []);
+  assert.ok(chamadas.some(([op, col, val]) => op === 'lt' && col === 'due_date' && val === SEGUNDA),
+    'sem o `lt` a varredura da manhã arquivaria a pauta que acabou de nascer');
+  assert.ok(!chamadas.some(([op, col, val]) => op === 'eq' && col === 'due_date' && val === SEGUNDA),
+    'o container de HOJE é assunto do fechamento das 23:00, nunca da limpeza');
+});
+
+// Serviço de limpeza não pode derrubar quem chama: de manhã, quem vem depois é a MONTAGEM da
+// pauta do dia — o trabalho de verdade. A varredura devolve o problema em `avisos`, não por throw.
+test('varredura que falha devolve aviso em vez de lançar — a montagem da manhã não pode cair junto', async () => {
+  const d = depsNoite({});
+  comVarredura(d, { erroLista: 'conexão caiu' });
+  const v = await varrerPautasVelhas({ supabase: {}, groupId: 'grp', hoje: SEGUNDA, deps: d });
+  assert.strictEqual(v.containersVelhosFechados, 0);
+  assert.strictEqual(v.avisos.length, 1);
+  assert.match(v.avisos[0], /dias anteriores|varr/i);
+});
+
+// ── RESÍDUO 3: FILHA DE HOJE QUE NÃO FECHA DEIXA O CONTAINER ABERTO ─────────────────────────
+// O fechamento de HOJE chamava fecharContainer INCONDICIONALMENTE depois do laço: bastava uma
+// filha não fechar pra sobrar uma `pending` pendurada num container `done`. A varredura procura
+// CONTAINERS abertos, nunca filhas soltas — essa órfã não é achada por ninguém, some do painel do
+// grupo e fica envelhecendo nos relatórios de atrasadas pra sempre. A varredura dos dias velhos
+// já fazia o certo (teste logo acima); o fechamento de hoje estava inconsistente com ela.
+test('filha de HOJE que não fecha deixa o container aberto — órfã invisível não é achada por ninguém', async () => {
+  const d = depsNoite({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', false)],
+    daPauta: ['pk-Ana', 'pk-Bia'],
+    containerId: 'cont-hoje',
+    filhasPendentes: [
+      { id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' },
+      { id: 'f-bia', title: '08:00 Anamnese — Bia (Canto)' },
+    ],
+  });
+  comVarredura(d, { containers: [] });   // varredura fora do caminho: o assunto aqui é HOJE
+  d.fecharFilha = async (_sb, arg) => { d.filhasFechadas.push(arg); return arg.id !== 'f-bia'; };
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(d.containerFechadoChamadas.length, 0,
+    'container done em cima de filha pending esconde a órfã pra sempre');
+  assert.strictEqual(r.containerFechado, false, 'o resultado precisa DIZER que o container ficou aberto');
+  assert.strictEqual(r.filhasFechadasComoFeitas, 1, 'a filha que fechou continua contada');
+  assert.match(r.motivo, /Bia/, 'o aviso que já existe é quem explica o motivo');
+});
+
+// O caminho feliz não pode ter sido quebrado pela condição acima: com todas as filhas fechando,
+// o container FECHA — é a aposta central do desenho (nada se acumula no painel).
+test('todas as filhas de hoje fecharam → o container fecha, como sempre', async () => {
+  const d = depsNoite({
+    alunos: [aluno('Ana', '09:00', true)], daPauta: ['pk-Ana'],
+    containerId: 'cont-hoje', filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }],
+  });
+  comVarredura(d, { containers: [] });
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.containerFechado, true);
+  assert.strictEqual(d.containerFechadoChamadas.length, 1);
+  assert.strictEqual(r.motivo, null, 'noite limpa não inventa motivo');
 });

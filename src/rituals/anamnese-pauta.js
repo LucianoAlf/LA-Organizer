@@ -346,61 +346,45 @@ async function _fecharContainer(sb, { containerId }) {
   return true;
 }
 
-// Passada da NOITE: lê a fonte de novo, carimba o resultado de cada aluno que entrou na pauta
-// de hoje em anamnese_pauta (a VERDADE da escada), e fecha o RECADO do dia nos painéis de
-// tarefa (filhas viram done/cancelled, container vira done). Os contadores preencheu/
-// naoPreencheu/semVerificacao refletem o que REALMENTE entrou no banco, nunca a intenção:
-// gravarResultado (Task 1) devolve `false` quando o UPDATE não casa NENHUMA linha, mesmo sem
-// erro do banco — foi corrigido assim bem por isso, pra não mentir sucesso. Se contássemos a
-// tentativa em vez da escrita, o relatório da noite viraria ficção. `filhasFechadasComoFeitas`/
-// `filhasFechadasComoNaoFeitas`/`containerFechado` são os contadores do FECHAMENTO do recado —
-// `motivo` continua sendo o sensor único de por que algo NÃO aconteceu.
-async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, hoje, deps = {} }) {
-  const repo = deps.repo || repoPadrao;
-  const acharContainer = deps.acharContainer || _acharContainerParaFechar;
+// ── VARREDURA DAS PAUTAS DE DIAS ANTERIORES ──────────────────────────────────────────────────
+// CRITICAL 3 (revisão de costura, 04/09): quando a RPC da noite caía, o ritual gravava
+// sem_verificacao e voltava SEM fechar — container e filhas ficavam `pending`. E nada, em lugar
+// nenhum, revisitava um dia anterior: a passada da noite só olha `dia = hoje` / `due_date =
+// hoje`, e como os slots são de 15 min a retentativa do mesmo dia tinha no máximo 3 ticks — uma
+// queda de 15 minutos custava o dia inteiro, PRA SEMPRE. O estrago não fica no painel da pauta:
+// createTaskGroup carimba toda filha com context 'work', data_classification 'real', status
+// 'pending' e assigned_to null, que é exatamente o WHERE dos relatórios de atrasadas (CEO, limit
+// 80; líderes, limit 200; os dois ordenados por due_date CRESCENTE). Uma noite ruim = até 102
+// filhas que envelhecem, viram as atrasadas MAIS ANTIGAS do sistema, consomem a janela de 80
+// inteira e expulsam trabalho real do digest — o oposto exato da aposta central do desenho
+// ("a pauta do dia é descartável; nada se acumula no painel").
+//
+// RESÍDUO 2 (04/09): esta varredura nasceu DENTRO de fecharPautaDaUnidade, chamada só às 23:00 —
+// uma passada ATRASADA. A spec §7 diz "na manhã seguinte o pacote velho é arquivado e sai do
+// caminho": até a noite seguinte, as 102 filhas envenenavam o relatório do CEO por um DIA ÚTIL
+// inteiro. Por isso ela virou função PRÓPRIA e EXPORTADA — o bloco das 06:00 do dispatcher chama
+// exatamente esta, antes de montar a pauta do dia. Extraída, nunca copiada: duas implementações
+// da mesma limpeza divergem, e a que fica cega é justamente a que ninguém percebe que parou.
+//
+// O que ela faz não mudou. Fecha as filhas velhas como NÃO-FEITAS (`cancelled`), porque não dá
+// pra afirmar quem preencheu num dia que já passou lendo a fonte de HOJE, e NÃO grava nada em
+// anamnese_pauta: dia sem medição não conta na escada — a regra sagrada desta feature. O
+// container vai a `done` pelo mesmo _fecharContainer do fechamento de hoje, onde 'done' já
+// significa "o recado do dia está fechado" (é assim mesmo quando todas as filhas foram
+// canceladas), nunca "todo mundo preencheu". Os tetos (VARREDURA_DIAS / VARREDURA_MAX_CONTAINERS)
+// continuam valendo, e o filtro `lt('due_date', hoje)` de _listarContainersVelhosAbertos é o que
+// garante, estruturalmente, que ela NUNCA toca o container de HOJE — inclusive o que a montagem
+// das 06:00 cria no mesmo tick, logo depois dela.
+//
+// Nunca lança: devolve os problemas em `avisos`. Quem chama de manhã tem a montagem do dia logo
+// atrás — o trabalho de verdade — e serviço de limpeza não pode derrubar trabalho de verdade.
+async function varrerPautasVelhas({ supabase, groupId, hoje, deps = {} }) {
+  const listarContainersVelhos = deps.listarContainersVelhos || _listarContainersVelhosAbertos;
   const listarFilhasPendentes = deps.listarFilhasPendentes || _listarFilhasPendentes;
   const fecharFilha = deps.fecharFilha || _fecharFilha;
   const fecharContainer = deps.fecharContainer || _fecharContainer;
-  const listarContainersVelhos = deps.listarContainersVelhos || _listarContainersVelhosAbertos;
-  const semFechamento = { filhasFechadasComoFeitas: 0, filhasFechadasComoNaoFeitas: 0, containerFechado: false };
 
-  // Divergência entre o que esta passada TENTOU gravar e o que REALMENTE entrou no banco não
-  // pode ser engolida: se algum UPDATE não casar linha nenhuma, isso sai no motivo em vez de
-  // desaparecer dentro de um contador que finge sucesso. `avisos` recebe também qualquer
-  // problema do fechamento do recado e da varredura (abaixo) — um único sensor pra tudo que não
-  // é o caminho feliz. Declarados no topo porque a varredura, que vem antes de tudo, já escreve
-  // neles.
   const avisos = [];
-  const falhasGravacao = [];
-  function motivoFinal(base) {
-    const partes = [...(base ? [base] : []), ...avisos];
-    if (falhasGravacao.length) {
-      partes.push(`${falhasGravacao.length} gravação(ões) não confirmada(s) no banco: ${falhasGravacao.join(', ')}`);
-    }
-    return partes.length ? partes.join('; ') : null;
-  }
-
-  // ── VARREDURA DAS PAUTAS DE DIAS ANTERIORES ────────────────────────────────────────────────
-  // CRITICAL 3 (revisão de costura, 04/09): quando a RPC da noite caía, o ritual gravava
-  // sem_verificacao e voltava SEM fechar — container e filhas ficavam `pending`. E nada, em
-  // lugar nenhum, revisitava um dia anterior: esta passada só olha `dia = hoje` / `due_date =
-  // hoje`, e como os slots são de 15 min a retentativa do mesmo dia tinha no máximo 3 ticks —
-  // uma queda de 15 minutos custava o dia inteiro, PRA SEMPRE. O estrago não fica no painel da
-  // pauta: createTaskGroup carimba toda filha com context 'work', data_classification 'real',
-  // status 'pending' e assigned_to null, que é exatamente o WHERE dos relatórios de atrasadas
-  // (CEO, limit 80; líderes, limit 200; os dois ordenados por due_date CRESCENTE). Uma noite
-  // ruim = até 102 filhas que envelhecem, viram as atrasadas MAIS ANTIGAS do sistema, consomem
-  // a janela de 80 inteira e expulsam trabalho real do digest — o oposto exato da aposta
-  // central do desenho ("a pauta do dia é descartável; nada se acumula no painel").
-  //
-  // Roda ANTES de qualquer retorno antecipado de propósito: limpar não pode depender de hoje ter
-  // pauta (domingo, ou uma manhã que falhou) nem da fonte responder — a varredura não consulta a
-  // fonte. Fecha as filhas velhas como NÃO-FEITAS (`cancelled`), porque não dá pra afirmar quem
-  // preencheu num dia que já passou lendo a fonte de HOJE, e NÃO grava nada em anamnese_pauta:
-  // dia sem medição não conta na escada — a regra sagrada desta feature. O container vai a
-  // `done` pelo mesmo _fecharContainer do fechamento de hoje, onde 'done' já significa "o recado
-  // do dia está fechado" (é assim mesmo quando todas as filhas foram canceladas), nunca "todo
-  // mundo preencheu".
   let containersVelhosFechados = 0;
   let filhasVelhasFechadas = 0;
   if (groupId) {
@@ -427,7 +411,7 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
             }
           }
           // Fechar o container com uma filha órfã aberta esconderia essa filha PRA SEMPRE: a
-          // varredura acha CONTAINERS, não filhas soltas. Deixar aberto é o que faz a noite
+          // varredura acha CONTAINERS, não filhas soltas. Deixar aberto é o que faz a passada
           // seguinte tentar de novo — o container custa uma linha nos relatórios de atrasadas,
           // a órfã escondida custa uma linha por aluno, todo dia.
           if (!todasFecharam) {
@@ -440,10 +424,56 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
         }
       }
     } catch (e) {
-      // Serviço de limpeza não pode derrubar o fechamento de HOJE, que é o que alimenta a escada.
+      // Serviço de limpeza não pode derrubar quem chamou: à noite, o fechamento de HOJE (que
+      // alimenta a escada); de manhã, a montagem da pauta do dia.
       avisos.push(`falha ao varrer as pautas de dias anteriores: ${(e && e.message) || String(e)}`);
     }
   }
+  return { containersVelhosFechados, filhasVelhasFechadas, avisos };
+}
+
+// Passada da NOITE: lê a fonte de novo, carimba o resultado de cada aluno que entrou na pauta
+// de hoje em anamnese_pauta (a VERDADE da escada), e fecha o RECADO do dia nos painéis de
+// tarefa (filhas viram done/cancelled, container vira done). Os contadores preencheu/
+// naoPreencheu/semVerificacao refletem o que REALMENTE entrou no banco, nunca a intenção:
+// gravarResultado (Task 1) devolve `false` quando o UPDATE não casa NENHUMA linha, mesmo sem
+// erro do banco — foi corrigido assim bem por isso, pra não mentir sucesso. Se contássemos a
+// tentativa em vez da escrita, o relatório da noite viraria ficção. `filhasFechadasComoFeitas`/
+// `filhasFechadasComoNaoFeitas`/`containerFechado` são os contadores do FECHAMENTO do recado —
+// `motivo` continua sendo o sensor único de por que algo NÃO aconteceu.
+async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, hoje, deps = {} }) {
+  const repo = deps.repo || repoPadrao;
+  const acharContainer = deps.acharContainer || _acharContainerParaFechar;
+  const listarFilhasPendentes = deps.listarFilhasPendentes || _listarFilhasPendentes;
+  const fecharFilha = deps.fecharFilha || _fecharFilha;
+  const fecharContainer = deps.fecharContainer || _fecharContainer;
+  const semFechamento = { filhasFechadasComoFeitas: 0, filhasFechadasComoNaoFeitas: 0, containerFechado: false };
+
+  // Divergência entre o que esta passada TENTOU gravar e o que REALMENTE entrou no banco não
+  // pode ser engolida: se algum UPDATE não casar linha nenhuma, isso sai no motivo em vez de
+  // desaparecer dentro de um contador que finge sucesso. `avisos` recebe também qualquer
+  // problema do fechamento do recado e da varredura (abaixo) — um único sensor pra tudo que não
+  // é o caminho feliz. Declarados no topo porque a varredura, que vem antes de tudo, já escreve
+  // neles.
+  const avisos = [];
+  const falhasGravacao = [];
+  function motivoFinal(base) {
+    const partes = [...(base ? [base] : []), ...avisos];
+    if (falhasGravacao.length) {
+      partes.push(`${falhasGravacao.length} gravação(ões) não confirmada(s) no banco: ${falhasGravacao.join(', ')}`);
+    }
+    return partes.length ? partes.join('; ') : null;
+  }
+
+  // A varredura das pautas de dias anteriores mora em varrerPautasVelhas (acima), fora desta
+  // função, desde a correção do resíduo 2 (04/09) — o bloco das 06:00 do dispatcher chama a
+  // MESMA função antes de montar a pauta do dia. Continua rodando ANTES de qualquer retorno
+  // antecipado daqui: limpar não pode depender de hoje ter pauta (domingo, ou uma manhã que
+  // falhou) nem da fonte responder. Os `avisos` dela entram no mesmo sensor do resto — motivo
+  // único de por que algo não aconteceu.
+  const { containersVelhosFechados, filhasVelhasFechadas, avisos: avisosVarredura } =
+    await varrerPautasVelhas({ supabase, groupId, hoje, deps });
+  avisos.push(...avisosVarredura);
   const varredura = { containersVelhosFechados, filhasVelhasFechadas };
 
   const pessoas = await repo.pessoasDoDia(supabase, { unidadeId, dia: hoje });
@@ -533,6 +563,7 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
       } else {
         const semAnamnesePorNome = _mapaPorNome(situ.filtrarPorRecorte(data || [], 'anamnese'));
         const todosPorNome = _mapaPorNome(data || []);
+        let todasFecharam = true;
         for (const filha of filhas) {
           const decisao = _decidirFechoDaFilha(filha.title, semAnamnesePorNome, todosPorNome);
           const ok = await fecharFilha(supabase, { id: filha.id, status: decisao.status, notes: decisao.notes });
@@ -541,10 +572,21 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
           // e a filha ficava `pending` pra sempre, virando o entulho que a varredura acima
           // existe pra limpar. Nomeia a filha: "alguma coisa falhou" não dá pra investigar.
           if (ok) { if (decisao.status === 'done') filhasFechadasComoFeitas++; else filhasFechadasComoNaoFeitas++; }
-          else avisos.push(`não consegui fechar a filha "${filha.title}"`);
+          else { todasFecharam = false; avisos.push(`não consegui fechar a filha "${filha.title}"`); }
         }
-        containerFechado = !!(await fecharContainer(supabase, { containerId }));
-        if (!containerFechado) avisos.push('fechei as filhas mas não consegui fechar o container');
+        // RESÍDUO 3 (04/09): isto era INCONDICIONAL. Bastava uma filha não fechar pra sobrar uma
+        // `pending` pendurada num container `done` — e a varredura procura CONTAINERS abertos,
+        // nunca filhas soltas: essa órfã não era achada por ninguém, sumia do painel do grupo e
+        // ficava envelhecendo nos relatórios de atrasadas PRA SEMPRE. A varredura dos dias velhos
+        // (varrerPautasVelhas, acima) já aplicava esta regra; o fechamento de HOJE era o lado
+        // inconsistente. Deixando o container aberto, a varredura de uma passada seguinte o pega
+        // e termina o serviço. Sem aviso novo: o `não consegui fechar a filha "..."` acima já
+        // nomeia a filha e explica por que o container ficou aberto — dois avisos pro mesmo fato
+        // só encompridariam o motivo sem dizer nada a mais.
+        if (todasFecharam) {
+          containerFechado = !!(await fecharContainer(supabase, { containerId }));
+          if (!containerFechado) avisos.push('fechei as filhas mas não consegui fechar o container');
+        }
       }
     }
   } catch (e) {
@@ -558,6 +600,9 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
 }
 
 module.exports = {
-  montarPautaDaUnidade, fecharPautaDaUnidade,
+  // varrerPautasVelhas é exportada porque tem DOIS chamadores: o fechamento das 23:00 (aqui) e o
+  // bloco das 06:00 do dispatcher, que limpa o entulho da noite anterior ANTES de montar a pauta
+  // do dia. Uma implementação só, de propósito — ver o comentário da função.
+  montarPautaDaUnidade, fecharPautaDaUnidade, varrerPautasVelhas,
   TETO_FILHAS, VARREDURA_DIAS, VARREDURA_MAX_CONTAINERS,
 };

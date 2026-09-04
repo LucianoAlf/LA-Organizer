@@ -80,6 +80,28 @@ test('título da filha: 1ª vez é limpo, 2ª carrega a marca', () => {
     '14:00 Anamnese — Alice Cagnin (Canto) ⚠️ 2ª semana — não preencheu na anterior');
 });
 
+// Resíduo 1: como o degrau 3 agora FICA na pauta, ele precisa de marca própria — sem ela se lê
+// idêntico a quem está na 1ª vez, e a equipe repete a abordagem que já falhou duas vezes. Quem
+// lê é a secretaria: o texto diz o que mudou (o caminho agora é o link, não lembrar na aula).
+test('título da filha: 3ª vez fica na pauta, marcada, dizendo pra mandar o link', () => {
+  const item = { pessoa: { nome: 'Alice Cagnin' }, hora: '14:00', curso: 'Canto' };
+  assert.strictEqual(tituloDaFilha(item, 2),
+    '14:00 Anamnese — Alice Cagnin (Canto) ⚠️ 3ª semana sem preencher — mande o link da anamnese');
+  assert.strictEqual(tituloDaFilha(item, 4),
+    '14:00 Anamnese — Alice Cagnin (Canto) ⚠️ 5ª semana sem preencher — mande o link da anamnese',
+    'o número acompanha o histórico: `falhas` é o que já foi gravado ANTES da aparição de hoje');
+});
+
+// Os dois leitores de título (_extrairNomeDaFilha em rituals/anamnese-pauta.js e o bloco da fala
+// no dispatcher) cortam o nome no primeiro ' (' ou ' ⚠'. Se a marca do degrau 3 não começasse
+// por ' ⚠', o nome vazaria sujo pro zap das 07:30 e pro fechamento da noite — que decide
+// done/cancelled comparando NOME. Trava aqui, no ponto onde o texto nasce.
+test('a marca do degrau 3 começa por " ⚠" — é o que os leitores de título cortam', () => {
+  const semCurso = { pessoa: { nome: 'Alice Cagnin' }, hora: '14:00', curso: null };
+  const t = tituloDaFilha(semCurso, 2);
+  assert.ok(t.startsWith('14:00 Anamnese — Alice Cagnin ⚠'), `título inesperado: ${t}`);
+});
+
 test('título da escalada diz quantas semanas', () => {
   assert.strictEqual(tituloDaEscalada({ nome: 'Alice Cagnin' }, 2),
     'Mandar link da anamnese — Alice Cagnin (2 semanas sem preencher)');
@@ -87,8 +109,16 @@ test('título da escalada diz quantas semanas', () => {
     'Mandar link da anamnese — Alice Cagnin (4 semanas sem preencher)');
 });
 
-// A pauta do dia é descartável; a escalada é dívida. Elas não podem se misturar.
-test('separarPorDegrau tira o degrau 3 da pauta', () => {
+// A pauta do dia é descartável; a escalada é dívida. Mas separar SÓ vale quando existe pra onde
+// mandar quem sai — e não existe.
+//
+// CORREÇÃO 04/09 (resíduo 1): a expectativa deste teste era `pauta: ['Ana','Bia']`, travando um
+// comportamento errado. A tarefa "Mandar link da anamnese" que tomaria o lugar do Cid é a FATIA
+// 2: `tituloDaEscalada` só aparece em teste e `escaladosItens` não é consumido por ninguém.
+// Então, na prática, a partir da 3ª aparição o aluno simplesmente DESAPARECIA da pauta, sem
+// substituto — é o "12 de 43" que a spec proíbe. A expectativa mudou; nenhum assert foi
+// enfraquecido (este teste ganhou asserts, não perdeu).
+test('degrau 3 CONTINUA na pauta e também sai em escalados — ninguém some sem substituto', () => {
   const itens = [
     { pessoa: { nome: 'Ana', pessoa_chave: 'pk1' }, hora: '09:00', curso: 'Canto' },
     { pessoa: { nome: 'Bia', pessoa_chave: 'pk2' }, hora: '10:00', curso: 'Canto' },
@@ -96,9 +126,26 @@ test('separarPorDegrau tira o degrau 3 da pauta', () => {
   ];
   const mapa = new Map([['pk1', 0], ['pk2', 1], ['pk3', 2]]);
   const r = separarPorDegrau(itens, mapa);
-  assert.deepStrictEqual(r.pauta.map((x) => x.pessoa.nome), ['Ana', 'Bia']);
-  assert.deepStrictEqual(r.escalados.map((x) => x.pessoa.nome), ['Cid']);
+  assert.deepStrictEqual(r.pauta.map((x) => x.pessoa.nome), ['Ana', 'Bia', 'Cid'],
+    'enquanto a fatia 2 não existe, tirar da pauta é fazer sumir justamente quem mais precisa');
+  assert.deepStrictEqual(r.escalados.map((x) => x.pessoa.nome), ['Cid'],
+    'a lista da fatia 2 continua pronta — ela não vai precisar mudar comportamento de novo');
   assert.strictEqual(r.escalados[0].falhas, 2, 'a escalada leva o número junto pro título');
+  assert.deepStrictEqual(r.pauta.map((x) => x.falhas), [0, 1, 2], 'cada item leva o próprio histórico');
+});
+
+// O contador da mensagem das 07:30 (mensagemDoGrupo, abaixo) conta `pauta`. Com o degrau 3 fora
+// dela, a partir da 2ª semana o zap subnotificava o total do dia — número mentindo pra equipe.
+test('a pauta conta TODO mundo do dia — o total do zap das 07:30 volta a bater', () => {
+  const itens = [
+    { pessoa: { nome: 'Ana', pessoa_chave: 'pk1' }, hora: '09:00', curso: 'Canto' },
+    { pessoa: { nome: 'Bia', pessoa_chave: 'pk2' }, hora: '10:00', curso: 'Canto' },
+    { pessoa: { nome: 'Cid', pessoa_chave: 'pk3' }, hora: '11:00', curso: 'Canto' },
+  ];
+  const mapa = new Map([['pk1', 5], ['pk2', 9], ['pk3', 2]]);   // todo mundo no degrau 3
+  const r = separarPorDegrau(itens, mapa);
+  assert.strictEqual(r.pauta.length, itens.length, 'unidade inteira no degrau 3 não pode virar pauta vazia');
+  assert.strictEqual(r.escalados.length, itens.length);
 });
 
 test('sem mapa de falhas, todo mundo é 1ª vez — nunca escala no escuro', () => {
