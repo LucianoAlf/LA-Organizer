@@ -248,6 +248,25 @@ function iniciarTypingSustentado(supabase, groupId) {
   return parar;
 }
 
+// ── O ACENO SÓ SAI QUANDO O PEDIDO É TRABALHO (04/09) ──────────────────────────────────────
+// Antes, o canal de ops postava o ack em TODO turno: "coé Tom" recebia "👽 Opa, Alf — deixa eu
+// ver aqui." e, minutos depois, a resposta — duas mensagens para uma pergunta. O Alf reclamou
+// disso com todas as letras: ele quer conversar, não receber protocolo.
+//
+// A condição fica AQUI, no ponto de chamada, e NÃO dentro de `ackDoPedido`: aquela função tem
+// contrato de devolver sempre string não-vazia (um teste prende isso, porque `postTomText` com
+// vazio faz o turno parecer não-atendido). Quem decide POSTAR é o engine — e ele já ligou o
+// "digitando" sustentado logo acima, então calar aqui não vira silêncio: a pessoa vê a barrinha.
+// A REGRA de quem merece aceno mora no ops-agent, junto do ack; aqui fica só o ato de postar.
+async function postAckSePreciso(supabase, groupId, text, quem) {
+  if (!opsAgent.mereceAck(text)) {
+    // Declarado no log: "não acenei porque era papo" e "falhei ao acenar" não podem ficar iguais.
+    console.log(`[OpsAgent] sem aceno (papo curto) grupo=${groupId} — o "digitando" cobre a espera`);
+    return null;
+  }
+  return postTomText(supabase, groupId, opsAgent.ackDoPedido(text, quem));
+}
+
 // Falha de ENTREGA no grupo. Carrega o parcial de propósito: quem chama precisa saber se o
 // grupo ficou com meio relatório na tela, e é isso que vai pro log do ciclo.
 class GroupPostError extends Error {
@@ -341,7 +360,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       .finally(pararTyping);
 
     console.log(`[OpsAgent] pedido de ${quem}: "${String(text).slice(0, 80)}"`);
-    return await postTomText(supabase, groupId, opsAgent.ackDoPedido(text, quem));
+    return await postAckSePreciso(supabase, groupId, text, quem);
   }
 
   // ── PRÉ-PASSO: confirmação determinística de ação destrutiva pendente (roda ANTES do LLM) ──
@@ -1123,4 +1142,5 @@ function friendlyTaskFail(why) {
 }
 
 module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM, buildTomContent, friendlyTaskFail, postOpsResult, GroupPostError,
+  postAckSePreciso,
   ordenarPoolPorVencimento, recortarPool, extrairMarkers, rasparMarkersResiduais, POOL_LIMIT, MARKER_TETO };

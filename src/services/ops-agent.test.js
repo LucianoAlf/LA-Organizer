@@ -361,3 +361,45 @@ test('contarItensDoPedido: só conta marcador que ABRE a linha', () => {
   assert.strictEqual(m.contarItensDoPedido('em 1998 foram 2 casos e 3 alertas'), 0);
   assert.strictEqual(m.contarItensDoPedido(''), 0);
 });
+
+// ── PAPO CURTO NÃO GERA ACENO (04/09, reclamação do Alf com todas as letras) ────────────────
+// O engine postava o ack em TODO turno do canal de ops. Numa pergunta curta isso vira DUAS
+// mensagens para uma pergunta — protocolo, não conversa. O ack continua existindo e continua
+// sempre devolvendo string (o contrato acima não muda); o que passa a ser condicional é POSTAR.
+// A regra mora aqui, ao lado do ack, porque usa exatamente o mesmo conhecimento (a conta de
+// itens e o corte de tamanho); quem age em cima dela é o group-chat-engine.
+test('mereceAck: frase curta de conversa não merece aceno — o "digitando" já basta', () => {
+  const m = carregar(LIGADO);
+  for (const p of ['👀', 'coé Tom', 'e aí, deu certo?', 'Tom, roda os testes', 'blz?']) {
+    assert.strictEqual(m.mereceAck(p), false, `não podia acenar: ${p}`);
+  }
+});
+
+test('mereceAck: pauta enumerada merece aceno mesmo sendo curta — quem enumera passa trabalho', () => {
+  const m = carregar(LIGADO);
+  assert.strictEqual(m.mereceAck('Tom:\n1. um\n2. dois'), true);
+  assert.strictEqual(m.mereceAck('- um\n- dois\n- tres'), true);
+});
+
+test('mereceAck: pedido denso merece aceno — vai demorar minutos', () => {
+  const m = carregar(LIGADO);
+  const denso = 'Le os ultimos 3000 registros do tom-out.log e cruza com marker_logs pra ver o que sobrou';
+  assert.ok(denso.length > m.ACK_CURTO_MAX);
+  assert.strictEqual(m.mereceAck(denso), true);
+});
+
+test('mereceAck: mensagem vazia não merece aceno (não é pedido)', () => {
+  const m = carregar(LIGADO);
+  for (const p of ['', null, undefined, '   ']) assert.strictEqual(m.mereceAck(p), false, JSON.stringify(p));
+});
+
+// O corte é EXATAMENTE o ramo do aceno curto: se um dia alguém mexer no ACK_CURTO_MAX, os dois
+// lados andam juntos e ninguém volta a postar "Opa — deixa eu ver aqui" em cima de um papo.
+test('mereceAck: o silêncio cobre exatamente o ramo do aceno curto do ackDoPedido', () => {
+  const m = carregar(LIGADO);
+  const curto = 'x'.repeat(m.ACK_CURTO_MAX);
+  const passou = 'x'.repeat(m.ACK_CURTO_MAX + 1);
+  assert.match(m.ackDoPedido(curto, 'Alf'), /Opa/, 'esse é o ramo curto');
+  assert.strictEqual(m.mereceAck(curto), false);
+  assert.strictEqual(m.mereceAck(passou), true);
+});

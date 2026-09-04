@@ -254,6 +254,28 @@ function ackDoPedido(texto, quem = null) {
   return `👽 Tô nessa${nome} — vou medir e já te falo.`;
 }
 
+// ── PAPO CURTO NÃO GERA ACENO (04/09) ──────────────────────────────────────────────────────
+// O `ackDoPedido` acima continua devolvendo SEMPRE string — esse contrato não muda, e tem teste
+// que o prende. O que passa a ser condicional é POSTAR: o engine chamava o ack em TODO turno do
+// canal, então "coé Tom" recebia "👽 Opa, Alf — deixa eu ver aqui." e, minutos depois, a
+// resposta. Duas mensagens para uma pergunta é protocolo, não conversa — e foi exatamente essa
+// a reclamação do Alf: ele quer conversar, não receber recibo.
+//
+// A regra mora AQUI, ao lado do ack, porque usa o mesmo conhecimento (a conta de itens e o corte
+// de tamanho) — se um dia alguém mexer no `ACK_CURTO_MAX`, os dois lados andam juntos. Quem AGE
+// em cima dela é o `group-chat-engine`, que é quem posta.
+//
+// Calar não vira silêncio: o engine liga o "digitando" sustentado antes de disparar o agente, e
+// a pessoa vê a barrinha do TOM enquanto ele trabalha.
+function mereceAck(texto) {
+  const t = String(texto || '').trim();
+  // Pauta enumerada é trabalho mesmo sendo curta: quem enumera não está batendo papo.
+  if (contarItensDoPedido(t) >= 2) return true;
+  // O corte é EXATAMENTE o ramo do aceno curto do `ackDoPedido`. Acima dele o pedido é denso e
+  // vai levar minutos — aí avisar que começou é informação, não protocolo.
+  return t.length > ACK_CURTO_MAX;
+}
+
 // Governança reusa este spawn com protocolo próprio. Extraído em funções puras para o
 // zero-regressão do canal de ops ficar provado por teste, e não por leitura.
 function resolverBriefing(quem, briefing) {
@@ -402,6 +424,6 @@ module.exports = {
   isOpsChannel, runOpsAgent, buildBriefing, OPS_GROUP_ID, OPS_ALLOWLIST, OPS_ENABLED,
   pedidosEmAndamento, textoDePedidosPerdidos, configurarCanalAviso, avisarPedidosPerdidos,
   resolverBriefing, resolverTimeout, OPS_TIMEOUT_MS, linhaDeCusto,
-  ackDoPedido, contarItensDoPedido, ACK_CURTO_MAX,
+  ackDoPedido, contarItensDoPedido, ACK_CURTO_MAX, mereceAck,
   _registrarPedido, _concluirPedido,   // expostos para o teste do registro
 };

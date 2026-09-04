@@ -349,3 +349,32 @@ test('A GUARDA NAO ENFRAQUECE: passiva SEM agente de terceiro segue pega', () =>
   // "foram criadas" sem dizer POR QUEM continua sendo o TOM se atribuindo a escrita.
   assert.match(buildTomContent('Todas as tarefas foram criadas.', []), /não consegui registrar/i);
 });
+
+// ── O ACENO SÓ SAI QUANDO O PEDIDO É TRABALHO (04/09) ──────────────────────────────────────
+// O canal de ops postava o ack em TODO turno: "coé Tom" recebia "👽 Opa, Alf — deixa eu ver
+// aqui." e, minutos depois, a resposta — duas mensagens para uma pergunta. A condição fica AQUI,
+// no ponto de chamada, e não dentro de `ackDoPedido`: aquela função tem contrato de devolver
+// SEMPRE string não-vazia (um teste prende isso, porque `postTomText` com vazio faria o turno
+// parecer não-atendido). Quem decide POSTAR é o engine — e ele já ligou o "digitando" antes,
+// então calar aqui não vira silêncio.
+const { postAckSePreciso } = require('./group-chat-engine');
+
+test('ack: papo curto no canal de ops não posta mensagem nenhuma', async () => {
+  const sb = sbQueFalhaNa(0);
+  const r = await postAckSePreciso(sb, 'g1', 'coé Tom', 'Alf');
+  assert.strictEqual(sb.postadas.length, 0, 'papo curto não pode virar duas mensagens');
+  assert.strictEqual(r, null);
+});
+
+test('ack: pedido de trabalho continua avisando que começou', async () => {
+  const sb = sbQueFalhaNa(0);
+  await postAckSePreciso(sb, 'g1', 'Tom, tres coisas:\n1. o regex\n2. o guard\n3. a decisao', 'Alf');
+  assert.strictEqual(sb.postadas.length, 1);
+  assert.match(sb.postadas[0], /3/, 'a pauta enumerada devolve a conta');
+});
+
+test('ack: pedido denso avisa que a medição começou', async () => {
+  const sb = sbQueFalhaNa(0);
+  await postAckSePreciso(sb, 'g1', 'Le os ultimos 3000 registros do tom-out.log e cruza com marker_logs', 'Alf');
+  assert.strictEqual(sb.postadas.length, 1);
+});
