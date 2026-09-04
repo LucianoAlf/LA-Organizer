@@ -264,6 +264,23 @@ async function logMarker(collaboratorId, markerType, result, reason = null, raw 
   }
 }
 
+// Resumo de credencial para a mensagem de confirmacao (executor <<CREDENCIAL_ACTION>>).
+// Valor sensivel SEMPRE mascarado: confirmar uma escrita nao exige devolver a senha
+// pro WhatsApp. `categoria` entra no resumo pra pessoa ver em que balde vai cair antes
+// de confirmar (o parser ja validou contra o CHECK do banco; null vira 'outro' na RPC).
+function _resumoCredencial(a) {
+  if (!a) return '';
+  const l = [`*${a.nome || a.alvo || 'sem nome'}*`];
+  if (a.categoria) l.push(`Categoria: ${a.categoria}`);
+  if (a.servico) l.push(`Serviço: ${a.servico}`);
+  if (a.projeto) l.push(`Projeto: ${a.projeto}`);
+  if (a.url_ref) l.push(`Link: ${a.url_ref}`);
+  for (const c of (a.campos || [])) {
+    l.push(`${c.label}: ${c.sensivel ? '●●●●●●' : c.valor}`);
+  }
+  return l.join('\n');
+}
+
 // Ambiguidade real (linhagens distintas) NÃO é resolvida na Fatia A — mantém o comportamento
 // legado e registra. O payload precisa ser rico: contar ocorrência diz QUANTO, não diz O QUE, e
 // é o o-que que desenha o desempate da Fatia B. `vencedor_legado` é o campo que depois
@@ -11234,6 +11251,255 @@ async function processMessage(phone, text, raw = {}) {
     // Nunca derruba a mensagem: se o two-pass falhar, segue com o reply original
     // (o marker sobrando será removido pelo UNKNOWN_MARKER_STRIPPED adiante).
     console.warn('[PedirCredenciais] two-pass falhou:', e instanceof Error ? e.message : String(e));
+  }
+
+  // ---- CONFIRMACAO de escrita de credencial pendente (03/09) — CredencialConfirm ----
+  // Roda ANTES do executor de proposito: a resposta curta ("confirma", "1", "criar") nao
+  // carrega marker nenhum. Se o executor viesse primeiro, um "confirma" abriria uma intent
+  // NOVA em vez de resolver a pendente, e a escrita nunca aconteceria.
+  //
+  // Este e o unico ponto do codigo que GRAVA credencial. O executor abaixo so propoe.
+  try {
+    const pi = require('./services/pending-intents');
+    // listOpenIntents NAO filtra por kind (opts so aceita limit/expiryHours) — filtra aqui.
+    // Sem isso, uma intent de outro kind mais recente seria pega no lugar e a confirmacao
+    // de credencial nunca seria processada.
+    const _abertas = await pi.listOpenIntents(collab.id, { limit: 5 });
+    const intent = (_abertas || []).find((i) => i && i.kind === 'credencial_write');
+    if (intent) {
+      // O resolvedor generico (~10340) pega `openIntents.find(i => i.kind !== 'approval_pending')`
+      // — a mais recente de QUALQUER tipo, que logo depois de "Confirma?" e justamente esta — e
+      // agenda `_pendingIntentToResolve`, aplicado la em ~13870, DEPOIS deste bloco. Se ele
+      // fechasse a intent de credencial como 'confirmed' sem ninguem ter gravado, a pessoa
+      // acharia que cadastrou, nada teria sido escrito, e a intent ja fechada faria a
+      // repeticao nao achar mais nada. Perda silenciosa. Esta intent e deste bloco resolver.
+      _pendingIntentToResolve = null;
+
+      // Janela de 15min (mesma de finance_source / reschedule_confirm / event_create_confirm).
+      // listOpenIntents so corta em 24h: sem esta guarda um "sim" 20 horas depois gravaria
+      // credencial. Fora da janela nao grava — e fecha como 'expired' pra que o resolvedor
+      // generico (janela de 20min) nao a marque 'confirmed' sem escrita nenhuma.
+      if (!withinConfirmWindow(intent.asked_at, 15)) {
+        await pi.resolveIntent(intent.id, 'expired', 'fora da janela de 15min');
+        await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', 'janela_expirada', null);
+        console.warn(`[CredencialConfirm] intent ${String(intent.id).slice(0, 8)} fora da janela de 15min — expirada SEM gravar`);
+      } else {
+        const { detectUserConfirmation } = require('./services/user-confirmation');
+        // `text` e REATRIBUIDO ao longo do processMessage com blocos "[CONTEXTO INTERNO —
+        // nao verbalize ao usuario]". No texto inchado o detector estoura o limite de
+        // resposta curta e devolve null — a confirmacao viraria NOOP silencioso.
+        // `inboundVerbatimText` (declarado em ~8866) e o snapshot antes de qualquer mutacao.
+        const _confirmText = stripReplyScaffold(String(inboundVerbatimText || '')).userText;
+        const conf = detectUserConfirmation(_confirmText);      // 'yes' | 'no' | null
+        const escolha = String(_confirmText || '').trim().match(/^([1-5])$/);
+        const querCriar = /^\s*criar\s*$/i.test(String(_confirmText || ''));
+        const p = intent.payload || {};
+        const { upsertCredencial, deleteCredencial } = require('./services/credenciais');
+
+        const _gravar = async (credId) => {
+          const d = p.proposta || {};
+          return upsertCredencial(collab.id, {
+            id: credId || null,
+            nome: d.nome,
+            categoria: d.categoria,     // sem isso toda credencial nova cai no balde 'outro'
+            servico: d.servico,
+            projeto: d.projeto,
+            url_ref: d.url_ref,
+            observacoes: d.observacoes,
+            campos: d.campos,
+          });
+        };
+
+        // `_msgErro` (services/credenciais.js) descarta o code do erro (42501 / P0002) e
+        // devolve so a mensagem — forbidden e not_found so se distinguem pela string.
+        // A negativa de permissao mantem a MESMA discricao do ramo nao-admin: nunca revela
+        // que existe funcionalidade de credenciais.
+        const _replyErro = (erro, verbo) => {
+          const e = String(erro || '');
+          if (/forbidden/i.test(e)) return 'Isso eu não consigo te ajudar por aqui — fala com o Luciano.';
+          if (/not_found|nao_encontrada/i.test(e)) return '_Não achei essa credencial. Me diz o nome exato?_';
+          return `_Não consegui ${verbo}. Tenta de novo?_`;
+        };
+
+        let tratou = true;
+        let gravou = null;      // null = este ramo nao tentou escrever
+        let motivo = String(p.modo || 'desconhecido');
+
+        if (conf === 'no') {
+          await pi.resolveIntent(intent.id, 'denied', 'usuario negou');
+          motivo = `negada:${p.modo}`;
+          reply = 'Ok, não gravei nada.';
+        } else if (p.modo === 'duplicata' && escolha) {
+          const alvoId = (p.candidatos || [])[Number(escolha[1]) - 1];
+          if (!alvoId) {
+            gravou = false;
+            motivo = 'indice_invalido';
+            reply = '_Número fora da lista. Responde de novo com o número certo?_';
+          } else {
+            const r = await _gravar(alvoId);
+            gravou = !!r.ok;
+            motivo = `duplicata_merge:${alvoId}`;
+            await pi.resolveIntent(intent.id, r.ok ? 'confirmed' : 'denied', r.erro || null);
+            reply = r.ok ? '✅ Atualizei a credencial que já existia.' : _replyErro(r.erro, 'atualizar');
+          }
+        } else if (p.modo === 'duplicata' && querCriar) {
+          const r = await _gravar(null);
+          gravou = !!r.ok;
+          motivo = 'duplicata_criar_assim_mesmo';
+          await pi.resolveIntent(intent.id, r.ok ? 'confirmed' : 'denied', r.erro || null);
+          reply = r.ok ? '✅ Criei a credencial nova.' : _replyErro(r.erro, 'criar');
+        } else if (p.modo === 'alvo_ambiguo' && escolha) {
+          const alvoId = (p.candidatos || [])[Number(escolha[1]) - 1];
+          if (!alvoId) {
+            gravou = false;
+            motivo = 'indice_invalido';
+            reply = '_Número fora da lista. Responde de novo com o número certo?_';
+          } else if (p.proposta && p.proposta.action === 'delete') {
+            const r = await deleteCredencial(collab.id, alvoId);
+            gravou = !!r.ok;
+            motivo = `alvo_ambiguo_delete:${alvoId}`;
+            await pi.resolveIntent(intent.id, r.ok ? 'confirmed' : 'denied', r.erro || null);
+            reply = r.ok ? '✅ Apaguei.' : _replyErro(r.erro, 'apagar');
+          } else {
+            const r = await _gravar(alvoId);
+            gravou = !!r.ok;
+            motivo = `alvo_ambiguo_update:${alvoId}`;
+            await pi.resolveIntent(intent.id, r.ok ? 'confirmed' : 'denied', r.erro || null);
+            reply = r.ok ? '✅ Atualizei.' : _replyErro(r.erro, 'atualizar');
+          }
+        } else if (conf === 'yes' && p.modo === 'create') {
+          const r = await _gravar(null);
+          gravou = !!r.ok;
+          motivo = 'create';
+          await pi.resolveIntent(intent.id, r.ok ? 'confirmed' : 'denied', r.erro || null);
+          reply = r.ok ? '✅ Cadastrei.' : _replyErro(r.erro, 'cadastrar');
+        } else if (conf === 'yes' && p.modo === 'update') {
+          const r = await _gravar(p.alvo_id);
+          gravou = !!r.ok;
+          motivo = 'update';
+          await pi.resolveIntent(intent.id, r.ok ? 'confirmed' : 'denied', r.erro || null);
+          reply = r.ok ? `✅ Atualizei *${p.alvo_nome}*.` : _replyErro(r.erro, 'atualizar');
+        } else if (conf === 'yes' && p.modo === 'delete') {
+          const r = await deleteCredencial(collab.id, p.alvo_id);
+          gravou = !!r.ok;
+          motivo = 'delete';
+          await pi.resolveIntent(intent.id, r.ok ? 'confirmed' : 'denied', r.erro || null);
+          reply = r.ok ? `✅ Apaguei *${p.alvo_nome}*.` : _replyErro(r.erro, 'apagar');
+        } else {
+          tratou = false;   // nao era confirmacao: segue o fluxo normal, intent segue aberta
+        }
+
+        if (tratou) {
+          _credenciaisNoTurno = true;   // isencao estreita do anti-leak, so neste turno
+          // `executed` SO quando gravou de verdade. Marcar executed numa escrita que falhou
+          // preencheria `_metrics.marker_emitted` (derivado de marker_logs result=executed) e
+          // desarmaria o chokepoint que pega "TOM disse que fez e nada persistiu".
+          const _res = gravou === null ? 'skipped' : (gravou ? 'executed' : 'rejected');
+          await logMarker(collab.id, 'CREDENCIAL_ACTION', _res, `confirmacao:${motivo}`, null);
+          console.log(`[CredencialConfirm] intent=${String(intent.id).slice(0, 8)} modo=${p.modo} result=${_res}`);
+        }
+      }
+    }
+  } catch (e) {
+    // Nunca derruba a mensagem. Fail-closed: qualquer erro aqui significa que NAO gravou.
+    console.warn('[CredencialConfirm] falhou:', e instanceof Error ? e.message : String(e));
+  }
+
+  // ---- EXECUTOR DETERMINISTICO <<CREDENCIAL_ACTION>> (03/09) ----
+  // O modelo PROPOE; aqui o engine DECIDE. Nada e gravado neste bloco: ele monta o resumo
+  // e abre uma pending_intent. A gravacao acontece no bloco de confirmacao acima, no turno
+  // seguinte, quando a pessoa responde. E o padrao do financeiro (1,3% de falha), oposto ao
+  // do TASK_UPDATE (14%), que deixa o modelo escolher o alvo.
+  try {
+    const { parseCredencialAction, stripCredencialAction } = require('./lib/credencial-action');
+    const _temMarker = /<<CREDENCIAL_ACTION>>/i.test(String(reply || ''));
+    const _acao = parseCredencialAction(reply);
+
+    if (_temMarker && !_acao) {
+      // parseCredencialAction devolve null para JSON malformado, acao invalida E campo
+      // obrigatorio ausente — as tres causas colapsam num null so, e um modulo puro nao tem
+      // logger. Sem este ramo o payload malformado do modelo nao deixaria rastro nenhum, e
+      // o usuario ainda veria o marker cru na tela.
+      _credenciaisNoTurno = true;
+      await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'payload_invalido', null);
+      console.warn('[CredencialAction] marker presente com payload invalido — nada gravado');
+      reply = stripCredencialAction(reply) || 'Não entendi direito o que você quer que eu faça aí. Me manda de novo?';
+    } else if (_acao) {
+      _credenciaisNoTurno = true;   // isencao do anti-leak, mesma flag do two-pass
+      reply = stripCredencialAction(reply);
+
+      const { getCredenciaisPara } = require('./services/credenciais');
+      const { isAdmin, creds } = await getCredenciaisPara(collab.id);
+
+      if (!isAdmin) {
+        // Negativa que NAO revela a existencia da funcionalidade de credenciais.
+        await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'nao_admin', null);
+        reply = 'Isso eu não consigo te ajudar por aqui — fala com o Luciano.';
+      } else {
+        const { acharDuplicatas, acharAlvo } = require('./lib/credencial-duplicata');
+        const pi = require('./services/pending-intents');
+
+        // openIntent devolve null quando o insert falha. Prometer "Confirma?" sem intent
+        // aberta faria o "sim" seguinte cair no vazio — a pessoa acharia que cadastrou.
+        const _abrir = async (payload, pergunta) => {
+          const id = await pi.openIntent(collab.id, 'credencial_write', payload, pergunta);
+          if (!id) {
+            await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'intent_nao_aberta', null);
+            console.warn('[CredencialAction] openIntent falhou — a confirmacao nao seria reconhecida');
+            return false;
+          }
+          _metrics.awaiting_user_confirm = true;   // turno = pergunta → ACTIONABLE_NO_MARKER nao acusa
+          return true;
+        };
+        const FALHA_PENDENCIA = '_Não consegui deixar isso pendente agora. Me pede de novo daqui a pouco?_';
+
+        if (_acao.action === 'create') {
+          const dups = acharDuplicatas(_acao, creds);
+          if (dups.length) {
+            const lista = dups.slice(0, 3).map((d, i) => `${i + 1}. *${d.cred.nome}* — ${d.motivo}`).join('\n');
+            await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', `duplicata:${dups.length}`, null);
+            reply = `Antes de criar: já existe algo parecido.\n\n${lista}\n\n`
+              + `Quer atualizar uma dessas (responde o número) ou criar assim mesmo (responde *criar*)?`;
+            const _ok = await _abrir(
+              { modo: 'duplicata', proposta: _acao, candidatos: dups.slice(0, 3).map(d => d.cred.id) }, reply);
+            if (!_ok) reply = FALHA_PENDENCIA;
+          } else {
+            const resumo = _resumoCredencial(_acao);
+            await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', 'aguardando_confirmacao:create', null);
+            reply = `Vou cadastrar assim:\n\n${resumo}\n\nConfirma?`;
+            const _ok = await _abrir({ modo: 'create', proposta: _acao }, reply);
+            if (!_ok) reply = FALHA_PENDENCIA;
+          }
+        } else {
+          const { exato, candidatos } = acharAlvo(_acao.alvo, creds);
+          if (!exato && !candidatos.length) {
+            // Alvo nao encontrado: perguntar, NUNCA escolher.
+            await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'alvo_nao_encontrado', null);
+            _metrics.awaiting_user_confirm = true;
+            reply = 'Não achei nenhuma credencial com esse nome. Me diz o nome exato?';
+          } else if (!exato && candidatos.length > 1) {
+            const lista = candidatos.slice(0, 5).map((c, i) => `${i + 1}. *${c.nome}*`).join('\n');
+            await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', `alvo_ambiguo:${candidatos.length}`, null);
+            reply = `Achei mais de uma. Qual delas?\n\n${lista}`;
+            const _ok = await _abrir(
+              { modo: 'alvo_ambiguo', proposta: _acao, candidatos: candidatos.slice(0, 5).map(c => c.id) }, reply);
+            if (!_ok) reply = FALHA_PENDENCIA;
+          } else {
+            const alvo = exato || candidatos[0];
+            const verbo = _acao.action === 'delete' ? 'APAGAR' : 'atualizar';
+            const detalhe = _acao.action === 'delete' ? '' : `\n\n${_resumoCredencial(_acao)}`;
+            await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', `aguardando_confirmacao:${_acao.action}`, null);
+            reply = `Vou ${verbo} *${alvo.nome}*.${detalhe}\n\nConfirma?`;
+            const _ok = await _abrir(
+              { modo: _acao.action, proposta: _acao, alvo_id: alvo.id, alvo_nome: alvo.nome }, reply);
+            if (!_ok) reply = FALHA_PENDENCIA;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Nunca derruba a mensagem. Fail-closed: erro aqui = nenhuma intent aberta, nada gravado.
+    console.warn('[CredencialAction] falhou:', e instanceof Error ? e.message : String(e));
   }
 
   // Ordem de strip: ONBOARDING → PROJECT → MEMORY (memória por último — não deve aparecer pro user em hipótese alguma).
