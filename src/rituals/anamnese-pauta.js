@@ -926,12 +926,81 @@ async function relatorioDeFimDeDia({ supabase, laReport, unidadeId, hoje, deps =
   };
 }
 
+// ── O LEMBRETE DE HORA EM HORA (pedido do Alf, 04/09) ────────────────────────────────────────
+// De hora em hora, das 09:00 às 19:00, cada tick fala da hora SEGUINTE (às 09:00 fala das 10:00,
+// às 19:00 fala das 20:00 — a última aula do dia). Nunca da lista do dia: a lista inteira
+// repetida 11 vezes vira ruído e a equipe para de ler, aí a mensagem que importa também morre.
+//
+// ESTA FUNÇÃO SÓ LÊ, e mais estritamente que o relatório de fim de dia: ela não recebe
+// `supabase` nem `repo`. Não grava na escada, não fecha filha, não fecha container — e, a regra
+// sagrada desta feature, NUNCA escreve no LA Report: nem baixa de anamnese, nem de contrato.
+// Quem escreve é a fonte; o TOM lê e cobra. A tela de baixa de contrato no LA Report é obra do
+// dono — ninguém deve "completar" esta função inventando esse caminho.
+//
+// A CONTA sai de filtrarPorRecorte (a única definição de cada pendência nesta casa) e de
+// pautaDoDia (a mesma função que monta a pauta da manhã), das MESMAS linhas de UMA consulta: dois
+// recortes da mesma leitura, nunca duas consultas, porque a RPC leva 6-8s e o dia tem 11 slots
+// vezes 3 unidades. Se este lembrete tivesse critério próprio, um dia ele e o card do LA Report
+// discordariam sobre a mesma pessoa e ninguém confiaria em nenhum dos dois.
+//
+// Quem decide se a unidade PODE ser cobrada agora (a mensagem de abertura dela já saiu?) é o
+// dispatcher, lendo marker_logs: é lá que mora o horário de abertura de cada unidade.
+async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora }) {
+  const vazio = { texto: null, alunos: [] };
+
+  // Mesma guarda barata dos outros blocos: `hoje` torto viraria um dia da semana que casa com
+  // qualquer aula (null === null em diaDaAula) e produziria uma lista INVENTADA num grupo real.
+  const diaSemana = _diaSemanaBrt(hoje);
+  if (!Number.isInteger(diaSemana) || diaSemana < 0 || diaSemana > 6) {
+    return { ...vazio, motivo: `dia da semana inválido para hoje="${hoje}"` };
+  }
+  // A hora é comparada por IGUALDADE com a hora que pautaDoDia devolve ("HH:MM", zero à
+  // esquerda). Um "9:00" não casaria nada e o lembrete sairia mudo dizendo que está tudo bem —
+  // silêncio por FALHA com cara de silêncio por SAÚDE, que é o bug que esta casa mais sangra.
+  if (!/^\d{2}:\d{2}$/.test(String(hora || ''))) {
+    return { ...vazio, motivo: `hora inválida para o lembrete: "${hora}"` };
+  }
+
+  let data;
+  try {
+    // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
+    // linhas" silencioso — aqui isso significaria "ninguém chegando na próxima hora", uma
+    // afirmação que ninguém mediu, repetida 11 vezes por dia em três grupos reais.
+    const r = await laReport.rpc('get_situacao_alunos_v1',
+      { p_unidade_id: unidadeId, p_apenas_pendentes: false });
+    if (r.error) {
+      // Sensor PRÓPRIO: textualmente distinto dos outros três "consulta do LA Report falhou"
+      // deste arquivo (manhã, meio do dia, noite). Quem audita marker_logs precisa saber QUAL
+      // passada caiu sem abrir o código.
+      return {
+        ...vazio,
+        motivo: `consulta do LA Report falhou no lembrete da próxima hora: ${r.error.message} — não cobro sem a fonte`,
+      };
+    }
+    data = r.data;
+  } catch (e) {
+    // Exceção (rede, cliente) é a MESMA coisa que erro da RPC pra quem lê: a fonte não respondeu.
+    // Vira motivo em vez de subir — o dispatcher já tem catch por unidade, mas ali a falha
+    // viraria console.error sem marcador, e "não sei se rodou" some do banco.
+    return { ...vazio, motivo: `consulta do LA Report falhou no lembrete da próxima hora: ${(e && e.message) || String(e)} — não cobro sem a fonte` };
+  }
+
+  // Dois recortes, UMA leitura. A ordem (anamnese antes de contrato) é a do rótulo combinado.
+  const anamnese = pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'anamnese'), diaSemana);
+  const contrato = pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'contrato'), diaSemana);
+  const alunos = pura.alunosDaHora({ anamnese, contrato, hora });
+
+  // texto null com motivo null = ninguém chegando pendente nesta hora. Silêncio é notícia boa —
+  // e quem registra que a passada RODOU e não achou ninguém é o marcador, no dispatcher.
+  return { texto: pura.lembreteDaProximaHora({ itens: alunos, hora }), alunos, motivo: null };
+}
+
 module.exports = {
   // varrerPautasVelhas é exportada porque tem DOIS chamadores: o fechamento das 23:00 (aqui) e o
   // bloco das 06:00 do dispatcher, que limpa o entulho da noite anterior ANTES de montar a pauta
   // do dia. Uma implementação só, de propósito — ver o comentário da função.
   montarPautaDaUnidade, fecharPautaDaUnidade, varrerPautasVelhas, atualizarPautaDaUnidade,
-  relatorioDeFimDeDia,
+  relatorioDeFimDeDia, lembreteDaProximaHora,
   TETO_FILHAS, VARREDURA_DIAS, VARREDURA_MAX_CONTAINERS,
   // Os dois gatilhos do disjuntor saem daqui pra que o teste prove a FRONTEIRA (15 não dispara,
   // 16 dispara) contra o valor real, e não contra um número redigitado no teste — uma cópia lá

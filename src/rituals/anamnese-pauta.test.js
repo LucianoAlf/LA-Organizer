@@ -1515,3 +1515,109 @@ test('fim de dia: hoje torto não deixa o relatório inventar um dia', async () 
   assert.ok(r.motivo && /dia da semana/.test(r.motivo), `sensor próprio: ${r.motivo}`);
   assert.deepStrictEqual(d.escritas, []);
 });
+
+// ── O LEMBRETE DE HORA EM HORA (pedido do Alf, 04/09) ────────────────────────────────────────
+// De hora em hora (09:00 às 19:00) o TOM fala da PRÓXIMA hora. Ele SÓ LÊ: não grava na escada,
+// não fecha filha, não fecha container, e — a regra sagrada — NUNCA escreve no LA Report. Quem
+// dá baixa em anamnese e em contrato é a fonte; ele lê e cobra.
+const { lembreteDaProximaHora } = require('./anamnese-pauta');
+
+// `anamnese`/`contrato` aqui são "está OK": true = preenchido, e portanto FORA da cobrança.
+const alunoDaHora = (nome, hora, { anamnese = true, contrato = true } = {}) => ({
+  nome, pessoa_chave: 'pk-' + nome, classificacao: 'LA',
+  aulas_resumo: [`Canto — Segunda-feira ${hora}`],
+  anamnese_preenchida: !!anamnese, tem_data_contrato: !!contrato,
+});
+
+// supabase que EXPLODE se alguém encostar: o lembrete não recebe cliente de banco nenhum, e este
+// fake é o que transforma essa promessa em teste. Um `from()` que escorregasse pra dentro da
+// função apareceria como falha aqui, não como escrita silenciosa em produção.
+const supabaseProibido = { from() { throw new Error('o lembrete não pode tocar o banco'); } };
+
+function rodarLembrete({ alunos = [], rpcErro = null, lanca = false, hora = '15:00', hoje = SEGUNDA } = {}) {
+  const chamadas = [];
+  const laReport = {
+    rpc: async (nome, args) => {
+      chamadas.push([nome, args]);
+      if (lanca) throw new Error('rede caiu no meio da consulta');
+      return { data: rpcErro ? null : alunos, error: rpcErro };
+    },
+  };
+  return lembreteDaProximaHora({ laReport, unidadeId: 'u1', hoje, hora })
+    .then((r) => ({ ...r, chamadas }));
+}
+
+test('lembrete: fala SÓ de quem chega na próxima hora, não da lista do dia', async () => {
+  const r = await rodarLembrete({
+    alunos: [
+      alunoDaHora('Arthur Bezerra', '15:00', { anamnese: false }),
+      alunoDaHora('Bento Alves', '16:00', { anamnese: false }),
+      alunoDaHora('Carla Dias', '15:00'),   // sem pendência nenhuma: não entra
+    ],
+  });
+  assert.strictEqual(r.motivo, null);
+  assert.strictEqual(r.alunos.length, 1);
+  assert.match(r.texto, /Arthur Bezerra/);
+  assert.doesNotMatch(r.texto, /Bento Alves/, 'a lista do dia inteiro é o ruído que este lembrete existe pra matar');
+  assert.doesNotMatch(r.texto, /Carla Dias/);
+});
+
+test('lembrete: as DUAS pendências do mesmo aluno viram uma linha com rótulo combinado', async () => {
+  const r = await rodarLembrete({
+    alunos: [
+      alunoDaHora('Levi Freire', '15:00', { anamnese: false, contrato: false }),
+      alunoDaHora('Gabriela da Silva', '15:00', { contrato: false }),
+    ],
+  });
+  assert.strictEqual(r.texto,
+    '⏰ *Próxima hora — 15:00*\n'
+    + '· Gabriela da Silva (Canto) — contrato\n'
+    + '· Levi Freire (Canto) — anamnese e contrato');
+});
+
+test('lembrete: hora sem ninguém pendente NÃO vira mensagem — e o motivo é null (zero por saúde)', async () => {
+  const r = await rodarLembrete({ alunos: [alunoDaHora('Carla Dias', '15:00')] });
+  assert.strictEqual(r.texto, null, 'silêncio ali é notícia boa');
+  assert.strictEqual(r.motivo, null, 'zero por SAÚDE não pode sair com a mesma cara de zero por FALHA');
+  assert.deepStrictEqual(r.alunos, []);
+});
+
+test('lembrete: fonte fora do ar NÃO fala — e diz por quê, com sensor próprio', async () => {
+  const r = await rodarLembrete({ rpcErro: { message: 'timeout' } });
+  assert.strictEqual(r.texto, null, 'nunca "ninguém pendente" quando não deu pra apurar');
+  assert.match(r.motivo, /lembrete/i, 'o motivo precisa distinguir esta consulta das outras três do arquivo');
+  assert.match(r.motivo, /timeout/);
+});
+
+test('lembrete: exceção na consulta vira motivo, não explosão', async () => {
+  const r = await rodarLembrete({ lanca: true });
+  assert.strictEqual(r.texto, null);
+  assert.match(r.motivo, /rede caiu/);
+});
+
+test('lembrete: SÓ LÊ — uma consulta à fonte, e nada de banco', async () => {
+  const r = await lembreteDaProximaHora({
+    supabase: supabaseProibido,
+    laReport: { rpc: async () => ({ data: [alunoDaHora('Ana', '15:00', { anamnese: false })], error: null }) },
+    unidadeId: 'u1', hoje: SEGUNDA, hora: '15:00',
+  });
+  assert.match(r.texto, /Ana/);
+});
+
+test('lembrete: uma única consulta por unidade — a RPC leva 6-8s e o dia tem 11 slots', async () => {
+  const r = await rodarLembrete({ alunos: [alunoDaHora('Ana', '15:00', { anamnese: false, contrato: false })] });
+  assert.strictEqual(r.chamadas.length, 1, 'anamnese e contrato saem da MESMA leitura');
+  assert.strictEqual(r.chamadas[0][0], 'get_situacao_alunos_v1');
+});
+
+test('lembrete: hoje torto não inventa lista (LOCALYMD-UTC-SHIFT)', async () => {
+  const r = await rodarLembrete({ hoje: 'ontem', alunos: [alunoDaHora('Ana', '15:00', { anamnese: false })] });
+  assert.strictEqual(r.texto, null);
+  assert.match(r.motivo, /dia da semana inválido/);
+});
+
+test('lembrete: hora torta não monta nada', async () => {
+  const r = await rodarLembrete({ hora: '25h', alunos: [alunoDaHora('Ana', '15:00', { anamnese: false })] });
+  assert.strictEqual(r.texto, null);
+  assert.match(r.motivo, /hora inválida/);
+});

@@ -169,7 +169,14 @@ function mensagemDoGrupo({ itens, contrato, contratoErro, unidadeNome, dataBr } 
   // Linha EM BRANCO entre os dois: é o "separadinho" que o dono pediu. No WhatsApp é o que faz
   // o olho ver duas demandas e não um bolo só.
   const blocoContrato = _blocoDeContrato({ contrato, contratoErro, dataBr });
-  return blocoContrato ? `${blocoAnamnese}\n\n${blocoContrato}` : blocoAnamnese;
+  const corpo = blocoContrato ? `${blocoAnamnese}\n\n${blocoContrato}` : blocoAnamnese;
+  // A LINHA DO LEMBRETE (pedido do Alf, 04/09). Vem no FIM e depois de uma linha em branco: ela
+  // não pertence a nenhum dos dois blocos — é o que o TOM vai fazer com eles pelo resto do dia.
+  // NUNCA na primeira linha: o dispatcher usa `texto.split('\n')[0]` como chave da guarda de
+  // duplicata contra reenvio num grupo REAL (mesma regra do bloco de contrato, acima).
+  // Ela é uma PROMESSA: se o lembrete de hora em hora for desligado um dia, esta linha vira
+  // mentira e sai junto.
+  return `${corpo}\n\n${LINHA_LEMBRETE_HORA}`;
 }
 
 // ── O RELATÓRIO DE FIM DE DIA (pedido do Alf, 04/09) ─────────────────────────────────────────
@@ -239,9 +246,88 @@ function mensagemDeFimDeDia({ preencheram, faltaram, semVerificacao, dataBr, err
   return linhas.join('\n');
 }
 
+// ── O LEMBRETE DE HORA EM HORA (pedido do Alf, 04/09) ────────────────────────────────────────
+// De hora em hora (09:00 às 19:00) o TOM fala da PRÓXIMA hora — nunca da lista do dia.
+//
+// POR QUE A PRÓXIMA HORA E NÃO A LISTA DO DIA: a lista inteira repetida 11 vezes vira ruído, e a
+// equipe para de ler — aí a mensagem que importa também deixa de ser lida. O que serve no meio do
+// expediente é quem está CHEGANDO agora. Medido nos dados de hoje: 2 a 7 alunos por horário.
+//
+// AQUI ANAMNESE E CONTRATO CONVIVEM NA MESMA LINHA, ao contrário da mensagem da manhã, onde o
+// dono pediu blocos separados. Não é incoerência: lá são duas listas do dia inteiro, com gente
+// diferente em cada uma, e misturá-las esconde uma demanda dentro da outra. Aqui é a MESMA pessoa
+// chegando na MESMA hora — quebrar em dois blocos faria a secretaria procurar o mesmo aluno duas
+// vezes pra descobrir que era um só.
+//
+// A promessa que a mensagem da manhã faz mora aqui do lado, de propósito: quem desligar um dos
+// dois vê o outro na mesma tela.
+const LINHA_LEMBRETE_HORA = 'De hora em hora eu aviso aqui quem chega na hora seguinte.';
+
+// Ordem FIXA do rótulo: "anamnese e contrato", nunca "contrato e anamnese". A ordem sai de uma
+// lista, não da ordem em que os recortes foram lidos — senão o mesmo aluno apareceria escrito de
+// um jeito hoje e de outro amanhã, e a equipe leria isso como duas coisas diferentes.
+const ORDEM_PENDENCIAS = ['anamnese', 'contrato'];
+
+// Junta os dois recortes numa linha por ALUNO. Os dois lados chegam PRONTOS de pautaDoDia — a
+// mesma função que monta a pauta da manhã, alimentada por filtrarPorRecorte, que é a única
+// definição de cada pendência nesta casa. Nunca um filtro próprio aqui: uma segunda cópia faria o
+// lembrete e o card do LA Report discordarem sobre a mesma pessoa, e ninguém confiaria em nenhum.
+//
+// A identidade é `pessoa_chave`, NUNCA o nome: uma unidade tem dezenas de "Maria", e juntar por
+// nome faria duas alunas virarem uma linha só — com a pendência de uma colada na outra. Sem
+// chave nenhuma o item é DESCARTADO em vez de virar linha fantasma no zap.
+function alunosDaHora({ anamnese, contrato, hora } = {}) {
+  if (!hora) return [];   // sem hora não há "próxima hora" — nada a dizer
+  const porChave = new Map();
+  const somar = (lista, pendencia) => {
+    for (const item of (lista || [])) {
+      if (!item || item.hora !== hora) continue;
+      const chave = item.pessoa && item.pessoa.pessoa_chave;
+      if (!chave) continue;
+      const ja = porChave.get(chave);
+      if (ja) { ja.pendencias.add(pendencia); continue; }
+      porChave.set(chave, {
+        pessoa: item.pessoa, hora: item.hora, curso: item.curso || null,
+        pendencias: new Set([pendencia]),
+      });
+    }
+  };
+  somar(anamnese, 'anamnese');
+  somar(contrato, 'contrato');
+  // Ordem alfabética: dentro de uma hora só, o horário não desempata nada, e a ordem em que a RPC
+  // devolveu as linhas mudaria de um slot pro outro sem motivo nenhum que a equipe entenda.
+  return [...porChave.values()]
+    .map((i) => ({ ...i, pendencias: ORDEM_PENDENCIAS.filter((p) => i.pendencias.has(p)) }))
+    .sort((a, b) => String(a.pessoa.nome || '').localeCompare(String(b.pessoa.nome || ''), 'pt-BR'));
+}
+
+// O texto. Curto por desenho: quem lê é a secretaria no meio do expediente, de pé, com aluno na
+// frente. Cabeçalho + uma linha por aluno, nada de rodapé ensinando a pedir lista — a lista do dia
+// já saiu de manhã e está no painel.
+//
+// A HORA no cabeçalho não é enfeite: a primeira linha é a chave da guarda de duplicata do
+// dispatcher (`like('content', cabeçalho%)`), e sem a hora o lembrete das 16:00 casaria o
+// cabeçalho do das 15:00 — e nunca sairia.
+function lembreteDaProximaHora({ itens, hora } = {}) {
+  if (!hora) return null;
+  const linhas = [];
+  for (const i of (itens || [])) {
+    // Item sem pendência nenhuma não vira linha: "· Fulano — " não diz nada e é pior que ausência.
+    const rotulo = (i && i.pendencias || []).join(' e ');
+    if (!rotulo) continue;
+    const nome = (i.pessoa && i.pessoa.nome) || '?';
+    linhas.push(`· ${nome}${i.curso ? ` (${i.curso})` : ''} — ${rotulo}`);
+  }
+  // Hora sem ninguém pendente NÃO gera mensagem: silêncio ali é notícia boa. Quem distingue "zero
+  // por saúde" de "zero por falha" é o marcador que o dispatcher grava, não a ausência de texto.
+  if (!linhas.length) return null;
+  return [`⏰ *Próxima hora — ${hora}*`, ...linhas].join('\n');
+}
+
 module.exports = {
   diaDaAula, horaDaAula, pautaDoDia, DIAS,
   degrau, tituloDaFilha, tituloDaEscalada, separarPorDegrau,
   mensagemDoGrupo, PRIMEIROS_NO_ZAP,
   mensagemDeFimDeDia, FALTARAM_NO_ZAP,
+  alunosDaHora, lembreteDaProximaHora, LINHA_LEMBRETE_HORA,
 };

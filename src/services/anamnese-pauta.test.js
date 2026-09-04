@@ -198,7 +198,9 @@ test('a mensagem trava a copy aprovada — string inteira, byte a byte', () => {
     '📋 *Anamnese — hoje (qua 10/09)*\n'
     + '4 alunos com aula hoje ainda sem anamnese.\n'
     + 'Os primeiros: 08:00 Arthur Bezerra · 09:00 Maria Isabel · 09:00 Davi Reis\n'
-    + 'A lista completa está no painel do grupo.');
+    + 'A lista completa está no painel do grupo.\n'
+    + '\n'
+    + 'De hora em hora eu aviso aqui quem chega na hora seguinte.');
 });
 
 // ── O BLOCO DE CONTRATO (pedido do Alf, 04/09) ───────────────────────────────────────────────
@@ -221,7 +223,9 @@ test('a copy dos DOIS blocos, byte a byte — separados por linha em branco', ()
     + '\n'
     + '✍️ *Contrato — hoje (qua 10/09)*\n'
     + '2 alunos com aula hoje ainda sem data de contrato.\n'
-    + 'Hoje: 08:00 Arthur Bezerra · 11:00 Bento Alves');
+    + 'Hoje: 08:00 Arthur Bezerra · 11:00 Bento Alves\n'
+    + '\n'
+    + 'De hora em hora eu aviso aqui quem chega na hora seguinte.');
 });
 
 test('dia sem pendência de contrato NÃO imprime bloco de contrato', () => {
@@ -382,4 +386,101 @@ test('o relatório é só texto — função pura, sem efeito nenhum', () => {
   const antes = JSON.stringify(faltaram);
   mensagemDeFimDeDia({ preencheram: 1, faltaram, dataBr: 'sex 04/09' });
   assert.strictEqual(JSON.stringify(faltaram), antes, 'não pode mutar o que recebeu');
+});
+
+// ── O LEMBRETE DE HORA EM HORA (pedido do Alf, 04/09) ────────────────────────────────────────
+// "a lista inteira repetida 11 vezes vira ruído: a equipe para de ler. O que serve é quem está
+// CHEGANDO agora." Medido: 2 a 7 alunos por horário de aula.
+const { alunosDaHora, lembreteDaProximaHora, LINHA_LEMBRETE_HORA } = require('./anamnese-pauta');
+
+const ITEM = (nome, hora, curso) => ({ pessoa: { nome, pessoa_chave: 'pk-' + nome }, hora, curso });
+
+test('a linha do lembrete é a ÚLTIMA da mensagem da manhã — e não toca a primeira', () => {
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: CONTRATO, dataBr: 'qua 10/09' });
+  const linhas = m.split('\n');
+  assert.strictEqual(linhas[linhas.length - 1], LINHA_LEMBRETE_HORA);
+  // A primeira linha é a chave da guarda de duplicata do dispatcher — a linha nova não pode
+  // encostar nela, senão a guarda fica cega e a mensagem sai duas vezes num grupo real.
+  assert.strictEqual(linhas[0], '📋 *Anamnese — hoje (qua 10/09)*');
+});
+
+test('alunosDaHora só devolve quem chega NAQUELA hora', () => {
+  const r = alunosDaHora({
+    anamnese: [ITEM('Arthur Bezerra', '15:00', 'Teclado'), ITEM('Bento Alves', '16:00', 'Violão')],
+    contrato: [],
+    hora: '15:00',
+  });
+  assert.strictEqual(r.length, 1, 'a lista do dia inteiro é o ruído que este lembrete existe pra matar');
+  assert.strictEqual(r[0].pessoa.nome, 'Arthur Bezerra');
+  assert.deepStrictEqual(r[0].pendencias, ['anamnese']);
+});
+
+test('quem tem as DUAS pendências vira UMA linha com rótulo combinado', () => {
+  const r = alunosDaHora({
+    anamnese: [ITEM('Levi Freire', '15:00', 'Bateria')],
+    contrato: [ITEM('Levi Freire', '15:00', 'Bateria')],
+    hora: '15:00',
+  });
+  assert.strictEqual(r.length, 1, 'é a mesma pessoa chegando na mesma hora — duas linhas confundem');
+  assert.deepStrictEqual(r[0].pendencias, ['anamnese', 'contrato']);
+});
+
+test('o mesmo NOME em pessoas diferentes não colapsa numa linha só', () => {
+  const r = alunosDaHora({
+    anamnese: [{ pessoa: { nome: 'Maria', pessoa_chave: 'pk-1' }, hora: '15:00', curso: 'Canto' }],
+    contrato: [{ pessoa: { nome: 'Maria', pessoa_chave: 'pk-2' }, hora: '15:00', curso: 'Violão' }],
+    hora: '15:00',
+  });
+  assert.strictEqual(r.length, 2, 'uma unidade tem dezenas de "Maria" — quem é chave é pessoa_chave');
+});
+
+test('o lembrete trava a copy aprovada — string inteira, byte a byte', () => {
+  const itens = alunosDaHora({
+    anamnese: [ITEM('Arthur Bezerra', '15:00', 'Teclado'), ITEM('Levi Freire', '15:00', 'Bateria')],
+    contrato: [ITEM('Gabriela da Silva', '15:00', 'Contrabaixo'), ITEM('Levi Freire', '15:00', 'Bateria')],
+    hora: '15:00',
+  });
+  assert.strictEqual(lembreteDaProximaHora({ itens, hora: '15:00' }),
+    '⏰ *Próxima hora — 15:00*\n'
+    + '· Arthur Bezerra (Teclado) — anamnese\n'
+    + '· Gabriela da Silva (Contrabaixo) — contrato\n'
+    + '· Levi Freire (Bateria) — anamnese e contrato');
+});
+
+test('hora sem ninguém pendente NÃO vira mensagem — silêncio ali é notícia boa', () => {
+  assert.strictEqual(lembreteDaProximaHora({ itens: [], hora: '15:00' }), null);
+  assert.strictEqual(lembreteDaProximaHora({ itens: alunosDaHora({ anamnese: [], contrato: [], hora: '15:00' }), hora: '15:00' }), null);
+});
+
+test('sem hora não monta lembrete nenhum — nunca um "undefined" no grupo real', () => {
+  assert.strictEqual(lembreteDaProximaHora({ itens: [ITEM('Ana', '15:00', 'Canto')] }), null);
+  assert.deepStrictEqual(alunosDaHora({ anamnese: [ITEM('Ana', '15:00', 'Canto')], contrato: [] }), []);
+});
+
+// A primeira linha é a chave da guarda de duplicata (like('content', cabeçalho%)). Sem a HORA
+// dentro dela, o lembrete das 16:00 casaria o cabeçalho do das 15:00 e nunca sairia.
+test('o cabeçalho carrega a HORA — é o que separa um slot do outro na guarda de duplicata', () => {
+  const itens = alunosDaHora({ anamnese: [ITEM('Ana', '15:00', 'Canto')], contrato: [], hora: '15:00' });
+  const a = lembreteDaProximaHora({ itens, hora: '15:00' }).split('\n')[0];
+  const b = lembreteDaProximaHora({ itens, hora: '16:00' }).split('\n')[0];
+  assert.notStrictEqual(a, b);
+  assert.ok(a.includes('15:00'));
+});
+
+test('aluno sem curso não vira parêntese vazio, e item torto não vaza "undefined"', () => {
+  const itens = alunosDaHora({
+    anamnese: [{ pessoa: { nome: 'Sem Curso', pessoa_chave: 'pk-x' }, hora: '15:00' }, { hora: '15:00' }],
+    contrato: [],
+    hora: '15:00',
+  });
+  const m = lembreteDaProximaHora({ itens, hora: '15:00' });
+  assert.strictEqual(m, '⏰ *Próxima hora — 15:00*\n· Sem Curso — anamnese');
+  assert.doesNotMatch(m, /undefined|\(\)/);
+});
+
+test('o lembrete não muta o que recebeu', () => {
+  const itens = alunosDaHora({ anamnese: [ITEM('Ana', '15:00', 'Canto')], contrato: [], hora: '15:00' });
+  const antes = JSON.stringify(itens);
+  lembreteDaProximaHora({ itens, hora: '15:00' });
+  assert.strictEqual(JSON.stringify(itens), antes);
 });
