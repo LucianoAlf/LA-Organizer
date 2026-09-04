@@ -82,3 +82,32 @@ test('acharAlvo: entrada invalida nao quebra', () => {
   assert.deepEqual(acharAlvo(null, EXISTENTES), { exato: null, candidatos: [] });
   assert.deepEqual(acharAlvo('x', null), { exato: null, candidatos: [] });
 });
+
+// I-1 (review 04/09): o `motivo` vai inteiro pra tela do WhatsApp. Campo sensivel nao
+// pode devolver o segredo em claro na lista de duplicatas.
+test('motivo NAO cita o valor quando o campo e sensivel — cita o label', () => {
+  const existentes = [{ id: '9', nome: 'Canva Antigo', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }];
+  const d = acharDuplicatas({ nome: 'Canva Novo', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }, existentes);
+  assert.equal(d.length, 1);
+  assert.equal(d[0].forca, 'alta');
+  assert.ok(!/hunter2/.test(d[0].motivo), `segredo vazou no motivo: ${d[0].motivo}`);
+  assert.equal(d[0].motivo, 'mesmo valor no campo Senha');
+});
+
+test('motivo mascara mesmo sem a flag, quando o label denuncia segredo', () => {
+  const existentes = [{ id: '9', nome: 'VPS', campos: [{ label: 'Senha', valor: 'p4ss' }] }];
+  const d = acharDuplicatas({ nome: 'VPS nova', campos: [{ label: 'Senha', valor: 'p4ss' }] }, existentes);
+  assert.ok(!/p4ss/.test(d[0].motivo), `segredo vazou no motivo: ${d[0].motivo}`);
+});
+
+test('basta um dos lados marcar sensivel para mascarar', () => {
+  const existentes = [{ id: '9', nome: 'Token X', campos: [{ label: 'Valor', valor: 'abc123' }] }];
+  const d = acharDuplicatas({ nome: 'Token Y', campos: [{ label: 'Valor', valor: 'abc123', sensivel: true }] }, existentes);
+  assert.ok(!/abc123/.test(d[0].motivo), `segredo vazou no motivo: ${d[0].motivo}`);
+});
+
+test('campo NAO sensivel segue mostrando o valor (e o que torna a mensagem util)', () => {
+  const existentes = [{ id: '9', nome: 'Gmail A', campos: [{ label: 'E-mail', valor: 'escola@gmail.com' }] }];
+  const d = acharDuplicatas({ nome: 'Gmail B', campos: [{ label: 'E-mail', valor: 'escola@gmail.com' }] }, existentes);
+  assert.equal(d[0].motivo, 'mesmo valor de campo: escola@gmail.com');
+});

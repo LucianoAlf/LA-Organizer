@@ -166,3 +166,36 @@ test('deleteCredencial: sem credId nem chama a RPC', async () => {
   assert.equal(rpcCalls, 0);
   assert.equal(r.ok, false);
 });
+
+// C-2 (review 04/09): a RPC faz `campos = coalesce(p_campos, g.campos)` no UPDATE.
+// `'[]'::jsonb` nao e null — mandar lista vazia num update parcial APAGAVA login e senha.
+test('upsertCredencial: campos ausente vai como null (nao apaga o que ja esta la)', async () => {
+  let params = null;
+  rpcImpl = async (_fn, p) => { params = p; return { data: 'uuid-1', error: null }; };
+  await upsertCredencial(ADMIN, { id: 'cred-1', nome: 'Canva', url_ref: 'https://novo' });
+  assert.equal(params.p_campos, null, 'sem campos => null, pro coalesce da RPC preservar');
+});
+
+test('upsertCredencial: campos [] tambem vai como null (update parcial nao destroi)', async () => {
+  let params = null;
+  rpcImpl = async (_fn, p) => { params = p; return { data: 'uuid-1', error: null }; };
+  await upsertCredencial(ADMIN, { id: 'cred-1', nome: 'Canva', campos: [] });
+  assert.equal(params.p_campos, null);
+});
+
+test('upsertCredencial: campos com item vai como lista', async () => {
+  let params = null;
+  rpcImpl = async (_fn, p) => { params = p; return { data: 'uuid-1', error: null }; };
+  const campos = [{ label: 'Senha', valor: 's3cr3t', sensivel: true }];
+  await upsertCredencial(ADMIN, { id: 'cred-1', nome: 'Canva', campos });
+  assert.deepEqual(params.p_campos, campos);
+});
+
+test('upsertCredencial: create sem campos segue valido (RPC faz coalesce p/ [] no insert)', async () => {
+  let params = null;
+  rpcImpl = async (_fn, p) => { params = p; return { data: 'uuid-novo', error: null }; };
+  const r = await upsertCredencial(ADMIN, { nome: 'Novo' });
+  assert.equal(r.ok, true);
+  assert.equal(params.p_cred_id, null, 'sem id => insert');
+  assert.equal(params.p_campos, null);
+});

@@ -69,7 +69,12 @@ async function upsertCredencial(collaboratorId, dados) {
       p_projeto: dados.projeto || null,
       p_url_ref: dados.url_ref || null,
       p_observacoes: dados.observacoes || null,
-      p_campos: Array.isArray(dados.campos) ? dados.campos : [],
+      // C-2 (review 04/09): no UPDATE a RPC faz `campos = coalesce(p_campos, g.campos)`.
+      // `'[]'::jsonb` NAO e null — mandar lista vazia num update parcial ("troca so o
+      // link do Canva") APAGAVA login e senha, sem aviso e sem volta. Ausencia vira null
+      // e o coalesce preserva o que ja esta la; no INSERT a RPC ja faz
+      // coalesce(p_campos, '[]'::jsonb), entao criar sem campo nenhum segue funcionando.
+      p_campos: Array.isArray(dados.campos) && dados.campos.length ? dados.campos : null,
     });
     if (error) {
       console.warn('[Credenciais] upsert erro:', _msgErro(error));
