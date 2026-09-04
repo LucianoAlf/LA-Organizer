@@ -10,52 +10,70 @@
 // mensagem tem credencial. O reconhecimento do modelo falha exatamente no
 // cenario em que o vazamento acontece.
 //
-// FIX ROUND 1 (C-1/C-2/C-3/I-1): rotulo e valor podem estar em linhas
-// diferentes (print de tela de login), rotulo pode estar colado a outra
-// palavra (senha_wifi, MinhaSenha), ";" tambem e separador, e valor de um
-// campo nao pode engolir o rotulo do campo seguinte na mesma linha.
+// REGRA DE OURO: na duvida entre mascarar demais e mascarar de menos,
+// mascara demais. Perder texto de diagnostico e barato; vazar senha nao e.
 //
-// FIX ROUND 2 (C-4/C-5/C-6): a correcao do C-1 tratava "rotulo pendente"
-// como um unico slot -- quando vinham DOIS rotulos empilhados sem valor
-// (exatamente o formato de print de tela: "Usuario:" / "Senha:" / "Token:"
-// cada um numa linha, valores depois), o segundo rotulo era consumido como
-// se fosse o valor do primeiro, e o valor de verdade saia em claro. Agora
-// rotulos pendentes formam uma FILA: acumula enquanto as linhas parecerem
-// "NomeDeCampo:" sem valor (mesmo que o nome nao seja um rotulo de segredo
-// conhecido, tipo "Login:" -- ele so nao teria disparado sozinho), e ao
-// achar a primeira linha que nao e rotulo, mascara as proximas K linhas
-// nao-vazias (K = tamanho do bloco acumulado), desde que ALGUM rotulo do
-// bloco seja de segredo -- senao nao ha motivo pra suspeitar de credencial
-// vindo e a fila e descartada sem mascarar nada.
-// Tambem corrigido: (C-5) a guarda de pergunta ("nao e valor") agora vale
-// no caminho entre linhas, nao so na mesma linha; e uma linha so vira
-// "rotulo pendente" se tiver ate 3 palavras antes do separador -- senao
-// "Deixa eu te contar um segredo:" apaga a proxima linha da conversa.
-// (C-6) com separador ESPACO (nao ":"/"="/";"), so dispara se o valor for
-// um unico token sem espaco com 4+ caracteres -- senao frase idiomatica tipo
-// "a chave da porta esta emprestada" vira "a chave ***".
+// ---------------------------------------------------------------------------
+// DESENHO (round 4) -- por que a "fila de rotulos pendentes" foi jogada fora
+// ---------------------------------------------------------------------------
+// Os rounds 1..3 mantinham uma fila de rotulos pendentes e classificavam uma
+// linha como "rotulo" pela FORMA (ate 3 palavras + separador + nada depois),
+// sem checar se a palavra era de fato um rotulo de segredo. Isso vazava dos
+// dois lados:
+//   'Senha:\nhunter2:\nrealvalue' -> 'Senha:\nhunter2:\n***'  (hunter2 lido
+//        como rotulo e devolvido em claro)
+//   'Senha:\nhunter2:'           -> intacto, achou=false      (vaza e nem
+//        sinaliza)
+//   'Senha:\nToken:\nvou te mandar por email.\nfalou.' apagava 2 frases de
+//        conversa real, porque o tamanho do bloco (K) mandava consumir N
+//        linhas seguintes independente do que elas fossem.
 //
-// FIX ROUND 3 (C-5.1): a guarda de pergunta do round 2 ABORTAVA a fila
-// inteira ao ver a primeira linha em formato de pergunta depois do rotulo
-// pendente -- mas pergunta nao ser o valor nao quer dizer que o valor nao
-// venha na linha seguinte ("Senha:\nvoce pode ajudar?\nhunter2" vazava
-// hunter2). Agora uma linha-pergunta so e pulada (nao mascara, nao fecha a
-// busca); quem fecha a busca de verdade e a primeira linha nao-pergunta
-// (mascarada) ou o estouro do orcamento de 3 linhas nao-vazias examinadas
-// depois do rotulo -- o que vier primeiro. Estourou sem resolver, a busca
-// para (silenciosamente, sem mascarar o que ainda nao tinha mascarado).
+// O desenho novo nao conta rotulos e nao tem K. Sao duas maquinas:
+//
+//   (A) MESMA LINHA -- inalterada desde o round 1/2:
+//       <nome do campo><separador><valor>. Dispara se o token de nome de campo
+//       imediatamente antes do separador, normalizado (minusculo, sem "_"/"-"),
+//       CONTIVER um dos rotulos conhecidos. Separadores ":", "=", ";" e espaco;
+//       com espaco so dispara se o valor for um unico token sem espacos com 4+
+//       caracteres. Dois campos na mesma linha mascaram separadamente.
+//
+//   (B) MODO "as proximas linhas sao valores":
+//       - LIGA quando uma linha e <nome do campo><separador de pontuacao> e
+//         nada depois, E esse nome contem um rotulo CONHECIDO. Forma sozinha
+//         nunca liga o modo -- essa e a correcao da causa raiz.
+//       - Com o modo ligado, cada linha nao vazia e mascarada INTEIRA, sem
+//         tentar adivinhar se ela e "mais um rotulo". 'hunter2:' mascara,
+//         'Token:' mascara. Perder o rotulo no log e sobre-redacao aceitavel.
+//       - DESLIGA por prosa: linha com 3+ palavras que nao termina em "?".
+//         Ela nao e mascarada e fecha o modo -- e o que devolve
+//         'vou te mandar por email.' ao log.
+//       - DESLIGA por teto: depois de 5 linhas mascaradas.
+//       - PERGUNTA e pulada, nao fecha: linha que termina em "?" (ou comeca
+//         com "?"/"!"/"."), com orcamento de 3 pulos. Preserva
+//         'Senha:\nvoce pode ajudar?\nhunter2'.
+//       - Linha em branco nao mascara, nao gasta orcamento e nao fecha.
+//       - Linha nao mascarada (prosa ou pergunta) ainda passa pela maquina (A):
+//         'Senha:\naqui esta a minha token: xyz123' fecha o modo por prosa mas
+//         o campo inline continua sendo mascarado.
 
 const MASCARA = '***';
 
 // Usados como CONTAINS (nao igualdade) contra o token de nome de campo --
 // a sequencia [A-Za-z0-9_-] imediatamente antes do separador, normalizada em
-// minusculo e sem "_"/"-". De proposito permissivo (C-2): perder precisao
-// tipo mascarar "resenha: x" e aceitavel; deixar "senha_wifi" vazar nao e.
+// minusculo e sem "_"/"-". De proposito permissivo: perder precisao tipo
+// mascarar "resenha: x" e aceitavel; deixar "senha_wifi" vazar nao e.
 const ROTULOS_BASE = ['senha', 'password', 'passwd', 'pwd', 'token', 'apikey', 'chave', 'secret', 'segredo'];
 
 // "api key" tem espaco de verdade entre as palavras -- nao cai na classe de
 // caracteres [A-Za-z0-9_-] do token generico, entao tem regra propria.
 const RE_API_KEY = /^api[ _-]?key$/i;
+
+// Teto de linhas mascaradas pelo modo antes de ele fechar sozinho.
+const TETO_MASCARAS = 5;
+// Orcamento de linhas-pergunta que o modo pode pular antes de fechar.
+const ORCAMENTO_PULOS = 3;
+// A partir de quantas palavras uma linha nao-pergunta conta como prosa.
+const MIN_PALAVRAS_PROSA = 3;
 
 function _normalizaToken(tok) {
   return String(tok).toLowerCase().replace(/[_-]/g, '');
@@ -70,25 +88,30 @@ function _tokenValido(tok) {
 // <token><separador>. A fronteira antes do token e lookbehind (nao consome
 // caractere) de proposito: se fosse capturada e consumida, o candidato
 // seguinte na mesma linha perderia a fronteira que o candidato anterior
-// "comeu" -- e e exatamente esse o motivo do I-1. Separador: ":", "=", ";"
-// ou um espaco/tab (aceita zero ou mais espacos/tabs soltos antes dele).
+// "comeu". Separador: ":", "=", ";" ou um espaco/tab (aceita zero ou mais
+// espacos/tabs soltos antes dele).
 const RE_CAMPO = /(?:^|(?<=[\s(\[]))(api[ _-]?key|[A-Za-z0-9_-]+)[ \t]*([:=;]|[ \t])/gi;
-
-// Linha inteira igual a "ate 3 palavras" + separador de pontuacao + nada
-// alem de espaco ate o fim. Usado para: (a) C-5, so promove uma linha a
-// "rotulo pendente" se tiver essa cara -- senao uma frase que termina em
-// "segredo:" (6 palavras) apaga a linha seguinte inteira; (b) fila do C-4,
-// pra reconhecer linhas tipo "Login:" que nao sao rotulo de segredo mas
-// ainda fazem parte do bloco de campos empilhados.
-const RE_FORMA_ROTULO = /^[ \t]*((?:\S+[ \t]+){0,2}\S+)[ \t]*[:=;][ \t]*$/;
 
 function _ehPergunta(v) {
   return /^[?!.]/.test(v) || /\?$/.test(v);
 }
 
-// C-6: com separador de pontuacao, comportamento de sempre. Com espaco, so
-// conta como valor se for um unico token colado (sem espaco) e com 4+
-// caracteres -- formato real de credencial colada, nao de frase comum.
+function _contaPalavras(v) {
+  const t = v.trim();
+  if (!t) return 0;
+  return t.split(/\s+/).length;
+}
+
+// Prosa = conversa de verdade, nao valor de campo. Quem chama ja descartou o
+// caso pergunta (que termina em "?"), entao aqui basta a contagem de palavras.
+function _ehProsa(v) {
+  return _contaPalavras(v) >= MIN_PALAVRAS_PROSA;
+}
+
+// Com separador de pontuacao, qualquer resto de linha conta como valor. Com
+// ESPACO, so conta se for um unico token colado (sem espaco) e com 4+
+// caracteres -- formato real de credencial colada, nao de frase comum. Sem
+// isso, "a chave da porta esta emprestada" viraria "a chave ***".
 function _valorQualifica(sepEhPontuacao, v) {
   if (sepEhPontuacao) return true;
   return !/\s/.test(v) && v.length >= 4;
@@ -108,6 +131,10 @@ function _acharProximoCampo(linha, from) {
   return null;
 }
 
+// Maquina (A): mascara os pares <campo><sep><valor> DENTRO de uma linha.
+// Devolve tambem `pendente`: a linha termina com um rotulo CONHECIDO seguido
+// de separador de pontuacao e nada depois -- ou seja, o valor deve vir nas
+// proximas linhas. So isso liga o modo da maquina (B).
 function _processaLinha(linha) {
   let achou = false;
   let pendente = false;
@@ -125,8 +152,8 @@ function _processaLinha(linha) {
     out += linha.slice(pos, campo.start);
 
     const sepEhPontuacao = campo.sepChar === ':' || campo.sepChar === '=' || campo.sepChar === ';';
-    // I-1: o valor deste campo para no proximo campo valido da mesma linha,
-    // nao no fim dela -- senao engole o rotulo seguinte inteiro.
+    // O valor deste campo para no proximo campo valido da mesma linha, nao no
+    // fim dela -- senao engole o rotulo seguinte inteiro.
     const proximo = _acharProximoCampo(linha, campo.matchEnd);
     const valorEnd = proximo ? proximo.start : linha.length;
     const valorRaw = linha.slice(campo.matchEnd, valorEnd);
@@ -134,11 +161,9 @@ function _processaLinha(linha) {
     const sepOut = /\s/.test(campo.sepChar) ? ' ' : `${campo.sepChar} `;
 
     if (!v) {
-      // C-1: separador de pontuacao e nada mais na linha -- o valor pode
-      // estar na proxima linha nao vazia (print de tela de login).
-      // C-5: so conta como "rotulo pendente" se a linha toda parecer nome
-      // de campo (ate 3 palavras) -- ver RE_FORMA_ROTULO.
-      if (sepEhPontuacao && !proximo && RE_FORMA_ROTULO.test(linha)) pendente = true;
+      // Rotulo conhecido + pontuacao + nada depois: o valor vem nas proximas
+      // linhas (print de tela de login, campo digitado em mensagens separadas).
+      if (sepEhPontuacao && !proximo) pendente = true;
       out += linha.slice(campo.start, valorEnd);
       pos = valorEnd;
       continue;
@@ -152,7 +177,7 @@ function _processaLinha(linha) {
 
     achou = true;
     out += `${campo.token}${sepOut}${MASCARA}`;
-    // Preserva o espaco entre esta credencial e a proxima (I-1): sem isso
+    // Preserva o espaco entre esta credencial e a proxima: sem isso
     // "senha: abc token: xyz" vira "senha: ***token: ***" (sem espaco).
     const espacoFinal = valorRaw.length - valorRaw.replace(/\s+$/, '').length;
     pos = valorEnd - espacoFinal;
@@ -164,72 +189,64 @@ function _processaLinha(linha) {
 function redigirSegredos(texto) {
   if (!texto || typeof texto !== 'string') return { texto: '', achou: false };
 
-  const partes = texto.split(/(\r\n|\r|\n)/); // conteudo e separador de linha alternados
+  const partes = texto.split(/(\r\n|\r|\n)/); // conteudo e separador alternados
   let achou = false;
 
-  // Fila de rotulos pendentes (C-4): filaTamanho conta quantas linhas
-  // seguidas parecem "NomeDeCampo:" sem valor; filaTemSecreto marca se
-  // alguma delas e de fato um rotulo de segredo conhecido (Senha, Token...).
-  // "Login:" sozinho entra na conta do tamanho mas nao liga filaTemSecreto.
-  let filaTamanho = 0;
-  let filaTemSecreto = false;
+  // Maquina (B): "as proximas linhas sao valores".
+  let modo = false;
+  let mascaradas = 0;
+  let pulos = 0;
 
-  // Busca do valor (C-5.1), ativa depois que a fila fecha: restanteMascarar
-  // e quantas linhas ainda faltam mascarar para completar o bloco;
-  // tentativas e o orcamento de linhas nao-vazias que a busca ainda pode
-  // examinar antes de desistir (pergunta nao mascara mas GASTA orcamento).
-  let buscando = false;
-  let restanteMascarar = 0;
-  let tentativas = 0;
+  function ligaModo() {
+    modo = true;
+    mascaradas = 0;
+    pulos = 0;
+  }
 
-  // Avalia uma linha como candidata a valor durante a busca. Pergunta pula
-  // (nao mascara, nao fecha a fila) sem contar como resolvida; nao-pergunta
-  // mascara e abate uma unidade do bloco. Em ambos os casos gasta orcamento;
-  // zerou o orcamento ou o bloco, a busca encerra.
-  function avaliaCandidato(i, linha) {
-    if (linha.trim() === '') return; // linha em branco nao gasta orcamento
-    tentativas -= 1;
-    if (!_ehPergunta(linha.trim())) {
-      partes[i] = MASCARA;
-      achou = true;
-      restanteMascarar -= 1;
-    }
-    if (restanteMascarar <= 0 || tentativas <= 0) buscando = false;
+  // Roda a maquina (A) na linha e grava o resultado. Devolve o `pendente`
+  // para quem decide se o modo (re)liga.
+  function aplicaMesmaLinha(i, linha) {
+    const r = _processaLinha(linha);
+    partes[i] = r.texto;
+    if (r.achou) achou = true;
+    return r.pendente;
   }
 
   for (let i = 0; i < partes.length; i += 2) {
     const linha = partes[i];
+    const conteudo = linha.trim();
 
-    if (buscando) {
-      avaliaCandidato(i, linha);
+    if (modo) {
+      // Linha em branco: nao mascara, nao gasta orcamento, nao fecha.
+      if (conteudo === '') continue;
+
+      // Pergunta: pulada, o modo continua ligado (o valor pode vir depois).
+      if (_ehPergunta(conteudo)) {
+        const pendente = aplicaMesmaLinha(i, linha);
+        pulos += 1;
+        if (pendente) ligaModo();
+        else if (pulos >= ORCAMENTO_PULOS) modo = false;
+        continue;
+      }
+
+      // Prosa: conversa de verdade. Nao mascara e fecha o modo.
+      if (_ehProsa(conteudo)) {
+        const pendente = aplicaMesmaLinha(i, linha);
+        modo = false;
+        if (pendente) ligaModo();
+        continue;
+      }
+
+      // Qualquer outra linha e valor: mascara INTEIRA, sem tentar adivinhar
+      // se e "mais um rotulo".
+      partes[i] = MASCARA;
+      achou = true;
+      mascaradas += 1;
+      if (mascaradas >= TETO_MASCARAS) modo = false;
       continue;
     }
 
-    const r = _processaLinha(linha);
-    partes[i] = r.texto;
-    if (r.achou) achou = true;
-
-    const pareceRotulo = RE_FORMA_ROTULO.test(linha);
-    if (pareceRotulo) {
-      filaTamanho += 1;
-      if (r.pendente) filaTemSecreto = true;
-    } else if (linha.trim() !== '') {
-      // Primeira linha que nao parece rotulo: fecha o bloco acumulado e
-      // abre a busca pelo valor, processando esta mesma linha como a
-      // primeira candidata (C-5.1: pode ser pergunta e nao resolver ainda).
-      if (filaTamanho > 0 && filaTemSecreto) {
-        buscando = true;
-        restanteMascarar = filaTamanho;
-        tentativas = 3; // C-5.1: no maximo 3 linhas nao-vazias de espera
-        filaTamanho = 0;
-        filaTemSecreto = false;
-        avaliaCandidato(i, linha);
-      } else {
-        filaTamanho = 0;
-        filaTemSecreto = false;
-      }
-    }
-    // Linha em branco no meio do bloco: nao conta e nao fecha, so espera.
+    if (aplicaMesmaLinha(i, linha)) ligaModo();
   }
 
   return { texto: partes.join(''), achou };
