@@ -40,4 +40,39 @@ function pautaDoDia(pessoas, diaSemana) {
   return saida.sort((a, b) => a.hora.localeCompare(b.hora));
 }
 
-module.exports = { diaDaAula, horaDaAula, pautaDoDia, DIAS };
+// ── A ESCADA ──────────────────────────────────────────────────────────────────────────────
+// Conta APARIÇÕES falhadas, não cliques: contar "a equipe tentou" faria a escalada depender de
+// todo mundo marcar checkbox certinho todo dia, e isso quebra na primeira semana corrida.
+function degrau(falhas) {
+  const n = Number(falhas) || 0;
+  if (n >= 2) return 3;
+  return n === 1 ? 2 : 1;
+}
+
+function tituloDaFilha({ pessoa, hora, curso }, falhas) {
+  const base = `${hora} Anamnese — ${pessoa.nome}${curso ? ` (${curso})` : ''}`;
+  return degrau(falhas) === 2 ? `${base} ⚠️ 2ª semana — não preencheu na anterior` : base;
+}
+
+function tituloDaEscalada(pessoa, falhas) {
+  const n = Number(falhas) || 0;
+  return `Mandar link da anamnese — ${pessoa.nome} (${n} semanas sem preencher)`;
+}
+
+// Degrau 3 SAI da pauta: no terceiro encontro o problema deixou de ser "lembrar na aula".
+// `mapaFalhas` null (erro de leitura) → todo mundo é 1ª vez. Nunca escalar no escuro.
+function separarPorDegrau(itens, mapaFalhas) {
+  const pauta = [];
+  const escalados = [];
+  for (const item of (itens || [])) {
+    const falhas = mapaFalhas ? (mapaFalhas.get(item.pessoa.pessoa_chave) || 0) : 0;
+    if (degrau(falhas) === 3) escalados.push({ ...item, falhas });
+    else pauta.push({ ...item, falhas });
+  }
+  return { pauta, escalados };
+}
+
+module.exports = {
+  diaDaAula, horaDaAula, pautaDoDia, DIAS,
+  degrau, tituloDaFilha, tituloDaEscalada, separarPorDegrau,
+};
