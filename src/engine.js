@@ -10658,22 +10658,33 @@ async function processMessage(phone, text, raw = {}) {
         // a reversão (scripts/prova-confirm-create-gate.js).
         const { podeLiberarCriacao } = require('./utils/confirm-create-gate');
         const _gateOn = process.env.TOM_CONFIRM_CREATE_GATE !== '0';
-        const _liberaCriacao = _gateOn && !hasConcrete && podeLiberarCriacao(target.question_text);
+        // CREDENCIAL (04/09) — Camada 2 do caso Hugo 17:21. Se o TOM propos cadastrar uma
+        // credencial SEM marker, a intent que nasce aqui e generica, e o ramo de baixo mandava
+        // pedir os dados de novo — com os dados na propria pergunta. Vem ANTES e VETA o
+        // create-gate de propósito: `podeLiberarCriacao` casa com "vou registrar", entao uma
+        // proposta de credencial poderia virar TAREFA nova — com o segredo dentro do titulo.
+        // A Camada 1 (retry no mesmo turno, ~11623) e quem deveria ter evitado chegar aqui;
+        // esta e a rede, e as duas juntas nunca devolvem "me manda os dados de novo".
+        const { pareceEscritaDeCredencial } = require('./lib/credencial-retry-gate');
+        const _liberaCredencial = !hasConcrete && pareceEscritaDeCredencial(target.question_text);
+        const _liberaCriacao = _gateOn && !hasConcrete && !_liberaCredencial && podeLiberarCriacao(target.question_text);
         // FATIA 8: análogo do create-gate para RECADO implícito. Se a pergunta é proposta de recado
         // e o usuário confirmou, instrui o LLM a compor+emitir COORDINATION_REQUEST — e o handler
         // despacha DIRETO (preConfirmed, sem re-estagiar/loopar). Flag de rollback
         // TOM_CONFIRM_RECADO_GATE=0. Só quando NÃO é criação (create-gate tem precedência).
         const { podeLiberarRecado } = require('./coordination/confirm-coord-gate');
         const _liberaRecado = process.env.TOM_CONFIRM_RECADO_GATE !== '0' && !hasConcrete
-          && !_liberaCriacao && podeLiberarRecado(target.question_text);
+          && !_liberaCriacao && !_liberaCredencial && podeLiberarRecado(target.question_text);
         if (_liberaRecado) _metrics.recado_preconfirmed = true;
         let markerRule = hasConcrete
           ? 'Emita o marker apropriado APENAS para os itens do payload acima (ex: <<TASK_UPDATE>> com action=create para cada draft). NÃO crie, edite ou reagende NENHUM item que não esteja no payload.'
-          : (_liberaCriacao
+          : (_liberaCredencial
+            ? 'O payload não tem ids, MAS a pergunta acima é uma proposta de CADASTRO/ALTERAÇÃO DE CREDENCIAL que VOCÊ mesmo formulou e o usuário aprovou. Emita <<CREDENCIAL_ACTION>> reproduzindo EXATAMENTE o que você propôs ali — mesmo nome, mesmos campos, mesmos valores, letra por letra. NÃO invente nenhum valor, NÃO complete nada de conhecimento próprio e NÃO peça os dados de novo: eles estão na sua própria proposta acima. NÃO toque em nenhuma outra credencial, tarefa ou evento.'
+            : (_liberaCriacao
             ? 'O payload não tem ids, MAS a pergunta acima é uma proposta de CRIAÇÃO que VOCÊ mesmo formulou e o usuário aprovou. Emita o marker de criação (action=create) reproduzindo EXATAMENTE os dados que você propôs ali — mesmo título, mesma data, mesma hora, mesma pessoa. NÃO invente nenhum dado que não esteja na sua proposta. E NÃO edite, reagende, conclua, delegue nem apague NENHUM item já existente.'
             : (_liberaRecado
               ? 'O payload não tem ids, MAS a pergunta acima é um RECADO/aviso que VOCÊ mesmo propôs e o usuário aprovou. Emita <<COORDINATION_REQUEST>> para o destinatário que você citou ali, compondo a mensagem FIEL à intenção que você propôs — mesmo destinatário, mesmo teor. NÃO invente destinatário nem mude o assunto. NÃO edite, reagende, conclua, delegue nem apague NENHUM item existente.'
-              : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.'));
+              : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.')));
 
         // TASK-HONESTY-NEGA-BAIXA-FEITA (Kailane 12/08 19:21) — irmão do COORD-HONESTY nas TAREFAS.
         // A instrução acima afirma o ABSOLUTO "você NÃO consegue executar isso agora", mas sua
@@ -10684,7 +10695,7 @@ async function processMessage(phone, text, raw = {}) {
         // tasks.completed_at. A proibição de emitir marker NÃO é afrouxada — o perigo do LLM
         // chutar alvo (Rose 10/06) continua barrado; o que muda é não poder negar o que existe.
         // Consulta só neste ramo (raro) e falha-aberta: sem a leitura, vale a regra original.
-        if (!hasConcrete && !_liberaCriacao) {
+        if (!hasConcrete && !_liberaCriacao && !_liberaCredencial) {
           try {
             const { concluidasRecentes, regraComConclusaoRecente, JANELA_PADRAO_MIN } = require('./lib/task-done-recente');
             const _desde = new Date(Date.now() - JANELA_PADRAO_MIN * 60_000).toISOString();
@@ -10713,10 +10724,14 @@ async function processMessage(phone, text, raw = {}) {
             // O que o gate libera vai num tipo próprio — os dois somados reproduzem a série
             // antiga, então dá pra ver a migração de um balde pro outro em vez de um sumiço.
             await logMarker(collab.id,
-              _liberaCriacao ? 'CONFIRM_CREATE_ALLOWED' : 'CONFIRM_NOEXEC',
-              _liberaCriacao ? 'redirected' : 'skipped',
+              _liberaCredencial ? 'CONFIRM_CREDENCIAL_ALLOWED' : (_liberaCriacao ? 'CONFIRM_CREATE_ALLOWED' : 'CONFIRM_NOEXEC'),
+              (_liberaCredencial || _liberaCriacao) ? 'redirected' : 'skipped',
               `kind=${target.kind}`,
-              String(target.question_text || '').slice(0, 200));
+              // A pergunta do TOM vai pro raw_excerpt de marker_logs, que o relatorio das 7h
+              // transmite por WhatsApp aos diretores. Numa proposta de credencial ela carrega
+              // os valores em claro — redige antes de gravar (fail-closed: erro = omite).
+              (() => { try { return redigirSegredos(String(target.question_text || '')).texto.slice(0, 200); }
+                catch (_) { return '[redacao falhou — pergunta omitida]'; } })());
           } catch (_) { /* telemetria nunca quebra o turno */ }
         }
         const ctxHint = `\n\n[CONTEXTO INTERNO — não verbalize ao usuário]\nVocê tinha aberto uma intent (${target.kind}) com a pergunta: "${(target.question_text || '').slice(0, 200)}".\nPayload pendente: ${payloadStr}\nO usuário CONFIRMOU. ${markerRule}`;
@@ -11618,6 +11633,87 @@ async function processMessage(phone, text, raw = {}) {
   } catch (e) {
     // Nunca derruba a mensagem. Fail-closed: qualquer erro aqui significa que NAO gravou.
     console.warn('[CredencialConfirm] falhou:', e instanceof Error ? e.message : String(e));
+  }
+
+  // ---- RETRY DE CREDENCIAL SEM MARKER (04/09) — Camada 1 ----
+  // Caso Hugo 04/09 17:21: o TOM escreveu "Vou cadastrar:\n*Conta do Google Ads*\nLogin: ...
+  // \nSenha: ...\n\nConfirma?" SEM emitir <<CREDENCIAL_ACTION>>. Sem marker o executor
+  // abaixo nunca roda, nenhuma intent `credencial_write` nasce, e o "isso" do turno seguinte
+  // cai no auto-resolve GENERICO (~10676), cujo ramo sem payload concreto manda o modelo
+  // pedir os dados de novo. Foi o engine que ditou aquele "me manda os dados de novo" — com
+  // os dados dois turnos acima. E a mesma classe do ACTIONABLE_NO_MARKER (a falha #1 do
+  // projeto), so que aqui ela ainda ECOA A SENHA em texto claro, porque quem escreveu a
+  // confirmacao foi o modelo e nao o executor (que mascara).
+  //
+  // O conserto e no MESMO TURNO, nao no seguinte: aqui a mensagem crua da pessoa ainda esta
+  // em maos, entao da pra converter a fala em marker e cair no caminho normal. O executor
+  // abaixo entao reescreve a resposta com os valores mascarados e abre a confirmacao — a
+  // pessoa nao percebe nada, nao repete nada. Mesmo espirito do AUTO_RETRY de TASK_UPDATE
+  // (~14238), com prompt proprio porque o schema e outro.
+  //
+  // Guardas (todas necessarias, nenhuma redundante):
+  //  - `_credenciaisNoTurno` false: a LEITURA (two-pass) ja ligou essa flag e devolve ficha
+  //    com rotulos reais; sem esta guarda uma resposta de consulta viraria proposta de
+  //    escrita. O gate puro NAO se defende disso sozinho — esta anotado la.
+  //  - `_isMarkerRetry`: o retry de tarefa reentra no pipeline; nao encadear retries.
+  //  - admin ANTES da chamada: nao gasta LLM e nao encena cadastro pra quem nao pode.
+  // Fail-closed em tudo: qualquer erro deixa a resposta do modelo como estava.
+  try {
+    const { pareceEscritaDeCredencial } = require('./lib/credencial-retry-gate');
+    const _semMarker = !/<<CREDENCIAL_ACTION>>/i.test(String(reply || ''));
+    if (_semMarker && !_credenciaisNoTurno && !(raw && raw._isMarkerRetry)
+        && pareceEscritaDeCredencial(String(reply || ''))) {
+      const { getCredenciaisPara } = require('./services/credenciais');
+      const { isAdmin } = await getCredenciaisPara(collab.id);
+      if (!isAdmin) {
+        // Nao e admin: nada a converter. Nao logo como falha nem mudo a resposta — o
+        // executor abaixo nem roda (sem marker), e a negativa neutra continua sendo dele.
+        console.log('[CredencialRetry] fala de escrita sem marker, mas colaborador nao e admin — ignorado');
+      } else {
+        const _msgPessoa = stripReplyScaffold(String(inboundVerbatimText || '')).userText;
+        const _retrySys = `Você é um conversor mecânico texto→marker. Sua única saída é UM marker JSON, sem nenhum texto fora dele.
+
+O TOM (você) acabou de propor cadastrar/alterar uma credencial, mas esqueceu de emitir o marker. Converta a proposta abaixo no marker — sem inventar nada.
+
+- Mensagem da pessoa: "${_msgPessoa.slice(0, 1200)}"
+- O que você respondeu: "${String(reply || '').slice(0, 1200)}"
+
+Formato (exatamente este):
+<<CREDENCIAL_ACTION>>
+{"action":"create","nome":"Conta do Google Ads","servico":"Google","categoria":"plataforma","projeto":"Marketing","url_ref":"https://ads.google.com","observacoes":"","campos":[{"label":"E-mail","valor":"a@b.com","sensivel":false},{"label":"Senha","valor":"xxx","sensivel":true}]}
+<<END>>
+
+Regras:
+- \`action\` é **create**, **update** ou **delete**. Nunca outra coisa.
+- Em **create**, \`nome\` é obrigatório. Em **update**/**delete**, use \`alvo\` (nome da credencial existente) no lugar de \`nome\`.
+- \`categoria\` só aceita: whatsapp, api_key, token, vps, social, email, plataforma, outro. Na dúvida use **outro**.
+- \`sensivel: true\` em senha, token, chave e qualquer segredo; e-mail, login, URL e telefone são false.
+- Os valores dos campos são os da mensagem da pessoa, copiados LETRA POR LETRA. Não corrija, não complete, não invente nenhum valor que não esteja ali.
+- Se a proposta não for de credencial, ou se faltar dado pra montar o marker, retorne literalmente: NO_MARKER
+
+Output AGORA, apenas o marker:`;
+        const _resp = await ai.chat(_retrySys, [{ role: 'user', content: 'Emita o marker correto.' }]);
+        const _txt = String(_resp?.text || _resp?.reply || _resp?.content || '');
+        const { parseCredencialAction } = require('./lib/credencial-action');
+        const _m = _txt.match(/<<CREDENCIAL_ACTION>>[\s\S]*?<<END>>/i);
+        if (_txt && !/NO_MARKER/i.test(_txt) && _m && parseCredencialAction(_m[0])) {
+          // Anexa o marker a resposta do modelo. O executor abaixo assume dali: apaga a
+          // inbound, tira o marker do texto e SUBSTITUI a resposta pelo resumo mascarado —
+          // ou seja, a fala com a senha em claro nem chega a ser enviada.
+          reply = `${String(reply || '')}\n${_m[0]}`;
+          await logMarker(collab.id, 'CREDENCIAL_RETRY', 'executed', 'marker_recuperado', null);
+          console.log('[CredencialRetry] fala sem marker convertida — executor assume o turno');
+        } else {
+          // Nao converteu: a resposta do modelo segue como esta. Fica o registro, que e o
+          // que permite medir se a Camada 1 esta pegando (cruzar com CREDENCIAL_ACTION).
+          await logMarker(collab.id, 'CREDENCIAL_RETRY', 'rejected',
+            _txt ? 'sem_marker_valido' : 'resposta_vazia', null);
+          console.warn('[CredencialRetry] retry nao produziu marker valido — resposta do modelo mantida');
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[CredencialRetry] falhou (non-fatal):', e instanceof Error ? e.message : String(e));
   }
 
   // ---- EXECUTOR DETERMINISTICO <<CREDENCIAL_ACTION>> (03/09) ----

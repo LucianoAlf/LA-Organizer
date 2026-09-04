@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ENGINE = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
-const INICIO = '        if (!hasConcrete && !_liberaCriacao) {';
+const INICIO = '        if (!hasConcrete && !_liberaCriacao && !_liberaCredencial) {';
 const FIM = "          } catch (e) { console.warn('[TaskHonesty] lookup err (non-fatal):', e.message); }";
 
 function extrairBloco() {
@@ -25,13 +25,14 @@ function extrairBloco() {
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-async function rodarBloco({ doneRows, hasConcrete = false, liberaCriacao = false }) {
+async function rodarBloco({ doneRows, hasConcrete = false, liberaCriacao = false, liberaCredencial = false }) {
   const marcadores = [];
   const REGRA = 'REGRA ORIGINAL: você NÃO consegue executar isso agora. NÃO emita marker nenhum. peça pra pessoa repetir.';
   const ctx = {
     markerRule: REGRA,
     hasConcrete,
     _liberaCriacao: liberaCriacao,
+    _liberaCredencial: liberaCredencial,
     collab: { id: 'collab-teste' },
     logMarker: async (...a) => { marcadores.push(a); },
     supabase: {
@@ -45,7 +46,7 @@ async function rodarBloco({ doneRows, hasConcrete = false, liberaCriacao = false
     require: (p) => require(p.replace('./lib/', './')),
   };
   const fn = new AsyncFunction('ctx', `
-    let { markerRule, hasConcrete, _liberaCriacao, collab, logMarker, supabase, require } = ctx;
+    let { markerRule, hasConcrete, _liberaCriacao, _liberaCredencial, collab, logMarker, supabase, require } = ctx;
     const console = { log(){}, warn(){} };
     ${extrairBloco()}
     ctx.markerRule = markerRule;
@@ -86,13 +87,13 @@ test('WIRING: erro na consulta é não-fatal e preserva a regra', async () => {
   const marcadores = [];
   const REGRA = 'REGRA ORIGINAL';
   const ctx = {
-    markerRule: REGRA, hasConcrete: false, _liberaCriacao: false,
+    markerRule: REGRA, hasConcrete: false, _liberaCriacao: false, _liberaCredencial: false,
     collab: { id: 'x' }, logMarker: async (...a) => { marcadores.push(a); },
     supabase: { from: () => { throw new Error('banco fora'); } },
     require: (p) => require(p.replace('./lib/', './')),
   };
   const fn = new AsyncFunction('ctx', `
-    let { markerRule, hasConcrete, _liberaCriacao, collab, logMarker, supabase, require } = ctx;
+    let { markerRule, hasConcrete, _liberaCriacao, _liberaCredencial, collab, logMarker, supabase, require } = ctx;
     const console = { log(){}, warn(){} };
     ${extrairBloco()}
     ctx.markerRule = markerRule;
@@ -110,4 +111,16 @@ test('WIRING: o ramo de liberação de criação não é tocado', async () => {
 test('WIRING: payload concreto não paga a consulta nem muda de regra', async () => {
   const r = await rodarBloco({ doneRows: [{ title: 'X', completed_at: AGORA() }], hasConcrete: true });
   assert.strictEqual(r.markerRule, r.REGRA);
+});
+
+// Proposta de CREDENCIAL (04/09): aquele ramo ja manda reproduzir o que o TOM propos. Deixar
+// o TaskHonesty entrar ali paga uma consulta a `tasks` a toa e ainda anexa uma frase sobre
+// baixa de tarefa numa regra que fala de credencial.
+test('WIRING: proposta de credencial nao paga a consulta nem muda de regra', async () => {
+  const r = await rodarBloco({
+    doneRows: [{ title: 'Fechar caixa', completed_at: AGORA() }],
+    liberaCredencial: true,
+  });
+  assert.strictEqual(r.markerRule, r.REGRA, 'a regra de credencial foi contaminada pelo TaskHonesty');
+  assert.strictEqual(r.marcadores.length, 0, 'gravou marker de baixa recente num turno de credencial');
 });

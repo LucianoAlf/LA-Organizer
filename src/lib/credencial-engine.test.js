@@ -46,6 +46,7 @@ const iEfetivo = exigir(idx((l) => l.startsWith('function _resumoCredencialEfeti
 const iHelperEnd = exigir(idx((l) => l === '}', iEfetivo), 'fim de _resumoCredencialEfetivo');
 const iTwoPass = exigir(idx((l) => l.includes('TWO-PASS <<PEDIR_CREDENCIAIS>>')), 'bloco TWO-PASS');
 const iConfirm = exigir(idx((l) => l.includes('---- CONFIRMACAO de escrita de credencial pendente')), 'bloco CredencialConfirm');
+const iRetry = exigir(idx((l) => l.includes('---- RETRY DE CREDENCIAL SEM MARKER')), 'bloco CredencialRetry');
 const iExec = exigir(idx((l) => l.includes('---- EXECUTOR DETERMINISTICO <<CREDENCIAL_ACTION>>')), 'bloco EXECUTOR');
 const iExecEnd = exigir(idx((l) => l.includes("console.warn('[CredencialAction] falhou:"), iExec), 'catch do EXECUTOR');
 
@@ -53,21 +54,27 @@ test('ORDEM: TWO-PASS vem antes da confirmacao, que vem antes do executor', () =
   // Se o executor rodasse antes, um "confirma" abriria uma intent NOVA em vez de resolver
   // a pendente — e a escrita nunca aconteceria.
   assert.ok(iTwoPass < iConfirm, `TWO-PASS (${iTwoPass}) tem de vir antes da confirmacao (${iConfirm})`);
-  assert.ok(iConfirm < iExec, `confirmacao (${iConfirm}) tem de vir antes do executor (${iExec})`);
+  assert.ok(iConfirm < iRetry, `confirmacao (${iConfirm}) tem de vir antes do retry (${iRetry})`);
+  // O retry ANEXA o marker na resposta; se rodasse depois do executor, o executor nao veria
+  // marker nenhum e o turno seguiria com a fala do modelo — senha em claro na tela e nada
+  // gravado, que e exatamente o bug que ele conserta.
+  assert.ok(iRetry < iExec, `retry (${iRetry}) tem de vir antes do executor (${iExec})`);
 });
 
 const helperSrc = lines.slice(iHelper, iHelperEnd + 1).join('\n');
-const confirmSrc = lines.slice(iConfirm, iExec).join('\n');
+const confirmSrc = lines.slice(iConfirm, iRetry).join('\n');
+const retrySrc = lines.slice(iRetry, iExec).join('\n');
 const execSrc = lines.slice(iExec, iExecEnd + 2).join('\n');
 
 const body = `
 ${helperSrc}
 return async function run(ctx) {
-  const { collab, logMarker, withinConfirmWindow, FRESH_WINDOW_MIN, stripReplyScaffold, _metrics, inboundVerbatimText, _inboundWaId } = ctx;
+  const { collab, logMarker, withinConfirmWindow, FRESH_WINDOW_MIN, stripReplyScaffold, _metrics, inboundVerbatimText, _inboundWaId, ai, raw } = ctx;
   let reply = ctx.reply;
   let _credenciaisNoTurno = ctx._credenciaisNoTurno === true;
   let _pendingIntentToResolve = ctx._pendingIntentToResolve;
 ${confirmSrc}
+${retrySrc}
 ${execSrc}
   return { reply, _credenciaisNoTurno, _pendingIntentToResolve };
 };`;
@@ -85,6 +92,7 @@ const stubs = {
   './services/user-confirmation': require(path.join(ROOT, 'services/user-confirmation.js')),
   './lib/credencial-action': require(path.join(ROOT, 'lib/credencial-action.js')),
   './lib/credencial-duplicata': require(path.join(ROOT, 'lib/credencial-duplicata.js')),
+  './lib/credencial-retry-gate': require(path.join(ROOT, 'lib/credencial-retry-gate.js')),
 };
 const stubRequire = (m) => {
   if (!(m in stubs) || stubs[m] === null) throw new Error('require nao stubado: ' + m);
@@ -103,6 +111,9 @@ function ctxBase(over) {
     _inboundWaId: 'WA-TURNO',
     _metrics: {},
     _pendingIntentToResolve: null,
+    raw: {},
+    // Default: o retry NUNCA chama o modelo. Cada cenario que quiser exercita-lo passa o seu.
+    ai: { chat: async () => { throw new Error('ai.chat chamado sem cenario de retry'); } },
     withinConfirmWindow,
     FRESH_WINDOW_MIN,
     stripReplyScaffold,
@@ -817,4 +828,178 @@ test('inbound: CREDENCIAL_INBOUND_APAGADA esta na lista de markers NAO-dominio d
   const linha = ENGINE_SRC_LINES.find((l) => l.includes('const _NON_DOMAIN_MARKERS ='));
   assert.ok(linha, 'lista _NON_DOMAIN_MARKERS nao encontrada em engine.js');
   assert.match(linha, /CREDENCIAL_INBOUND_APAGADA/);
+});
+
+// =====================================================================
+// RETRY DE CREDENCIAL SEM MARKER (Camada 1) — caso Hugo 04/09 17:21
+// O TOM propos o cadastro em prosa, sem marker. Sem marker nada roda: nenhuma intent nasce,
+// nada e gravado, a senha vai em claro na tela — e no turno seguinte o auto-resolve generico
+// manda pedir os dados de novo. O retry converte a fala no marker AINDA NESTE TURNO, e o
+// executor assume: mascara, abre a confirmacao e apaga a inbound.
+// =====================================================================
+
+// Reproducao do question_text real gravado em pending_intents naquele turno (valores trocados).
+const FALA_SEM_MARKER = [
+  'Vou cadastrar:',
+  '',
+  '*Conta do Google Ads*',
+  'Login: contato@lamusic.com.br',
+  'Senha: hunter2',
+  '',
+  'Confirma?',
+].join('\n');
+
+const aiQueDevolve = (texto) => {
+  const vistos = [];
+  return { vistos, chat: async (sys) => { vistos.push(sys); return { text: texto }; } };
+};
+
+test('retry: fala sem marker vira marker, executor assume e a senha some da resposta', async () => {
+  cenario(piStub([]), credStub());
+  const ai = aiQueDevolve(MARKER({
+    action: 'create', nome: 'Conta do Google Ads', categoria: 'plataforma', servico: 'Google',
+    campos: [{ label: 'Login', valor: 'contato@lamusic.com.br', sensivel: false },
+             { label: 'Senha', valor: 'hunter2', sensivel: true }],
+  }));
+  const r = await run(ctxBase({ reply: FALA_SEM_MARKER, inboundVerbatimText: 'guarda ai: login contato@lamusic.com.br senha hunter2', ai }));
+
+  assert.ok(!/hunter2/.test(r.reply), 'a senha continuou em claro na resposta: ' + r.reply);
+  assert.match(r.reply, /●●●●●●/);
+  assert.ok(r.reply.includes('Confirma?'), 'nao virou confirmacao do executor: ' + r.reply);
+  assert.strictEqual(calls.upsert.length, 0, 'gravou sem confirmacao');
+  assert.strictEqual(calls.open.length, 1, 'nao abriu a intent — o "sim" seguinte cairia no vazio');
+  assert.strictEqual(calls.open[0].kind, 'credencial_write');
+  assert.strictEqual(calls.open[0].payload.modo, 'create');
+  assert.strictEqual(calls.apagar.length, 1, 'nao apagou a inbound com a credencial');
+  assert.deepStrictEqual(
+    calls.markers.filter((m) => m.type === 'CREDENCIAL_RETRY').map((m) => m.result + ':' + m.reason),
+    ['executed:marker_recuperado']);
+  // O mini-prompt precisa dos DOIS lados: a fala do TOM (o que ele propos) e a mensagem da
+  // pessoa (de onde vem o valor letra por letra). Sem a segunda ele inventaria a senha.
+  assert.ok(ai.vistos[0].includes('Vou cadastrar:'), 'o prompt do retry nao levou a fala do TOM');
+  assert.ok(ai.vistos[0].includes('guarda ai'), 'o prompt do retry nao levou a mensagem da pessoa');
+});
+
+test('retry: NO_MARKER deixa a resposta do modelo como estava e nao abre intent', async () => {
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({ reply: FALA_SEM_MARKER, ai: aiQueDevolve('NO_MARKER') }));
+  assert.strictEqual(r.reply, FALA_SEM_MARKER);
+  assert.strictEqual(calls.open.length, 0);
+  assert.strictEqual(calls.upsert.length, 0);
+  assert.deepStrictEqual(
+    calls.markers.filter((m) => m.type === 'CREDENCIAL_RETRY').map((m) => m.result + ':' + m.reason),
+    ['rejected:sem_marker_valido']);
+});
+
+test('retry: marker invalido devolvido pelo modelo nao e anexado', async () => {
+  cenario(piStub([]), credStub());
+  // action fora do enum: parseCredencialAction devolve null. Anexar assim mesmo faria o
+  // executor cair no ramo payload_invalido e trocar a resposta por "nao entendi" — pior
+  // que deixar a fala original.
+  const r = await run(ctxBase({ reply: FALA_SEM_MARKER, ai: aiQueDevolve(MARKER({ action: 'inventada', nome: 'X' })) }));
+  assert.strictEqual(r.reply, FALA_SEM_MARKER);
+  assert.strictEqual(calls.open.length, 0);
+  assert.deepStrictEqual(
+    calls.markers.filter((m) => m.type === 'CREDENCIAL_RETRY').map((m) => m.reason), ['sem_marker_valido']);
+});
+
+test('retry: nao-admin nao chama o modelo nem abre intent', async () => {
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: false, creds: [] }) }));
+  // ctxBase manda ai.chat estourar: se for chamado, o teste quebra.
+  const r = await run(ctxBase({ reply: FALA_SEM_MARKER }));
+  assert.strictEqual(r.reply, FALA_SEM_MARKER);
+  assert.strictEqual(calls.open.length, 0);
+  assert.strictEqual(calls.markers.filter((m) => m.type === 'CREDENCIAL_RETRY').length, 0);
+});
+
+test('retry: turno de LEITURA (_credenciaisNoTurno) nunca chama o modelo', async () => {
+  // A resposta do two-pass traz ficha com rotulos reais; se um verbo de escrita aparecer nela
+  // o gate puro dispara. Quem barra e esta guarda — por isso ela e testada aqui.
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({
+    reply: 'Anotei aqui pra voce:' + '\n' + 'Login: a@b.com' + '\n' + 'Senha: hunter2',
+    _credenciaisNoTurno: true,
+  }));
+  assert.strictEqual(calls.open.length, 0);
+  assert.strictEqual(calls.markers.filter((m) => m.type === 'CREDENCIAL_RETRY').length, 0);
+  assert.ok(r.reply.includes('hunter2'), 'a resposta de leitura foi adulterada');
+});
+
+test('retry: conversa que nao e ficha de credencial nao chama o modelo', async () => {
+  cenario(piStub([]), credStub());
+  const fala = 'Vou cadastrar a tarefa de trocar as lampadas da sala 3. Confirma?';
+  const r = await run(ctxBase({ reply: fala }));
+  assert.strictEqual(r.reply, fala);
+  assert.strictEqual(calls.markers.filter((m) => m.type === 'CREDENCIAL_RETRY').length, 0);
+});
+
+test('retry: nao encadeia em cima do auto-retry de tarefa (_isMarkerRetry)', async () => {
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({ reply: FALA_SEM_MARKER, raw: { _isMarkerRetry: true } }));
+  assert.strictEqual(r.reply, FALA_SEM_MARKER);
+  assert.strictEqual(calls.markers.filter((m) => m.type === 'CREDENCIAL_RETRY').length, 0);
+});
+
+test('retry: turno que JA tem marker nao passa pelo retry', async () => {
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({ reply: MARKER({ action: 'create', nome: 'Canva LA', categoria: 'plataforma' }) }));
+  assert.strictEqual(calls.markers.filter((m) => m.type === 'CREDENCIAL_RETRY').length, 0);
+  assert.strictEqual(calls.open.length, 1, 'o caminho normal parou de funcionar');
+});
+
+test('retry: falha do modelo nao derruba o turno (fail-closed)', async () => {
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({
+    reply: FALA_SEM_MARKER,
+    ai: { chat: async () => { throw new Error('provider fora do ar'); } },
+  }));
+  assert.strictEqual(r.reply, FALA_SEM_MARKER);
+  assert.strictEqual(calls.open.length, 0);
+  assert.strictEqual(calls.upsert.length, 0);
+});
+
+// =====================================================================
+// CAMADA 2 — auto-resolve generico (engine.js ~10662)
+// Se o retry falhar, a confirmacao do turno seguinte cai na intent GENERICA. O ramo sem
+// payload concreto mandava "peca pra pessoa repetir o pedido com os detalhes" — foi o engine
+// que ditou o "me manda os dados de novo" no caso Hugo. Este bloco nao e extraivel (depende
+// do supabase e de meia duzia de variaveis do turno), entao a prova aqui e sobre a FONTE:
+// a precedencia e o texto da regra sao verificados no proprio engine.js.
+// =====================================================================
+
+const iCredGate = exigir(
+  ENGINE_SRC_LINES.findIndex((l) => l.includes('const _liberaCredencial = !hasConcrete && pareceEscritaDeCredencial')),
+  'calculo de _liberaCredencial no auto-resolve');
+const iCriaGate = exigir(
+  ENGINE_SRC_LINES.findIndex((l) => l.includes('const _liberaCriacao = _gateOn && !hasConcrete')),
+  'calculo de _liberaCriacao no auto-resolve');
+
+test('camada 2: credencial e avaliada ANTES e VETA o create-gate de tarefa', () => {
+  // `podeLiberarCriacao` casa com "vou registrar" — sem o veto, uma proposta de credencial
+  // vira TAREFA nova, com o segredo dentro do titulo. A ordem importa: _liberaCredencial
+  // tem de existir antes da linha que o consome.
+  assert.ok(iCredGate < iCriaGate, 'o gate de credencial passou a ser calculado depois do de criacao');
+  assert.ok(ENGINE_SRC_LINES[iCriaGate].includes('!_liberaCredencial'),
+    'o create-gate perdeu o veto de credencial: ' + ENGINE_SRC_LINES[iCriaGate]);
+});
+
+test('camada 2: o ramo de credencial manda reproduzir, nunca pedir de novo', () => {
+  const iRegra = exigir(
+    ENGINE_SRC_LINES.findIndex((l) => l.includes('proposta de CADASTRO/ALTERAÇÃO DE CREDENCIAL')),
+    'markerRule do ramo de credencial');
+  const regra = ENGINE_SRC_LINES[iRegra];
+  assert.ok(regra.includes('<<CREDENCIAL_ACTION>>'), 'a regra nao diz qual marker emitir');
+  assert.ok(/NÃO peça os dados de novo/.test(regra),
+    'a regra deixou de proibir explicitamente pedir os dados de novo — que e o bug de origem');
+});
+
+test('camada 2: a pergunta gravada em marker_logs passa pelo redator', () => {
+  // question_text de uma proposta de credencial carrega os valores em claro, e raw_excerpt
+  // vai pro relatorio das 7h que os diretores recebem no WhatsApp.
+  const iTelemetria = exigir(
+    ENGINE_SRC_LINES.findIndex((l) => l.includes("'CONFIRM_CREDENCIAL_ALLOWED'")),
+    'telemetria do ramo de credencial');
+  const trecho = ENGINE_SRC_LINES.slice(iTelemetria, iTelemetria + 8).join('\n');
+  assert.ok(trecho.includes('redigirSegredos(String(target.question_text'),
+    'a pergunta voltou a ser gravada crua no marker_logs');
 });
