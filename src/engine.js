@@ -11684,12 +11684,20 @@ async function processMessage(phone, text, raw = {}) {
         console.log('[CredencialRetry] fala de escrita sem marker, mas colaborador nao e admin — ignorado');
       } else {
         const _msgPessoa = stripReplyScaffold(String(inboundVerbatimText || '')).userText;
+        // 4000, nao 1200 (04/09). O prompt manda pegar o valor REAL na mensagem da pessoa
+        // quando a resposta so tem a mascara — e e exatamente isso que salva o turno. So que
+        // a mensagem da pessoa costuma ser ANALISE DE IMAGEM, e print de credencial vem em
+        // lote: os 3 do Hugo somaram 2494 chars, com a Chave Secreta no ultimo. Cortar em
+        // 1200 jogava fora justo a parte que o retry precisava ler, e o marker sairia sem o
+        // campo. Uma chamada curta a mais de contexto e barata perto de um turno perdido.
+        const _MAX_CTX_PESSOA = 4000;
+        const _MAX_CTX_REPLY = 2000;
         const _retrySys = `Você é um conversor mecânico texto→marker. Sua única saída é UM marker JSON, sem nenhum texto fora dele.
 
 O TOM (você) acabou de propor cadastrar/alterar uma credencial, mas esqueceu de emitir o marker. Converta a proposta abaixo no marker — sem inventar nada.
 
-- Mensagem da pessoa: "${_msgPessoa.slice(0, 1200)}"
-- O que você respondeu: "${String(reply || '').slice(0, 1200)}"
+- Mensagem da pessoa: "${_msgPessoa.slice(0, _MAX_CTX_PESSOA)}"
+- O que você respondeu: "${String(reply || '').slice(0, _MAX_CTX_REPLY)}"
 
 Formato (exatamente este):
 <<CREDENCIAL_ACTION>>
