@@ -5002,13 +5002,26 @@ async function run(opts = {}) {
           // é o que impede o relatório da noite de bloquear a pauta da manhã (e vice-versa) no
           // LIKE por conteúdo.
           const cabecalhoFim = String(rel.texto).split('\n')[0];
+          // O TEXTO DEGRADADO DE HOJE, derivado da MESMA função pura que o ritual usou pra
+          // montá-lo — nunca redigitado aqui. Ele existe porque o relatório de verdade e o "não
+          // consegui conferir" COMPARTILHAM o cabeçalho: uma guarda que só olha o cabeçalho vê os
+          // dois como a mesma mensagem, e aí a retentativa que o 'fallback' abaixo libera bateria
+          // na própria mensagem degradada e nunca a substituiria pelo relatório real — o conserto
+          // se anularia sozinho. Uma cópia da frase aqui nasceria divergente no dia em que alguém
+          // mexesse no texto, e a guarda ficaria cega em silêncio: o pior jeito de uma guarda morrer.
+          const [, mesFimBr, diaFimBr] = String(now.ymd).split('-');
+          const textoDegradadoFim = _pautaAbertura.mensagemDeFimDeDia({ erro: true, dataBr: `${diaFimBr}/${mesFimBr}` });
           const hojeInicioFimISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+          // `content` junto do id, e limite acima de 1: a decisão agora depende do QUE está no
+          // grupo, não só de existir alguma coisa lá. Com limit(1) eu poderia enxergar só a
+          // mensagem degradada e não o relatório real que veio depois dela — e mandaria o real
+          // uma segunda vez.
           const { data: jaEnviadoFim, error: erroJaEnviadoFim } = await supabase.from('group_chat_messages')
-            .select('id')
+            .select('id, content')
             .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
             .gte('created_at', hojeInicioFimISO)
             .like('content', `${cabecalhoFim}%`)
-            .limit(1);
+            .limit(10);
           if (erroJaEnviadoFim) {
             console.error(`[Pauta] fim de dia: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviadoFim.message}`);
             const { error: erroMarkerChk } = await supabase.from('marker_logs').insert({
@@ -5018,12 +5031,31 @@ async function run(opts = {}) {
             if (erroMarkerChk) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChk.message}`);
             continue;
           }
-          if (jaEnviadoFim && jaEnviadoFim.length) {
+          // A classificação é DESEQUILIBRADA de propósito: só conta como degradado o que bate
+          // EXATAMENTE o texto degradado de hoje; qualquer outro conteúdo com este cabeçalho é
+          // tratado como relatório de verdade e BLOQUEIA o envio. Errar pro lado de não mandar
+          // custa um relatório — visível, com marcador 'fallback' pra quem audita. Errar pro outro
+          // lado manda relatório repetido num grupo de WhatsApp real, com gente lendo.
+          const enviadasHojeFim = jaEnviadoFim || [];
+          const jaTemRelatorioReal = enviadasHojeFim.some((m) => String(m.content || '') !== textoDegradadoFim);
+          const jaTemDegradado = enviadasHojeFim.some((m) => String(m.content || '') === textoDegradadoFim);
+          const relDegradado = Boolean(rel.motivo);
+          if (jaTemRelatorioReal || (jaTemDegradado && relDegradado)) {
+            // Dois desfechos diferentes, e o `result` não pode achatá-los num só:
+            //  - já existe relatório REAL no grupo: o dia acabou, 'skipped' fecha a chave (é o
+            //    caso que esta guarda já cobria — envio ok, marcador de um tick anterior falhou);
+            //  - só existe o DEGRADADO e eu continuo degradado: repetir "não consegui conferir" a
+            //    cada tick seria ruído no grupo, então calo — mas 'skipped' aqui fecharia o dia
+            //    com o degradado como resposta final, que é exatamente o defeito de 04/09.
+            //    'fallback' cala agora e deixa o próximo tick tentar de novo.
             const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
-              marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
-              reason: `${chaveFim} relatório já enviado (achado por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
+              marker_type: 'PAUTA_ANAMNESE',
+              result: jaTemRelatorioReal ? 'skipped' : 'fallback',
+              reason: (jaTemRelatorioReal
+                ? `${chaveFim} relatório já enviado (achado por conteúdo — marcador de um tick anterior deve ter falhado)`
+                : `${chaveFim} degradado já no grupo, esperando a fonte voltar: ${rel.motivo}`).slice(0, 120),
             });
-            if (erroMarkerSkip) console.error(`[Pauta] fim de dia: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
+            if (erroMarkerSkip) console.error(`[Pauta] fim de dia: marker_logs insert (duplicata) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
             continue;
           }
 
@@ -5042,8 +5074,23 @@ async function run(opts = {}) {
             continue;
           }
           const { error: erroMarkerFim } = await supabase.from('marker_logs').insert({
-            marker_type: 'PAUTA_ANAMNESE', result: 'executed',
-            reason: `${chaveFim} ok=${rel.preencheram} falta=${rel.faltaram.length} semver=${rel.semVerificacao}`.slice(0, 120),
+            marker_type: 'PAUTA_ANAMNESE',
+            // O DEFEITO DE 04/09 (Barra, 19:30). A leitura de anamnese_pauta falhou por segundos,
+            // o ritual devolveu `motivo` e o texto honesto de "não consegui conferir", a mensagem
+            // degradada foi pro grupo — e AQUI o marcador carimbava 'executed ok=0 falta=0
+            // semver=0' sem olhar `rel.motivo`. Duas consequências, e a segunda é a grave:
+            //  1) o sensor mente — quem audita marker_logs vê um dia executado com zeros,
+            //     indistinguível de um dia em que ninguém preencheu nada; "zero por falha" igual
+            //     a "zero por saúde" é a classe de bug que esta casa mais sangra;
+            //  2) 'executed' TRAVA a chave de idempotência (a consulta lá em cima filtra
+            //     result IN (executed, skipped) justamente pra que 'fallback' deixe o tick
+            //     seguinte tentar), então o relatório do dia se perdeu por uma falha de segundos.
+            // O caminho vizinho (sem texto) já fazia certo com `rel.motivo ? 'fallback' :
+            // 'skipped'` — era só o caminho de ENVIO que tinha esquecido de olhar o motivo.
+            result: relDegradado ? 'fallback' : 'executed',
+            reason: (relDegradado
+              ? `${chaveFim} degradado: ${rel.motivo}`
+              : `${chaveFim} ok=${rel.preencheram} falta=${rel.faltaram.length} semver=${rel.semVerificacao}`).slice(0, 120),
           });
           if (erroMarkerFim) {
             // Mensagem JÁ no grupo real e o marcador que travaria a retentativa não gravou: o
