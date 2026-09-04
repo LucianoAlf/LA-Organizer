@@ -11158,21 +11158,31 @@ async function processMessage(phone, text, raw = {}) {
   // Anti-loop: a 2ª chamada não recebe a instrução do marker, e não há laço —
   // se o modelo reemitir mesmo assim, UNKNOWN_MARKER_STRIPPED limpa o texto.
   try {
-    const { hasPedirCredenciaisMarker, formatCredenciaisBlock } = require('./lib/pedir-credenciais');
+    const { hasPedirCredenciaisMarker } = require('./lib/pedir-credenciais');
     if (hasPedirCredenciaisMarker(reply)) {
-      const { getCredenciaisPublicas } = require('./services/credenciais-publicas');
-      const links = await getCredenciaisPublicas();
-      const bloco = formatCredenciaisBlock(links);
-      console.log(`[PedirCredenciais] marker detectado — ${links.length} link(s) disponivel(is)`);
-      await logMarker(collab.id, 'PEDIR_CREDENCIAIS', links.length ? 'executed' : 'rejected',
-        `links:${links.length}`, null);
+      const { getCredenciaisPara } = require('./services/credenciais');
+      const { formatListaPublica, formatCredencialAdmin } = require('./lib/credenciais-format');
+      const { isAdmin, creds } = await getCredenciaisPara(collab.id);
+      console.log(`[PedirCredenciais] marker detectado — admin=${isAdmin} itens=${creds.length}`);
+      await logMarker(collab.id, 'PEDIR_CREDENCIAIS', creds.length ? 'executed' : 'rejected',
+        `admin:${isAdmin} itens:${creds.length}`, null);
+
+      let bloco = '';
+      if (creds.length) {
+        bloco = isAdmin
+          ? creds.map(c => formatCredencialAdmin(c)).join('\n\n')
+          : formatListaPublica(creds);
+      }
+
       if (!bloco) {
         reply = 'Não tenho nenhum sistema cadastrado com link por aqui ainda.';
       } else {
-        reply = bloco;
-        const credSys = `${bloco}\n\nO colaborador perguntou sobre acesso a algum desses sistemas. `
-          + `Responda em português, de forma curta e natural, APENAS o link que ele pediu. `
-          + `Só liste todos se ele tiver pedido explicitamente a lista completa. `
+        reply = bloco; // degrada para o bloco cru se a 2a chamada falhar
+        const credSys = `${bloco}\n\n`
+          + `O colaborador perguntou sobre acesso a algum desses sistemas. `
+          + `Responda em português, de forma curta e natural, APENAS o que ele pediu — `
+          + `não despeje a lista inteira nem todos os campos se ele perguntou por um item só. `
+          + `Só liste tudo se ele tiver pedido explicitamente a lista completa. `
           + `Não mencione banco de dados, tabela ou qualquer detalhe técnico interno. `
           + `Não emita nenhum marker nesta resposta.`;
         const segunda = await ai.chat(credSys, msgs);
