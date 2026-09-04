@@ -19,11 +19,21 @@ async function registrarAparicoes(sb, { unidadeId, dia, pessoas } = {}) {
 }
 
 async function gravarResultado(sb, { unidadeId, dia, pessoaChave, resultado } = {}) {
-  const { error } = await sb.from('anamnese_pauta')
+  // .select('id') no fim: o PostgREST devolve error:null quando o UPDATE não casa NENHUMA
+  // linha — zero linhas é SQL válido, não é erro. Sem isto, um `dia` errado por fuso, ou uma
+  // linha que registrarAparicoes nunca criou, faria esta função dizer "gravei" sem ter
+  // gravado nada — o mesmo "zero linhas silencioso" que já mordeu esta casa (03/09), só que
+  // do lado da escrita em vez da leitura. Não é sobra: se tirar, o bug volta calado.
+  const { data, error } = await sb.from('anamnese_pauta')
     .update({ resultado, updated_at: new Date().toISOString() })
-    .eq('unidade_id', unidadeId).eq('pessoa_chave', pessoaChave).eq('dia', dia);
+    .eq('unidade_id', unidadeId).eq('pessoa_chave', pessoaChave).eq('dia', dia)
+    .select('id');
   if (error) {
     console.error(`[Pauta] gravarResultado falhou ${pessoaChave} ${dia}: ${error.message}`);
+    return false;
+  }
+  if (!(data || []).length) {
+    console.error(`[Pauta] gravarResultado não achou linha p/ atualizar unidade=${unidadeId} pessoa=${pessoaChave} dia=${dia}`);
     return false;
   }
   return true;

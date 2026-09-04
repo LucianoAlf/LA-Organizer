@@ -62,9 +62,24 @@ test('contarFalhas devolve null em erro de leitura, nunca Map vazio', async () =
   assert.strictEqual(await contarFalhas(sb, { unidadeId: 'u1', pessoas: ['pk1'] }), null);
 });
 
-test('gravarResultado carimba o resultado e devolve false em erro', async () => {
-  const ok = fakeSb();
-  assert.strictEqual(await gravarResultado(ok, { unidadeId: 'u1', dia: '2026-09-10', pessoaChave: 'pk1', resultado: 'preencheu' }), true);
-  const ruim = fakeSb({ erro: { message: 'x' } });
-  assert.strictEqual(await gravarResultado(ruim, { unidadeId: 'u1', dia: '2026-09-10', pessoaChave: 'pk1', resultado: 'preencheu' }), false);
+test('gravarResultado casa a linha e devolve true', async () => {
+  const sb = fakeSb({ rows: [{ id: 'row1' }] });
+  const ok = await gravarResultado(sb, { unidadeId: 'u1', dia: '2026-09-10', pessoaChave: 'pk1', resultado: 'preencheu' });
+  assert.strictEqual(ok, true);
+});
+
+test('gravarResultado devolve false em erro do banco', async () => {
+  const sb = fakeSb({ erro: { message: 'x' } });
+  const ok = await gravarResultado(sb, { unidadeId: 'u1', dia: '2026-09-10', pessoaChave: 'pk1', resultado: 'preencheu' });
+  assert.strictEqual(ok, false);
+});
+
+// Correção 1: o PostgREST devolve error:null quando o UPDATE não casa NENHUMA linha — zero
+// linhas é SQL válido, não é erro. Sem o .select() no repo, isto voltava `true` sem ter
+// gravado nada (dia trocado por fuso, ou linha que registrarAparicoes nunca criou). Este é
+// o teste que trava essa regressão.
+test('gravarResultado devolve false quando o UPDATE casa ZERO linhas, mesmo com error: null', async () => {
+  const sb = fakeSb({ rows: [] });
+  const ok = await gravarResultado(sb, { unidadeId: 'u1', dia: '2026-09-10', pessoaChave: 'pk1', resultado: 'preencheu' });
+  assert.strictEqual(ok, false);
 });
