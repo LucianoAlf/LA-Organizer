@@ -229,6 +229,13 @@ export function GovernancaPage() {
 
   // ── List query ──────────────────────────────────────────
   const { data, isLoading, error } = useQuery({
+    // Esta lista muda POR FORA do app: o TOM cadastra credencial pelo WhatsApp. O default do
+    // queryClient e refetchOnWindowFocus:false, entao voltar pra aba nao buscava nada e a
+    // credencial recem-cadastrada simplesmente nao aparecia (caso Hugo 04/09 16:40 — ele
+    // cadastrou pelo WhatsApp, o TOM gravou certo, e a tela seguia sem ela). Aqui a premissa
+    // e justamente "cadastra falando, confere na tela", entao esta tela precisa refazer a
+    // busca ao voltar. Escopo estreito de proposito: mexer no default afeta as 38 rotas.
+    refetchOnWindowFocus: true,
     queryKey: ['governance'],
     queryFn: async () => {
       const { data, error } = await supabase

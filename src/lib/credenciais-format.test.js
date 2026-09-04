@@ -107,7 +107,7 @@ test('formatCredencialAdmin: credencial sem campos nao quebra', () => {
 // que as 3 marcadas ficaram congeladas desde 07/08.
 // =====================================================================
 const {
-  rodapeVisibilidade, contarNomesNaResposta, MAX_NOMES_RODAPE,
+  rodapeVisibilidade, contarNomesNaResposta, MAX_NOMES_RODAPE, formatAvisoReuso,
 } = require('./credenciais-format');
 
 const PUB = (nome) => ({ nome, visivel_tom: true, url_ref: 'https://x' });
@@ -165,4 +165,20 @@ test('entradas degeneradas nao quebram nem inventam rodape', () => {
   assert.strictEqual(rodapeVisibilidade(TRES, null), '');
   assert.strictEqual(contarNomesNaResposta([{ nome: 'ab' }, { nome: 'cd' }], 'ab cd'), 0,
     'nome curto demais casaria em qualquer texto');
+});
+
+test('aviso de reuso nao concorda genero com o rotulo (saiu "Esse senha" na tela)', () => {
+  // O rotulo vem do cadastro e pode ser qualquer coisa. Concordar com ele erraria em metade
+  // dos casos; a frase concorda com "valor", que e sempre masculino.
+  const um = (label) => [{ cred: { id: 'a', nome: 'registro.br' }, label }];
+  for (const label of ['Senha', 'senha', 'token', 'chave de API', 'Application Password']) {
+    const t = formatAvisoReuso(um(label));
+    assert.ok(!/Esse (senha|chave)/i.test(t), `concordancia errada: ${t}`);
+    assert.ok(t.includes(label), `perdeu o rotulo: ${t}`);
+  }
+});
+
+test('aviso de reuso nunca imprime valor — so nome e rotulo', () => {
+  const t = formatAvisoReuso([{ cred: { id: 'a', nome: 'X', campos: [{ label: 'Senha', valor: 'hunter2' }] }, label: 'Senha' }]);
+  assert.ok(!/hunter2/.test(t), t);
 });

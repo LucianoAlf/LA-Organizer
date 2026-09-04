@@ -72,12 +72,16 @@ const MAX_NOMES_REUSO = 3;
 function formatAvisoReuso(reuso) {
   const lista = (Array.isArray(reuso) ? reuso : []).filter(r => r && r.cred && r.cred.nome);
   if (!lista.length) return '';
-  const rotulo = String(lista[0].label || 'segredo').trim().toLowerCase();
+  // O rotulo vem do cadastro e pode ser qualquer coisa ("Senha", "token", "chave de API"),
+  // entao concordar genero com ele daria erro em metade dos casos — saiu "Esse senha" na tela
+  // do Hugo em 04/09 16:39. Tratamos o rotulo como nome proprio do campo, e a frase concorda
+  // com "valor", que e sempre masculino.
+  const rotulo = String(lista[0].label || 'segredo').trim();
   const nomes = lista.slice(0, MAX_NOMES_REUSO).map(r => `*${r.cred.nome}*`);
   const resto = lista.length - nomes.length;
-  if (lista.length === 1) return `\n\n⚠️ Esse ${rotulo} já está em ${nomes[0]}.`;
+  if (lista.length === 1) return `\n\n⚠️ Esse mesmo valor de *${rotulo}* já está em ${nomes[0]}.`;
   const corpo = nomes.join(', ') + (resto > 0 ? ` e mais ${resto}` : '');
-  return `\n\n⚠️ Esse ${rotulo} já aparece em outros ${lista.length} cadastros: ${corpo}.`;
+  return `\n\n⚠️ Esse mesmo valor de *${rotulo}* já aparece em outros ${lista.length} cadastros: ${corpo}.`;
 }
 
 // Quantos nomes da lista aparecem na resposta final. Proxy DETERMINISTICO pra "isso foi uma
