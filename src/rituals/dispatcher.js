@@ -4113,8 +4113,17 @@ async function run(opts = {}) {
         // próximo tick, falha persistente numa unidade não pode bloquear as irmãs indefinidamente.
         try {
           const chaveDia = `pauta_anamnese:${unidadeId}:${now.ymd}`;
+          // Correção A (revisão do coordenador, 04/09): a consulta de idempotência só trava a
+          // retentativa em EXECUTED ou SKIPPED — um desfecho RESOLVIDO. A spec é explícita: "a
+          // chave do dia impede pacote duplicado QUANDO DER CERTO". 'fallback' significa "deu
+          // errado, tenta de novo": sem este filtro, um marcador de fallback bloqueava a
+          // retentativa do mesmo jeito que um sucesso, e o bug original (mensagem/pacote perdido
+          // pro resto do dia) voltava disfarçado de "já tentei". Custo aceito: fonte fora do ar a
+          // manhã inteira grava uma linha de fallback a cada tick (5 min) até resolver — é
+          // barulho CERTO, visível e limitado ao dia.
           const { data: jaTem, error: erroJaTem } = await supabase.from('marker_logs')
-            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveDia}%`).limit(1);
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveDia}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
           if (erroJaTem) {
             console.error(`[Pauta] montagem: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaTem.message}`);
             continue; // falha-fechada: não sei se já rodou hoje, não arrisco duplicar
@@ -4166,8 +4175,13 @@ async function run(opts = {}) {
         // Correção 1/5: try/catch por unidade — mesmo motivo do bloco das 06:00 (comentário lá).
         try {
           const chaveFala = `pauta_fala:${unidadeId}:${now.ymd}`;
+          // Correção A: só EXECUTED/SKIPPED travam a retentativa — mesmo motivo do bloco das
+          // 06:00 (comentário lá). Sem isto, o marcador 'fallback' gravado abaixo quando o envio
+          // falha bloquearia a retentativa igual um sucesso, e a mensagem se perderia pro resto
+          // do dia — o mesmo silêncio permanente que este plano inteiro existe pra evitar.
           const { data: jaFalou, error: erroJaFalou } = await supabase.from('marker_logs')
-            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFala}%`).limit(1);
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFala}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
           if (erroJaFalou) {
             console.error(`[Pauta] fala: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFalou.message}`);
             continue;
@@ -4235,17 +4249,64 @@ async function run(opts = {}) {
           const texto = pura.mensagemDoGrupo({ itens, unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}` });
           if (!texto) continue;
 
+          // Correção B (revisão do coordenador, 04/09) — o "irmão" do Important 1: mesmo com a
+          // Correção A, sobra o caso em que a mensagem ENTRA e o marker_logs falha logo depois —
+          // não fica linha nenhuma (nem executed, nem fallback). Sem esta guarda, o próximo tick
+          // não acha marcador e manda a mensagem DE NOVO, num grupo de WhatsApp real com gente
+          // lendo. Log não previne; só uma guarda no ARTEFATO previne — mesmo padrão de
+          // _pacoteJaExiste (Task 5, rituals/anamnese-pauta.js): a guarda olha o que foi
+          // GRAVADO, não o registro sobre o que foi gravado, porque o registro é exatamente o
+          // que pode falhar calado.
+          //
+          // O cabeçalho vem de `texto.split('\n')[0]`, NUNCA redigitado: se o texto consultado
+          // pudesse divergir do texto enviado, a guarda nasceria cega e a mensagem repetida
+          // voltaria em silêncio — é o detalhe que decide se ela funciona.
+          const cabecalhoMsg = String(texto).split('\n')[0];
+          // Mesmo corte de "hoje em BRT" já usado no health-check acima (todayStart).
+          const hojeInicioISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+          const { data: jaEnviada, error: erroJaEnviada } = await supabase.from('group_chat_messages')
+            .select('id')
+            .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
+            .gte('created_at', hojeInicioISO)
+            .like('content', `${cabecalhoMsg}%`)
+            .limit(1);
+          if (erroJaEnviada) {
+            // Não sei se já falei — não posso arriscar falar de novo num grupo real no escuro.
+            // 'fallback' (com a Correção A) deixa o próximo tick tentar de novo com a leitura
+            // corrigida, em vez de travar calado ou arriscar reenvio.
+            console.error(`[Pauta] fala: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviada.message}`);
+            const { error: erroMarkerChkFallback } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveFala} checagem de duplicata falhou: ${erroJaEnviada.message}`.slice(0, 120),
+            });
+            if (erroMarkerChkFallback) console.error(`[Pauta] fala: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChkFallback.message}`);
+            continue;
+          }
+          if (jaEnviada && jaEnviada.length) {
+            // Achou o artefato: um tick anterior já mandou esta mensagem e só o marcador falhou.
+            // Não envia de novo — só fecha o marcador que faltou.
+            const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
+              reason: `${chaveFala} mensagem já enviada (achada por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
+            });
+            if (erroMarkerSkip) console.error(`[Pauta] fala: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
+            continue;
+          }
+
           // Important 1 (revisão do coordenador, 04/09): este bloco não tem guarda de duplicata
-          // própria como a montagem/fechamento (Tasks 5/6) — aqui o marker_logs É a guarda contra
-          // reenvio. Uma guarda que pode falhar calada não é guarda: os dois inserts abaixo checam
-          // error e MUDAM o que acontece a seguir, não só logam.
+          // própria como a montagem/fechamento (Tasks 5/6) — aqui a guarda é a checagem acima
+          // (Correção B) mais o marker_logs. Uma guarda que pode falhar calada não é guarda: os
+          // dois inserts abaixo checam error e MUDAM o que acontece a seguir, não só logam.
           const { error: erroMsg } = await supabase.from('group_chat_messages').insert({
             group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: texto, channel: 'app',
           });
           if (erroMsg) {
-            // A mensagem NÃO saiu. Gravar 'executed' aqui travaria a chave do dia e a equipe
-            // nunca mais receberia o recado hoje — o silêncio permanente que este plano inteiro
-            // existe pra evitar. 'fallback' deixa o próximo tick tentar de novo, com motivo.
+            // A mensagem NÃO saiu. Gravar 'executed' aqui travaria a chave do dia pro resto de
+            // hoje. 'fallback' deixa o próximo tick tentar de novo — mas SÓ porque a consulta de
+            // idempotência acima (Correção A) filtra `result IN (executed, skipped)`: sem esse
+            // filtro, um marcador 'fallback' bloquearia a retentativa do mesmo jeito que um
+            // sucesso, e a mensagem se perderia pro resto do dia — o silêncio permanente que
+            // este plano inteiro existe pra evitar, só que documentado em vez de corrigido.
             console.error(`[Pauta] fala: envio da mensagem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMsg.message}`);
             const { error: erroMarkerFallback } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
@@ -4283,8 +4344,11 @@ async function run(opts = {}) {
         // Correção 1/5: try/catch por unidade — mesmo motivo do bloco das 06:00 (comentário lá).
         try {
           const chaveFecha = `pauta_fecha:${unidadeId}:${now.ymd}`;
+          // Correção A: só EXECUTED/SKIPPED travam a retentativa — mesmo motivo do bloco das
+          // 06:00 (comentário lá).
           const { data: jaFechou, error: erroJaFechou } = await supabase.from('marker_logs')
-            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFecha}%`).limit(1);
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFecha}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
           if (erroJaFechou) {
             console.error(`[Pauta] fechamento: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFechou.message}`);
             continue;
