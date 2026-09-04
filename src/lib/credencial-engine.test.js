@@ -93,6 +93,7 @@ const stubs = {
   './lib/credencial-action': require(path.join(ROOT, 'lib/credencial-action.js')),
   './lib/credencial-duplicata': require(path.join(ROOT, 'lib/credencial-duplicata.js')),
   './lib/credencial-retry-gate': require(path.join(ROOT, 'lib/credencial-retry-gate.js')),
+  './lib/credenciais-format': require(path.join(ROOT, 'lib/credenciais-format.js')),
 };
 const stubRequire = (m) => {
   if (!(m in stubs) || stubs[m] === null) throw new Error('require nao stubado: ' + m);
@@ -1002,4 +1003,72 @@ test('camada 2: a pergunta gravada em marker_logs passa pelo redator', () => {
   const trecho = ENGINE_SRC_LINES.slice(iTelemetria, iTelemetria + 8).join('\n');
   assert.ok(trecho.includes('redigirSegredos(String(target.question_text'),
     'a pergunta voltou a ser gravada crua no marker_logs');
+});
+
+// =====================================================================
+// LAOR-3 — reuso de senha vira AVISO, nao obstaculo
+// Caso real (Hugo, 04/09 15:08): "conta do ADS Google" foi barrada porque a senha aparecia em
+// registro.br, Mila Openclaw e Mila Supabase — credenciais sem relacao nenhuma com o Google
+// Ads. A pergunta "quer atualizar uma dessas?" ficou de pe e a credencial NUNCA foi criada.
+// =====================================================================
+
+const REUSADAS = [
+  { id: 'r1', nome: 'Domínio — registro.br', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] },
+  { id: 'r2', nome: 'Mila Openclaw',         campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] },
+  { id: 'r3', nome: 'Mila Supabase',         campos: [{ label: 'senha', valor: 'hunter2' }] },
+];
+const PROPOSTA_ADS = {
+  action: 'create', nome: 'Conta do ADS Google', categoria: 'plataforma',
+  campos: [{ label: 'E-mail', valor: 'la.tec@gmail.com', sensivel: false },
+           { label: 'Senha', valor: 'hunter2', sensivel: true }],
+};
+
+test('senha reaproveitada NAO vira duplicata — cadastra em um passo, com aviso', async () => {
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: REUSADAS }) }));
+  const r = await run(ctxBase({ reply: MARKER(PROPOSTA_ADS) }));
+
+  assert.ok(!/já existe algo parecido/.test(r.reply), 'voltou a tratar reuso como duplicata: ' + r.reply);
+  assert.match(r.reply, /Vou cadastrar assim/);
+  assert.strictEqual(calls.open[0].payload.modo, 'create', 'abriu no modo duplicata');
+  // O aviso continua existindo — o que mudou foi o lugar dele.
+  assert.match(r.reply, /já aparece em outros 3 cadastros/);
+  assert.match(r.reply, /registro\.br/);
+  assert.ok(!/hunter2/.test(r.reply), 'a senha vazou no aviso: ' + r.reply);
+  assert.strictEqual(calls.upsert.length, 0, 'gravou antes de confirmar');
+});
+
+test('sem reuso, a confirmacao de create continua limpa', async () => {
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({ reply: MARKER(PROPOSTA_ADS) }));
+  assert.ok(!/⚠️/.test(r.reply), 'avisou reuso sem haver reuso: ' + r.reply);
+  assert.match(r.reply, /Confirma\?/);
+});
+
+test('update: o aviso nao acusa a propria credencial de reusar a senha dela', async () => {
+  const alvo = { id: 'alvo', nome: 'Canva LA', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] };
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [alvo] }) }));
+  const r = await run(ctxBase({
+    reply: MARKER({ action: 'update', alvo: 'Canva LA', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }),
+  }));
+  assert.ok(!/já está em/.test(r.reply), 'acusou o proprio alvo: ' + r.reply);
+  assert.match(r.reply, /Vou atualizar/);
+});
+
+test('update: reuso em OUTRA credencial e avisado', async () => {
+  const alvo = { id: 'alvo', nome: 'Canva LA', campos: [{ label: 'Senha', valor: 'antiga', sensivel: true }] };
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [alvo, REUSADAS[0]] }) }));
+  const r = await run(ctxBase({
+    reply: MARKER({ action: 'update', alvo: 'Canva LA', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }),
+  }));
+  assert.match(r.reply, /já está em \*Domínio — registro\.br\*/);
+  assert.ok(!/hunter2/.test(r.reply));
+});
+
+test('delete nao carrega aviso de reuso (nao ha senha nova em jogo)', async () => {
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [REUSADAS[0]] }) }));
+  const r = await run(ctxBase({
+    reply: MARKER({ action: 'delete', alvo: 'Domínio — registro.br', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }),
+  }));
+  assert.match(r.reply, /Vou APAGAR/);
+  assert.ok(!/⚠️/.test(r.reply), 'aviso de reuso apareceu no delete: ' + r.reply);
 });

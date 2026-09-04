@@ -11793,7 +11793,23 @@ Output AGORA, apenas o marker:`;
         await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'nao_admin', null);
         reply = 'Isso eu não consigo te ajudar por aqui — fala com o Luciano.';
       } else {
-        const { acharDuplicatas, acharAlvo } = require('./lib/credencial-duplicata');
+        const { acharDuplicatas, acharAlvo, acharReusoDeSegredo } = require('./lib/credencial-duplicata');
+        const { formatAvisoReuso } = require('./lib/credenciais-format');
+        // LAOR-3: reuso de senha NAO e duplicata. Ate 04/09 ele caia no ramo de duplicata e
+        // virava "quer atualizar uma dessas?" — foi o que barrou a "conta do ADS Google", que
+        // nunca chegou a ser criada. Aqui vira AVISO dentro da confirmacao normal: a pessoa
+        // fica sabendo do reuso e cadastra no mesmo passo. `ignorarId` tira o proprio alvo do
+        // update (senao ele acusaria a credencial de reusar a propria senha).
+        const _avisoDeReuso = (ignorarId) => {
+          try {
+            const r = acharReusoDeSegredo(_acao, creds).filter(x => !ignorarId || x.cred.id !== ignorarId);
+            return formatAvisoReuso(r);
+          } catch (e) {
+            // Aviso e acessorio: nunca pode impedir o cadastro. Mas nao pode sumir calado.
+            console.warn('[CredencialAction] aviso de reuso falhou (non-fatal):', e instanceof Error ? e.message : String(e));
+            return '';
+          }
+        };
         const pi = require('./services/pending-intents');
 
         // openIntent devolve null quando o insert falha. Prometer "Confirma?" sem intent
@@ -11825,7 +11841,7 @@ Output AGORA, apenas o marker:`;
           } else {
             const resumo = _resumoCredencial(_acao);
             await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', 'aguardando_confirmacao:create', null);
-            reply = `Vou cadastrar assim:\n\n${resumo}\n\nConfirma?`;
+            reply = `Vou cadastrar assim:\n\n${resumo}${_avisoDeReuso(null)}\n\nConfirma?`;
             const _ok = await _abrir({ modo: 'create', proposta: _acao }, reply);
             if (!_ok) reply = FALHA_PENDENCIA;
           }
@@ -11855,7 +11871,7 @@ Output AGORA, apenas o marker:`;
             // sobrevivente nao aparecia — a pessoa confirmava sem ver o que sobra.
             const detalhe = _acao.action === 'delete' ? '' : `\n\n${_resumoCredencialEfetivo(alvo, _acao)}`;
             await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', `aguardando_confirmacao:${_acao.action}`, null);
-            reply = `Vou ${verbo} *${alvo.nome}*.${detalhe}\n\nConfirma?`;
+            reply = `Vou ${verbo} *${alvo.nome}*.${detalhe}${_acao.action === 'delete' ? '' : _avisoDeReuso(alvo.id)}\n\nConfirma?`;
             const _ok = await _abrir(
               { modo: _acao.action, proposta: _acao, alvo_id: alvo.id, alvo_nome: alvo.nome }, reply);
             if (!_ok) reply = FALHA_PENDENCIA;

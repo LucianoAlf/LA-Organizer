@@ -54,6 +54,32 @@ function formatCredencialAdmin(cred, opts = {}) {
   return linhas.join('\n');
 }
 
+const MAX_NOMES_REUSO = 3;
+
+/**
+ * Aviso de REUSO de segredo, pra colar dentro da confirmacao de cadastro.
+ *
+ * LAOR-3: ate 04/09 isto era tratado como DUPLICATA — o TOM oferecia "quer atualizar uma
+ * dessas?" pra credenciais que so compartilhavam a senha. Barrou o cadastro do Google Ads,
+ * que nunca foi criado. A informacao e boa; o lugar dela e outro: aviso dentro da
+ * confirmacao normal, em UM passo, em vez de virar obstaculo.
+ *
+ * Nunca recebe nem imprime o valor — so o nome da credencial e o rotulo do campo.
+ *
+ * @param {Array<{cred: object, label: string}>} reuso  saida de acharReusoDeSegredo
+ * @returns {string} '' quando nao ha reuso; senao um bloco comecando com \n\n
+ */
+function formatAvisoReuso(reuso) {
+  const lista = (Array.isArray(reuso) ? reuso : []).filter(r => r && r.cred && r.cred.nome);
+  if (!lista.length) return '';
+  const rotulo = String(lista[0].label || 'segredo').trim().toLowerCase();
+  const nomes = lista.slice(0, MAX_NOMES_REUSO).map(r => `*${r.cred.nome}*`);
+  const resto = lista.length - nomes.length;
+  if (lista.length === 1) return `\n\n⚠️ Esse ${rotulo} já está em ${nomes[0]}.`;
+  const corpo = nomes.join(', ') + (resto > 0 ? ` e mais ${resto}` : '');
+  return `\n\n⚠️ Esse ${rotulo} já aparece em outros ${lista.length} cadastros: ${corpo}.`;
+}
+
 // Quantos nomes da lista aparecem na resposta final. Proxy DETERMINISTICO pra "isso foi uma
 // listagem" — e o rodape so faz sentido em listagem. Numa pergunta pontual ("qual a senha do
 // Canva?") um rodape de visibilidade seria ruido em todo turno.
@@ -118,6 +144,6 @@ function rodapeVisibilidade(creds, resposta) {
 
 module.exports = {
   mdParaWhatsapp, formatListaPublica, formatCredencialAdmin,
-  rodapeVisibilidade, contarNomesNaResposta,
-  MAX_ITENS, MAX_CAMPOS, MAX_NOMES_RODAPE,
+  rodapeVisibilidade, contarNomesNaResposta, formatAvisoReuso,
+  MAX_ITENS, MAX_CAMPOS, MAX_NOMES_RODAPE, MAX_NOMES_REUSO,
 };

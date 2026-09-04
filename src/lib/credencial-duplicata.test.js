@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { acharDuplicatas, acharAlvo } = require('./credencial-duplicata');
+const { acharDuplicatas, acharAlvo, acharReusoDeSegredo } = require('./credencial-duplicata');
 
 const EXISTENTES = [
   { id: '1', nome: 'Gmail — Escola de Música LA (YouTube/Google Ads)', servico: 'Gmail', projeto: 'Marketing',
@@ -10,10 +10,28 @@ const EXISTENTES = [
   { id: '3', nome: 'Cloudflare — DNS/CDN', servico: 'Cloudflare', projeto: 'Landing Pages', campos: [] },
 ];
 
-test('valor de campo igual e sinal de forca alta', () => {
+// LAOR-3: identidade igual SOZINHA e `media`, nao `alta`. Evidencia da propria base — "Chave
+// openai" e "Gmail — Escola de Musica LA" compartilham o mesmo e-mail e sao credenciais
+// diferentes (uma chave de API e uma conta). Vira `alta` so com host ou servico batendo junto.
+test('identidade igual sem host nem servico e sinal MEDIO', () => {
   const d = acharDuplicatas({ nome: 'Conta nova', campos: [{ label: 'E-mail', valor: 'escola@gmail.com' }] }, EXISTENTES);
   assert.equal(d.length, 1);
   assert.equal(d[0].cred.id, '1');
+  assert.equal(d[0].forca, 'media');
+});
+
+test('identidade igual COM o mesmo servico e sinal ALTO — mesma conta no mesmo sistema', () => {
+  const d = acharDuplicatas(
+    { nome: 'Conta nova', servico: 'Gmail', campos: [{ label: 'E-mail', valor: 'escola@gmail.com' }] }, EXISTENTES);
+  assert.equal(d.find(x => x.cred.id === '1').forca, 'alta');
+});
+
+test('identidade igual COM o mesmo host e sinal ALTO, mesmo sem servico', () => {
+  const existentes = [{ id: 'h', nome: 'Ads antigo', url_ref: 'https://ads.google.com/campaigns?id=9',
+    campos: [{ label: 'E-mail', valor: 'la@gmail.com' }] }];
+  const d = acharDuplicatas(
+    { nome: 'Ads novo', url_ref: 'http://www.ads.google.com', campos: [{ label: 'E-mail', valor: 'la@gmail.com' }] },
+    existentes);
   assert.equal(d[0].forca, 'alta');
 });
 
@@ -83,31 +101,103 @@ test('acharAlvo: entrada invalida nao quebra', () => {
   assert.deepEqual(acharAlvo('x', null), { exato: null, candidatos: [] });
 });
 
-// I-1 (review 04/09): o `motivo` vai inteiro pra tela do WhatsApp. Campo sensivel nao
-// pode devolver o segredo em claro na lista de duplicatas.
-test('motivo NAO cita o valor quando o campo e sensivel — cita o label', () => {
-  const existentes = [{ id: '9', nome: 'Canva Antigo', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }];
-  const d = acharDuplicatas({ nome: 'Canva Novo', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }, existentes);
-  assert.equal(d.length, 1);
-  assert.equal(d[0].forca, 'alta');
-  assert.ok(!/hunter2/.test(d[0].motivo), `segredo vazou no motivo: ${d[0].motivo}`);
-  assert.equal(d[0].motivo, 'mesmo valor no campo Senha');
+// =====================================================================
+// LAOR-3 — SEGREDO IGUAL NAO E DUPLICATA
+// O caso real (Hugo, 04/09 15:08): "conta do ADS Google" foi barrada porque a senha dela
+// aparecia em registro.br, Mila Openclaw e Mila Supabase. Nenhuma tem relacao com o Google
+// Ads — o que elas compartilham e uma senha reaproveitada. A credencial nunca foi criada.
+// =====================================================================
+
+test('senha igual NAO gera duplicata — nem alta, nem nenhuma', () => {
+  const existentes = [{ id: '9', nome: 'Domínio — registro.br', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }];
+  const d = acharDuplicatas({ nome: 'Conta do ADS Google', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }, existentes);
+  assert.deepEqual(d, [], 'senha reaproveitada voltou a virar duplicata');
 });
 
-test('motivo mascara mesmo sem a flag, quando o label denuncia segredo', () => {
+test('senha igual sem a flag tambem nao gera — o label ja denuncia', () => {
   const existentes = [{ id: '9', nome: 'VPS', campos: [{ label: 'Senha', valor: 'p4ss' }] }];
-  const d = acharDuplicatas({ nome: 'VPS nova', campos: [{ label: 'Senha', valor: 'p4ss' }] }, existentes);
-  assert.ok(!/p4ss/.test(d[0].motivo), `segredo vazou no motivo: ${d[0].motivo}`);
+  assert.deepEqual(acharDuplicatas({ nome: 'VPS nova', campos: [{ label: 'Senha', valor: 'p4ss' }] }, existentes), []);
 });
 
-test('basta um dos lados marcar sensivel para mascarar', () => {
+test('basta um dos lados marcar sensivel para o campo sair da conta', () => {
   const existentes = [{ id: '9', nome: 'Token X', campos: [{ label: 'Valor', valor: 'abc123' }] }];
-  const d = acharDuplicatas({ nome: 'Token Y', campos: [{ label: 'Valor', valor: 'abc123', sensivel: true }] }, existentes);
-  assert.ok(!/abc123/.test(d[0].motivo), `segredo vazou no motivo: ${d[0].motivo}`);
+  assert.deepEqual(
+    acharDuplicatas({ nome: 'Token Y', campos: [{ label: 'Valor', valor: 'abc123', sensivel: true }] }, existentes), []);
 });
 
-test('campo NAO sensivel segue mostrando o valor (e o que torna a mensagem util)', () => {
+test('campo que NAO identifica nao gera duplicata (custo, dispositivo, integracao)', () => {
+  // Medido na base: Custo/mes igual em 4 cadastros, Dispositivo em 4, Integracao em 5.
+  // Dois cadastros que custam o mesmo por mes eram "alta duplicata".
+  for (const label of ['Custo/mês', 'Dispositivo', 'Integração', 'Observação']) {
+    const existentes = [{ id: '9', nome: 'Mila Barra — SDR', campos: [{ label, valor: 'mesmo-valor-aqui' }] }];
+    const d = acharDuplicatas({ nome: 'Coisa nova', campos: [{ label, valor: 'mesmo-valor-aqui' }] }, existentes);
+    assert.deepEqual(d, [], `campo ${label} voltou a casar`);
+  }
+});
+
+test('valor que nao identifica ninguem nao gera duplicata (admin, root)', () => {
+  // Os dois WordPress da base casavam como duplicata forte por usuario = admin.
+  for (const valor of ['admin', 'root', 'user', 'ADMIN ']) {
+    const existentes = [{ id: '9', nome: 'WordPress — LPs', campos: [{ label: 'Usuário', valor: 'admin' }] }];
+    const d = acharDuplicatas({ nome: 'WordPress — outro', campos: [{ label: 'Usuário', valor }] }, existentes);
+    assert.deepEqual(d, [], `valor "${valor}" voltou a casar`);
+  }
+});
+
+test('nome curto nao casa mais por conter/estar contido', () => {
+  const existentes = [{ id: '9', nome: 'Sol — Atendimento', campos: [] }];
+  assert.deepEqual(acharDuplicatas({ nome: 'Sol', campos: [] }, existentes), []);
+});
+
+test('identidade segue mostrando o valor — e ele que torna a mensagem util', () => {
   const existentes = [{ id: '9', nome: 'Gmail A', campos: [{ label: 'E-mail', valor: 'escola@gmail.com' }] }];
   const d = acharDuplicatas({ nome: 'Gmail B', campos: [{ label: 'E-mail', valor: 'escola@gmail.com' }] }, existentes);
-  assert.equal(d[0].motivo, 'mesmo valor de campo: escola@gmail.com');
+  assert.equal(d[0].motivo, 'mesmo E-mail: escola@gmail.com');
+});
+
+// ---- aviso de reuso: a informacao nao some, muda de lugar ----
+
+test('reuso de segredo devolve as credenciais e o LABEL — nunca o valor', () => {
+  const existentes = [
+    { id: 'a', nome: 'Domínio — registro.br', campos: [{ label: 'Senha', valor: 'hunter2' }] },
+    { id: 'b', nome: 'Mila Openclaw', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] },
+    { id: 'c', nome: 'Outra', campos: [{ label: 'Senha', valor: 'diferente' }] },
+  ];
+  const r = acharReusoDeSegredo({ nome: 'ADS Google', campos: [{ label: 'Senha', valor: 'hunter2', sensivel: true }] }, existentes);
+  assert.equal(r.length, 2);
+  assert.deepEqual(r.map(x => x.cred.id), ['a', 'b']);
+  assert.equal(r[0].label, 'Senha');
+  assert.ok(!JSON.stringify(r.map(x => ({ id: x.cred.id, label: x.label }))).includes('hunter2'));
+});
+
+test('reuso ignora campo NAO sensivel — e-mail repetido nao e reuso de segredo', () => {
+  const existentes = [{ id: 'a', nome: 'X', campos: [{ label: 'E-mail', valor: 'a@b.com' }] }];
+  assert.deepEqual(acharReusoDeSegredo({ nome: 'Y', campos: [{ label: 'E-mail', valor: 'a@b.com' }] }, existentes), []);
+});
+
+test('reuso conta cada credencial UMA vez, mesmo com varios campos batendo', () => {
+  const existentes = [{ id: 'a', nome: 'Sol', campos: [{ label: 'senha gmail', valor: 's3' }, { label: 'senha supabase', valor: 's3' }] }];
+  const r = acharReusoDeSegredo({ nome: 'Nova', campos: [{ label: 'Senha', valor: 's3' }] }, existentes);
+  assert.equal(r.length, 1);
+});
+
+test('reuso: entrada invalida e proposta sem segredo devolvem vazio', () => {
+  assert.deepEqual(acharReusoDeSegredo(null, []), []);
+  assert.deepEqual(acharReusoDeSegredo({ nome: 'X' }, []), []);
+  assert.deepEqual(acharReusoDeSegredo({ nome: 'X', campos: [{ label: 'E-mail', valor: 'a@b' }] }, null), []);
+  assert.deepEqual(acharReusoDeSegredo({ nome: 'X', campos: [{ label: 'Senha', valor: '' }] },
+    [{ id: 'a', nome: 'Y', campos: [{ label: 'Senha', valor: '' }] }]), [], 'valor vazio casou');
+});
+
+test('mesmo host SOZINHO nao casa — reprovado na prova contra as 46', () => {
+  // Gerava 12 pares novos, e os piores eram hosts genericos: tres contas de Gmail diferentes
+  // viravam "parecidas" so por morarem em mail.google.com. O caso legitimo (recadastro do
+  // mesmo sistema) e coberto por host+identidade = alta.
+  const existentes = [
+    { id: 'a', nome: 'Gmail — Barra', url_ref: 'https://mail.google.com', campos: [{ label: 'E-mail', valor: 'barra@gmail.com' }] },
+  ];
+  const d = acharDuplicatas(
+    { nome: 'Gmail — backup', url_ref: 'https://mail.google.com', campos: [{ label: 'E-mail', valor: 'backup@gmail.com' }] },
+    existentes);
+  assert.deepEqual(d, [], 'host sozinho voltou a casar');
 });
