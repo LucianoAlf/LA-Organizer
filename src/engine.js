@@ -8875,7 +8875,7 @@ async function processMessage(phone, text, raw = {}) {
   try { _textStartLog = redigirSegredos(text).texto; }
   catch (e) {
     _textStartLog = '[redacao falhou — texto omitido]';
-    console.warn(`[Redacao] falha ao redigir texto do START log phone=${_phoneTail}: ${e.message}`);
+    console.warn(`[Redacao] falha ao redigir texto do START log phone=${_phoneTail}: ${e instanceof Error ? e.message : String(e)}`);
   }
   console.log(`[Engine] processMessage START phone=${_phoneTail} text="${String(_textStartLog).slice(0, 60).replace(/\n/g, ' ')}"`);
   // Sprint 10: telemetria operacional. Acumulada durante o pipeline e gravada
@@ -8956,7 +8956,7 @@ async function processMessage(phone, text, raw = {}) {
     if (_red.achou) console.log('[Redacao] valor sensivel mascarado no texto que vai para os logs');
   } catch (e) {
     textForLogs = '[redacao falhou — texto omitido]';
-    console.warn(`[Redacao] falha ao redigir texto de entrada collab=${collab.id}: ${e.message}`);
+    console.warn(`[Redacao] falha ao redigir texto de entrada collab=${collab.id}: ${e instanceof Error ? e.message : String(e)}`);
   }
   await logConversation(collab.id, 'inbound', textForLogs, _inboundWaId);
 
