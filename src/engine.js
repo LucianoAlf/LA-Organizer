@@ -8926,7 +8926,22 @@ async function processMessage(phone, text, raw = {}) {
   // o id gravado identifica o lote pela última fala, não por todas.
   let _inboundWaId = null;
   try { _inboundWaId = whatsapp.extractMessageId(raw); } catch (_) { _inboundWaId = null; }
-  await logConversation(collab.id, 'inbound', text, _inboundWaId);
+  // REDACAO NA ENTRADA (03/09) — o texto que segue para QUALQUER log vai
+  // mascarado. Nao basta redigir no conversation_history: engine grava os 200
+  // primeiros chars em marker_logs.reason quando falta marker, e o relatorio
+  // das 7h transmite esse trecho por WhatsApp. `text` aqui ja inclui a analise
+  // de imagem injetada pelo webhook, entao print de senha tambem e coberto.
+  // Deterministico de proposito: nao depende de o modelo reconhecer a credencial.
+  const { redigirSegredos } = require('./lib/redigir-segredo');
+  const _red = redigirSegredos(text);
+  const textForLogs = _red.texto;
+  if (_red.achou) console.log('[Redacao] valor sensivel mascarado no texto que vai para os logs');
+  // Copia da mensagem crua ANTES de qualquer reatribuicao de `text` (~9483, 10291,
+  // 10587 anexam blocos [CONTEXTO INTERNO] mais adiante). Uma task futura precisa
+  // do texto original do colaborador para detectar confirmacao — no texto inchado
+  // com contexto o detector devolve null.
+  const _textInboundRaw = String(text || '');
+  await logConversation(collab.id, 'inbound', textForLogs, _inboundWaId);
 
   // ---- Pending intents: lê UMA vez por mensagem (compartilhado finance_source + Sprint 30.3) ----
   let _openIntents = [];
@@ -13666,9 +13681,13 @@ async function processMessage(phone, text, raw = {}) {
     if (!_metrics.awaiting_user_confirm && !_replyIsInfoGathering && _flagActionable) {
       _metrics.actionable_intent = true;
       if (fired.length === 0) {
-        console.warn(`[Engine] ACTIONABLE_NO_MARKER — text="${String(text).slice(0,80)}" reply="${String(reply).slice(0,100)}"`);
+        // `text` aqui pode ja ter sido reatribuido com blocos [CONTEXTO INTERNO] — redige de novo
+        // em vez de reusar textForLogs (obsoleto neste ponto); reply do modelo pode ecoar o segredo.
+        const _textRed = redigirSegredos(text).texto;
+        const _replyRed = redigirSegredos(String(reply)).texto;
+        console.warn(`[Engine] ACTIONABLE_NO_MARKER — text="${String(_textRed).slice(0,80)}" reply="${String(_replyRed).slice(0,100)}"`);
         await logMarker(collab.id, 'ACTIONABLE_NO_MARKER', 'rejected',
-          `text:${String(text).slice(0,200)}`, String(reply).slice(0,500));
+          `text:${String(_textRed).slice(0,200)}`, String(_replyRed).slice(0,500));
 
         // --- Sprint 28.2: Camada 1 — retry com prompt cirúrgico ---
         // Só ataca quando há promessa EXPLÍCITA na reply (caso cristalino).
