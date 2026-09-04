@@ -648,3 +648,78 @@ test('recuperação: o cabeçalho novo é COBERTO pela guarda de duplicata (dist
 test('recuperação: faixa sem ninguém pendente continua sendo SILÊNCIO, não mensagem vazia', () => {
   assert.strictEqual(lembreteDaProximaHora({ itens: [], hora: '10:00', recuperacao: true }), null);
 });
+
+// ── O HORÁRIO DO RELATÓRIO DE FIM DE DIA (correção 04/09) ────────────────────────────────────
+// Mesma ideia da abertura, do outro lado do dia. Os horários de dia útil (Barra 19:30, Recreio e
+// Campo Grande 20:30) são horários de DIA ÚTIL: no sábado a escola fecha muito mais cedo e o
+// relatório saía com a casa vazia — ninguém lê. O dono informou os reais de sábado (Barra 15:30,
+// Recreio 14:30, Campo Grande 14:30) e eles batem com os dados: a última aula de sábado é 15:00
+// na Barra e 14:00 no Recreio e no Campo Grande, ou seja, o relatório sai meia hora depois dela,
+// com a equipe ainda na casa.
+const {
+  horaDeFimDeDiaDaUnidade, horariosDeFimDeDiaDoDia,
+} = require('./anamnese-pauta');
+
+test('fim de dia: dia útil segue exatamente como antes (Barra 19:30, Recreio e Campo Grande 20:30)', () => {
+  for (const dia of [1, 2, 3, 4, 5]) {
+    assert.strictEqual(horaDeFimDeDiaDaUnidade('Barra', dia), '19:30', `dia ${dia}`);
+    assert.strictEqual(horaDeFimDeDiaDaUnidade('Recreio', dia), '20:30', `dia ${dia}`);
+    assert.strictEqual(horaDeFimDeDiaDaUnidade('Campo Grande', dia), '20:30', `dia ${dia}`);
+  }
+});
+
+test('fim de dia: no SÁBADO sai mais cedo — Barra 15:30, Recreio e Campo Grande 14:30', () => {
+  assert.strictEqual(horaDeFimDeDiaDaUnidade('Barra', 6), '15:30');
+  assert.strictEqual(horaDeFimDeDiaDaUnidade('Recreio', 6), '14:30');
+  assert.strictEqual(horaDeFimDeDiaDaUnidade('Campo Grande', 6), '14:30');
+  assert.deepStrictEqual(horariosDeFimDeDiaDoDia(6), ['14:30', '15:30'],
+    'dois slots no sábado: as duas de 14:30 falam num, a Barra no outro');
+});
+
+// Mesma medição da abertura: zero aulas em domingo nas três unidades. Sem aula não há o que
+// relatar, e mandar um relatório vazio num grupo real ensina a equipe a ignorar o relatório.
+test('fim de dia: DOMINGO não existe — nenhuma unidade relata, e o bloco nem chega a rodar', () => {
+  for (const u of ['Recreio', 'Barra', 'Campo Grande']) {
+    assert.strictEqual(horaDeFimDeDiaDaUnidade(u, 0), null, `${u} não relata no domingo`);
+  }
+  assert.deepStrictEqual(horariosDeFimDeDiaDoDia(0), [],
+    'lista vazia é o que faz o `some()` do dispatcher ser falso o domingo inteiro');
+});
+
+test('fim de dia: unidade desconhecida devolve null — não chuto horário de escola que não conheço', () => {
+  assert.strictEqual(horaDeFimDeDiaDaUnidade('Unidade Nova', 1), null);
+  assert.strictEqual(horaDeFimDeDiaDaUnidade('Unidade Nova', 6), null);
+});
+
+test('fim de dia: dia da semana torto não vira horário de dia útil por descuido', () => {
+  assert.strictEqual(horaDeFimDeDiaDaUnidade('Barra', null), null);
+  assert.strictEqual(horaDeFimDeDiaDaUnidade('Barra', 7), null);
+  assert.deepStrictEqual(horariosDeFimDeDiaDoDia('sábado'), []);
+});
+
+test('fim de dia: os horários do dia saem ORDENADOS e sem repetição', () => {
+  assert.deepStrictEqual(horariosDeFimDeDiaDoDia(3), ['19:30', '20:30'],
+    'Recreio e Campo Grande caem no mesmo slot — um horário só, não dois iguais');
+});
+
+// O relatório é o fim do dia daquela unidade: se ele saísse antes da abertura dela, a mensagem da
+// noite chegaria antes da pauta da manhã. Não é um detalhe estético — é a ordem que a equipe lê.
+test('fim de dia: em todo dia com aula o relatório sai DEPOIS da abertura da mesma unidade', () => {
+  for (const dia of [1, 2, 3, 4, 5, 6]) {
+    for (const u of ['Recreio', 'Barra', 'Campo Grande']) {
+      assert.ok(horaDeFimDeDiaDaUnidade(u, dia) > horaDeAberturaDaUnidade(u, dia),
+        `${u} no dia ${dia}: fim (${horaDeFimDeDiaDaUnidade(u, dia)}) tem que ser depois da abertura`);
+    }
+  }
+});
+
+test('fim de dia: o horário do sábado não depende do fuso do processo (LOCALYMD-UTC-SHIFT)', () => {
+  const tzOriginal = process.env.TZ;
+  try {
+    process.env.TZ = 'America/Sao_Paulo';
+    assert.strictEqual(horaDeFimDeDiaDaUnidade('Barra', diaSemanaBrt('2026-09-05')), '15:30',
+      'a forma proibida leria sábado como sexta e a Barra relataria às 19:30, com a casa vazia');
+  } finally {
+    if (tzOriginal === undefined) delete process.env.TZ; else process.env.TZ = tzOriginal;
+  }
+});

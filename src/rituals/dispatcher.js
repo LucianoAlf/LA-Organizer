@@ -115,7 +115,13 @@ const PAUTA_ANAMNESE_FECHA_TIME = '23:00';
 // ninguem na escola pra ler. Chave e o nome que situacao-aluno.nomeDaUnidade() devolve, igual ao
 // mapa da fala. Slots sao de 15 min (timeToSlot), entao :30 cai certo.
 // Ele so LE: quem fecha filha, fecha container e grava a escada continua sendo o bloco das 23:00.
-const PAUTA_ANAMNESE_FIMDIA_POR_UNIDADE = { 'Recreio': '20:30', 'Barra': '19:30', 'Campo Grande': '20:30' };
+// A TABELA DE HORARIOS NAO MORA MAIS AQUI (correcao 04/09), pelo mesmo motivo da abertura: ela
+// depende do DIA DA SEMANA. Os horarios que ficavam nesta linha (Barra 19:30, Recreio e Campo
+// Grande 20:30) sao de DIA UTIL — no sabado a escola fecha muito mais cedo e o relatorio saia
+// horas depois de a casa esvaziar, pra ninguem ler. Virou decisao testavel em
+// services/anamnese-pauta.js: horaDeFimDeDiaDaUnidade() e horariosDeFimDeDiaDoDia(), ao lado da
+// tabela da abertura. Deixar a constante aqui como copia seria pior que remove-la: dois horarios
+// pra mesma unidade, e um deles mentindo.
 // A lista do dia PRECISA encolher (pedido do Alf, 04/09). Sem esta passada, quem preenche a
 // anamnese no tablet as 10h fica na tela ate as 23:00 e a equipe cobra quem ja fez. De 2 em 2
 // horas, das 09:00 as 21:00: a primeira aula e 08:00 (a de 09:00 pega a turma da manha) e a
@@ -4903,17 +4909,39 @@ async function run(opts = {}) {
   // dia continua sendo o bloco das 23:00 logo abaixo. Duas passadas gravando o mesmo resultado
   // fariam a escada divergir de si mesma, e às 19:30 o dia nem acabou (ainda tem aula às 20:00).
   // A trava disso mora no ritual (relatorioDeFimDeDia) e tem teste com fakes de escrita.
+  // O HORARIO DO RELATORIO DEPENDE DO DIA DA SEMANA (correcao 04/09): sabado tem conjunto proprio
+  // (Barra 15:30, Recreio e Campo Grande 14:30 — meia hora depois da ultima aula de cada uma) e
+  // domingo nao existe, e nesse caso horariosDeFimDeDiaDoDia() devolve lista VAZIA, o `some()` e
+  // falso o dia inteiro e o bloco nao abre. Sem `if (domingo)` solto por aqui, igual a abertura:
+  // quem sabe quando cada unidade fecha e a tabela, num lugar so, testavel.
+  //
+  // O dia da semana e o MESMO _pautaDiaSemana que a fala da manha usou, la em cima: sai de
+  // diaSemanaBrt (a string YYYY-MM-DD quebrada em digitos, Date.UTC + getUTCDay), NUNCA de
+  // `new Date(now.ymd).getDay()`, que le a hora LOCAL do processo e so acerta por sorte numa VPS
+  // em UTC. Duas leituras do dia no mesmo tick poderiam divergir — esta reusa a de la
+  // (LOCALYMD-UTC-SHIFT).
+  const _pautaHorasFimDia = _pautaAbertura.horariosDeFimDeDiaDoDia(_pautaDiaSemana);
   if (opts.force === 'pauta_anamnese_fimdia'
-      || Object.values(PAUTA_ANAMNESE_FIMDIA_POR_UNIDADE).some((h) => timeToSlot(h) === slotNow)) {
+      || _pautaHorasFimDia.some((h) => timeToSlot(h) === slotNow)) {
     try {
       const { relatorioDeFimDeDia } = require('./anamnese-pauta');
       const situAl = require('../services/situacao-aluno');
       const { laReportClient } = require('../services/la-report-client');
       for (const unidadeId of situAl.UNIDADES_IDS) {
-        const horaDoFecho = PAUTA_ANAMNESE_FIMDIA_POR_UNIDADE[situAl.nomeDaUnidade(unidadeId)];
+        // Cada unidade relata na SUA hora — que depende do dia (dia util: Barra 19:30, Recreio e
+        // Campo Grande 20:30; sabado: Barra 15:30, as outras duas 14:30). O bloco abre quando
+        // QUALQUER uma bate o slot, entao aqui sai quem nao e a da vez.
+        const horaDoFecho = _pautaAbertura.horaDeFimDeDiaDaUnidade(situAl.nomeDaUnidade(unidadeId), _pautaDiaSemana);
         if (!horaDoFecho) {
-          // Unidade nova sem horário definido: não falo no escuro, mas também não calo sobre isso.
-          console.warn(`[Pauta] fim de dia: unidade sem horario definido (${unidadeId}) -- nao vou falar`);
+          // null tem DOIS significados e eles nao podem virar o mesmo rastro: domingo e rotina (nao
+          // houve aula, nao ha o que relatar), unidade sem horario e coisa pra alguem olhar. Em
+          // nenhum dos dois eu caio no horario de dia util por descuido — mandar o relatorio pra
+          // casa vazia e exatamente o que esta amarra existe pra impedir.
+          if (_pautaDiaSemana === 0) {
+            console.log(`[Pauta] fim de dia: domingo nao tem aula (${situAl.nomeDaUnidade(unidadeId)}) -- nao falo`);
+          } else {
+            console.warn(`[Pauta] fim de dia: unidade sem horario definido (${unidadeId}) -- nao vou falar`);
+          }
           continue;
         }
         if (opts.force !== 'pauta_anamnese_fimdia' && timeToSlot(horaDoFecho) !== slotNow) continue;

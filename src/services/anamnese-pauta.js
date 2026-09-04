@@ -57,6 +57,44 @@ function horariosDeAberturaDoDia(diaSemana) {
   return [...new Set(horas)].sort();
 }
 
+// ── QUANDO CADA UNIDADE FECHA O DIA (correção 04/09) ─────────────────────────────────────────
+// O relatório de fim de dia sai por unidade, depois da última aula dela — e a última aula muda no
+// sábado. Horários reais informados pelo dono:
+//   Seg a Sex   Barra 19:30 · Recreio 20:30 · Campo Grande 20:30
+//   Sábado      Barra 15:30 · Recreio 14:30 · Campo Grande 14:30
+// Conferidos contra os dados: a última aula de sábado é 15:00 na Barra e 14:00 no Recreio e no
+// Campo Grande — o relatório sai meia hora depois dela, com a equipe ainda na casa. Com o mapa de
+// dia útil o relatório de sábado saía às 19:30/20:30, horas depois de a escola fechar: mensagem
+// para casa vazia, e um relatório que ninguém lê ensina a equipe a ignorar o próximo também.
+//
+// DOMINGO NÃO EXISTE, pelo mesmo motivo da abertura (zero aulas nas três unidades, conferido na
+// fonte em 04/09): sem aula não há o que relatar. null é o que faz o dispatcher não abrir o bloco.
+//
+// A tabela mora AQUI, ao lado da tabela da abertura, de propósito: são as duas pontas do MESMO
+// dia e leem o MESMO dia da semana. Separá-las convidaria alguém a corrigir o sábado num lado só.
+const FIMDIA_DIA_UTIL = { Recreio: '20:30', Barra: '19:30', 'Campo Grande': '20:30' };
+const FIMDIA_SABADO = { Recreio: '14:30', Barra: '15:30', 'Campo Grande': '14:30' };
+
+// null = esta unidade não relata neste dia (domingo, ou unidade que eu não conheço). Mesma regra
+// da abertura: quem chama NÃO pode transformar null em "usa o de dia útil" — mandar o relatório
+// às 20:30 de um sábado é falar sozinho num grupo que já esvaziou.
+function horaDeFimDeDiaDaUnidade(unidadeNome, diaSemana) {
+  if (!Number.isInteger(diaSemana) || diaSemana < 0 || diaSemana > 6) return null;
+  if (diaSemana === 0) return null;                    // domingo: não há aula
+  const mapa = diaSemana === 6 ? FIMDIA_SABADO : FIMDIA_DIA_UTIL;
+  return mapa[unidadeNome] || null;
+}
+
+// Os horários DISTINTOS de fim de dia do dia, ordenados: é com isto que o dispatcher decide se o
+// slot de agora é hora de alguma unidade relatar. No domingo é lista vazia, e é ela que mantém o
+// bloco fechado o dia inteiro sem precisar de um `if (domingo)` espalhado pelo dispatcher.
+function horariosDeFimDeDiaDoDia(diaSemana) {
+  const horas = Object.keys(FIMDIA_DIA_UTIL)
+    .map((nome) => horaDeFimDeDiaDaUnidade(nome, diaSemana))
+    .filter(Boolean);
+  return [...new Set(horas)].sort();
+}
+
 function _norm(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
@@ -409,6 +447,11 @@ module.exports = {
   // cópia redigitada lá faria a suíte continuar verde no dia em que alguém mudasse o valor aqui.
   diaSemanaBrt, horaDeAberturaDaUnidade, horariosDeAberturaDoDia,
   ABERTURA_DIA_UTIL, ABERTURA_SABADO,
+  // O horário do relatório de fim de dia sai daqui pelo mesmo motivo da abertura: o dispatcher e
+  // os testes leem a MESMA tabela, e uma cópia redigitada lá faria a suíte continuar verde no dia
+  // em que uma unidade mudasse de horário aqui.
+  horaDeFimDeDiaDaUnidade, horariosDeFimDeDiaDoDia,
+  FIMDIA_DIA_UTIL, FIMDIA_SABADO,
   degrau, tituloDaFilha, tituloDaEscalada, separarPorDegrau,
   mensagemDoGrupo, PRIMEIROS_NO_ZAP,
   mensagemDeFimDeDia, FALTARAM_NO_ZAP,
