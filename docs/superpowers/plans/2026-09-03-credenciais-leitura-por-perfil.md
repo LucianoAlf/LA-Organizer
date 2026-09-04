@@ -113,8 +113,9 @@ revoke execute on function get_credenciais_para(uuid) from anon;
 revoke execute on function get_credenciais_para(uuid) from authenticated;
 grant execute on function get_credenciais_para(uuid) to service_role;
 
--- Uma porta so de leitura: a antiga sai junto.
-drop function if exists get_credenciais_publicas();
+-- NAO dropar get_credenciais_publicas aqui. O engine em producao so passa a
+-- usar a RPC nova no deploy (Task 6); dropar agora deixaria o TOM respondendo
+-- "nao tenho nenhum sistema cadastrado" ate la. O drop e o Step 2 da Task 6.
 ```
 
 - [ ] **Step 2: Aplicar via MCP**
@@ -163,7 +164,7 @@ select has_function_privilege('anon','get_credenciais_para(uuid)','EXECUTE') as 
        (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
         where n.nspname='public' and p.proname='get_credenciais_publicas') as antiga_ainda_existe;
 ```
-Esperado: `anon_pode=false`, `auth_pode=false`, `service_pode=true`, `antiga_ainda_existe=0`.
+Esperado: `anon_pode=false`, `auth_pode=false`, `service_pode=true`, e `antiga_ainda_existe=1` — a antiga **continua existindo de propósito** até o deploy da Task 6, para não quebrar o TOM em produção nesse intervalo.
 
 - [ ] **Step 8: Commit**
 
@@ -472,37 +473,48 @@ Criar `src/services/credenciais.js`:
 // necessidade, ja que a consulta e pontual.
 
 const CACHE_TTL_MS = 30 * 60 * 1000;
-let _cachePublico = { ts: 0, creds: [] };
+
+// Cache keyed por collaboratorId. SO entra aqui quem NAO e admin — entao um
+// hit ja implica escopo publico, e o resultado admin (que traz senha em texto
+// plano) nunca fica residente na memoria do processo.
+const _cachePublico = new Map();
 
 function _resetCache() {
-  _cachePublico = { ts: 0, creds: [] };
+  _cachePublico.clear();
+}
+
+function _cacheHit(collaboratorId) {
+  const hit = _cachePublico.get(collaboratorId);
+  if (!hit) return null;
+  if (Date.now() - hit.ts >= CACHE_TTL_MS) { _cachePublico.delete(collaboratorId); return null; }
+  return hit.creds;
 }
 
 async function getCredenciaisPara(collaboratorId) {
   if (!collaboratorId) return { isAdmin: false, creds: [] };
+
+  const cached = _cacheHit(collaboratorId);
+  if (cached) return { isAdmin: false, creds: cached };
+
   try {
     const supabase = require('../supabase/client'); // lazy: evita init no load (testes)
     const { data, error } = await supabase.rpc('get_credenciais_para', { p_collaborator_id: collaboratorId });
     if (error) {
       console.warn('[Credenciais] RPC erro:', error.message);
-      return { isAdmin: false, creds: _cachePublico.creds };
+      return { isAdmin: false, creds: [] };   // fail-closed
     }
     const rows = data || [];
     const isAdmin = rows.length > 0 && rows[0].is_admin === true;
-    if (!isAdmin) {
-      _cachePublico = { ts: Date.now(), creds: rows };
-    }
+    if (!isAdmin) _cachePublico.set(collaboratorId, { ts: Date.now(), creds: rows });
     return { isAdmin, creds: rows };
   } catch (e) {
     console.warn('[Credenciais] fetch falhou:', e.message);
-    return { isAdmin: false, creds: _cachePublico.creds };
+    return { isAdmin: false, creds: [] };     // fail-closed
   }
 }
 
 module.exports = { getCredenciaisPara, _resetCache, CACHE_TTL_MS };
 ```
-
-**Nota sobre o cache do público:** a leitura só usa o cache quando a RPC falha (degradação) — o caminho feliz sempre consulta. Isso é intencional aqui: a chamada só acontece quando o marker dispara, e o volume é baixo demais para justificar servir dado potencialmente velho no caminho normal.
 
 - [ ] **Step 4: Rodar e confirmar que passa**
 
@@ -669,6 +681,21 @@ Nota: o alias SSH `tom` não funciona neste ambiente (`~/.ssh/config` vazio) —
 ssh root@89.116.73.186 "pm2 list | grep tom"
 ```
 Expected: `online`.
+
+- [ ] **Step 2b: Dropar a RPC antiga (só agora)**
+
+A `get_credenciais_publicas` sobreviveu à Task 1 de propósito, para o TOM em produção não ficar sem leitura entre a migration e este deploy. Com o código novo no ar, ela sai:
+
+```sql
+drop function if exists get_credenciais_publicas();
+```
+
+Verificar que sumiu e que a nova ficou:
+```sql
+select proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+where n.nspname='public' and p.proname like 'get_credenciais%';
+```
+Esperado: apenas `get_credenciais_para`.
 
 - [ ] **Step 3: Teste E2E — admin pedindo credencial completa**
 
