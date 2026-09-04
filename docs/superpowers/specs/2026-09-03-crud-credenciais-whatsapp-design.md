@@ -102,6 +102,29 @@ Decisão consciente do Hugo: a senha trafega pelo WhatsApp. Hoje ela existe em 1
 | WhatsApp do Hugo e do Luciano + backup em nuvem | Impossível mitigar — aceito |
 | UAZAPI (provedor terceiro) | Impossível mitigar — aceito |
 
+### Cadastro por imagem (decidido em 03/09)
+
+Aceito no escopo. Um print da tela de senha ou foto de um papel deve cadastrar igual ao texto digitado.
+
+**Mas o caminho da imagem é mais exposto que o do texto**, e a mitigação precisa cobri-lo explicitamente. Fluxo atual (`src/services/media.js:1-9`, `src/webhook.js:317`):
+
+1. A UAZAPI gera uma **URL pública** da imagem (`return_link=true`).
+2. Essa URL é passada **direto para o OpenAI vision** (`gpt-5.4-mini`), sem re-upload.
+3. O texto extraído é **injetado no `content`** da mensagem inbound.
+4. `logConversation` grava esse texto em **dois** campos: `conversation_history.content` e `media_extracted_text`.
+
+Consequências, comparado a digitar a senha:
+
+| | Texto digitado | Imagem |
+|---|---|---|
+| Terceiros na cadeia | UAZAPI | UAZAPI **e OpenAI** |
+| Acessível por URL | não | sim, enquanto o link da UAZAPI viver |
+| Campos do banco com o segredo em claro | 1 | 2 |
+
+E como o texto extraído entra no `content`, ele é exatamente o material que pode acabar em `marker_logs.reason` e, daí, no relatório das 7h — o mesmo caminho descrito abaixo.
+
+**Portanto:** a redação na entrada se aplica ao texto **depois** da injeção da análise de mídia, não apenas ao texto digitado. Um mecanismo que só olhasse a mensagem original deixaria a imagem passar limpa.
+
 ### Redação na entrada, não no ponto de gravação
 
 A mitigação **não pode** ser aplicada arquivo a arquivo em cada `logConversation`. Motivo concreto: `src/engine.js:13643` grava `reason: "text:<primeiros 200 chars da mensagem>"` quando o TOM deixa de emitir marker para uma mensagem acionável. O check `actionable_no_marker` lê esse campo e `formatHealthReport` o renderiza como `_user: "..."` — **enviado por WhatsApp para Hugo e Luciano no relatório das 7h**.
