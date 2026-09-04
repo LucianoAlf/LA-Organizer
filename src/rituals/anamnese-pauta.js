@@ -172,4 +172,78 @@ async function montarPautaDaUnidade({ supabase, laReport, unidadeId, groupId, cr
   };
 }
 
-module.exports = { montarPautaDaUnidade, TETO_FILHAS };
+// Passada da NOITE: lê a fonte de novo e carimba o resultado de cada aluno que entrou na pauta
+// de hoje. Não posta mensagem (decisão do Alf, 03/09 — o placar da noite ficou fora da fatia
+// 1). Os contadores abaixo refletem o que REALMENTE entrou no banco, nunca a intenção:
+// gravarResultado (Task 1) devolve `false` quando o UPDATE não casa NENHUMA linha, mesmo sem
+// erro do banco — foi corrigido assim bem por isso, pra não mentir sucesso. Se contássemos a
+// tentativa em vez da escrita, o relatório da noite viraria ficção.
+async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, hoje, deps = {} }) {
+  const repo = deps.repo || repoPadrao;
+  const pessoas = await repo.pessoasDoDia(supabase, { unidadeId, dia: hoje });
+  if (pessoas === null) {
+    // Sensor próprio: falhar ao LER quem entrou na pauta de hoje é diferente de "não tinha
+    // pauta hoje" (abaixo, motivo null) — senão o mesmo "zero linhas silencioso" que já custou
+    // dois diagnósticos errados nesta casa (03/09) volta agora do lado da passada da noite.
+    return {
+      fechou: false, preencheu: 0, naoPreencheu: 0, semVerificacao: 0,
+      motivo: 'não consegui ler quem entrou na pauta de hoje',
+    };
+  }
+  if (!pessoas.length) {
+    // Ninguém entrou na pauta hoje — saúde, não falha. Motivo null é o mesmo sensor de "zero
+    // por saúde" usado no resto deste arquivo.
+    return { fechou: false, preencheu: 0, naoPreencheu: 0, semVerificacao: 0, motivo: null };
+  }
+
+  // Divergência entre o que esta passada TENTOU gravar e o que REALMENTE entrou no banco não
+  // pode ser engolida: se algum UPDATE não casar linha nenhuma, isso sai no motivo em vez de
+  // desaparecer dentro de um contador que finge sucesso.
+  const falhasGravacao = [];
+  async function gravar(pessoaChave, resultado) {
+    const ok = await repo.gravarResultado(supabase, { unidadeId, dia: hoje, pessoaChave, resultado });
+    if (!ok) falhasGravacao.push(pessoaChave);
+    return ok;
+  }
+  function comAvisoDeFalhas(base) {
+    if (!falhasGravacao.length) return base;
+    const aviso = `${falhasGravacao.length} gravação(ões) não confirmada(s) no banco: ${falhasGravacao.join(', ')}`;
+    return base ? `${base}; ${aviso}` : aviso;
+  }
+
+  // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
+  // linhas" silencioso.
+  const { data, error } = await laReport.rpc('get_situacao_alunos_v1',
+    { p_unidade_id: unidadeId, p_apenas_pendentes: false });
+
+  // Dia que a NOSSA infra derrubou não conta contra o aluno: senão a 3ª aparição da escada
+  // chega por culpa nossa e a equipe cobra quem já tinha preenchido.
+  if (error) {
+    let semVerificacao = 0;
+    for (const pk of pessoas) {
+      if (await gravar(pk, 'sem_verificacao')) semVerificacao++;
+    }
+    return {
+      fechou: true, preencheu: 0, naoPreencheu: 0, semVerificacao,
+      motivo: comAvisoDeFalhas(`consulta do LA Report falhou: ${error.message}`),
+    };
+  }
+
+  const porChave = new Map((data || []).map((p) => [p.pessoa_chave, p]));
+  let preencheu = 0; let naoPreencheu = 0; let semVerificacao = 0;
+  for (const pk of pessoas) {
+    const p = porChave.get(pk);
+    let resultado;
+    if (!p) { resultado = 'sem_verificacao'; }                              // saiu da base ativa
+    else if (!situ.filtrarPorRecorte([p], 'anamnese').length) { resultado = 'preencheu'; }
+    else { resultado = 'nao_preencheu'; }
+    if (await gravar(pk, resultado)) {
+      if (resultado === 'sem_verificacao') semVerificacao++;
+      else if (resultado === 'preencheu') preencheu++;
+      else naoPreencheu++;
+    }
+  }
+  return { fechou: true, preencheu, naoPreencheu, semVerificacao, motivo: comAvisoDeFalhas(null) };
+}
+
+module.exports = { montarPautaDaUnidade, fecharPautaDaUnidade, TETO_FILHAS };

@@ -227,3 +227,109 @@ test('o título consultado na checagem de duplicata é o MESMO título usado na 
   assert.strictEqual(d.titulosChecados[0], d.criadas[0].input.title,
     'se os dois textos puderem divergir, a guarda de duplicata fica cega pro próprio container');
 });
+
+// ── TASK 6: A PASSADA DA NOITE ──────────────────────────────────────────────────────────────
+// De manhã o ritual MONTA a pauta (acima). À noite ele FECHA: lê a fonte de novo e carimba,
+// pessoa por pessoa, quem preencheu e quem não. Dia que a NOSSA infra caiu não pode contar
+// contra o aluno — grava sem_verificacao, nunca nao_preencheu, senão a 3ª aparição da escada
+// chega por culpa nossa e a equipe cobra quem já tinha preenchido.
+const { fecharPautaDaUnidade } = require('./anamnese-pauta');
+
+function depsNoite({ rpcErro = null, alunos = [], daPauta = [] } = {}) {
+  const gravados = [];
+  return {
+    gravados,
+    laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
+    repo: {
+      pessoasDoDia: async () => daPauta,
+      gravarResultado: async (_sb, arg) => { gravados.push(arg); return true; },
+    },
+  };
+}
+
+test('à noite grava preencheu/nao_preencheu lendo a fonte', async () => {
+  const d = depsNoite({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', false)],
+    daPauta: ['pk-Ana', 'pk-Bia'],
+  });
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.preencheu, 1);
+  assert.strictEqual(r.naoPreencheu, 1);
+  assert.deepStrictEqual(
+    d.gravados.map((g) => [g.pessoaChave, g.resultado]).sort(),
+    [['pk-Ana', 'preencheu'], ['pk-Bia', 'nao_preencheu']],
+  );
+});
+
+// Dia que a nossa infra derrubou NÃO pode contar contra o aluno: senão a 3ª vez chega por
+// culpa nossa e a equipe cobra quem já tinha preenchido.
+test('RPC falha à noite → grava sem_verificacao, nunca nao_preencheu', async () => {
+  const d = depsNoite({ rpcErro: { message: 'timeout' }, daPauta: ['pk-Ana', 'pk-Bia'] });
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.semVerificacao, 2);
+  assert.strictEqual(r.naoPreencheu, 0);
+  assert.ok(d.gravados.every((g) => g.resultado === 'sem_verificacao'));
+});
+
+test('aluno que sumiu da base entra como sem_verificacao, não como falha', async () => {
+  const d = depsNoite({ alunos: [aluno('Ana', '09:00', true)], daPauta: ['pk-Ana', 'pk-Sumiu'] });
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: SEGUNDA, deps: d,
+  });
+  const sumiu = d.gravados.find((g) => g.pessoaChave === 'pk-Sumiu');
+  assert.strictEqual(sumiu.resultado, 'sem_verificacao', 'não está mais na base — não dá pra afirmar que falhou');
+});
+
+test('pauta vazia à noite não grava nada', async () => {
+  const d = depsNoite({ alunos: [], daPauta: [] });
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.fechou, false);
+  assert.strictEqual(d.gravados.length, 0);
+});
+
+// Contexto além do brief: pessoasDoDia (repo, novo nesta task) pode devolver `null` quando a
+// LEITURA falha (ex.: coluna errada — o mesmo "zero linhas silencioso" que já custou dois
+// diagnósticos errados nesta casa em 03/09), e `[]` quando LEGITIMAMENTE ninguém entrou na
+// pauta hoje. Os dois não podem sair com o mesmo motivo null, senão uma leitura que falhou
+// parece uma noite tranquila.
+test('não consegui ler quem entrou na pauta hoje não é tratado como "pauta vazia por saúde"', async () => {
+  const d = depsNoite({ daPauta: [] });
+  d.repo.pessoasDoDia = async () => null; // leitura falhou — diferente de "ninguém na pauta"
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.fechou, false);
+  assert.ok(r.motivo, 'leitura que falhou não pode sair com o mesmo motivo null de "não tinha pauta hoje"');
+  assert.strictEqual(d.gravados.length, 0);
+});
+
+// Contexto além do brief (Alf, 03/09): gravarResultado (Task 1) devolve `false` quando o UPDATE
+// não casa NENHUMA linha, mesmo sem erro do banco — foi corrigido assim bem por isso, pra não
+// mentir sucesso. Se esta função contasse a TENTATIVA em vez da ESCRITA real, o relatório da
+// noite viraria ficção (contaria gente como "preencheu" sem a linha ter sido de fato gravada).
+// A divergência entre o que tentou e o que gravou precisa aparecer em algum lugar — não pode
+// ser engolida em silêncio.
+test('gravação que não casa linha nenhuma não entra em nenhum contador, e a divergência aparece no motivo', async () => {
+  const d = depsNoite({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', false)],
+    daPauta: ['pk-Ana', 'pk-Bia'],
+  });
+  // Bia grava normal; a escrita da Ana "não acha a linha" (Task 1: devolve false sem error).
+  d.repo.gravarResultado = async (_sb, arg) => {
+    d.gravados.push(arg);
+    return arg.pessoaChave !== 'pk-Ana';
+  };
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.preencheu, 0, 'a escrita da Ana falhou — não pode contar como preenchido sem ter gravado');
+  assert.strictEqual(r.naoPreencheu, 1, 'só a Bia realmente entrou no banco');
+  assert.ok(r.motivo && /grava/i.test(r.motivo),
+    'a divergência entre o que tentou e o que gravou precisa aparecer em algum lugar, não sumir');
+});

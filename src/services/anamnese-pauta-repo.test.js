@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { registrarAparicoes, gravarResultado, contarFalhas } = require('./anamnese-pauta-repo');
+const { registrarAparicoes, gravarResultado, contarFalhas, pessoasDoDia } = require('./anamnese-pauta-repo');
 
 // supabase de mentira: encadeável, guarda o que foi escrito, devolve o que mandarmos
 function fakeSb({ rows = [], erro = null } = {}) {
@@ -82,4 +82,19 @@ test('gravarResultado devolve false quando o UPDATE casa ZERO linhas, mesmo com 
   const sb = fakeSb({ rows: [] });
   const ok = await gravarResultado(sb, { unidadeId: 'u1', dia: '2026-09-10', pessoaChave: 'pk1', resultado: 'preencheu' });
   assert.strictEqual(ok, false);
+});
+
+// pessoasDoDia (Task 6) — é a lista que a passada da noite fecha. Mesmo padrão de teste dos
+// três de cima: uma linha por pessoa, e erro de leitura NÃO pode virar lista vazia.
+test('pessoasDoDia devolve a lista de pessoa_chave do dia', async () => {
+  const sb = fakeSb({ rows: [{ pessoa_chave: 'pk1' }, { pessoa_chave: 'pk2' }] });
+  const lista = await pessoasDoDia(sb, { unidadeId: 'u1', dia: '2026-09-10' });
+  assert.deepStrictEqual(lista, ['pk1', 'pk2']);
+});
+
+// Mesma trava de contarFalhas: lista vazia significa "ninguém na pauta hoje" (noite tranquila);
+// erro de leitura é outra coisa e não pode sair igual — por isso null, nunca [].
+test('pessoasDoDia devolve null em erro de leitura, nunca lista vazia', async () => {
+  const sb = fakeSb({ erro: { message: 'timeout' } });
+  assert.strictEqual(await pessoasDoDia(sb, { unidadeId: 'u1', dia: '2026-09-10' }), null);
 });

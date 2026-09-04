@@ -57,4 +57,15 @@ async function contarFalhas(sb, { unidadeId, pessoas } = {}) {
   return m;
 }
 
-module.exports = { registrarAparicoes, gravarResultado, contarFalhas };
+// Quem entrou na pauta de um dia — é a lista que a passada da noite fecha.
+async function pessoasDoDia(sb, { unidadeId, dia } = {}) {
+  const { data, error } = await sb.from('anamnese_pauta')
+    .select('pessoa_chave').eq('unidade_id', unidadeId).eq('dia', dia);
+  if (error) {
+    console.error(`[Pauta] pessoasDoDia falhou unidade=${unidadeId} dia=${dia}: ${error.message}`);
+    return null;
+  }
+  return (data || []).map((r) => r.pessoa_chave);
+}
+
+module.exports = { registrarAparicoes, gravarResultado, contarFalhas, pessoasDoDia };
