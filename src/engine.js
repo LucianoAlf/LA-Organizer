@@ -11702,6 +11702,7 @@ Regras:
 - \`categoria\` só aceita: whatsapp, api_key, token, vps, social, email, plataforma, outro. Na dúvida use **outro**.
 - \`sensivel: true\` em senha, token, chave e qualquer segredo; e-mail, login, URL e telefone são false.
 - Os valores dos campos são os da mensagem da pessoa, copiados LETRA POR LETRA. Não corrija, não complete, não invente nenhum valor que não esteja ali.
+- **NUNCA copie um valor escondido** (●●●●●●, ***, ••••). Isso é máscara, não é o valor. Se um campo só aparece assim na sua resposta, pegue o valor real da mensagem da pessoa; se ele não estiver lá, omita esse campo — nunca mande a máscara.
 - Se a proposta não for de credencial, ou se faltar dado pra montar o marker, retorne literalmente: NO_MARKER
 
 Output AGORA, apenas o marker:`;
@@ -11788,10 +11789,23 @@ Output AGORA, apenas o marker:`;
       const { getCredenciaisPara } = require('./services/credenciais');
       const { isAdmin, creds } = await getCredenciaisPara(collab.id);
 
+      const { temValorMascarado } = require('./lib/credencial-action');
+      const _labelMascarado = temValorMascarado(_acao);
+
       if (!isAdmin) {
         // Negativa que NAO revela a existencia da funcionalidade de credenciais.
         await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'nao_admin', null);
         reply = 'Isso eu não consigo te ajudar por aqui — fala com o Luciano.';
+      } else if (_labelMascarado) {
+        // Caso Hugo 04/09 15:40: o modelo imitou a confirmacao do engine — inclusive o
+        // ●●●●●● — e propos gravar a mascara como se fosse a senha. Gravar isso criaria uma
+        // credencial que PARECE certa na tela e nao serve pra nada; e o tipo de estrago que
+        // so aparece no dia em que alguem precisa do acesso. Fail-closed e explicito.
+        await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', `valor_mascarado:${_labelMascarado}`, null);
+        console.warn(`[CredencialAction] campo "${_labelMascarado}" veio mascarado — nada gravado`);
+        _metrics.awaiting_user_confirm = true;   // o turno responde com pergunta
+        reply = `Me perdi no valor de *${_labelMascarado}* — só chegou a versão escondida aqui. `
+          + `Manda esse campo de novo que eu cadastro na hora.`;
       } else {
         const { acharDuplicatas, acharAlvo, acharReusoDeSegredo } = require('./lib/credencial-duplicata');
         const { formatAvisoReuso } = require('./lib/credenciais-format');

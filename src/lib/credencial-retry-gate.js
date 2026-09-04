@@ -43,8 +43,29 @@ const ROTULO_SENSIVEL = /^[\s*_>#-]*(?:senha|password|pass|token|refresh[\s_-]?t
 
 const PALAVRA_CREDENCIAL = /\bcredenci\w+/iu;
 
-// Ja mascarado pelo engine (resumo do executor). Nao e fala do modelo — nao reprocessar.
-const JA_MASCARADO = /●{3,}/u;
+// ---------------------------------------------------------------------------
+// NAO EXISTE MAIS UM VETO POR "JA MASCARADO". Removido em 04/09 18:40 UTC, depois de o gate
+// ter falhado no primeiro caso real com ele no ar.
+//
+// O que eu tinha escrito: `const JA_MASCARADO = /●{3,}/` vetava o gate, sob a hipotese de que
+// texto com ●●●●●● so podia ser o resumo do executor e nao devia ser reprocessado.
+//
+// O que aconteceu de verdade (Hugo 15:40 BRT): o MODELO escreveu a confirmacao imitando o
+// formato do engine — "Vou cadastrar: ... Senha: ●●●●●● ... Confirma?" — e sem marker.
+// Ele copiou o ●●●●●● junto, porque a mensagem que o engine mandou no turno anterior esta no
+// historico como se fosse fala dele (system.js:4039 devolve todo outbound como role
+// 'assistant'). Ou seja: a marca de mascaramento nao distingue autor NENHUM — ela e
+// justamente o que o modelo mais imita. As duas camadas do conserto de hoje foram vetadas por
+// ela ao mesmo tempo, e o turno terminou com "me manda de novo com a senha real".
+//
+// O discriminador CERTO de autoria e `_credenciaisNoTurno`, no engine: todo bloco que reescreve
+// `reply` com texto do proprio engine (two-pass de leitura ~11317, CredencialConfirm ~11636,
+// executor ~11777/11785) liga essa flag antes, e o retry so roda com ela desligada. Neste
+// ponto do pipeline `reply` e SEMPRE fala do modelo.
+//
+// A defesa contra gravar um valor mascarado nao mora aqui: mora no executor
+// (`temValorMascarado`, lib/credencial-action.js), que e por onde as duas camadas passam.
+// ---------------------------------------------------------------------------
 
 function _contaRotulos(texto) {
   const re = new RegExp(ROTULO_QUALQUER.source, 'gimu');
@@ -62,7 +83,6 @@ function pareceEscritaDeCredencial(texto) {
   if (typeof texto !== 'string') return false;
   const t = texto.trim();
   if (!t) return false;
-  if (JA_MASCARADO.test(t)) return false;
   if (!VERBO_ESCRITA.test(t)) return false;
   // Um rotulo sensivel basta; senao exige dois rotulos quaisquer, ou a palavra "credencial".
   if (ROTULO_SENSIVEL.test(t)) return true;

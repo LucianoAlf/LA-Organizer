@@ -1072,3 +1072,26 @@ test('delete nao carrega aviso de reuso (nao ha senha nova em jogo)', async () =
   assert.match(r.reply, /Vou APAGAR/);
   assert.ok(!/⚠️/.test(r.reply), 'aviso de reuso apareceu no delete: ' + r.reply);
 });
+
+test('executor RECUSA gravar valor mascarado e diz qual campo (caso 15:40)', async () => {
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({ reply: MARKER({
+    action: 'create', nome: 'Conta do Google Ads', categoria: 'plataforma', servico: 'Google',
+    campos: [{ label: 'E-mail', valor: 'la.tec@gmail.com', sensivel: false },
+             { label: 'Senha', valor: '●●●●●●', sensivel: true }],
+  }) }));
+  assert.strictEqual(calls.upsert.length, 0, 'gravou a mascara como se fosse senha');
+  assert.strictEqual(calls.open.length, 0, 'abriu confirmacao pra gravar mascara');
+  assert.match(r.reply, /Senha/, 'nao disse qual campo: ' + r.reply);
+  assert.deepStrictEqual(markersAcao().map((m) => m.result + ':' + m.reason), ['rejected:valor_mascarado:Senha']);
+});
+
+test('executor com valores reais segue normal — a guarda nao atrapalha o caminho feliz', async () => {
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({ reply: MARKER({
+    action: 'create', nome: 'Conta do Google Ads', categoria: 'plataforma',
+    campos: [{ label: 'Senha', valor: 'senha-de-verdade', sensivel: true }],
+  }) }));
+  assert.strictEqual(calls.open.length, 1);
+  assert.match(r.reply, /Confirma\?/);
+});

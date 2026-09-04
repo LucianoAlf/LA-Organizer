@@ -94,3 +94,40 @@ test('CATEGORIAS_VALIDAS tem os 8 valores do CHECK do banco', () => {
   assert.deepEqual([...CATEGORIAS_VALIDAS].sort(),
     ['api_key','email','outro','plataforma','social','token','vps','whatsapp']);
 });
+
+// =====================================================================
+// temValorMascarado — caso Hugo 04/09 15:40
+// O engine imprime a senha como ●●●●●● na confirmacao. Essa mensagem volta pro modelo no turno
+// seguinte como se fosse fala dele (system.js:4039), e ele reproduz o ●●●●●● ao imitar o
+// formato. Gravar isso criaria uma credencial que PARECE certa na tela e nao serve pra nada.
+// =====================================================================
+const { temValorMascarado } = require('./credencial-action');
+
+test('mascara e reconhecida em todas as marcas que o engine usa', () => {
+  for (const m of ['●●●●●●', '***', '••••', '▪▪▪', '  ●●●●●●  ', '××××']) {
+    assert.strictEqual(
+      temValorMascarado({ campos: [{ label: 'Senha', valor: m }] }), 'Senha', `nao pegou: ${m}`);
+  }
+});
+
+test('devolve o LABEL do primeiro campo mascarado, pra mensagem dizer qual e', () => {
+  assert.strictEqual(temValorMascarado({ campos: [
+    { label: 'E-mail', valor: 'a@b.com' },
+    { label: 'Token de acesso', valor: '●●●●●●' },
+  ] }), 'Token de acesso');
+});
+
+test('valor legitimo NAO e confundido com mascara', () => {
+  for (const v of ['hunter2', 'a@b.com', '**', 'xx', '[preencher]', 'P@ssw0rd***', '***abc', '250178Alf#']) {
+    assert.strictEqual(
+      temValorMascarado({ campos: [{ label: 'Senha', valor: v }] }), null, `falso positivo: ${v}`);
+  }
+});
+
+test('acao sem campos, invalida ou com valor nao-string devolve null', () => {
+  assert.strictEqual(temValorMascarado(null), null);
+  assert.strictEqual(temValorMascarado({}), null);
+  assert.strictEqual(temValorMascarado({ campos: [] }), null);
+  assert.strictEqual(temValorMascarado({ campos: [null, { label: 'X' }] }), null);
+  assert.strictEqual(temValorMascarado({ campos: [{ label: 'X', valor: 123 }] }), null);
+});

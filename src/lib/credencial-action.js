@@ -73,4 +73,36 @@ function stripCredencialAction(text) {
   return text.replace(RE_MARKER_G, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-module.exports = { parseCredencialAction, stripCredencialAction, ACOES_VALIDAS, CATEGORIAS_VALIDAS };
+// Valor que e so marca de mascaramento: ●●●●●●, ***, ••••, ▪▪▪. Nao e senha — e o rastro
+// visual que o proprio engine imprime quando esconde uma.
+const VALOR_MASCARADO_RE = /^[\s]*[●•*·▪○◦x×]{3,}[\s]*$/u;
+
+/**
+ * A acao carrega algum campo cujo valor e so mascara?
+ *
+ * A DEFESA CENTRAL contra o caso Hugo 04/09 15:40. O engine imprime a senha como ●●●●●● na
+ * confirmacao; essa mensagem volta pro modelo no turno seguinte como se fosse fala dele
+ * (system.js:4039 devolve todo outbound como role 'assistant'), e ele reproduz o ●●●●●● ao
+ * imitar o formato. Se um marker montado a partir dessa imitacao passasse, a senha GRAVADA
+ * viraria "●●●●●●" — a credencial existiria, pareceria certa na tela e nao serviria pra nada.
+ *
+ * Mora aqui, no modulo puro, porque as DUAS camadas de recuperacao (o retry do mesmo turno e
+ * o auto-resolve do turno seguinte) desembocam no mesmo executor. Guardar so numa delas
+ * deixaria a outra aberta.
+ *
+ * @returns {string|null} o label do primeiro campo mascarado, ou null
+ */
+function temValorMascarado(acao) {
+  if (!acao || !Array.isArray(acao.campos)) return null;
+  for (const c of acao.campos) {
+    if (c && typeof c.valor === 'string' && VALOR_MASCARADO_RE.test(c.valor)) {
+      return String(c.label || 'campo').trim();
+    }
+  }
+  return null;
+}
+
+module.exports = {
+  parseCredencialAction, stripCredencialAction, temValorMascarado,
+  ACOES_VALIDAS, CATEGORIAS_VALIDAS, VALOR_MASCARADO_RE,
+};

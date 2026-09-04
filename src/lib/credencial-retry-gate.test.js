@@ -43,7 +43,6 @@ const NEGATIVOS = [
   ['vazio', ''],
   ['nao-string', null],
   ['numero', 42],
-  ['resumo mascarado do proprio engine', 'Vou cadastrar:\n*Google Ads*\nSenha: ●●●●●●\n\nConfirma?'],
   ['leitura sem verbo de escrita', '*Canva — criativos*\nLogin: a@b.com\nSenha: xyz123'],
   ['proposta de TAREFA, nao credencial', 'Vou cadastrar a tarefa de trocar as lampadas da sala 3. Confirma?'],
   ['verbo sem nenhum rotulo', 'Vou cadastrar isso aqui pra voce, pode deixar.'],
