@@ -11326,6 +11326,8 @@ async function processMessage(phone, text, raw = {}) {
           + `Responda em português, de forma curta e natural, APENAS o que ele pediu — `
           + `não despeje a lista inteira nem todos os campos se ele perguntou por um item só. `
           + `Só liste tudo se ele tiver pedido explicitamente a lista completa. `
+          + `Se o que ele pediu não estiver nesta lista, diga de forma simples e direta que essa credencial não está cadastrada. `
+          + `Nunca complete com conhecimento próprio, nem sugira endereço, endpoint, link ou valor que não veio na lista acima — mesmo que pareça que você sabe a resposta. `
           + `Não mencione banco de dados, tabela ou qualquer detalhe técnico interno. `
           + `Não emita nenhum marker nesta resposta.`;
         const segunda = await ai.chat(credSys, msgs);
