@@ -311,3 +311,130 @@ test('nada aplicado é dito com todas as letras', () => {
   assert.match(h, /Não consegui aplicar nada/);
   assert.match(h, /9/);
 });
+
+// ── ANTI-CONFABULAÇÃO: o auto-relato do TOM não é evidência ────────────────────────────────
+// 04/09 (medido): o TOM disse no grupo da Barra que "não processou a mensagem da Krissya por ter
+// pego o 'Tom' do Alf primeiro". A mensagem dela é 11:15:34; o "Tom" do Alf é 11:35:12 — 19min38s
+// DEPOIS. A explicação era hipótese do próprio TOM sobre a própria falha, e ia virar `fact` ATIVO
+// na rodada das 3h (fact nasce is_active=true). Estes testes seguram esse caminho.
+const { materialDeConsolidacao, origemDaEvidencia, DECAY_PADRAO_CONTEXT_DIAS } = require('./group-memory');
+
+const RESUMO_MENTIROSO = '<h3>📋 Resumo da sessão</h3><p>TOM não processou a mensagem da Krissya por ter pego o "Tom" do Alf primeiro — falha reconhecida e corrigida na hora.</p>';
+const FALA_MENTIROSA = 'Fui na ordem e peguei o "Tom" do Alf logo depois — acabei não processando o da Krissya.';
+
+test('material de consolidação: o "Resumo da sessão" do TOM fica de fora', () => {
+  const dentro = materialDeConsolidacao([
+    { role: 'member', kind: 'text', content: 'Tom, lembra o Arthur às 16h', sender: { full_name: 'Krissya' } },
+    { role: 'tom', kind: 'report', content: RESUMO_MENTIROSO },
+    { role: 'tom', kind: 'text', content: 'Anotado!' },
+  ]);
+  assert.strictEqual(dentro.length, 2);
+  assert.ok(!dentro.some((m) => m.kind === 'report'), 'report do TOM não é material de memória');
+  assert.ok(dentro.some((m) => m.role === 'tom' && m.kind === 'text'), 'a fala do TOM segue como fio da conversa');
+});
+
+test('o resumo de sessão do TOM nem chega ao extrator', async () => {
+  const sb = fakeSupabase({ mensagens: [
+    { role: 'member', kind: 'text', content: 'Porque vc nao respondeu a Krissya?', created_at: '2026-09-04T14:35:37Z', sender: { full_name: 'Alf' } },
+    { role: 'tom', kind: 'report', content: RESUMO_MENTIROSO, created_at: '2026-09-04T14:47:05Z' },
+  ] });
+  let visto = null;
+  await consolidateGroupMemoryFor({
+    supabase: sb, group: GRUPO,
+    chat: async (_sys, msgs) => { visto = msgs[0].content; return '[]'; },
+    getEmbedding: semEmbedding, agora: new Date('2026-09-05T06:00:00Z'),
+  });
+  assert.ok(visto, 'o extrator foi chamado');
+  assert.doesNotMatch(visto, /pego o "Tom" do Alf primeiro/, 'o resumo do TOM não pode ser material de memória');
+  assert.match(visto, /Porque vc nao respondeu a Krissya/, 'a fala das PESSOAS continua inteira');
+});
+
+test('CORTE: auto-explicação do TOM não vira fact nem context', async () => {
+  const sb = fakeSupabase({ mensagens: [
+    { role: 'member', kind: 'text', content: 'Porque vc nao respondeu a Krissya?', created_at: '2026-09-04T14:35:37Z', sender: { full_name: 'Alf' } },
+    { role: 'tom', kind: 'text', content: FALA_MENTIROSA, created_at: '2026-09-04T14:36:02Z' },
+    { role: 'tom', kind: 'report', content: RESUMO_MENTIROSO, created_at: '2026-09-04T14:47:05Z' },
+  ] });
+  const r = await consolidateGroupMemoryFor({
+    supabase: sb, group: GRUPO,
+    chat: async () => JSON.stringify([
+      { memory_type: 'fact', content: 'O TOM nao respondeu a Krissya porque pegou o Tom do Alf primeiro',
+        importance: 'high', evidence: FALA_MENTIROSA },
+      { memory_type: 'context', content: 'A falha do TOM com a Krissya foi reconhecida e corrigida na hora',
+        importance: 'normal', decay_at: '2026-09-20T00:00:00Z',
+        evidence: 'TOM não processou a mensagem da Krissya por ter pego o "Tom" do Alf primeiro' },
+    ]),
+    getEmbedding: semEmbedding, agora: new Date('2026-09-05T06:00:00Z'),
+  });
+  assert.strictEqual(sb._inseridas.length, 0, 'nenhuma memória pode nascer da fala do TOM sobre o TOM');
+  assert.strictEqual(r.descartadas.autoRelato, 2, 'o descarte é CONTADO, não silencioso');
+});
+
+test('a mesma auto-explicação, se virar lesson, vai pra fila de aprovação em vez de sumir', async () => {
+  const sb = fakeSupabase({ mensagens: [
+    { role: 'tom', kind: 'text', content: FALA_MENTIROSA, created_at: '2026-09-04T14:36:02Z' },
+  ] });
+  await consolidateGroupMemoryFor({
+    supabase: sb, group: GRUPO,
+    chat: async () => JSON.stringify([
+      { memory_type: 'lesson', content: 'TOM deve processar cada chamado na ordem em que chegou', importance: 'high', evidence: FALA_MENTIROSA },
+    ]),
+    getEmbedding: semEmbedding, agora: new Date('2026-09-05T06:00:00Z'),
+  });
+  assert.strictEqual(sb._inseridas.length, 1, 'hipótese do TOM vira PROPOSTA, não verdade');
+  assert.strictEqual(sb._inseridas[0].is_active, false);
+  assert.strictEqual(sb._inseridas[0].approved_at, null);
+});
+
+test('evidência dita por PESSOA continua virando memória', async () => {
+  const sb = fakeSupabase({ mensagens: [
+    { role: 'member', kind: 'text', content: 'Krissya, nao marca ele com @', created_at: '2026-09-04T14:00:53Z', sender: { full_name: 'Alf' } },
+    { role: 'tom', kind: 'text', content: 'Entendi, Alf!', created_at: '2026-09-04T14:01:00Z' },
+  ] });
+  const r = await consolidateGroupMemoryFor({
+    supabase: sb, group: GRUPO,
+    chat: async () => JSON.stringify([
+      { memory_type: 'fact', content: 'No grupo o TOM e chamado pelo nome, sem arroba', importance: 'high', evidence: 'Krissya, nao marca ele com @' },
+    ]),
+    getEmbedding: semEmbedding, agora: new Date('2026-09-05T06:00:00Z'),
+  });
+  assert.strictEqual(sb._inseridas.length, 1, 'testemunho de gente continua sendo evidência');
+  assert.strictEqual(r.descartadas.autoRelato, 0);
+});
+
+// Polaridade: quem falou primeiro não importa — se ALGUMA pessoa disse aquilo, é testemunho.
+// Só quando SÓ o TOM disse é que a candidata cai. Falso positivo aqui custaria memória boa.
+test('origemDaEvidencia: pessoa ganha do TOM quando os dois disseram parecido', () => {
+  const msgs = [
+    { role: 'member', kind: 'text', content: 'Chama ele normalmente no Vocativo (com virgula)' },
+    { role: 'tom', kind: 'text', content: 'Chama ele normalmente no Vocativo, combinado' },
+  ];
+  assert.strictEqual(origemDaEvidencia('Chama ele normalmente no Vocativo (com virgula)', msgs), 'humano');
+  assert.strictEqual(origemDaEvidencia(FALA_MENTIROSA, [{ role: 'tom', kind: 'text', content: FALA_MENTIROSA }]), 'tom');
+  assert.strictEqual(origemDaEvidencia('', msgs), 'desconhecida');
+  assert.strictEqual(origemDaEvidencia('jacare pescando manga no telhado da vizinha', msgs), 'desconhecida');
+});
+
+// `context` é "situação temporária (SEMPRE defina decay_at)" — mas quem obedece é a LLM. Sem
+// backstop, um context sem prazo entra ATIVO e sem validade: vira verdade permanente do grupo.
+test('context sem decay_at ganha prazo; com prazo, respeita o que veio', async () => {
+  const sb = fakeSupabase({ mensagens: [
+    { role: 'member', kind: 'text', content: 'a Duda comeca sabado e o Arthur cuida da matricula', created_at: '2026-09-02T20:00:00Z', sender: { full_name: 'Alf' } },
+  ] });
+  await consolidateGroupMemoryFor({
+    supabase: sb, group: GRUPO,
+    chat: async () => JSON.stringify([
+      { memory_type: 'context', content: 'a Duda comeca no sabado 05/09', importance: 'normal', evidence: 'a Duda comeca sabado' },
+      { memory_type: 'context', content: 'cinco contratos para assinar entre 08 e 11/09', importance: 'normal', decay_at: '2026-09-12T00:00:00.000Z', evidence: 'a Duda comeca sabado' },
+      { memory_type: 'fact', content: 'o Arthur cuida da matricula na Barra', importance: 'normal', evidence: 'o Arthur cuida da matricula' },
+    ]),
+    getEmbedding: semEmbedding, agora: new Date('2026-09-03T06:00:00Z'),
+  });
+  const semPrazo = sb._inseridas.find((r) => /Duda/.test(r.content));
+  const comPrazo = sb._inseridas.find((r) => /contratos/.test(r.content));
+  const fato = sb._inseridas.find((r) => r.memory_type === 'fact');
+  const esperado = new Date(new Date('2026-09-03T06:00:00Z').getTime() + DECAY_PADRAO_CONTEXT_DIAS * 86400000).toISOString();
+  assert.strictEqual(semPrazo.decay_at, esperado, 'context sem prazo ganha o prazo padrão');
+  assert.strictEqual(comPrazo.decay_at, '2026-09-12T00:00:00.000Z', 'prazo explícito da LLM manda');
+  assert.strictEqual(fato.decay_at, null, 'fact não ganha prazo automático');
+});

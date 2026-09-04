@@ -8,11 +8,16 @@
 // Fatia 1: só ESCREVE. Nada aqui entra no prompt — ler é a Fatia 2, depois de o Alf conferir
 // o que foi guardado.
 
-const { prepararCandidatas, defaultsPorTipo } = require('./agent-memory');
+const { prepararCandidatas, defaultsPorTipo, looksLikeMemory } = require('./agent-memory');
 
 const JANELA_HORAS = 24;   // grupo de trabalho conversa todo dia (o 1:1 usa 7d por outro motivo)
 const TETO_POR_NOITE = 8;  // grupo movimentado não pode afogar a memória em uma noite
 const EVIDENCE_MAX = 200;
+// `context` é "situação temporária". Quando a LLM esquece o decay_at, o backstop entra: sem ele
+// um context nasce ATIVO e SEM validade — ou seja, vira verdade permanente do grupo, que é
+// exatamente o que a coluna existe pra impedir. 30 dias é folgado o bastante pra não perder
+// contexto real (os 4 contexts vivos em 04/09 pediam de 8 a 29 dias) e curto pra não eternizar.
+const DECAY_PADRAO_CONTEXT_DIAS = 30;
 
 function ymdEmSaoPaulo(date) {
   return new Date(date.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -28,6 +33,67 @@ function montarHistorico(mensagens) {
     })
     .filter(Boolean)
     .join('\n');
+}
+
+// ── AUTO-RELATO DO TOM NÃO É EVIDÊNCIA ─────────────────────────────────────────────────────
+// POR QUÊ (04/09, grupo da Barra): o TOM disse no grupo que "não processou a mensagem da Krissya
+// por ter pego o 'Tom' do Alf primeiro". Medido no banco: a mensagem dela é 11:15:34 e o "Tom" do
+// Alf é 11:35:12 — 19min38s DEPOIS. A raiz real era outra (a mensagem dela entrou com sender_id
+// NULL e o watcher abortou em silêncio). Ou seja: o TOM inventou uma causa pra própria falha, essa
+// prosa entrou no "Resumo da sessão" (role='tom', kind='report') e esta rotina, que lê o histórico
+// do grupo, ia transformar a invenção em `fact` — que nasce is_active=true, sem aprovação nenhuma.
+//
+// Havia duas saídas: (a) tirar o material do prato do extrator, ou (b) pedir no prompt que ele
+// não transforme auto-diagnóstico em fato. Escolhi (a), e o motivo é a taxa de burla: (b) é uma
+// frase num prompt que já diz "NÃO invente" — e foi justamente inventando que chegamos aqui. Um
+// filtro em código não depende de a LLM obedecer, não some quando alguém reescreve o prompt e não
+// varia por provider. Corte determinístico ganha de instrução toda vez.
+//
+// O corte tem DUAS camadas porque a mentira apareceu em dois lugares:
+//   1) o card `kind='report'` (o "Resumo da sessão") sai do material — é saída DERIVADA do TOM,
+//      não conversa. Consolidar o resumo do TOM fecha um laço em si mesmo: resumo → memória →
+//      prompt → próximo resumo (a mesma doença de DATE-SELF-POISONING).
+//   2) a fala solta `kind='text'` FICA (o extrator precisa do fio da conversa), mas nenhuma
+//      candidata pode nascer com `evidence` que só existe na boca do TOM. O prompt já obriga a
+//      evidência a ser "o trecho LITERAL da conversa que originou" — então dá pra conferir a
+//      procedência em código, depois da extração.
+// `lesson` escapa do corte de propósito: ela nasce inativa e vai pra fila de aprovação. Hipótese
+// do TOM sobre o TOM pode virar PROPOSTA pra um humano julgar — o que não pode é virar verdade.
+const KINDS_DERIVADOS_DO_TOM = new Set(['report']);
+
+function materialDeConsolidacao(mensagens) {
+  return (mensagens || []).filter((m) => !(m && m.role === 'tom' && KINDS_DERIVADOS_DO_TOM.has(m.kind)));
+}
+
+// Normaliza pra comparar procedência: o report vem em HTML e a fala vem com emoji e acento.
+function normalizarFala(s) {
+  return String(s == null ? '' : s)
+    .replace(/<[^>]+>/g, ' ')
+    .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Casamento por CONTINÊNCIA primeiro (evidência é citação literal), similaridade só de reserva —
+// looksLikeMemory é a mesma régua já usada pra deduplicar memória, então não nasce outra régua.
+function falaCasaComEvidencia(evidenciaNorm, conteudo) {
+  const linha = normalizarFala(conteudo);
+  if (!linha || !evidenciaNorm) return false;
+  if (linha.includes(evidenciaNorm) || evidenciaNorm.includes(linha)) return true;
+  return looksLikeMemory(evidenciaNorm, linha);
+}
+
+// POLARIDADE PROPOSITAL: se ALGUMA pessoa disse aquilo, é testemunho e passa — mesmo que o TOM
+// tenha repetido depois (ele quase sempre repete: ecoa o pedido ao confirmar). Só cai a candidata
+// cuja evidência SÓ existe na fala do TOM. Falso positivo aqui custaria memória boa de gente real;
+// falso negativo custa uma memória a menos. Evidência que não casa com nada segue como está —
+// endurecer isso é outra conversa (e outro risco), não a desta correção.
+function origemDaEvidencia(evidence, mensagens) {
+  const ev = normalizarFala(evidence);
+  if (!ev) return 'desconhecida';
+  const lista = mensagens || [];
+  if (lista.some((m) => m && m.role !== 'tom' && falaCasaComEvidencia(ev, m.content))) return 'humano';
+  if (lista.some((m) => m && m.role === 'tom' && falaCasaComEvidencia(ev, m.content))) return 'tom';
+  return 'desconhecida';
 }
 
 async function extrairMemoriaDeGrupo({ groupName, historyText, existentes, chat }) {
@@ -74,19 +140,28 @@ Saída OBRIGATÓRIA: array JSON puro, sem texto antes ou depois. Vazio se nada d
   }
 }
 
+// Backstop de validade: só `context` ganha prazo automático. `fact`/`decision`/`preference` são
+// registro durável por definição — dar prazo a eles seria inventar política, não corrigir bug.
+function prazoPadrao(memoryType, agora) {
+  if (memoryType !== 'context') return null;
+  return new Date(agora.getTime() + DECAY_PADRAO_CONTEXT_DIAS * 86400000).toISOString();
+}
+
 async function consolidateGroupMemoryFor({ supabase, group, chat, getEmbedding, agora = new Date() }) {
   const desde = new Date(agora.getTime() - JANELA_HORAS * 3600 * 1000).toISOString();
   const out = { mensagens: 0, candidatas: 0, salvas: 0, descartadas: null, erro: null };
 
+  // `kind` entra no SELECT porque é ele que separa a CONVERSA do card derivado do próprio TOM.
   const { data: msgs } = await supabase.from('group_chat_messages')
-    .select('role, content, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)')
+    .select('role, kind, content, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)')
     .eq('group_id', group.id).gte('created_at', desde).order('created_at', { ascending: true });
 
   const mensagens = msgs || [];
   out.mensagens = mensagens.length;
   if (!mensagens.length) return out; // PISO: grupo parado não gasta LLM
 
-  const historyText = montarHistorico(mensagens);
+  // Camada 1 do corte: o "Resumo da sessão" do TOM não é material de memória (ver bloco acima).
+  const historyText = montarHistorico(materialDeConsolidacao(mensagens));
   if (!historyText) return out;
 
   const { data: exist } = await supabase.from('group_memory')
@@ -104,8 +179,24 @@ async function consolidateGroupMemoryFor({ supabase, group, chat, getEmbedding, 
   }
   out.candidatas = candidatas.length;
 
-  const { aceitas, descartadas } = prepararCandidatas(candidatas, existentes, { teto: TETO_POR_NOITE });
-  out.descartadas = descartadas;
+  // Camada 2 do corte: candidata cuja evidência SÓ existe na boca do TOM não é memória — é o
+  // sistema se citando. Roda ANTES do prepararCandidatas pra não gastar o teto da noite com
+  // auto-relato, e confere contra `mensagens` INTEIRO (inclusive os reports) — assim, mesmo que
+  // a LLM cite um resumo que nem foi mandado pra ela, o descarte pega.
+  let autoRelato = 0;
+  const semAutoRelato = [];
+  for (const c of candidatas) {
+    if (c && c.memory_type !== 'lesson' && origemDaEvidencia(c.evidence, mensagens) === 'tom') {
+      autoRelato++;
+      continue;
+    }
+    semAutoRelato.push(c);
+  }
+
+  const { aceitas, descartadas } = prepararCandidatas(semAutoRelato, existentes, { teto: TETO_POR_NOITE });
+  // Descarte CONTADO: zero por "nada digno" e zero por "o TOM só falava de si" precisam ser
+  // distinguíveis na auditoria — foi a cegueira de 29/08 a 01/09 em outra fatia deste mesmo arquivo.
+  out.descartadas = { ...descartadas, autoRelato };
 
   const diaRodada = ymdEmSaoPaulo(agora);
   const ultima = mensagens[mensagens.length - 1];
@@ -121,7 +212,7 @@ async function consolidateGroupMemoryFor({ supabase, group, chat, getEmbedding, 
       memory_type: c.memory_type,
       content: c.content,
       importance: c.importance || 'normal',
-      decay_at: c.decay_at || null,
+      decay_at: c.decay_at || prazoPadrao(c.memory_type, agora),
       occurred_on: diaConversa,
       evidence: c.evidence ? String(c.evidence).slice(0, EVIDENCE_MAX) : null,
       source: `dream:${diaRodada}`,
@@ -290,6 +381,7 @@ function renderDecisao({ feitos, foraDaLista, acao }) {
 
 module.exports = {
   montarHistorico, extrairMemoriaDeGrupo, consolidateGroupMemoryFor, deveConsolidarGrupo,
+  materialDeConsolidacao, origemDaEvidencia, prazoPadrao, DECAY_PADRAO_CONTEXT_DIAS,
   ordenarLicoes, listarLicoesPendentes, decidirLicoes, renderLicoesPendentes, renderDecisao,
   JANELA_HORAS, TETO_POR_NOITE,
   TETO_BLOCO, MINIMO_PRA_TROCAR, memoriaViva, ordenarMemorias, linhaDeMemoria,
