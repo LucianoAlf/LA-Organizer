@@ -99,7 +99,10 @@ const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": conso
 // fala às 7h30 (mesmo slot do ops_digest — zap às 6h da manhã é invasivo), fecha às 23h (depois
 // da última aula das 20h).
 const PAUTA_ANAMNESE_MONTA_TIME = '06:00';
-const PAUTA_ANAMNESE_FALA_TIME = '07:30';
+// A fala sai quando a unidade ABRE, nao numa hora unica. 07:30 era hora de ninguem: a equipe
+// ainda nao chegou na escola e o recado fica boiando no grupo ate alguem aparecer. Pedido do
+// Alf em 04/09. A chave e o nome que situacao-aluno.nomeDaUnidade() devolve.
+const PAUTA_ANAMNESE_FALA_POR_UNIDADE = { 'Recreio': '08:00', 'Barra': '09:00', 'Campo Grande': '10:00' };
 const PAUTA_ANAMNESE_FECHA_TIME = '23:00';
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
@@ -4216,11 +4219,21 @@ async function run(opts = {}) {
   // bloco fica em silêncio (saúde, não erro)" — e era isso que fazia a spec §7 não ser cumprida.
   // Silêncio é saúde SÓ quando a montagem chegou ao fim e não havia aluno hoje; quando ela não
   // montou, o grupo é avisado (ver o bloco do CRITICAL 1 lá dentro).
-  if (opts.force === 'pauta_anamnese_fala' || timeToSlot(PAUTA_ANAMNESE_FALA_TIME) === slotNow) {
+  if (opts.force === 'pauta_anamnese_fala'
+      || Object.values(PAUTA_ANAMNESE_FALA_POR_UNIDADE).some((h) => timeToSlot(h) === slotNow)) {
     try {
       const pura = require('../services/anamnese-pauta');
       const situAl = require('../services/situacao-aluno');
       for (const unidadeId of situAl.UNIDADES_IDS) {
+        // Cada unidade fala na SUA hora (Recreio 08:00, Barra 09:00, Campo Grande 10:00). O bloco
+        // abre quando QUALQUER uma bate o slot, entao aqui sai quem nao e a da vez.
+        const horaDaFala = PAUTA_ANAMNESE_FALA_POR_UNIDADE[situAl.nomeDaUnidade(unidadeId)];
+        if (!horaDaFala) {
+          // Unidade nova sem horario definido: nao falo no escuro, mas tambem nao calo sobre isso.
+          console.warn(`[Pauta] fala: unidade sem horario definido (${unidadeId}) -- nao vou falar`);
+          continue;
+        }
+        if (opts.force !== 'pauta_anamnese_fala' && timeToSlot(horaDaFala) !== slotNow) continue;
         // Correção 1/5: try/catch por unidade — mesmo motivo do bloco das 06:00 (comentário lá).
         try {
           const chaveFala = `pauta_fala:${unidadeId}:${now.ymd}`;
