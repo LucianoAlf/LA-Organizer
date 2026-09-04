@@ -16,14 +16,18 @@ Um único caminho. **O engine decide o escopo pela pessoa que mandou a mensagem 
 
 | Quem | Quais credenciais | Quais campos |
 |---|---|---|
-| Hugo e Luciano (`is_system_admin = true`) | qualquer uma das 45 | tudo: `campos` com valores sensíveis, `observacoes`, metadados |
+| Hugo, Luciano e Anne Susan (`is_system_admin = true`) | qualquer uma das 45 | tudo: `campos` com valores sensíveis, `observacoes`, metadados |
 | Qualquer outro colaborador ativo | só `visivel_tom = true` (hoje 3) | só `nome` e `url_ref` |
 
-Para quem não é admin, a negativa **não revela que a funcionalidade existe** — nada de "credenciais são restritas ao Hugo e ao Luciano", que entrega a quem tentar exatamente o que precisa saber. Resposta genérica do tipo "isso eu não consigo te ajudar, fala com o Luciano".
+Para quem não é admin, a negativa **não revela que a funcionalidade existe** — nada de "credenciais são restritas à diretoria", que entrega a quem tentar exatamente o que precisa saber. Resposta genérica do tipo "isso eu não consigo te ajudar, fala com o Luciano".
+
+**Uma flag só governa as duas coisas** (decisão do Hugo, 03/09): `is_system_admin` controla tanto ver o valor decifrado na tela quanto operar credenciais pelo WhatsApp. Um conceito, um lugar para marcar.
 
 ### Por que uma coluna nova
 
-`role = 'director'` não serve: existem 4 directors ativos (Hugo, Luciano, **Anne Susan** e um **Admin**). Nova coluna `is_system_admin boolean not null default false` em `collaborators`, marcada só para Hugo e Luciano. Isso resolve o `TODO(roadmap): adicionar coluna is_system_admin em collaborators` já escrito em `src/rituals/dispatcher.js`.
+`role = 'director'` não serve: existem 4 directors ativos — Hugo, Luciano, **Anne Susan** e uma conta genérica **"Admin"** (`admin@gmail.com`). Nova coluna `is_system_admin boolean not null default false` em `collaborators`, marcada para **Hugo, Luciano e Anne Susan**. Isso resolve o `TODO(roadmap): adicionar coluna is_system_admin em collaborators` já escrito em `src/rituals/dispatcher.js`.
+
+Efeito colateral desejado: a conta "Admin" **não** recebe a flag. Ela continua `director` e segue servindo de placeholder para os rituais de sistema, mas deixa de alcançar valores sensíveis — o furo se fecha sem desativar nada e sem efeito colateral nos 813 `ritual_logs`.
 
 ### Gate em duas camadas independentes
 
@@ -130,7 +134,7 @@ Ou seja: notas pessoais estão cifradas em repouso e as senhas da empresa não. 
 
 **O que fazer:** trigger equivalente em `governance_credentials`, cifrando os itens de `campos` com `sensivel: true` (a estrutura daqui é `{label, valor, sensivel}`, não `{value, secret}` — adaptar), mais `reveal_credencial_campo(p_cred_id uuid, p_indice int)` que checa **`is_system_admin`** antes de decifrar.
 
-**Decisão do Hugo:** o `reveal` exige `is_system_admin`, não `director`. Consequência a comunicar antes do deploy: **Anne Susan perde o acesso às senhas pela tela**, que hoje ela tem. Continua vendo as credenciais, com o valor mascarado.
+**Decisão do Hugo:** o `reveal` exige `is_system_admin`, não `director`. Como Anne Susan recebe a flag, **ninguém que hoje enxerga senha deixa de enxergar** — a única que perde é a conta genérica "Admin", que é justamente o objetivo.
 
 **O que a cifragem resolve e o que não resolve.** Elimina a leitura casual por quem chega ao banco por fora da tela — `service_role`, scripts, dumps, backups, sessões de debug (foi assim que os `campos` foram lidos durante esta própria sessão de design). **Não** protege contra quem tem `service_role` e chama `gn_decrypt` deliberadamente: a chave mora no Vault do mesmo projeto.
 
