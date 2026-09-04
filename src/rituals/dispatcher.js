@@ -4107,35 +4107,52 @@ async function run(opts = {}) {
       const situAl = require('../services/situacao-aluno');
       const { laReportClient } = require('../services/la-report-client');
       for (const unidadeId of situAl.UNIDADES_IDS) {
-        const chaveDia = `pauta_anamnese:${unidadeId}:${now.ymd}`;
-        const { data: jaTem, error: erroJaTem } = await supabase.from('marker_logs')
-          .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveDia}%`).limit(1);
-        if (erroJaTem) {
-          console.error(`[Pauta] montagem: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaTem.message}`);
-          continue; // falha-fechada: não sei se já rodou hoje, não arrisco duplicar
-        }
-        if (jaTem && jaTem.length) continue;  // idempotência: o cron bate o slot 3x
+        // Correção 1/5 (revisão do coordenador, 04/09): try/catch por UNIDADE, não em volta do
+        // loop inteiro — mesmo padrão do GROUP_MEMORY logo acima. Um throw numa unidade (dado
+        // ruim só dela) não pode matar a pauta das outras duas: falha passageira se cura no
+        // próximo tick, falha persistente numa unidade não pode bloquear as irmãs indefinidamente.
+        try {
+          const chaveDia = `pauta_anamnese:${unidadeId}:${now.ymd}`;
+          const { data: jaTem, error: erroJaTem } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveDia}%`).limit(1);
+          if (erroJaTem) {
+            console.error(`[Pauta] montagem: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaTem.message}`);
+            continue; // falha-fechada: não sei se já rodou hoje, não arrisco duplicar
+          }
+          if (jaTem && jaTem.length) continue;  // idempotência: o cron bate o slot 3x
 
-        const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
-          .select('id, leader_id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
-        if (erroGrupo) {
-          console.error(`[Pauta] montagem: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
-          continue;
-        }
-        if (!grupo) continue;
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id, leader_id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] montagem: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            // Pequeno 2 (revisão do coordenador): código que ainda não rodou em produção. Se uma
+            // unidade perder o vínculo la_report_unidade_id, ela sumia da pauta em silêncio.
+            console.warn(`[Pauta] montagem: nenhum grupo com wa_group_jid vinculado à unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
 
-        const r = await montarPautaDaUnidade({
-          supabase, laReport: laReportClient, unidadeId, groupId: grupo.id,
-          criadoPor: grupo.leader_id, hoje: now.ymd,
-        });
-        await supabase.from('marker_logs').insert({
-          marker_type: 'PAUTA_ANAMNESE',
-          result: r.criou ? 'executed' : (r.motivo ? 'fallback' : 'skipped'),
-          reason: `${chaveDia} total=${r.total} escalados=${r.escalados}${r.motivo ? ' erro=' + r.motivo : ''}`.slice(0, 120),
-        });
-        if (r.motivo) console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+          const r = await montarPautaDaUnidade({
+            supabase, laReport: laReportClient, unidadeId, groupId: grupo.id,
+            criadoPor: grupo.leader_id, hoje: now.ymd,
+          });
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE',
+            result: r.criou ? 'executed' : (r.motivo ? 'fallback' : 'skipped'),
+            reason: `${chaveDia} total=${r.total} escalados=${r.escalados}${r.motivo ? ' erro=' + r.motivo : ''}`.slice(0, 120),
+          });
+          // Global Constraint: todo error de chamada Supabase é checado. Risco menor que na fala
+          // — montarPautaDaUnidade já tem guarda própria contra retentativa (_pacoteJaExiste) —
+          // mas uma falha muda de log continua sendo uma falha muda.
+          if (erroMarker) console.error(`[Pauta] montagem: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarker.message}`);
+          if (r.motivo) console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+        } catch (eUnidade) {
+          console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
       }
-    } catch (e) { console.error('[Pauta] montagem erro:', e.message); }
+    } catch (e) { console.error('[Pauta] montagem erro (fora do loop por unidade):', e.message); }
   }
 
   // 07:30 — o recado no grupo (mesmo slot do ops_digest — zap às 6h da manhã é invasivo).
@@ -4146,66 +4163,112 @@ async function run(opts = {}) {
       const pura = require('../services/anamnese-pauta');
       const situAl = require('../services/situacao-aluno');
       for (const unidadeId of situAl.UNIDADES_IDS) {
-        const chaveFala = `pauta_fala:${unidadeId}:${now.ymd}`;
-        const { data: jaFalou, error: erroJaFalou } = await supabase.from('marker_logs')
-          .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFala}%`).limit(1);
-        if (erroJaFalou) {
-          console.error(`[Pauta] fala: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFalou.message}`);
-          continue;
+        // Correção 1/5: try/catch por unidade — mesmo motivo do bloco das 06:00 (comentário lá).
+        try {
+          const chaveFala = `pauta_fala:${unidadeId}:${now.ymd}`;
+          const { data: jaFalou, error: erroJaFalou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFala}%`).limit(1);
+          if (erroJaFalou) {
+            console.error(`[Pauta] fala: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFalou.message}`);
+            continue;
+          }
+          if (jaFalou && jaFalou.length) continue;
+
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] fala: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[Pauta] fala: nenhum grupo com wa_group_jid vinculado à unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
+
+          // CORREÇÃO (Alf, 04/09): o plano original tinha um embed
+          // `parent:tasks!tasks_parent_task_id_fkey(title)` que não resolve — medido contra o
+          // banco, devolve "Could not find a relationship between 'tasks' and 'tasks' in the
+          // schema cache" ({data:null,error}), o que calaria esta fala pra sempre (cai direto no
+          // "!filhas.length" abaixo, em silêncio). Ninguém lê `f.parent` mesmo; embed tirado,
+          // erro checado. `.not('parent_task_id','is',null)` exclui o próprio CONTAINER da busca:
+          // o título dele também contém "Anamnese —" (ver _tituloDoContainer em
+          // rituals/anamnese-pauta.js) e bateria no mesmo LIKE das filhas, inflando a contagem da
+          // mensagem em +1 todo dia (o container tem o mesmo assigned_group_id e due_date).
+          const { data: filhas, error: erroFilhas } = await supabase.from('tasks')
+            .select('title')
+            .eq('assigned_group_id', grupo.id).eq('due_date', now.ymd)
+            .not('parent_task_id', 'is', null)
+            .like('title', '%Anamnese —%').order('title');
+          if (erroFilhas) {
+            console.error(`[Pauta] fala: consulta das filhas falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroFilhas.message}`);
+            continue;
+          }
+          if (!filhas || !filhas.length) continue;
+
+          // Falha FECHADA (Pequeno 1, revisão do coordenador): título que não bate o formato NÃO
+          // vira "nome" — a filha é PULADA, com log. O `.replace()` de antes, sem match, devolvia
+          // o título INTEIRO como nome (fails open) — texto que a equipe LÊ no zap; um título
+          // torto tem que sumir da mensagem, não virar um nome esquisito nela. Aceita hora de 1
+          // dígito, igual ao helper de origem (_extrairNomeDaFilha, rituals/anamnese-pauta.js) —
+          // mesma regra, não reinventar. Corta o resto no primeiro ` (` ou no primeiro ` ⚠`, o
+          // que vier antes — sem curso, o título da 2ª aparição é "HH:MM Anamnese — Nome ⚠️ 2ª
+          // semana — não preencheu na anterior" e cortar só em ` (` deixaria o aviso colado no nome.
+          const itens = [];
+          for (const f of filhas) {
+            const matchTitulo = /^(\d{1,2}):(\d{2}) Anamnese — (.+)$/.exec(String(f.title || ''));
+            if (!matchTitulo) {
+              console.warn(`[Pauta] fala: título fora do formato esperado (${situAl.nomeDaUnidade(unidadeId)}), pulando filha: "${f.title}"`);
+              continue;
+            }
+            const resto = matchTitulo[3];
+            const marcas = [' (', ' ⚠'].map((marca) => resto.indexOf(marca)).filter((i) => i !== -1);
+            const nome = (marcas.length ? resto.slice(0, Math.min(...marcas)) : resto).trim();
+            if (!nome) {
+              console.warn(`[Pauta] fala: nome vazio depois do corte (${situAl.nomeDaUnidade(unidadeId)}), pulando filha: "${f.title}"`);
+              continue;
+            }
+            itens.push({ hora: `${matchTitulo[1].padStart(2, '0')}:${matchTitulo[2]}`, pessoa: { nome } });
+          }
+          if (!itens.length) continue;
+
+          const [, m, d2] = now.ymd.split('-');
+          const texto = pura.mensagemDoGrupo({ itens, unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}` });
+          if (!texto) continue;
+
+          // Important 1 (revisão do coordenador, 04/09): este bloco não tem guarda de duplicata
+          // própria como a montagem/fechamento (Tasks 5/6) — aqui o marker_logs É a guarda contra
+          // reenvio. Uma guarda que pode falhar calada não é guarda: os dois inserts abaixo checam
+          // error e MUDAM o que acontece a seguir, não só logam.
+          const { error: erroMsg } = await supabase.from('group_chat_messages').insert({
+            group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: texto, channel: 'app',
+          });
+          if (erroMsg) {
+            // A mensagem NÃO saiu. Gravar 'executed' aqui travaria a chave do dia e a equipe
+            // nunca mais receberia o recado hoje — o silêncio permanente que este plano inteiro
+            // existe pra evitar. 'fallback' deixa o próximo tick tentar de novo, com motivo.
+            console.error(`[Pauta] fala: envio da mensagem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMsg.message}`);
+            const { error: erroMarkerFallback } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveFala} envio falhou: ${erroMsg.message}`.slice(0, 120),
+            });
+            if (erroMarkerFallback) console.error(`[Pauta] fala: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerFallback.message}`);
+            continue;
+          }
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE', result: 'executed', reason: `${chaveFala} itens=${itens.length}`.slice(0, 120),
+          });
+          if (erroMarker) {
+            // A mensagem JÁ SAIU pro grupo real e o marcador que travaria a retentativa não
+            // gravou — o próximo tick (5min, e o cron bate o slot 3x) não acha marcador e manda
+            // de novo, num grupo de WhatsApp real com gente lendo. Log alto de propósito: é a
+            // única forma de alguém descobrir isso a tempo de agir.
+            console.error(`[Pauta] fala: ATENÇÃO — mensagem enviada mas marker_logs não gravou (${situAl.nomeDaUnidade(unidadeId)}), risco de reenvio no próximo tick: ${erroMarker.message}`);
+          }
+        } catch (eUnidade) {
+          console.error(`[Pauta] fala ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
         }
-        if (jaFalou && jaFalou.length) continue;
-
-        const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
-          .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
-        if (erroGrupo) {
-          console.error(`[Pauta] fala: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
-          continue;
-        }
-        if (!grupo) continue;
-
-        // CORREÇÃO (Alf, 04/09): o plano original tinha um embed
-        // `parent:tasks!tasks_parent_task_id_fkey(title)` que não resolve — medido contra o
-        // banco, devolve "Could not find a relationship between 'tasks' and 'tasks' in the
-        // schema cache" ({data:null,error}), o que calaria esta fala pra sempre (cai direto no
-        // "!filhas.length" abaixo, em silêncio). Ninguém lê `f.parent` mesmo; embed tirado,
-        // erro checado. `.not('parent_task_id','is',null)` exclui o próprio CONTAINER da busca:
-        // o título dele também contém "Anamnese —" (ver _tituloDoContainer em
-        // rituals/anamnese-pauta.js) e bateria no mesmo LIKE das filhas, inflando a contagem da
-        // mensagem em +1 todo dia (o container tem o mesmo assigned_group_id e due_date).
-        const { data: filhas, error: erroFilhas } = await supabase.from('tasks')
-          .select('title')
-          .eq('assigned_group_id', grupo.id).eq('due_date', now.ymd)
-          .not('parent_task_id', 'is', null)
-          .like('title', '%Anamnese —%').order('title');
-        if (erroFilhas) {
-          console.error(`[Pauta] fala: consulta das filhas falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroFilhas.message}`);
-          continue;
-        }
-        if (!filhas || !filhas.length) continue;
-
-        // Corta no primeiro ` (` OU no primeiro ` ⚠`, o que vier antes — nunca só no primeiro
-        // ` (` (correção Alf, 04/09): sem curso, o título da 2ª aparição é "HH:MM Anamnese —
-        // Nome ⚠️ 2ª semana — não preencheu na anterior" e cortar só em ` (` deixaria o aviso
-        // inteiro colado no nome. Mesma regra de _extrairNomeDaFilha (rituals/anamnese-pauta.js)
-        // — não reinventar o corte aqui.
-        const itens = filhas.map((f) => {
-          const semPrefixo = String(f.title).replace(/^\d{2}:\d{2} Anamnese — /, '');
-          const marcas = [' (', ' ⚠'].map((marca) => semPrefixo.indexOf(marca)).filter((i) => i !== -1);
-          const nome = marcas.length ? semPrefixo.slice(0, Math.min(...marcas)) : semPrefixo;
-          return { hora: String(f.title).slice(0, 5), pessoa: { nome: nome.trim() } };
-        });
-        const [, m, d2] = now.ymd.split('-');
-        const texto = pura.mensagemDoGrupo({ itens, unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}` });
-        if (!texto) continue;
-
-        await supabase.from('group_chat_messages').insert({
-          group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: texto, channel: 'app',
-        });
-        await supabase.from('marker_logs').insert({
-          marker_type: 'PAUTA_ANAMNESE', result: 'executed', reason: `${chaveFala} itens=${itens.length}`.slice(0, 120),
-        });
       }
-    } catch (e) { console.error('[Pauta] fala erro:', e.message); }
+    } catch (e) { console.error('[Pauta] fala erro (fora do loop por unidade):', e.message); }
   }
 
   // 23:00 — fecha o recado do dia (filhas + container) depois da última aula (20:00). Lê a
@@ -4217,43 +4280,55 @@ async function run(opts = {}) {
       const situAl = require('../services/situacao-aluno');
       const { laReportClient } = require('../services/la-report-client');
       for (const unidadeId of situAl.UNIDADES_IDS) {
-        const chaveFecha = `pauta_fecha:${unidadeId}:${now.ymd}`;
-        const { data: jaFechou, error: erroJaFechou } = await supabase.from('marker_logs')
-          .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFecha}%`).limit(1);
-        if (erroJaFechou) {
-          console.error(`[Pauta] fechamento: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFechou.message}`);
-          continue;
-        }
-        if (jaFechou && jaFechou.length) continue;
+        // Correção 1/5: try/catch por unidade — mesmo motivo do bloco das 06:00 (comentário lá).
+        try {
+          const chaveFecha = `pauta_fecha:${unidadeId}:${now.ymd}`;
+          const { data: jaFechou, error: erroJaFechou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFecha}%`).limit(1);
+          if (erroJaFechou) {
+            console.error(`[Pauta] fechamento: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFechou.message}`);
+            continue;
+          }
+          if (jaFechou && jaFechou.length) continue;
 
-        // CORREÇÃO (Alf, 04/09): fecharPautaDaUnidade ganhou `groupId` na Task 6 — sem ele,
-        // _acharContainerParaFechar (rituals/anamnese-pauta.js) nunca encontra o container e as
-        // filhas nunca fecham: é o entulho de tarefas abertas por dia que a Task 6 existiu pra
-        // evitar. Mesma busca de grupo do bloco das 06:00.
-        const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
-          .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
-        if (erroGrupo) {
-          console.error(`[Pauta] fechamento: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
-          continue;
-        }
-        if (!grupo) continue;
+          // CORREÇÃO (Alf, 04/09): fecharPautaDaUnidade ganhou `groupId` na Task 6 — sem ele,
+          // _acharContainerParaFechar (rituals/anamnese-pauta.js) nunca encontra o container e as
+          // filhas nunca fecham: é o entulho de tarefas abertas por dia que a Task 6 existiu pra
+          // evitar. Mesma busca de grupo do bloco das 06:00.
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] fechamento: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[Pauta] fechamento: nenhum grupo com wa_group_jid vinculado à unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
 
-        const r = await fecharPautaDaUnidade({
-          supabase, laReport: laReportClient, unidadeId, groupId: grupo.id, hoje: now.ymd,
-        });
-        // filhasFechadasComoFeitas/filhasFechadasComoNaoFeitas/containerFechado (Task 6) vão no
-        // reason, dentro do limite de tamanho — é o único jeito de auditar o fechamento do
-        // RECADO (painel) sem abrir o banco, distinto do fechamento da ESCADA (ok/falta/semver).
-        const reasonFecha = `${chaveFecha} ok=${r.preencheu} falta=${r.naoPreencheu} semver=${r.semVerificacao} `
-          + `fok=${r.filhasFechadasComoFeitas} fnao=${r.filhasFechadasComoNaoFeitas} cont=${r.containerFechado}`;
-        await supabase.from('marker_logs').insert({
-          marker_type: 'PAUTA_ANAMNESE',
-          result: r.motivo ? 'fallback' : 'executed',
-          reason: reasonFecha.slice(0, 120),
-        });
-        if (r.motivo) console.error(`[Pauta] fechamento ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+          const r = await fecharPautaDaUnidade({
+            supabase, laReport: laReportClient, unidadeId, groupId: grupo.id, hoje: now.ymd,
+          });
+          // filhasFechadasComoFeitas/filhasFechadasComoNaoFeitas/containerFechado (Task 6) vão no
+          // reason, dentro do limite de tamanho — é o único jeito de auditar o fechamento do
+          // RECADO (painel) sem abrir o banco, distinto do fechamento da ESCADA (ok/falta/semver).
+          const reasonFecha = `${chaveFecha} ok=${r.preencheu} falta=${r.naoPreencheu} semver=${r.semVerificacao} `
+            + `fok=${r.filhasFechadasComoFeitas} fnao=${r.filhasFechadasComoNaoFeitas} cont=${r.containerFechado}`;
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE',
+            result: r.motivo ? 'fallback' : 'executed',
+            reason: reasonFecha.slice(0, 120),
+          });
+          // Global Constraint: todo error de chamada Supabase é checado. Risco menor que na fala
+          // — fecharPautaDaUnidade não depende deste marker pra evitar duplicata (ela lê a fonte
+          // de novo e decide pelo estado real) — mas uma falha muda de log continua sendo muda.
+          if (erroMarker) console.error(`[Pauta] fechamento: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarker.message}`);
+          if (r.motivo) console.error(`[Pauta] fechamento ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+        } catch (eUnidade) {
+          console.error(`[Pauta] fechamento ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
       }
-    } catch (e) { console.error('[Pauta] fechamento erro:', e.message); }
+    } catch (e) { console.error('[Pauta] fechamento erro (fora do loop por unidade):', e.message); }
   }
 
   // Agente de governança — 08:00 BRT, depois do digest das 07:30 (que já mostrou os achados
