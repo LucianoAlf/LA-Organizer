@@ -188,6 +188,10 @@ test('pauta vazia não gera mensagem — dia limpo é silêncio, não spam', () 
 // A copy foi desenhada e aprovada com o dono do produto — só um assert.match em fragmento
 // deixaria passar uma edição futura que trocasse o '·' por vírgula ou derrubasse o emoji.
 // Trava a string INTEIRA do caso de 4 itens do brief, byte a byte.
+//
+// SEM contrato no dia, a mensagem tem que sair IDÊNTICA à que o dono aprovou em 04/09 — é esta
+// asserção que prova que o bloco novo não mexeu no bloco antigo. Se algum dia ela quebrar junto
+// com a de baixo, quem mexeu mudou o bloco de anamnese sem querer.
 test('a mensagem trava a copy aprovada — string inteira, byte a byte', () => {
   const m = mensagemDoGrupo({ itens: ITENS, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
   assert.strictEqual(m,
@@ -195,6 +199,78 @@ test('a mensagem trava a copy aprovada — string inteira, byte a byte', () => {
     + '4 alunos com aula hoje ainda sem anamnese.\n'
     + 'Os primeiros: 08:00 Arthur Bezerra · 09:00 Maria Isabel · 09:00 Davi Reis\n'
     + 'A lista completa está no painel do grupo.');
+});
+
+// ── O BLOCO DE CONTRATO (pedido do Alf, 04/09) ───────────────────────────────────────────────
+// "anamnese e contrato sem assinar são duas demandas extremamente importantes que precisam ser
+// colocadas ali de forma separada. Não pode vir dentro do mesmo bolo, tem que estar separadinho."
+const CONTRATO = [
+  { pessoa: { nome: 'Arthur Bezerra' }, hora: '08:00', curso: 'Bateria' },
+  { pessoa: { nome: 'Bento Alves' }, hora: '11:00', curso: 'Violão' },
+];
+
+test('a copy dos DOIS blocos, byte a byte — separados por linha em branco', () => {
+  const m = mensagemDoGrupo({
+    itens: ITENS, contrato: CONTRATO, unidadeNome: 'Recreio', dataBr: 'qua 10/09',
+  });
+  assert.strictEqual(m,
+    '📋 *Anamnese — hoje (qua 10/09)*\n'
+    + '4 alunos com aula hoje ainda sem anamnese.\n'
+    + 'Os primeiros: 08:00 Arthur Bezerra · 09:00 Maria Isabel · 09:00 Davi Reis\n'
+    + 'A lista completa está no painel do grupo.\n'
+    + '\n'
+    + '✍️ *Contrato — hoje (qua 10/09)*\n'
+    + '2 alunos com aula hoje ainda sem data de contrato.\n'
+    + 'Hoje: 08:00 Arthur Bezerra · 11:00 Bento Alves');
+});
+
+test('dia sem pendência de contrato NÃO imprime bloco de contrato', () => {
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: [], unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  assert.doesNotMatch(m, /Contrato/, 'bloco vazio não aparece');
+  // e o que sobra é exatamente a mensagem de sempre
+  assert.strictEqual(m, mensagemDoGrupo({ itens: ITENS, unidadeNome: 'Recreio', dataBr: 'qua 10/09' }));
+});
+
+// A regra da casa: nunca afirmar número que não foi medido. Bloco AUSENTE se lê como "hoje não
+// tem ninguém sem contrato" — uma afirmação. Fonte fora tem que DIZER que está fora.
+test('fonte de contrato fora NÃO vira zero — diz que não conseguiu conferir', () => {
+  const m = mensagemDoGrupo({
+    itens: ITENS, contrato: [], contratoErro: 'timeout', unidadeNome: 'Recreio', dataBr: 'qua 10/09',
+  });
+  assert.match(m, /✍️ \*Contrato — hoje \(qua 10\/09\)\*/, 'o bloco aparece mesmo sem lista');
+  assert.match(m, /não consegui conferir/i);
+  assert.doesNotMatch(m, /0 alunos/, 'nunca um zero que ninguém mediu');
+});
+
+test('contrato longo corta nos primeiros e ensina a pedir a lista inteira', () => {
+  const muitos = ['Ana', 'Bia', 'Caio', 'Duda', 'Elis'].map((nome, i) => ({
+    pessoa: { nome }, hora: `${String(9 + i).padStart(2, '0')}:00`, curso: 'Canto',
+  }));
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: muitos, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  assert.match(m, /5 alunos com aula hoje ainda sem data de contrato/);
+  assert.match(m, /Os primeiros: 09:00 Ana · 10:00 Bia · 11:00 Caio/);
+  assert.doesNotMatch(m, /Duda/, 'contrato usa o mesmo teto do bloco de anamnese');
+  // Contrato NÃO tem painel (a pauta não cria tarefa de contrato — spec §8), então o único
+  // caminho pra lista inteira é pedir pro TOM. Se a mensagem não ensinar, ninguém descobre.
+  assert.match(m, /me peça|me pede|pedir/i, 'quando corta, tem que dizer como ver o resto');
+});
+
+test('item torto no bloco de contrato não vaza "undefined" nem derruba a mensagem', () => {
+  const tortos = [{ hora: '08:00' }, { pessoa: { nome: 'Sem Hora' } }];
+  assert.doesNotThrow(() => mensagemDoGrupo({ itens: ITENS, contrato: tortos, dataBr: 'qua 10/09' }));
+  const m = mensagemDoGrupo({ itens: ITENS, contrato: tortos, dataBr: 'qua 10/09' });
+  assert.doesNotMatch(m, /undefined/);
+});
+
+// O cabeçalho da mensagem é a CHAVE da guarda de duplicata do dispatcher
+// (`texto.split('\n')[0]` + `like('content', cabecalho%)`). Se o bloco de contrato mudasse a
+// primeira linha, a guarda ficaria cega e a mensagem poderia sair duas vezes num grupo real.
+test('o bloco de contrato NÃO muda a primeira linha — a guarda de duplicata depende dela', () => {
+  const semC = mensagemDoGrupo({ itens: ITENS, dataBr: 'qua 10/09' }).split('\n')[0];
+  const comC = mensagemDoGrupo({ itens: ITENS, contrato: CONTRATO, dataBr: 'qua 10/09' }).split('\n')[0];
+  const comErro = mensagemDoGrupo({ itens: ITENS, contratoErro: 'x', dataBr: 'qua 10/09' }).split('\n')[0];
+  assert.strictEqual(comC, semC);
+  assert.strictEqual(comErro, semC);
 });
 
 test('item torto (sem pessoa ou sem hora) não derruba a mensagem nem vaza "undefined"', () => {
@@ -205,4 +281,105 @@ test('item torto (sem pessoa ou sem hora) não derruba a mensagem nem vaza "unde
   assert.doesNotThrow(() => mensagemDoGrupo({ itens, unidadeNome: 'Recreio', dataBr: 'qua 10/09' }));
   const m = mensagemDoGrupo({ itens, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
   assert.doesNotMatch(m, /undefined/);
+});
+
+// ── O RELATÓRIO DE FIM DE DIA (pedido do Alf, 04/09) ─────────────────────────────────────────
+// "no final do dia ele manda uma lista do que foi feito ali no dia. Alunos que tiveram na escola
+// e não preencheram a anamnese. 'Semana que vem eu vou lembrar de novo.'"
+const { mensagemDeFimDeDia } = require('./anamnese-pauta');
+
+const FALTOU = (nome, hora) => ({ pessoa: { nome }, hora });
+
+test('a copy do fim de dia com as duas metades — string inteira, byte a byte', () => {
+  const m = mensagemDeFimDeDia({
+    preencheram: 9,
+    faltaram: [FALTOU('Maria Isabel', '09:00'), FALTOU('Davi Reis', '11:00'),
+      FALTOU('Alice Cagnin', '14:00'), FALTOU('Bento Alves', '18:00')],
+    dataBr: 'sex 04/09',
+  });
+  assert.strictEqual(m,
+    '🌙 *Anamnese — como foi hoje (sex 04/09)*\n'
+    + 'Hoje 9 dos 13 alunos da pauta preencheram a anamnese.\n'
+    + 'Faltaram 4, começando por: 09:00 Maria Isabel · 11:00 Davi Reis · 14:00 Alice Cagnin\n'
+    + 'A lista de hoje ainda está no painel do grupo.\n'
+    + 'Semana que vem eu lembro de novo — eles voltam na pauta no próximo dia de aula deles.');
+});
+
+test('lista curta de faltantes sai INTEIRA, sem apontar pro painel', () => {
+  const m = mensagemDeFimDeDia({
+    preencheram: 9, faltaram: [FALTOU('Maria Isabel', '09:00'), FALTOU('Davi Reis', '11:00')],
+    dataBr: 'sex 04/09',
+  });
+  assert.match(m, /Faltaram 2: 09:00 Maria Isabel · 11:00 Davi Reis/);
+  assert.doesNotMatch(m, /começando por/);
+  assert.doesNotMatch(m, /painel/, 'com todo mundo na tela, apontar pro painel é ruído');
+  assert.match(m, /Semana que vem eu lembro de novo/);
+});
+
+test('dia bom é dito como dia bom — ninguém faltou', () => {
+  const m = mensagemDeFimDeDia({ preencheram: 23, faltaram: [], dataBr: 'sex 04/09' });
+  assert.match(m, /Dia bom/);
+  assert.match(m, /os 23 alunos da pauta preencheram/);
+  // Sem faltante não existe promessa de semana que vem: não há a quem prometer.
+  assert.doesNotMatch(m, /Semana que vem/);
+});
+
+test('ninguém preencheu — sem número inventado e sem falso ânimo', () => {
+  const m = mensagemDeFimDeDia({
+    preencheram: 0, faltaram: [FALTOU('Ana', '09:00'), FALTOU('Bia', '10:00')], dataBr: 'sex 04/09',
+  });
+  assert.match(m, /nenhum dos 2 alunos da pauta preencheu/);
+  assert.doesNotMatch(m, /Dia bom/);
+  assert.match(m, /Semana que vem eu lembro de novo/);
+});
+
+// A regra que vale em toda a casa: número que não foi medido não sai. Fonte fora tem que virar
+// "não consegui apurar", nunca um relatório de zeros fingindo saúde.
+test('fonte fora NÃO vira relatório de zeros — diz que não apurou', () => {
+  const m = mensagemDeFimDeDia({ preencheram: 0, faltaram: [], erro: 'timeout', dataBr: 'sex 04/09' });
+  assert.match(m, /não consegui/i);
+  assert.doesNotMatch(m, /0 /, 'zero nenhum na cara da equipe quando não se mediu nada');
+  assert.doesNotMatch(m, /Dia bom/);
+});
+
+test('pauta vazia hoje é silêncio, não relatório', () => {
+  assert.strictEqual(mensagemDeFimDeDia({ preencheram: 0, faltaram: [], dataBr: 'dom 06/09' }), null);
+});
+
+// sem_verificacao é o terceiro desfecho de fecharPautaDaUnidade (aluno que sumiu da base ativa).
+// Somar ele em "preencheu" inflaria a vitória; somar em "faltou" acusaria quem talvez tenha
+// preenchido. Ele tem que aparecer como o que é: não sei.
+test('quem não deu pra conferir aparece separado — nem vitória nem falta', () => {
+  const m = mensagemDeFimDeDia({
+    preencheram: 5, faltaram: [FALTOU('Ana', '09:00')], semVerificacao: 2, dataBr: 'sex 04/09',
+  });
+  assert.match(m, /5 dos 8 alunos/, 'o total soma os três desfechos');
+  assert.match(m, /2 eu não consegui conferir/);
+});
+
+test('singular do fim de dia não sai "1 alunos" nem "Faltaram 1"', () => {
+  const m = mensagemDeFimDeDia({ preencheram: 1, faltaram: [], dataBr: 'sex 04/09' });
+  assert.doesNotMatch(m, /1 alunos/);
+  const m2 = mensagemDeFimDeDia({ preencheram: 0, faltaram: [FALTOU('Ana', '09:00')], dataBr: 'sex 04/09' });
+  assert.doesNotMatch(m2, /1 alunos/);
+  // Quem lê é a secretaria, não um parser: "Faltaram 1" é o tipo de erro que faz a mensagem
+  // inteira parecer automática demais pra merecer confiança.
+  assert.doesNotMatch(m2, /Faltaram 1/);
+  assert.match(m2, /Faltou 1: 09:00 Ana/);
+});
+
+test('faltante torto não vaza "undefined" no relatório da noite', () => {
+  const m = mensagemDeFimDeDia({
+    preencheram: 1, faltaram: [{ hora: '08:00' }, { pessoa: { nome: 'Sem Hora' } }], dataBr: 'sex 04/09',
+  });
+  assert.doesNotMatch(m, /undefined/);
+});
+
+// O relatório LÊ o dia; quem fecha é o ritual das 23:00. Se um dia alguém fizer esta função
+// devolver ação em vez de texto, este teste é o que avisa.
+test('o relatório é só texto — função pura, sem efeito nenhum', () => {
+  const faltaram = [FALTOU('Ana', '09:00')];
+  const antes = JSON.stringify(faltaram);
+  mensagemDeFimDeDia({ preencheram: 1, faltaram, dataBr: 'sex 04/09' });
+  assert.strictEqual(JSON.stringify(faltaram), antes, 'não pode mutar o que recebeu');
 });

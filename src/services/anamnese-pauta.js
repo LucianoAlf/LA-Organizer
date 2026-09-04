@@ -103,27 +103,145 @@ function separarPorDegrau(itens, mapaFalhas) {
 // ── A MENSAGEM (Task 4) ──────────────────────────────────────────────────────────────────
 const PRIMEIROS_NO_ZAP = 3;
 
+// "HH:MM Nome · HH:MM Nome". UM lugar só: os dois blocos da manhã e a lista da noite usam o
+// MESMO formato, e uma segunda cópia divergiria no dia em que alguém trocasse o '·' por vírgula
+// em um dos lados e não no outro.
+// Item torto (sem pessoa, sem hora) não pode derrubar a mensagem da unidade inteira nem vazar a
+// palavra "undefined" pro zap que a equipe lê — '?' e '--:--' são feios, mas muito melhores que
+// um TypeError na hora de falar ou um "undefined" na frente da equipe.
+function _horariosENomes(lista, quantos) {
+  return (lista || []).slice(0, quantos)
+    .map((i) => `${i.hora || '--:--'} ${(i.pessoa && i.pessoa.nome) || '?'}`).join(' · ');
+}
+
+function _alunosComAula(n) {
+  return `${n} aluno${n > 1 ? 's' : ''} com aula hoje`;
+}
+
+// ── O BLOCO DE CONTRATO (pedido do Alf, 04/09) ───────────────────────────────────────────────
+// "anamnese e contrato sem assinar são duas demandas extremamente importantes que precisam ser
+// colocadas ali de forma separada. Não pode vir dentro do mesmo bolo, tem que estar separadinho."
+//
+// TRÊS coisas deste bloco não são estilo, são regra:
+//
+// 1. Ele NUNCA entra na primeira linha da mensagem. O dispatcher usa `texto.split('\n')[0]` como
+//    chave da guarda de duplicata (`like('content', cabeçalho%)`) contra reenvio num grupo REAL.
+//    Mexer na linha 1 cega essa guarda — tem teste travando isso.
+// 2. Bloco vazio não aparece; bloco NÃO-LIDO aparece dizendo que não leu. Ausência se lê como
+//    "hoje não tem ninguém sem contrato", que é uma afirmação — e afirmar sem medir é
+//    exatamente o que esta casa não faz.
+// 3. O rótulo é "sem data de contrato", igual ao ROTULO de situacao-aluno.js. O dono fala
+//    "contrato sem assinar"; o que a fonte SABE é que falta a data de início. Dizer "não
+//    assinado" seria inventar um fato a partir de um campo vazio.
+//
+// Contrato NÃO tem painel: a pauta lista, mas não cria tarefa (spec §8 — "contrato já tem dono:
+// o Clayton cria na mão com horário de assinatura combinado, e duas fontes criando a mesma
+// tarefa colidem"). Por isso, quando a lista corta, o texto ENSINA a pedir o resto — é o único
+// caminho que existe pra ela, e o recorte 'contrato' já está no <<SITUACAO_ALUNO>> do grupo.
+function _blocoDeContrato({ contrato, contratoErro, dataBr }) {
+  const cabecalho = `✍️ *Contrato — hoje (${dataBr})*`;
+  if (contratoErro) {
+    return `${cabecalho}\nNão consegui conferir contrato agora. Assim que eu conseguir, eu aviso.`;
+  }
+  const lista = contrato || [];
+  if (!lista.length) return null;
+  const n = lista.length;
+  const corpo = `${cabecalho}\n${_alunosComAula(n)} ainda sem data de contrato.\n`
+    + `${n > PRIMEIROS_NO_ZAP ? 'Os primeiros' : 'Hoje'}: ${_horariosENomes(lista, PRIMEIROS_NO_ZAP)}`;
+  return n > PRIMEIROS_NO_ZAP
+    ? `${corpo}\nMe peça a lista de contrato que eu mando ela inteira.`
+    : corpo;
+}
+
 // Os N primeiros HORÁRIOS, não os N primeiros nomes alfabéticos: quem chega às 8h é quem
 // importa quando o dia começa. A lista inteira mora no painel.
 // `unidadeNome` não entra no texto de propósito: a mensagem já vai pro grupo daquela
 // unidade — repetir o nome seria redundante. Não é esquecimento; não "conserte" tirando o parâmetro.
-function mensagemDoGrupo({ itens, unidadeNome, dataBr } = {}) {
+function mensagemDoGrupo({ itens, contrato, contratoErro, unidadeNome, dataBr } = {}) {
   const lista = itens || [];
   if (!lista.length) return null;
   const n = lista.length;
-  // Item torto (sem pessoa, sem hora) não pode derrubar a mensagem da unidade inteira
-  // nem vazar a palavra "undefined" pro zap que a equipe lê — '?' e '--:--' são feios,
-  // mas muito melhores que um TypeError às 07:30 ou um "undefined" na frente da equipe.
-  const cabeca = lista.slice(0, PRIMEIROS_NO_ZAP)
-    .map((i) => `${i.hora || '--:--'} ${(i.pessoa && i.pessoa.nome) || '?'}`).join(' · ');
-  return `📋 *Anamnese — hoje (${dataBr})*\n`
-    + `${n} aluno${n > 1 ? 's' : ''} com aula hoje ainda sem anamnese.\n`
+  const cabeca = _horariosENomes(lista, PRIMEIROS_NO_ZAP);
+  const blocoAnamnese = `📋 *Anamnese — hoje (${dataBr})*\n`
+    + `${_alunosComAula(n)} ainda sem anamnese.\n`
     + `${n > PRIMEIROS_NO_ZAP ? 'Os primeiros' : 'Hoje'}: ${cabeca}\n`
     + 'A lista completa está no painel do grupo.';
+  // Linha EM BRANCO entre os dois: é o "separadinho" que o dono pediu. No WhatsApp é o que faz
+  // o olho ver duas demandas e não um bolo só.
+  const blocoContrato = _blocoDeContrato({ contrato, contratoErro, dataBr });
+  return blocoContrato ? `${blocoAnamnese}\n\n${blocoContrato}` : blocoAnamnese;
+}
+
+// ── O RELATÓRIO DE FIM DE DIA (pedido do Alf, 04/09) ─────────────────────────────────────────
+// "no final do dia ele manda uma lista do que foi feito ali no dia. Alunos que tiveram na escola
+// e não preencheram a anamnese. 'Semana que vem eu vou lembrar de novo.'"
+//
+// Duas metades, nesta ordem: o que a equipe CONSEGUIU e quem ESCAPOU. A ordem importa — quem lê
+// passou o dia trabalhando; abrir pela falha é injusto e faz o relatório virar cobrança.
+//
+// A promessa da última linha é VERDADE, não consolo: a escada faz o aluno reaparecer no próximo
+// dia de aula dele (pautaDoDia roda todo dia) e, a partir da 2ª aparição, tituloDaFilha carimba
+// o aviso no título. Se algum dia a escada for desligada, esta frase vira mentira e tem que sair
+// junto.
+//
+// Este texto NÃO fecha nada: quem grava resultado, fecha filha e fecha container é o ritual das
+// 23:00 (fecharPautaDaUnidade). Aqui é leitura.
+const FALTARAM_NO_ZAP = 3;
+
+function mensagemDeFimDeDia({ preencheram, faltaram, semVerificacao, dataBr, erro } = {}) {
+  const cabecalho = `🌙 *Anamnese — como foi hoje (${dataBr})*`;
+  // Fonte fora NUNCA vira relatório de zeros: "0 preencheram" é um número, e número que não foi
+  // medido não sai daqui. Diz o que não deu e o que acontece a seguir — o fechamento das 23:00
+  // relê a fonte e decide o dia de verdade.
+  if (erro) {
+    return `${cabecalho}\nNão consegui conferir o dia agora. Volto a olhar no fechamento da noite.`;
+  }
+  const faltou = faltaram || [];
+  const ok = Number(preencheram) || 0;
+  const semVer = Number(semVerificacao) || 0;
+  // O total soma os TRÊS desfechos: quem preencheu, quem não preencheu e quem não deu pra
+  // conferir. Sem o terceiro, as contas da mensagem não fecham e a equipe percebe.
+  const total = ok + faltou.length + semVer;
+  if (!total) return null;   // ninguém entrou na pauta hoje — silêncio, não um relatório de zeros
+
+  const linhas = [cabecalho];
+  const osAlunos = total === 1 ? 'o único aluno da pauta' : `os ${total} alunos da pauta`;
+  if (!faltou.length && !semVer) {
+    linhas.push(`Dia bom: ${osAlunos} ${total === 1 ? 'preencheu' : 'preencheram'} a anamnese hoje. 👏`);
+  } else if (!ok) {
+    linhas.push(total === 1
+      ? 'Hoje o único aluno da pauta não preencheu a anamnese.'
+      : `Hoje nenhum dos ${total} alunos da pauta preencheu a anamnese.`);
+  } else {
+    linhas.push(`Hoje ${ok} dos ${total} alunos da pauta preencheram a anamnese.`);
+  }
+
+  if (faltou.length) {
+    const cortou = faltou.length > FALTARAM_NO_ZAP;
+    // "Faltaram 1" é o tipo de descuido que faz a mensagem inteira soar automática demais pra
+    // merecer confiança — e quem lê é a secretaria, todo dia.
+    const verbo = faltou.length > 1 ? 'Faltaram' : 'Faltou';
+    linhas.push(`${verbo} ${faltou.length}${cortou ? ', começando por' : ''}: `
+      + `${_horariosENomes(faltou, FALTARAM_NO_ZAP)}`);
+    // O container do dia só fecha às 23:00 — então, na hora deste recado, a lista inteira ainda
+    // ESTÁ na tela. Só apontamos pra lá quando cortamos: com todo mundo no texto, seria ruído.
+    if (cortou) linhas.push('A lista de hoje ainda está no painel do grupo.');
+  }
+  if (semVer) {
+    // Nem vitória nem falta: somar em "preencheu" inflaria o resultado, somar em "faltou"
+    // acusaria quem talvez tenha preenchido. Sai como o que é — não sei.
+    linhas.push(`${semVer} eu não consegui conferir — não achei no sistema hoje.`);
+  }
+  // Sem faltante não há a quem prometer semana que vem — a frase viraria enfeite.
+  if (faltou.length) {
+    linhas.push('Semana que vem eu lembro de novo — eles voltam na pauta no próximo dia de aula deles.');
+  }
+  return linhas.join('\n');
 }
 
 module.exports = {
   diaDaAula, horaDaAula, pautaDoDia, DIAS,
   degrau, tituloDaFilha, tituloDaEscalada, separarPorDegrau,
   mensagemDoGrupo, PRIMEIROS_NO_ZAP,
+  mensagemDeFimDeDia, FALTARAM_NO_ZAP,
 };
