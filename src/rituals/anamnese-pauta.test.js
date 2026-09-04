@@ -235,15 +235,39 @@ test('o título consultado na checagem de duplicata é o MESMO título usado na 
 // chega por culpa nossa e a equipe cobra quem já tinha preenchido.
 const { fecharPautaDaUnidade } = require('./anamnese-pauta');
 
-function depsNoite({ rpcErro = null, alunos = [], daPauta = [] } = {}) {
+function depsNoite({
+  rpcErro = null, alunos = [], daPauta = [],
+  containerId = null, filhasPendentes = [], erroAcharContainer = null, erroListarFilhas = null,
+} = {}) {
   const gravados = [];
+  const filhasFechadas = [];
+  const containerFechadoChamadas = [];
+  const titulosChecados = [];
   return {
     gravados,
+    filhasFechadas,
+    containerFechadoChamadas,
+    titulosChecados,
     laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
     repo: {
       pessoasDoDia: async () => daPauta,
       gravarResultado: async (_sb, arg) => { gravados.push(arg); return true; },
     },
+    // Por padrão "não achei o container" — não quebra os testes que não ligam pro fechamento
+    // do recado (é exatamente o `supabase: {}` deles: sem containerId configurado, nunca
+    // chegaria a bater o `.from()` de verdade). `containerId`/`filhasPendentes` ligam o
+    // caminho de fechamento completo.
+    acharContainer: async (_sb, { titulo }) => {
+      titulosChecados.push(titulo);
+      if (erroAcharContainer) return { containerId: null, erro: erroAcharContainer };
+      return { containerId, erro: null };
+    },
+    listarFilhasPendentes: async () => {
+      if (erroListarFilhas) return { filhas: null, erro: erroListarFilhas };
+      return { filhas: filhasPendentes, erro: null };
+    },
+    fecharFilha: async (_sb, arg) => { filhasFechadas.push(arg); return true; },
+    fecharContainer: async (_sb, arg) => { containerFechadoChamadas.push(arg); return true; },
   };
 }
 
@@ -255,6 +279,9 @@ test('à noite grava preencheu/nao_preencheu lendo a fonte', async () => {
   const r = await fecharPautaDaUnidade({
     supabase: {}, laReport: d.laReport, unidadeId: 'u1', hoje: SEGUNDA, deps: d,
   });
+  // Correção 1/5 (ponto 2): só os caminhos de fechou:false estavam travados por teste — uma
+  // regressão que derrubasse `fechou` no caminho de sucesso passaria calada.
+  assert.strictEqual(r.fechou, true);
   assert.strictEqual(r.preencheu, 1);
   assert.strictEqual(r.naoPreencheu, 1);
   assert.deepStrictEqual(
@@ -332,4 +359,98 @@ test('gravação que não casa linha nenhuma não entra em nenhum contador, e a 
   assert.strictEqual(r.naoPreencheu, 1, 'só a Bia realmente entrou no banco');
   assert.ok(r.motivo && /grava/i.test(r.motivo),
     'a divergência entre o que tentou e o que gravou precisa aparecer em algum lugar, não sumir');
+});
+
+// ── TASK 6 · RODADA DE CORREÇÃO 1/5, PONTO 3: FECHAR O RECADO DO DIA ─────────────────────────
+// O plano perdeu dois passos da spec 4.3: fechar as filhas (done/cancelled) e o container
+// (done). "A pauta do dia é descartável, o backlog é a RPC" só é verdade se algo REALMENTE
+// fecha — senão cada unidade acumula 43-80 tarefas abertas por dia, pra sempre. O nome no
+// título não é chave (uma unidade tem dezenas de "Maria"): ambíguo ou sem correspondência
+// nunca vira `done`.
+
+test('fecha as filhas conforme a fonte, e o container como done', async () => {
+  const d = depsNoite({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', false)],
+    daPauta: ['pk-Ana', 'pk-Bia'],
+    containerId: 'cont-1',
+    filhasPendentes: [
+      { id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' },
+      { id: 'f-bia', title: '08:00 Anamnese — Bia (Canto)' },
+    ],
+  });
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.fechou, true);
+  const porId = Object.fromEntries(d.filhasFechadas.map((f) => [f.id, f.status]));
+  assert.strictEqual(porId['f-ana'], 'done', 'Ana já preencheu — filha fecha como feita');
+  assert.strictEqual(porId['f-bia'], 'cancelled', 'Bia ainda não preencheu — filha fecha como não-feita');
+  assert.strictEqual(r.filhasFechadasComoFeitas, 1);
+  assert.strictEqual(r.filhasFechadasComoNaoFeitas, 1);
+  assert.strictEqual(d.containerFechadoChamadas.length, 1, 'container fecha uma vez');
+  assert.strictEqual(r.containerFechado, true);
+});
+
+// Falha-fechada: sem a fonte não dá pra dizer quem preencheu — fechar no escuro marcaria
+// `cancelled` em quem já tinha preenchido. O container fica pending pro dia seguinte tentar de novo.
+test('RPC falha à noite → não fecha filha nem container, motivo diz por quê', async () => {
+  const d = depsNoite({
+    rpcErro: { message: 'timeout' }, daPauta: ['pk-Ana'],
+    containerId: 'cont-1', filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana' }],
+  });
+  const r = await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(d.filhasFechadas.length, 0, 'sem fonte, fechar arriscaria marcar cancelled em quem preencheu');
+  assert.strictEqual(d.containerFechadoChamadas.length, 0, 'container segue pending pro dia seguinte tentar de novo');
+  assert.strictEqual(r.containerFechado, false);
+  assert.match(r.motivo, /fechamento|container/i);
+});
+
+test('nome ambíguo entre duas filhas → cancelled com nota, nunca done', async () => {
+  const ana1 = aluno('Ana', '09:00', false);
+  const ana2 = { ...aluno('Ana', '09:30', false), pessoa_chave: 'pk-Ana2' }; // homônima, pk diferente
+  const d = depsNoite({
+    alunos: [ana1, ana2],
+    daPauta: ['pk-Ana', 'pk-Ana2'],
+    containerId: 'cont-1',
+    filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }],
+  });
+  await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d,
+  });
+  const filha = d.filhasFechadas.find((f) => f.id === 'f-ana');
+  assert.strictEqual(filha.status, 'cancelled', 'duas Anas ainda sem anamnese — não dá pra saber qual é');
+  assert.match(filha.notes, /ambígu/i);
+});
+
+test('filha sem correspondência na fonte → cancelled com nota, nunca deixada aberta', async () => {
+  const d = depsNoite({
+    alunos: [aluno('Ana', '09:00', false)],
+    daPauta: ['pk-Ana'],
+    containerId: 'cont-1',
+    filhasPendentes: [{ id: 'f-fantasma', title: '09:00 Anamnese — Alguém Que Sumiu' }],
+  });
+  await fecharPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d,
+  });
+  const filha = d.filhasFechadas.find((f) => f.id === 'f-fantasma');
+  assert.strictEqual(filha.status, 'cancelled', 'nunca fica pending/aberta');
+  assert.match(filha.notes, /sem correspondência/i);
+});
+
+// Reusa os dois helpers de deps (manhã `deps()` e noite `depsNoite()`) num único cenário: os
+// dois lados chamam a MESMA função privada de título — se um dia divergirem, este teste quebra.
+test('o título consultado pra achar o container à noite é o MESMO que a manhã usa pra criar', async () => {
+  const manha = deps({ alunos: [aluno('Ana', '09:00', false)] });
+  await montarPautaDaUnidade({
+    supabase: {}, laReport: manha.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
+    hoje: SEGUNDA, deps: manha,
+  });
+  const noite = depsNoite({ alunos: [aluno('Ana', '09:00', false)], daPauta: ['pk-Ana'] });
+  await fecharPautaDaUnidade({
+    supabase: {}, laReport: noite.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: noite,
+  });
+  assert.strictEqual(noite.titulosChecados[0], manha.criadas[0].input.title,
+    'se os dois textos puderem divergir, a noite não acha o container que a manhã criou');
 });
