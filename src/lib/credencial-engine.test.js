@@ -30,6 +30,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const lines = fs.readFileSync(path.join(ROOT, 'engine.js'), 'utf8').split('\n');
+const ENGINE_SRC_LINES = lines;
 
 function idx(pred, from = 0) {
   for (let i = from; i < lines.length; i++) if (pred(lines[i], i)) return i;
@@ -62,7 +63,7 @@ const execSrc = lines.slice(iExec, iExecEnd + 2).join('\n');
 const body = `
 ${helperSrc}
 return async function run(ctx) {
-  const { collab, logMarker, withinConfirmWindow, stripReplyScaffold, _metrics, inboundVerbatimText } = ctx;
+  const { collab, logMarker, withinConfirmWindow, FRESH_WINDOW_MIN, stripReplyScaffold, _metrics, inboundVerbatimText } = ctx;
   let reply = ctx.reply;
   let _credenciaisNoTurno = false;
   let _pendingIntentToResolve = ctx._pendingIntentToResolve;
@@ -91,7 +92,7 @@ const stubRequire = (m) => {
 };
 const run = new Function('require', body)(stubRequire);
 
-const { withinConfirmWindow } = require(path.join(ROOT, 'utils/dates.js'));
+const { withinConfirmWindow, FRESH_WINDOW_MIN } = require(path.join(ROOT, 'utils/dates.js'));
 const { stripReplyScaffold } = require(path.join(ROOT, 'events/detect-approval-reply.js'));
 
 function ctxBase(over) {
@@ -102,6 +103,7 @@ function ctxBase(over) {
     _metrics: {},
     _pendingIntentToResolve: null,
     withinConfirmWindow,
+    FRESH_WINDOW_MIN,
     stripReplyScaffold,
     logMarker: async (cid, type, result, reason, raw) => { calls.markers.push({ type, result, reason, raw }); },
   }, over);
@@ -261,11 +263,41 @@ test('confirmacao: "nao" resolve denied e nao grava', async () => {
   assert.deepStrictEqual(calls.markers.map((m) => m.result), ['skipped']);
 });
 
-test('janela: "confirma" 20min depois NAO grava e expira a intent', async () => {
-  cenario(piStub([intentCred({ modo: 'create', proposta: { nome: 'X' } }, minAtras(20))]), credStub());
+test('janela: PARIDADE com o auto-resolve generico — a constante, nunca um numero solto', () => {
+  // CONFIRM-STAGED-DEADBAND (Vitoria 03/09): um `15` literal aqui contra FRESH_WINDOW_MIN=20
+  // no auto-resolve generico abre uma banda morta de 5min em que o "sim" e consumido por
+  // quem nao tem payload. Este teste afirma a PARIDADE: afirmar "15" (ou "20") perpetuaria
+  // o problema, porque um numero solto volta a divergir na proxima mudanca da constante.
+  const mGuarda = confirmSrc.match(/withinConfirmWindow\(intent\.asked_at,\s*([A-Za-z_$][\w$]*|\d+)\s*\)/);
+  assert.ok(mGuarda, 'a guarda de janela sumiu do bloco de confirmacao de credencial');
+  assert.strictEqual(mGuarda[1], 'FRESH_WINDOW_MIN',
+    `a guarda usa "${mGuarda[1]}" em vez da constante compartilhada — banda morta de volta`);
+
+  // E a constante tem de ser mesmo a que o auto-resolve generico usa: se alguem mudar um
+  // dos dois lados, isto quebra. (O generico ainda carrega o literal; o que importa e o
+  // VALOR ser o mesmo, entao a comparacao e por valor, aceitando literal ou constante.)
+  const linhaGenerico = ENGINE_SRC_LINES.find((l) => l.includes('const fresh = target ? withinConfirmWindow(target.asked_at,'));
+  assert.ok(linhaGenerico, 'guarda do auto-resolve generico nao encontrada em engine.js');
+  const mGen = linhaGenerico.match(/withinConfirmWindow\(target\.asked_at,\s*([A-Za-z_$][\w$]*|\d+)\s*\)/);
+  assert.ok(mGen, 'janela do auto-resolve generico nao encontrada');
+  const janelaGenerica = /^\d+$/.test(mGen[1]) ? Number(mGen[1]) : FRESH_WINDOW_MIN;
+  assert.strictEqual(FRESH_WINDOW_MIN, janelaGenerica,
+    `credencial usa ${FRESH_WINDOW_MIN}min e o auto-resolve generico ${janelaGenerica}min — banda morta entre os dois`);
+});
+
+test('janela: dentro de FRESH_WINDOW_MIN a confirmacao ainda grava (banda morta fechada)', async () => {
+  // O ponto que antes caia no buraco: mais de 15min, menos de 20.
+  cenario(piStub([intentCred({ modo: 'create', proposta: { nome: 'X', campos: [] } }, minAtras(FRESH_WINDOW_MIN - 2))]), credStub());
   const r = await run(ctxBase({ inboundVerbatimText: 'confirma' }));
-  assert.strictEqual(calls.upsert.length, 0, 'gravou fora da janela de 15min');
-  assert.deepStrictEqual(calls.resolve, [{ id: 'i1', res: 'expired', note: 'fora da janela de 15min' }]);
+  assert.strictEqual(calls.upsert.length, 1, `"sim" a ${FRESH_WINDOW_MIN - 2}min caiu no vazio — banda morta`);
+  assert.match(r.reply, /Cadastrei/);
+});
+
+test('janela: passado FRESH_WINDOW_MIN nao grava e expira a intent', async () => {
+  cenario(piStub([intentCred({ modo: 'create', proposta: { nome: 'X' } }, minAtras(FRESH_WINDOW_MIN + 5))]), credStub());
+  const r = await run(ctxBase({ inboundVerbatimText: 'confirma' }));
+  assert.strictEqual(calls.upsert.length, 0, 'gravou fora da janela');
+  assert.deepStrictEqual(calls.resolve, [{ id: 'i1', res: 'expired', note: `fora da janela de ${FRESH_WINDOW_MIN}min` }]);
   assert.deepStrictEqual(calls.markers.map((m) => m.result + ':' + m.reason), ['skipped:janela_expirada']);
   assert.strictEqual(r.reply, '', 'nao deve sequestrar a reply do turno');
 });

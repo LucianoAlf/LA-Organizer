@@ -11376,18 +11376,26 @@ async function processMessage(phone, text, raw = {}) {
       // (Ha tambem um guard no proprio resolvedor generico, ~10382; isto e a 2a linha.)
       _pendingIntentToResolve = null;
 
-      // Janela de 15min (mesma de finance_source / reschedule_confirm / event_create_confirm).
-      // listOpenIntents so corta em 24h: sem esta guarda um "sim" 20 horas depois gravaria
-      // credencial. Fora da janela nao grava — e fecha como 'expired' pra que o resolvedor
-      // generico (janela de 20min) nao a marque 'confirmed' sem escrita nenhuma.
+      // Janela de frescor. `listOpenIntents` so corta em 24h: sem esta guarda um "sim" 20
+      // horas depois gravaria credencial. Fora da janela nao grava — e fecha como 'expired'
+      // pra que o resolvedor generico nao a marque 'confirmed' sem escrita nenhuma.
       // A janela e sempre a da intent VIGENTE: no fluxo de duas etapas, a 2a intent nasce
       // no turno da escolha, entao o relogio recomeca ali.
-      if (!withinConfirmWindow(intent.asked_at, 15)) {
+      //
+      // CONFIRM-STAGED-DEADBAND (Vitoria 03/09): aqui havia um `15` literal enquanto o
+      // auto-resolve generico (~10456) usa FRESH_WINDOW_MIN=20 — e a diferenca e uma BANDA
+      // MORTA. No caso dela o "Sim" veio 17m40s depois: o executor estagiado ficou de fora e
+      // o generico consumiu a confirmacao sem ter payload pra agir. Na credencial o dano e
+      // menor (o bloco fecha como 'expired' e o branch de ~10382 tira credencial_write do
+      // generico, entao ninguem escreve com dado errado), mas entre 15 e 20 minutos o "sim"
+      // simplesmente nao funcionava: caia no LLM, que nao tem o payload. Mesma constante que
+      // reschedule_confirm e event_create_confirm passaram a usar — paridade, nao numero solto.
+      if (!withinConfirmWindow(intent.asked_at, FRESH_WINDOW_MIN)) {
         // I-4: resolveIntent devolve false em erro, sem lancar — se o fechamento falhar a
         // intent segue aberta e volta a ser candidata no proximo turno. Precisa de rastro.
-        const _okExp = await pi.resolveIntent(intent.id, 'expired', 'fora da janela de 15min');
+        const _okExp = await pi.resolveIntent(intent.id, 'expired', `fora da janela de ${FRESH_WINDOW_MIN}min`);
         await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', 'janela_expirada', null);
-        console.warn(`[CredencialConfirm] intent ${String(intent.id).slice(0, 8)} fora da janela de 15min — expirada SEM gravar`
+        console.warn(`[CredencialConfirm] intent ${String(intent.id).slice(0, 8)} fora da janela de ${FRESH_WINDOW_MIN}min — expirada SEM gravar`
           + (_okExp ? '' : ' (ATENCAO: resolveIntent FALHOU, a intent segue aberta)'));
       } else {
         const { detectUserConfirmation } = require('./services/user-confirmation');
