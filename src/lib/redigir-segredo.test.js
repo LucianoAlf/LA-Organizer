@@ -152,3 +152,23 @@ test('C-6: separador espaco em frase idiomatica nao dispara (chave/segredo como 
   assert.equal(r.achou, false);
   assert.equal(r.texto, t);
 });
+
+// --- Fix round 3 (review C-5.1: guarda de pergunta abortava demais a fila) -
+
+test('C-5.1: pergunta nao consome a fila -- valor real logo depois ainda mascara', () => {
+  const r = redigirSegredos('Senha:\nvoce pode ajudar?\nhunter2');
+  assert.equal(r.texto, 'Senha:\nvoce pode ajudar?\n***');
+  assert.equal(r.achou, true);
+});
+
+test('C-5.1: pergunta sem valor nenhum depois -- fila fica sem nada pra mascarar', () => {
+  const t = 'Senha:\nvoce pode ajudar?';
+  const r = redigirSegredos(t);
+  assert.equal(r.achou, false, 'nao ha valor nenhum na mensagem, so a pergunta');
+  assert.equal(r.texto, t);
+});
+
+test('C-5.1: fila expira apos 3 linhas nao vazias -- nao mascara o que vem depois do limite', () => {
+  const r = redigirSegredos('Senha:\na\nb\nc\nhunter2');
+  assert.match(r.texto, /hunter2/, 'hunter2 esta alem do limite de espera e nao pode ser mascarado');
+});

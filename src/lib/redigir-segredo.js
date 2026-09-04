@@ -34,6 +34,16 @@
 // (C-6) com separador ESPACO (nao ":"/"="/";"), so dispara se o valor for
 // um unico token sem espaco com 4+ caracteres -- senao frase idiomatica tipo
 // "a chave da porta esta emprestada" vira "a chave ***".
+//
+// FIX ROUND 3 (C-5.1): a guarda de pergunta do round 2 ABORTAVA a fila
+// inteira ao ver a primeira linha em formato de pergunta depois do rotulo
+// pendente -- mas pergunta nao ser o valor nao quer dizer que o valor nao
+// venha na linha seguinte ("Senha:\nvoce pode ajudar?\nhunter2" vazava
+// hunter2). Agora uma linha-pergunta so e pulada (nao mascara, nao fecha a
+// busca); quem fecha a busca de verdade e a primeira linha nao-pergunta
+// (mascarada) ou o estouro do orcamento de 3 linhas nao-vazias examinadas
+// depois do rotulo -- o que vier primeiro. Estourou sem resolver, a busca
+// para (silenciosamente, sem mascarar o que ainda nao tinha mascarado).
 
 const MASCARA = '***';
 
@@ -163,25 +173,35 @@ function redigirSegredos(texto) {
   // "Login:" sozinho entra na conta do tamanho mas nao liga filaTemSecreto.
   let filaTamanho = 0;
   let filaTemSecreto = false;
-  // Depois que a fila fecha (achou a primeira linha que nao e rotulo), esta
-  // e as proximas `restante` linhas nao-vazias sao mascaradas.
-  let restante = 0;
+
+  // Busca do valor (C-5.1), ativa depois que a fila fecha: restanteMascarar
+  // e quantas linhas ainda faltam mascarar para completar o bloco;
+  // tentativas e o orcamento de linhas nao-vazias que a busca ainda pode
+  // examinar antes de desistir (pergunta nao mascara mas GASTA orcamento).
+  let buscando = false;
+  let restanteMascarar = 0;
+  let tentativas = 0;
+
+  // Avalia uma linha como candidata a valor durante a busca. Pergunta pula
+  // (nao mascara, nao fecha a fila) sem contar como resolvida; nao-pergunta
+  // mascara e abate uma unidade do bloco. Em ambos os casos gasta orcamento;
+  // zerou o orcamento ou o bloco, a busca encerra.
+  function avaliaCandidato(i, linha) {
+    if (linha.trim() === '') return; // linha em branco nao gasta orcamento
+    tentativas -= 1;
+    if (!_ehPergunta(linha.trim())) {
+      partes[i] = MASCARA;
+      achou = true;
+      restanteMascarar -= 1;
+    }
+    if (restanteMascarar <= 0 || tentativas <= 0) buscando = false;
+  }
 
   for (let i = 0; i < partes.length; i += 2) {
     const linha = partes[i];
 
-    if (restante > 0) {
-      if (linha.trim() === '') continue; // linha em branco nao conta como valor
-      const v = linha.trim();
-      if (_ehPergunta(v)) {
-        // C-5: frase solta (pergunta) nao e o valor esperado -- aborta o
-        // consumo em vez de mascarar algo que pode ser so conversa normal.
-        restante = 0;
-        continue;
-      }
-      partes[i] = MASCARA;
-      achou = true;
-      restante -= 1;
+    if (buscando) {
+      avaliaCandidato(i, linha);
       continue;
     }
 
@@ -194,18 +214,20 @@ function redigirSegredos(texto) {
       filaTamanho += 1;
       if (r.pendente) filaTemSecreto = true;
     } else if (linha.trim() !== '') {
-      // Primeira linha que nao parece rotulo: fecha o bloco acumulado.
+      // Primeira linha que nao parece rotulo: fecha o bloco acumulado e
+      // abre a busca pelo valor, processando esta mesma linha como a
+      // primeira candidata (C-5.1: pode ser pergunta e nao resolver ainda).
       if (filaTamanho > 0 && filaTemSecreto) {
-        const v = linha.trim();
-        if (!_ehPergunta(v)) {
-          partes[i] = MASCARA;
-          achou = true;
-          restante = filaTamanho - 1; // esta linha ja foi consumida agora
-        }
-        // Se for pergunta (C-5), abandona o bloco sem mascarar nada.
+        buscando = true;
+        restanteMascarar = filaTamanho;
+        tentativas = 3; // C-5.1: no maximo 3 linhas nao-vazias de espera
+        filaTamanho = 0;
+        filaTemSecreto = false;
+        avaliaCandidato(i, linha);
+      } else {
+        filaTamanho = 0;
+        filaTemSecreto = false;
       }
-      filaTamanho = 0;
-      filaTemSecreto = false;
     }
     // Linha em branco no meio do bloco: nao conta e nao fecha, so espera.
   }
