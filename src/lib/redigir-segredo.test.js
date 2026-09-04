@@ -1209,13 +1209,48 @@ test('item 3: linha de tabela ja redigida nao re-arma o modo', () => {
   }
 });
 
-test('R10 limite conhecido: valor com espacos no caminho do V-2 nao mascara', () => {
+// ATUALIZADO no round 11: a segunda metade deste teste DOCUMENTAVA o vazamento
+// que a rodada 10 abriu ("abc123 escapa"). Ele foi corrigido pela regra
+// estreita -- havendo um segundo campo na mesma linha, o valor do campo
+// via-prefixo passa a ser so o primeiro token. A primeira metade continua
+// valendo: sem segundo campo, valor com espacos segue sem mascarar.
+test('R11: com segundo campo na linha, os dois valores mascaram', () => {
+  const r = redigirSegredos('a senha do wifi: abc123 e o token: xyz789');
+  assert.equal(r.texto, 'a senha do wifi: *** e o token: ***');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('abc123'), 'o valor do campo via-prefixo nao pode vazar');
+  assert.ok(!r.texto.includes('xyz789'));
+});
+
+test('R10 limite conhecido: sem segundo campo, valor com espacos nao mascara', () => {
   const a = redigirSegredos('a senha do wifi: X7k 9Qm 2p');
   assert.equal(a.texto, 'a senha do wifi: X7k 9Qm 2p', 'preco da regra de token unico do item 5');
   assert.equal(a.achou, false);
-  const b = redigirSegredos('a senha do wifi: abc123 e o token: xyz789');
-  assert.ok(!b.texto.includes('xyz789'), 'o campo com rotulo colado ao separador continua mascarando');
-  assert.match(b.texto, /abc123/, 'limite conhecido: o valor do campo via-prefixo tem espacos e escapa');
+});
+
+// A PREMISSA INTEIRA da correcao estreita: a regra so pode tocar uma linha que
+// tenha um SEGUNDO separador depois do primeiro. Se alguma trava tivesse um,
+// a correcao a quebraria -- entao isto e verificado explicitamente, e nao
+// deduzido do fato de as travas passarem.
+test('R11 premissa: nenhuma das 7 travas do item 5 tem segundo separador', () => {
+  const travas = [
+    'Nao esqueci da senha nao, so preciso confirmar uma coisa: o email do aluno',
+    'A chave do armario ficou com o Alfredo: ele leva amanha',
+    'Preciso trocar a senha do wifi. Motivo: muita gente conectada',
+    'Sobre o token do aluno no sistema, pergunta pro TI: eles resolvem',
+    'Perdi a chave da sala de novo, resumo da opera: vou pagar a copia',
+    'A senha do aluno ta errada no sistema, o que eu faco: abro chamado?',
+    'Falei da chave com a Marcia ontem, resposta dela: so na segunda'
+  ];
+  for (const t of travas) {
+    const primeiro = t.search(/[:=;|]/);
+    assert.notEqual(primeiro, -1, `deveria ter um separador: ${JSON.stringify(t)}`);
+    const depois = t.slice(primeiro + 1);
+    assert.doesNotMatch(depois, /[:=;|]/, `trava tem SEGUNDO separador, a correcao estreita a tocaria: ${JSON.stringify(t)}`);
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `deveria sair identico: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
 });
 
 test('R10 limite conhecido: tabela transposta de 3+ colunas ainda vaza', () => {

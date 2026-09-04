@@ -150,12 +150,15 @@
 //    borda: 'a senha e hunter2' e 'A imagem mostra um painel com a senha
 //    250178Alf# no campo' saem intactos. Sem separador nao ha onde ancorar o
 //    valor, e disparar por proximidade de palavra apagaria conversa comum.
-// 12. Com o rotulo NAO colado ao separador (o caminho do V-2), o valor tem de
-//    ser token unico de 4+ -- entao 'a senha do wifi: X7k 9Qm 2p' (valor com
-//    espacos) nao mascara, e em 'a senha do wifi: abc123 e o token: xyz789' o
-//    'abc123' escapa (o valor ate o proximo campo tem espacos). E o preco da
-//    correcao do item 5: a mesma regra e a que salva 'Preciso trocar a senha
-//    do wifi. Motivo: muita gente conectada'.
+// 12. Com o rotulo NAO colado ao separador (o caminho do V-2) e SEM outro
+//    campo na mesma linha, o valor tem de ser token unico de 4+ -- entao
+//    'a senha do wifi: X7k 9Qm 2p' (valor com espacos) nao mascara. E o preco
+//    da correcao do item 5: a mesma regra e a que salva 'Preciso trocar a
+//    senha do wifi. Motivo: muita gente conectada', cujo valor tambem tem
+//    espacos. Havendo um segundo campo na linha, o valor deste passa a ser so
+//    o primeiro token e volta a mascarar (round 11) -- e a unica situacao em
+//    que da para distinguir "resto de frase" de "credencial seguida de outro
+//    campo" sem quebrar aquela trava.
 // 6. Connection string ('postgres://user:hunter2@host:5432/db') nao casa.
 // 7. Heading markdown sem separador ('## Senha\nhunter2') nao arma -- e o
 //    limite 1 com outra roupa.
@@ -497,9 +500,9 @@ function _processaLinha(linha) {
     // O valor deste campo para no proximo campo valido da mesma linha, nao no
     // fim dela -- senao engole o rotulo seguinte inteiro.
     const proximo = _acharProximoCampo(linha, campo.matchEnd);
-    const valorEnd = proximo ? proximo.start : linha.length;
-    const valorRaw = linha.slice(campo.matchEnd, valorEnd);
-    const v = valorRaw.trim();
+    let valorEnd = proximo ? proximo.start : linha.length;
+    let valorRaw = linha.slice(campo.matchEnd, valorEnd);
+    let v = valorRaw.trim();
     const sepOut = /\s/.test(campo.sepChar) ? ' ' : `${campo.sepChar} `;
 
     if (!v || _soEnfase(v)) {
@@ -515,6 +518,27 @@ function _processaLinha(linha) {
     // Rotulo achado pela varredura (nao colado ao separador) exige valor com
     // forma de credencial colada, qualquer que seja o separador -- item 5.
     const exigeTokenUnico = campo.viaPrefixo === true;
+
+    // ROUND 11: correcao estreita do vazamento que a regra acima abriu. Em
+    // 'a senha do wifi: abc123 e o token: xyz789' o valor deste campo ia ate o
+    // campo seguinte ("abc123 e o"), tinha espacos, e "abc123" saia em claro.
+    // Quando HA um segundo campo na mesma linha, o valor deste passa a ser so
+    // o PRIMEIRO token -- o resto da linha continua sendo varrido normalmente.
+    // A condicao "ha segundo campo" e a premissa inteira da correcao: nenhuma
+    // das 7 travas do item 5 tem um segundo separador depois do primeiro, e
+    // por isso nenhuma delas e tocada aqui (ha teste explicito disso). Sem
+    // essa condicao -- mascarando sempre o primeiro token -- a trava 'Motivo:
+    // muita gente conectada' quebraria, porque "muita" tem 5 caracteres.
+    if (exigeTokenUnico && proximo && /\s/.test(v)) {
+      const espacosIni = valorRaw.match(/^[ \t]*/)[0].length;
+      const primeiro = valorRaw.slice(espacosIni).match(/^\S+/);
+      if (primeiro) {
+        valorEnd = campo.matchEnd + espacosIni + primeiro[0].length;
+        valorRaw = linha.slice(campo.matchEnd, valorEnd);
+        v = primeiro[0];
+      }
+    }
+
     if (_ehPergunta(v) || !_valorQualifica(sepEhPontuacao && !exigeTokenUnico, v)) {
       out += linha.slice(campo.start, valorEnd);
       pos = valorEnd;
