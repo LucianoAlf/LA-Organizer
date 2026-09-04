@@ -77,12 +77,17 @@ const PRIMEIROS_NO_ZAP = 3;
 
 // Os N primeiros HORÁRIOS, não os N primeiros nomes alfabéticos: quem chega às 8h é quem
 // importa quando o dia começa. A lista inteira mora no painel.
+// `unidadeNome` não entra no texto de propósito: a mensagem já vai pro grupo daquela
+// unidade — repetir o nome seria redundante. Não é esquecimento; não "conserte" tirando o parâmetro.
 function mensagemDoGrupo({ itens, unidadeNome, dataBr } = {}) {
   const lista = itens || [];
   if (!lista.length) return null;
   const n = lista.length;
+  // Item torto (sem pessoa, sem hora) não pode derrubar a mensagem da unidade inteira
+  // nem vazar a palavra "undefined" pro zap que a equipe lê — '?' e '--:--' são feios,
+  // mas muito melhores que um TypeError às 07:30 ou um "undefined" na frente da equipe.
   const cabeca = lista.slice(0, PRIMEIROS_NO_ZAP)
-    .map((i) => `${i.hora} ${i.pessoa.nome}`).join(' · ');
+    .map((i) => `${i.hora || '--:--'} ${(i.pessoa && i.pessoa.nome) || '?'}`).join(' · ');
   return `📋 *Anamnese — hoje (${dataBr})*\n`
     + `${n} aluno${n > 1 ? 's' : ''} com aula hoje ainda sem anamnese.\n`
     + `${n > PRIMEIROS_NO_ZAP ? 'Os primeiros' : 'Hoje'}: ${cabeca}\n`

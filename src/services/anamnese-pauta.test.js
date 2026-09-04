@@ -137,3 +137,25 @@ test('singular quando é um só', () => {
 test('pauta vazia não gera mensagem — dia limpo é silêncio, não spam', () => {
   assert.strictEqual(mensagemDoGrupo({ itens: [], unidadeNome: 'Recreio', dataBr: 'dom 14/09' }), null);
 });
+
+// A copy foi desenhada e aprovada com o dono do produto — só um assert.match em fragmento
+// deixaria passar uma edição futura que trocasse o '·' por vírgula ou derrubasse o emoji.
+// Trava a string INTEIRA do caso de 4 itens do brief, byte a byte.
+test('a mensagem trava a copy aprovada — string inteira, byte a byte', () => {
+  const m = mensagemDoGrupo({ itens: ITENS, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  assert.strictEqual(m,
+    '📋 *Anamnese — hoje (qua 10/09)*\n'
+    + '4 alunos com aula hoje ainda sem anamnese.\n'
+    + 'Os primeiros: 08:00 Arthur Bezerra · 09:00 Maria Isabel · 09:00 Davi Reis\n'
+    + 'A lista completa está no painel do grupo.');
+});
+
+test('item torto (sem pessoa ou sem hora) não derruba a mensagem nem vaza "undefined"', () => {
+  const itens = [
+    { hora: '08:00', curso: 'Bateria' }, // sem pessoa — não pode lançar TypeError
+    { pessoa: { nome: 'Sem Hora' }, curso: 'Canto' }, // sem hora — não pode virar "undefined" no texto
+  ];
+  assert.doesNotThrow(() => mensagemDoGrupo({ itens, unidadeNome: 'Recreio', dataBr: 'qua 10/09' }));
+  const m = mensagemDoGrupo({ itens, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
+  assert.doesNotMatch(m, /undefined/);
+});
