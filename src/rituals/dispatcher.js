@@ -95,6 +95,12 @@ const WEEKLY_RETRO_DEFAULT_TIME = '18:00';      // Sunday only
 const MEMORY_CONSOLIDATION_TIME = '22:00';      // Sunday only
 const PENDING_APPROVAL_REMINDER_TIMES = ['09:00', '15:00'];  // 2x/dia
 const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": consolidar memórias das últimas 24h
+// Pauta de anamnese (spec 2026-09-03): monta às 6h (antes da 1ª aula, depois do health check),
+// fala às 7h30 (mesmo slot do ops_digest — zap às 6h da manhã é invasivo), fecha às 23h (depois
+// da última aula das 20h).
+const PAUTA_ANAMNESE_MONTA_TIME = '06:00';
+const PAUTA_ANAMNESE_FALA_TIME = '07:30';
+const PAUTA_ANAMNESE_FECHA_TIME = '23:00';
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
 const OPS_DIGEST_TIME = '07:30';                // Every day — achados da auditoria no grupo de ops (após triagem das 5h)
@@ -3746,7 +3752,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -4087,6 +4093,167 @@ async function run(opts = {}) {
     } catch (err) {
       console.error('[OpsDigest] erro (retenta no próximo tick até 11h):', err.message);
     }
+  }
+
+  // ── PAUTA DE ANAMNESE (spec 2026-09-03) ─────────────────────────────────────────────────
+  // Três blocos independentes, cada um com sua própria idempotência via marker_logs (o cron
+  // bate o slot 3x — ver timeToSlot/currentSlot acima). Quem decide é anamnese-pauta.js
+  // (ritual) e o módulo puro; aqui só busca o grupo da unidade e chama.
+
+  // 06:00 — monta o pacote (container + filhas) com quem tem aula hoje e está sem anamnese.
+  if (opts.force === 'pauta_anamnese' || timeToSlot(PAUTA_ANAMNESE_MONTA_TIME) === slotNow) {
+    try {
+      const { montarPautaDaUnidade } = require('./anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        const chaveDia = `pauta_anamnese:${unidadeId}:${now.ymd}`;
+        const { data: jaTem, error: erroJaTem } = await supabase.from('marker_logs')
+          .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveDia}%`).limit(1);
+        if (erroJaTem) {
+          console.error(`[Pauta] montagem: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaTem.message}`);
+          continue; // falha-fechada: não sei se já rodou hoje, não arrisco duplicar
+        }
+        if (jaTem && jaTem.length) continue;  // idempotência: o cron bate o slot 3x
+
+        const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+          .select('id, leader_id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+        if (erroGrupo) {
+          console.error(`[Pauta] montagem: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+          continue;
+        }
+        if (!grupo) continue;
+
+        const r = await montarPautaDaUnidade({
+          supabase, laReport: laReportClient, unidadeId, groupId: grupo.id,
+          criadoPor: grupo.leader_id, hoje: now.ymd,
+        });
+        await supabase.from('marker_logs').insert({
+          marker_type: 'PAUTA_ANAMNESE',
+          result: r.criou ? 'executed' : (r.motivo ? 'fallback' : 'skipped'),
+          reason: `${chaveDia} total=${r.total} escalados=${r.escalados}${r.motivo ? ' erro=' + r.motivo : ''}`.slice(0, 120),
+        });
+        if (r.motivo) console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+      }
+    } catch (e) { console.error('[Pauta] montagem erro:', e.message); }
+  }
+
+  // 07:30 — o recado no grupo (mesmo slot do ops_digest — zap às 6h da manhã é invasivo).
+  // Separado da montagem de propósito: se a montagem falhar, o marker dela já registra o
+  // motivo; aqui simplesmente não há filhas pra ler, e o bloco fica em silêncio (saúde, não erro).
+  if (opts.force === 'pauta_anamnese_fala' || timeToSlot(PAUTA_ANAMNESE_FALA_TIME) === slotNow) {
+    try {
+      const pura = require('../services/anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        const chaveFala = `pauta_fala:${unidadeId}:${now.ymd}`;
+        const { data: jaFalou, error: erroJaFalou } = await supabase.from('marker_logs')
+          .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFala}%`).limit(1);
+        if (erroJaFalou) {
+          console.error(`[Pauta] fala: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFalou.message}`);
+          continue;
+        }
+        if (jaFalou && jaFalou.length) continue;
+
+        const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+          .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+        if (erroGrupo) {
+          console.error(`[Pauta] fala: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+          continue;
+        }
+        if (!grupo) continue;
+
+        // CORREÇÃO (Alf, 04/09): o plano original tinha um embed
+        // `parent:tasks!tasks_parent_task_id_fkey(title)` que não resolve — medido contra o
+        // banco, devolve "Could not find a relationship between 'tasks' and 'tasks' in the
+        // schema cache" ({data:null,error}), o que calaria esta fala pra sempre (cai direto no
+        // "!filhas.length" abaixo, em silêncio). Ninguém lê `f.parent` mesmo; embed tirado,
+        // erro checado. `.not('parent_task_id','is',null)` exclui o próprio CONTAINER da busca:
+        // o título dele também contém "Anamnese —" (ver _tituloDoContainer em
+        // rituals/anamnese-pauta.js) e bateria no mesmo LIKE das filhas, inflando a contagem da
+        // mensagem em +1 todo dia (o container tem o mesmo assigned_group_id e due_date).
+        const { data: filhas, error: erroFilhas } = await supabase.from('tasks')
+          .select('title')
+          .eq('assigned_group_id', grupo.id).eq('due_date', now.ymd)
+          .not('parent_task_id', 'is', null)
+          .like('title', '%Anamnese —%').order('title');
+        if (erroFilhas) {
+          console.error(`[Pauta] fala: consulta das filhas falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroFilhas.message}`);
+          continue;
+        }
+        if (!filhas || !filhas.length) continue;
+
+        // Corta no primeiro ` (` OU no primeiro ` ⚠`, o que vier antes — nunca só no primeiro
+        // ` (` (correção Alf, 04/09): sem curso, o título da 2ª aparição é "HH:MM Anamnese —
+        // Nome ⚠️ 2ª semana — não preencheu na anterior" e cortar só em ` (` deixaria o aviso
+        // inteiro colado no nome. Mesma regra de _extrairNomeDaFilha (rituals/anamnese-pauta.js)
+        // — não reinventar o corte aqui.
+        const itens = filhas.map((f) => {
+          const semPrefixo = String(f.title).replace(/^\d{2}:\d{2} Anamnese — /, '');
+          const marcas = [' (', ' ⚠'].map((marca) => semPrefixo.indexOf(marca)).filter((i) => i !== -1);
+          const nome = marcas.length ? semPrefixo.slice(0, Math.min(...marcas)) : semPrefixo;
+          return { hora: String(f.title).slice(0, 5), pessoa: { nome: nome.trim() } };
+        });
+        const [, m, d2] = now.ymd.split('-');
+        const texto = pura.mensagemDoGrupo({ itens, unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}` });
+        if (!texto) continue;
+
+        await supabase.from('group_chat_messages').insert({
+          group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: texto, channel: 'app',
+        });
+        await supabase.from('marker_logs').insert({
+          marker_type: 'PAUTA_ANAMNESE', result: 'executed', reason: `${chaveFala} itens=${itens.length}`.slice(0, 120),
+        });
+      }
+    } catch (e) { console.error('[Pauta] fala erro:', e.message); }
+  }
+
+  // 23:00 — fecha o recado do dia (filhas + container) depois da última aula (20:00). Lê a
+  // fonte de novo dentro de fecharPautaDaUnidade, que também grava o resultado de cada aluno em
+  // anamnese_pauta (a verdade da escada).
+  if (opts.force === 'pauta_anamnese_fecha' || timeToSlot(PAUTA_ANAMNESE_FECHA_TIME) === slotNow) {
+    try {
+      const { fecharPautaDaUnidade } = require('./anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        const chaveFecha = `pauta_fecha:${unidadeId}:${now.ymd}`;
+        const { data: jaFechou, error: erroJaFechou } = await supabase.from('marker_logs')
+          .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFecha}%`).limit(1);
+        if (erroJaFechou) {
+          console.error(`[Pauta] fechamento: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFechou.message}`);
+          continue;
+        }
+        if (jaFechou && jaFechou.length) continue;
+
+        // CORREÇÃO (Alf, 04/09): fecharPautaDaUnidade ganhou `groupId` na Task 6 — sem ele,
+        // _acharContainerParaFechar (rituals/anamnese-pauta.js) nunca encontra o container e as
+        // filhas nunca fecham: é o entulho de tarefas abertas por dia que a Task 6 existiu pra
+        // evitar. Mesma busca de grupo do bloco das 06:00.
+        const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+          .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+        if (erroGrupo) {
+          console.error(`[Pauta] fechamento: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+          continue;
+        }
+        if (!grupo) continue;
+
+        const r = await fecharPautaDaUnidade({
+          supabase, laReport: laReportClient, unidadeId, groupId: grupo.id, hoje: now.ymd,
+        });
+        // filhasFechadasComoFeitas/filhasFechadasComoNaoFeitas/containerFechado (Task 6) vão no
+        // reason, dentro do limite de tamanho — é o único jeito de auditar o fechamento do
+        // RECADO (painel) sem abrir o banco, distinto do fechamento da ESCADA (ok/falta/semver).
+        const reasonFecha = `${chaveFecha} ok=${r.preencheu} falta=${r.naoPreencheu} semver=${r.semVerificacao} `
+          + `fok=${r.filhasFechadasComoFeitas} fnao=${r.filhasFechadasComoNaoFeitas} cont=${r.containerFechado}`;
+        await supabase.from('marker_logs').insert({
+          marker_type: 'PAUTA_ANAMNESE',
+          result: r.motivo ? 'fallback' : 'executed',
+          reason: reasonFecha.slice(0, 120),
+        });
+        if (r.motivo) console.error(`[Pauta] fechamento ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+      }
+    } catch (e) { console.error('[Pauta] fechamento erro:', e.message); }
   }
 
   // Agente de governança — 08:00 BRT, depois do digest das 07:30 (que já mostrou os achados
