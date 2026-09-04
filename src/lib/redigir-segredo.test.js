@@ -364,3 +364,86 @@ test('R4 adversarial: nunca lanca, para entradas estranhas', () => {
     assert.equal(typeof r.achou, 'boolean');
   }
 });
+
+// --- Round 5: rotulo nao adjacente ao separador tambem arma o modo --------
+// Em portugues de verdade o rotulo quase nunca encosta no separador:
+// "A senha e:", "Minha senha eh:". O token colado ao ":" e "e"/"eh", entao a
+// regra de arme do round 4 (so o token adjacente) nao disparava e o valor da
+// linha seguinte vazava. Agora, numa linha que ja e candidata (termina em
+// ":"/"="/";" e nada depois), basta QUALQUER palavra da linha conter um
+// rotulo conhecido.
+
+test('R5: rotulo nao adjacente ao separador arma o modo (A senha e:)', () => {
+  const r = redigirSegredos('A senha e:\nhunter2');
+  assert.equal(r.texto, 'A senha e:\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R5: rotulo nao adjacente ao separador arma o modo (Minha senha eh:)', () => {
+  const r = redigirSegredos('Minha senha eh:\nhunter2');
+  assert.equal(r.texto, 'Minha senha eh:\n***');
+  assert.equal(r.achou, true);
+});
+
+// A trava que impede a regra nova de virar redacao universal: a frase ARMA
+// (contem "segredo"), mas a linha seguinte tem 5 palavras -> e prosa -> fecha
+// o modo sem mascarar nada. Saida byte a byte identica, achou=false.
+test('R5 trava: frase longa terminando em rotulo arma, mas a prosa fecha o modo', () => {
+  const t = 'Deixa eu te contar um segredo:\nvi ela na academia ontem';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t);
+  assert.equal(r.achou, false);
+});
+
+test('R5 trava: as quatro frases de conversa real seguem byte a byte identicas', () => {
+  const intactas = [
+    'qual a senha do chatwoot?',
+    'a chave da porta esta emprestada com o joao',
+    'me manda o link da anamnese por favor',
+    'Deixa eu te contar um segredo:\nvi ela na academia ontem'
+  ];
+  for (const t of intactas) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `deveria sair identico: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false, `nao deveria sinalizar: ${JSON.stringify(t)}`);
+  }
+});
+
+test('R5: linha candidata sem rotulo nenhum continua sem armar', () => {
+  for (const t of ['Login:\nadmin', 'Observacao:\nteste', 'Endereco:\nrua x']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `nao deveria mascarar: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});
+
+test('R5: linha de prosa que e ela mesma candidata re-arma o modo', () => {
+  const r = redigirSegredos('Senha:\nvou te falar a senha nova:\nhunter2');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('hunter2'), 'valor depois da re-arme nao pode vazar');
+});
+
+// --- Round 5: limites conhecidos, documentados de proposito ---------------
+// Ficam como estao por decisao do coordenador: cada um exigiria afrouxar o
+// gatilho de um jeito que reabre sobre-redacao em prosa, e as tres formas de
+// mensagem sao bem menos provaveis que a consertada nesta rodada.
+
+test('R5 limite conhecido: sem separador nenhum nao arma', () => {
+  const t = 'Senha\nhunter2';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'limite conhecido e documentado no topo do modulo');
+  assert.equal(r.achou, false);
+});
+
+test('R5 limite conhecido: tres perguntas seguidas esgotam o orcamento', () => {
+  const t = 'Senha:\nvoce pode?\ne isso?\ntudo bem?\nhunter2';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'limite conhecido e documentado no topo do modulo');
+  assert.equal(r.achou, false);
+});
+
+test('R5 limite conhecido: rotulo sozinho sem valor devolve achou=false', () => {
+  const r = redigirSegredos('Senha:');
+  assert.equal(r.texto, 'Senha:');
+  assert.equal(r.achou, false, 'nada foi redigido -- achou nao e "a mensagem fala de credencial"');
+});

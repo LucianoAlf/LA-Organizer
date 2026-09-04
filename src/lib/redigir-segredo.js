@@ -55,6 +55,33 @@
 //       - Linha nao mascarada (prosa ou pergunta) ainda passa pela maquina (A):
 //         'Senha:\naqui esta a minha token: xyz123' fecha o modo por prosa mas
 //         o campo inline continua sendo mascarado.
+//
+// ---------------------------------------------------------------------------
+// ROUND 5 -- o rotulo quase nunca encosta no separador em portugues de verdade
+// ---------------------------------------------------------------------------
+// 'A senha e:' / 'Minha senha eh:' vazavam o valor da linha seguinte porque o
+// token colado ao ":" era "e"/"eh", nao "senha". Para ARMAR o modo (so para
+// armar -- a deteccao de mesma linha nao mudou), numa linha que ja e candidata
+// a rotulo (termina em ":"/"="/";" e nada depois) basta que QUALQUER palavra da
+// linha, normalizada, contenha um rotulo conhecido. E seguro porque a condicao
+// "termina em separador, sem valor depois" ja filtra quase toda prosa, e o que
+// passar e fechado pela regra de prosa na linha seguinte: 'Deixa eu te contar
+// um segredo:\nvi ela na academia ontem' arma, mas a linha de 5 palavras fecha
+// o modo sem mascarar nada -- saida byte a byte identica, achou=false.
+//
+// ---------------------------------------------------------------------------
+// LIMITES CONHECIDOS -- sao decisao, nao descuido. Nao "conserte" sem medir.
+// ---------------------------------------------------------------------------
+// 1. 'Senha\nhunter2' (sem separador nenhum) nao arma: sem separador nao ha
+//    campo, e aceitar rotulo solto no fim da linha mascararia conversa comum.
+// 2. Tres perguntas seguidas entre o rotulo e o valor esgotam ORCAMENTO_PULOS
+//    e o valor seguinte escapa ('Senha:\nvoce pode?\ne isso?\ntudo bem?\nX').
+//    Aumentar o orcamento estende o modo por cima de conversa de verdade.
+// 3. Rotulo sozinho sem nada para mascarar devolve achou=false ('Senha:').
+//    "achou" significa "algo foi redigido", nao "a mensagem fala de credencial"
+//    -- quem consumir como a segunda coisa vai errar.
+// Os tres exigiriam afrouxar o gatilho de um jeito que reabre sobre-redacao em
+// prosa, e sao formas de mensagem bem menos provaveis que as ja cobertas.
 
 const MASCARA = '***';
 
@@ -91,6 +118,18 @@ function _tokenValido(tok) {
 // "comeu". Separador: ":", "=", ";" ou um espaco/tab (aceita zero ou mais
 // espacos/tabs soltos antes dele).
 const RE_CAMPO = /(?:^|(?<=[\s(\[]))(api[ _-]?key|[A-Za-z0-9_-]+)[ \t]*([:=;]|[ \t])/gi;
+
+// Linha candidata a rotulo: termina em separador de pontuacao e nada depois.
+const RE_LINHA_CANDIDATA = /[:=;][ \t]*$/;
+
+// Round 5 -- SO PARA ARMAR o modo (a deteccao de mesma linha continua olhando
+// apenas o token adjacente ao separador). Numa linha candidata, qualquer
+// palavra que contenha um rotulo conhecido basta: e o que pega 'A senha e:' e
+// 'Minha senha eh:', onde o token colado ao ":" e "e"/"eh".
+function _linhaArmaModo(linha) {
+  if (!RE_LINHA_CANDIDATA.test(linha)) return false;
+  return linha.trim().split(/\s+/).some(_tokenValido);
+}
 
 function _ehPergunta(v) {
   return /^[?!.]/.test(v) || /\?$/.test(v);
@@ -203,13 +242,15 @@ function redigirSegredos(texto) {
     pulos = 0;
   }
 
-  // Roda a maquina (A) na linha e grava o resultado. Devolve o `pendente`
-  // para quem decide se o modo (re)liga.
+  // Roda a maquina (A) na linha, grava o resultado e devolve se essa linha
+  // arma o modo. Duas condicoes, em uniao: o `pendente` da maquina (A) (token
+  // de rotulo conhecido colado ao separador, sem valor depois) OU a regra de
+  // linha candidata do round 5 (qualquer palavra da linha e rotulo conhecido).
   function aplicaMesmaLinha(i, linha) {
     const r = _processaLinha(linha);
     partes[i] = r.texto;
     if (r.achou) achou = true;
-    return r.pendente;
+    return r.pendente || _linhaArmaModo(linha);
   }
 
   for (let i = 0; i < partes.length; i += 2) {
@@ -222,18 +263,18 @@ function redigirSegredos(texto) {
 
       // Pergunta: pulada, o modo continua ligado (o valor pode vir depois).
       if (_ehPergunta(conteudo)) {
-        const pendente = aplicaMesmaLinha(i, linha);
+        const arma = aplicaMesmaLinha(i, linha);
         pulos += 1;
-        if (pendente) ligaModo();
+        if (arma) ligaModo();
         else if (pulos >= ORCAMENTO_PULOS) modo = false;
         continue;
       }
 
       // Prosa: conversa de verdade. Nao mascara e fecha o modo.
       if (_ehProsa(conteudo)) {
-        const pendente = aplicaMesmaLinha(i, linha);
+        const arma = aplicaMesmaLinha(i, linha);
         modo = false;
-        if (pendente) ligaModo();
+        if (arma) ligaModo();
         continue;
       }
 
