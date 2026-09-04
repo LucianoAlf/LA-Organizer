@@ -9,14 +9,28 @@ const aluno = (nome, hora, temAnamnese) => ({
   anamnese_preenchida: !!temAnamnese, cadastro_faltando: temAnamnese ? [] : ['anamnese'],
 });
 
-function deps({ rpcErro = null, alunos = [], falhas = new Map(), criar = null } = {}) {
+function deps({
+  rpcErro = null, alunos = [], falhas = new Map(), criar = null,
+  existente = false, erroChecagem = null,
+} = {}) {
   const criadas = [];
+  const titulosChecados = [];
+  const contadores = { rpc: 0 };
   return {
     criadas,
-    laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
+    titulosChecados,
+    contadores,
+    laReport: { rpc: async () => { contadores.rpc += 1; return { data: rpcErro ? null : alunos, error: rpcErro }; } },
     repo: {
       registrarAparicoes: async () => ({ gravadas: alunos.length, erro: null }),
       contarFalhas: async () => falhas,
+    },
+    // Fake da guarda de duplicata (correção 1/5): por padrão diz "não existe" pra não quebrar
+    // os testes que já passavam. `existente`/`erroChecagem` ligam os dois novos caminhos.
+    pacoteExiste: async (_supabase, { titulo }) => {
+      titulosChecados.push(titulo);
+      if (erroChecagem) return { existe: null, erro: erroChecagem };
+      return { existe: existente, erro: null };
     },
     criarPacote: criar || (async (arg) => { criadas.push(arg); return { groupId: 'g-mae', childIds: [] }; }),
   };
@@ -146,4 +160,70 @@ test('hoje malformado não derruba a pauta silenciosamente (diaSemana inválido 
   });
   assert.strictEqual(r.criou, false);
   assert.strictEqual(d.criadas.length, 0);
+});
+
+// ── RODADA DE CORREÇÃO 1/5 ──────────────────────────────────────────────────────────────────
+// O buraco real: createTaskGroup (task-groups.js) insere linha a linha sem transação. Com
+// 43-80 filhas, um insert que falhe no meio deixa mãe+filhas parciais JÁ COMMITADAS e lança; o
+// throw subia até o catch genérico do dispatcher, que não grava marcador (o insert do marcador
+// vem DEPOIS da chamada) — o cron de 5 min retentava e duplicava o container inteiro. A spec
+// quer a retentativa; o que faltava era ela ser SEGURA. Os 5 testes abaixo cobrem isso.
+
+test('container já existe pra (grupo, dia) → não cria de novo, motivo próprio, nem bate o LA Report', async () => {
+  const d = deps({ alunos: [aluno('Ana', '09:00', false)], existente: true });
+  const r = await montarPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
+    hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.criou, false);
+  assert.match(r.motivo, /já montada|ja montada/i);
+  assert.strictEqual(d.criadas.length, 0, 'não pode criar um segundo container pro mesmo dia');
+  assert.strictEqual(d.contadores.rpc, 0, 'achar o container antes evita bater a RPC lenta do LA Report à toa');
+});
+
+test('consulta de container existente falha → NÃO cria (não dá pra afirmar que não existe)', async () => {
+  const d = deps({ alunos: [aluno('Ana', '09:00', false)], erroChecagem: 'conexão caiu' });
+  const r = await montarPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
+    hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.criou, false);
+  assert.match(r.motivo, /não consegui checar|nao consegui checar|verificar/i);
+  assert.strictEqual(d.criadas.length, 0);
+  assert.strictEqual(d.contadores.rpc, 0, 'sem saber se já existe, nem chega a consultar o LA Report');
+});
+
+test('criarPacote lança → devolve {criou:false, motivo} em vez de propagar o throw', async () => {
+  const d = deps({ alunos: [aluno('Ana', '09:00', false)] });
+  d.criarPacote = async () => { throw new Error('insert task: constraint violation'); };
+  const r = await montarPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
+    hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.criou, false);
+  assert.match(r.motivo, /constraint violation|falha ao criar/i);
+});
+
+test('registrarAparicoes lança → devolve {criou:false, motivo} em vez de propagar o throw', async () => {
+  const d = deps({ alunos: [aluno('Ana', '09:00', false)] });
+  d.repo.registrarAparicoes = async () => { throw new Error('upsert falhou'); };
+  const r = await montarPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
+    hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.criou, false);
+  assert.match(r.motivo, /upsert falhou|falha ao registrar/i);
+  assert.strictEqual(d.criadas.length, 0, 'se registrar já lançou, criarPacote nem chega a rodar');
+});
+
+test('o título consultado na checagem de duplicata é o MESMO título usado na criação', async () => {
+  const d = deps({ alunos: [aluno('Ana', '09:00', false)] });
+  const r = await montarPautaDaUnidade({
+    supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
+    hoje: SEGUNDA, deps: d,
+  });
+  assert.strictEqual(r.criou, true);
+  assert.strictEqual(d.titulosChecados.length, 1);
+  assert.strictEqual(d.titulosChecados[0], d.criadas[0].input.title,
+    'se os dois textos puderem divergir, a guarda de duplicata fica cega pro próprio container');
 });
