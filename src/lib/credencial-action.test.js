@@ -118,7 +118,11 @@ test('devolve o LABEL do primeiro campo mascarado, pra mensagem dizer qual e', (
 });
 
 test('valor legitimo NAO e confundido com mascara', () => {
-  for (const v of ['hunter2', 'a@b.com', '**', 'xx', '[preencher]', 'P@ssw0rd***', '***abc', '250178Alf#']) {
+  // '[preencher]' SAIU desta lista em 04/09: virou recusa. Ele nao era uma decisao — entrou
+  // aqui so como "nao e mascara" quando a guarda so olhava ●●●. Mas e literalmente o que o
+  // proprio modelo escreve quando nao sabe o valor (foi o que gravou na 'Google Ads API - LA
+  // Music' das 14:20, que nasceu inutil). Stub proposital continua possivel pela tela.
+  for (const v of ['hunter2', 'a@b.com', '**', 'xx', 'n/a', 'P@ssw0rd***', '***abc', '250178Alf#']) {
     assert.strictEqual(
       temValorMascarado({ campos: [{ label: 'Senha', valor: v }] }), null, `falso positivo: ${v}`);
   }
@@ -130,4 +134,38 @@ test('acao sem campos, invalida ou com valor nao-string devolve null', () => {
   assert.strictEqual(temValorMascarado({ campos: [] }), null);
   assert.strictEqual(temValorMascarado({ campos: [null, { label: 'X' }] }), null);
   assert.strictEqual(temValorMascarado({ campos: [{ label: 'X', valor: 123 }] }), null);
+});
+
+// --- 04/09: a 2a porta do mesmo estrago — print truncado ----------------------------------
+// A analise de imagem TRUNCA. Os prints das 16:58 voltaram da visao com
+// “Client ID” = “1041658696311-rdtd1q0...” e “Client Secret” = “no JSON”. Gravar isso cria
+// credencial que parece certa na tela e nao abre nada.
+test('temValorMascarado: valor truncado em reticencias e recusado', () => {
+  for (const v of ['1041658696311-rdtd1q0...', '1//0h08sq2…', 'sk-abc123 ...']) {
+    const label = temValorMascarado({ campos: [{ label: 'Client ID', valor: v }] });
+    assert.strictEqual(label, 'Client ID', v);
+  }
+});
+
+test('temValorMascarado: placeholder textual e recusado', () => {
+  for (const v of ['no JSON', 'No Json', 'vazio', 'Vazio', '[preencher]', 'preencher', 'TBD']) {
+    assert.strictEqual(temValorMascarado({ campos: [{ label: 'Client Secret', valor: v }] }), 'Client Secret', v);
+  }
+});
+
+test('temValorMascarado: valor legitimo com ponto no meio passa', () => {
+  const ok = [
+    '1041658696311-rdtdlq0qhl09nefuki8sode2ap1lmji2.apps.googleusercontent.com',
+    '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',
+    'senha.com.pontos',
+    'v1.2.3-token',
+  ];
+  for (const v of ok) {
+    assert.strictEqual(temValorMascarado({ campos: [{ label: 'x', valor: v }] }), null, v);
+  }
+});
+
+test('temValorMascarado: mascara do engine continua recusada', () => {
+  assert.strictEqual(temValorMascarado({ campos: [{ label: 'Senha', valor: '●●●●●●' }] }), 'Senha');
+  assert.strictEqual(temValorMascarado({ campos: [{ label: 'Senha', valor: '***' }] }), 'Senha');
 });

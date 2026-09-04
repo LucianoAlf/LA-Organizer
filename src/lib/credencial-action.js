@@ -77,8 +77,24 @@ function stripCredencialAction(text) {
 // visual que o proprio engine imprime quando esconde uma.
 const VALOR_MASCARADO_RE = /^[\s]*[●•*·▪○◦x×]{3,}[\s]*$/u;
 
+// Valor CORTADO: termina em reticencias, com ou sem o resto colado ("1041658696311-rdtd1q0…",
+// "sk-abc123...", "AErty ...").
+//
+// Segunda porta do mesmo estrago, descoberta em 04/09: a analise de PRINT trunca. A imagem 2
+// que o Hugo mandou as 16:58 voltou da visao assim:
+//     “Client ID” = “1041658696311-rdtd1q0...”   “Refresh token” = “1//0h08sq2...”
+// Gravar isso cria uma credencial que PARECE certa na tela e nao abre nada — e o erro so
+// aparece no dia em que alguem precisa do acesso. Nenhum valor de credencial legitimo termina
+// em reticencias, entao a regra e segura: aqui e sempre corte, nunca conteudo.
+const VALOR_CORTADO_RE = /(?:\.\.\.|…)\s*$/u;
+
+// Placeholder textual: a visao devolve o que estava ESCRITO na celula, e as vezes o que
+// estava escrito era uma nota de onde o valor mora, nao o valor. Caso real da mesma imagem:
+// “Client Secret” = “no JSON”.
+const VALOR_PLACEHOLDER_RE = /^\s*(?:\[?\s*(?:n[oa]\s+json|no\s+arquivo|ver\s+json|vazio|em\s+branco|preencher|xxx+|todo|tbd)\s*\]?)\s*$/iu;
+
 /**
- * A acao carrega algum campo cujo valor e so mascara?
+ * A acao carrega algum campo cujo valor nao e o valor de verdade?
  *
  * A DEFESA CENTRAL contra o caso Hugo 04/09 15:40. O engine imprime a senha como ●●●●●● na
  * confirmacao; essa mensagem volta pro modelo no turno seguinte como se fosse fala dele
@@ -86,16 +102,23 @@ const VALOR_MASCARADO_RE = /^[\s]*[●•*·▪○◦x×]{3,}[\s]*$/u;
  * imitar o formato. Se um marker montado a partir dessa imitacao passasse, a senha GRAVADA
  * viraria "●●●●●●" — a credencial existiria, pareceria certa na tela e nao serviria pra nada.
  *
+ * Em 04/09 a mesma falha apareceu por OUTRA porta — o print truncado e o "no JSON" —, e o
+ * estrago e identico. Por isso as tres formas saem pela mesma guarda: o que importa nao e de
+ * onde veio o lixo, e que ele nao pode virar credencial.
+ *
  * Mora aqui, no modulo puro, porque as DUAS camadas de recuperacao (o retry do mesmo turno e
  * o auto-resolve do turno seguinte) desembocam no mesmo executor. Guardar so numa delas
  * deixaria a outra aberta.
  *
- * @returns {string|null} o label do primeiro campo mascarado, ou null
+ * @returns {string|null} o label do primeiro campo suspeito, ou null
  */
 function temValorMascarado(acao) {
   if (!acao || !Array.isArray(acao.campos)) return null;
   for (const c of acao.campos) {
-    if (c && typeof c.valor === 'string' && VALOR_MASCARADO_RE.test(c.valor)) {
+    if (!c || typeof c.valor !== 'string') continue;
+    if (VALOR_MASCARADO_RE.test(c.valor)
+      || VALOR_CORTADO_RE.test(c.valor)
+      || VALOR_PLACEHOLDER_RE.test(c.valor)) {
       return String(c.label || 'campo').trim();
     }
   }
@@ -104,5 +127,5 @@ function temValorMascarado(acao) {
 
 module.exports = {
   parseCredencialAction, stripCredencialAction, temValorMascarado,
-  ACOES_VALIDAS, CATEGORIAS_VALIDAS, VALOR_MASCARADO_RE,
+  ACOES_VALIDAS, CATEGORIAS_VALIDAS, VALOR_MASCARADO_RE, VALOR_CORTADO_RE, VALOR_PLACEHOLDER_RE,
 };

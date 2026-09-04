@@ -11801,11 +11801,15 @@ Output AGORA, apenas o marker:`;
         // ●●●●●● — e propos gravar a mascara como se fosse a senha. Gravar isso criaria uma
         // credencial que PARECE certa na tela e nao serve pra nada; e o tipo de estrago que
         // so aparece no dia em que alguem precisa do acesso. Fail-closed e explicito.
+        //
+        // 04/09 (2a porta): print truncado. A visao devolveu "1041658696311-rdtd1q0..." e
+        // "no JSON" como se fossem os valores. Mesmo estrago, mesma guarda — por isso a copy
+        // aqui fala em "incompleto", que cobre cortado, escondido e placeholder.
         await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', `valor_mascarado:${_labelMascarado}`, null);
-        console.warn(`[CredencialAction] campo "${_labelMascarado}" veio mascarado — nada gravado`);
+        console.warn(`[CredencialAction] campo "${_labelMascarado}" veio incompleto — nada gravado`);
         _metrics.awaiting_user_confirm = true;   // o turno responde com pergunta
-        reply = `Me perdi no valor de *${_labelMascarado}* — só chegou a versão escondida aqui. `
-          + `Manda esse campo de novo que eu cadastro na hora.`;
+        reply = `O valor de *${_labelMascarado}* chegou incompleto aqui — veio cortado ou escondido, `
+          + `não o valor inteiro. Manda esse campo em texto que eu cadastro na hora.`;
       } else {
         const { acharDuplicatas, acharAlvo, acharReusoDeSegredo } = require('./lib/credencial-duplicata');
         const { formatAvisoReuso } = require('./lib/credenciais-format');
