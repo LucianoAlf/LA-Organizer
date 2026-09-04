@@ -104,11 +104,18 @@ test('I-1: valor de um campo nao engole o rotulo do proximo na mesma linha', () 
   assert.match(r.texto, /token/i, 'o rotulo do segundo campo nao pode ser engolido pela mascara do primeiro');
 });
 
-test('pergunta continua intocada mesmo com rotulo composto (regressao do fix)', () => {
-  const t = 'qual eh a senha_wifi aqui?';
-  const r = redigirSegredos(t);
-  assert.equal(r.achou, false, 'pergunta nao tem valor a redigir, nem com rotulo composto');
-  assert.equal(r.texto, t);
+// ATUALIZADO no round 8 (V-1): o valor aqui e "aqui?", UMA palavra. Pela regra
+// nova, um token so nunca e pergunta -- e valor -- porque era exatamente essa
+// leitura que fazia 'senha: Alf#2026?' sair em claro. Sobre-redacao deliberada
+// de uma pergunta; a trava de verdade ('qual a senha do chatwoot?', cujo valor
+// "do chatwoot?" tem 2 palavras) continua byte a byte identica.
+test('pergunta com rotulo composto: valor de UMA palavra agora mascara (V-1)', () => {
+  const r = redigirSegredos('qual eh a senha_wifi aqui?');
+  assert.equal(r.texto, 'qual eh a senha_wifi ***');
+  assert.equal(r.achou, true);
+  const trava = redigirSegredos('qual a senha do chatwoot?');
+  assert.equal(trava.texto, 'qual a senha do chatwoot?', 'valor de 2 palavras segue sendo pergunta');
+  assert.equal(trava.achou, false);
 });
 
 // --- Fix round 2 (review C-4/C-5/C-6) -------------------------------------
@@ -702,10 +709,20 @@ test('R7: cabecalho de separacao nao vira valor nem quando o modo esta ligado', 
 // Documentados no bloco de limites do modulo. Estes testes existem para que
 // uma mudanca futura nesses casos seja consciente, nao acidental.
 
-test('R7 limite conhecido: rotulo no cabecalho e valor na linha de baixo vaza', () => {
-  const t = '| Usuario | Senha |\n| admin | hunter2 |';
+// ATUALIZADO no round 8: este limite FECHOU para tabela de 2 colunas. A
+// contagem de palavras passou a ignorar delimitadores (as barras nao sao
+// palavras), entao '| admin | hunter2 |' tem 2 palavras, nao 5 -- deixou de
+// cair na regra de prosa e passa a ser mascarado. Com 3+ colunas ainda vaza.
+test('round 8: tabela transposta de 2 colunas nao vaza mais', () => {
+  const r = redigirSegredos('| Usuario | Senha |\n| admin | hunter2 |');
+  assert.equal(r.texto, '| Usuario | Senha |\n***');
+  assert.equal(r.achou, true);
+});
+
+test('R8 limite conhecido: tabela transposta de 3+ colunas ainda vaza', () => {
+  const t = '| Servico | Senha | Token |\n| ads | hunter2 | T0k3n |';
   const r = redigirSegredos(t);
-  assert.equal(r.texto, t, 'a linha de valores tem 5+ "palavras" -> e prosa -> fecha o modo');
+  assert.equal(r.texto, t, 'a linha de valores tem 3 palavras -> e prosa -> fecha o modo');
   assert.equal(r.achou, false);
 });
 
@@ -728,4 +745,265 @@ test('R7: sobre-redacao aceita -- pipe em prosa mascara o resto da linha', () =>
   const r = redigirSegredos('me manda a senha | valeu');
   assert.equal(r.achou, true, 'lado seguro de errar: mascara demais, nao de menos');
   assert.ok(!r.texto.includes('valeu'));
+});
+
+// =========================================================================
+// Round 8 -- revisao final: V-1, V-2, V-3, V-4
+// =========================================================================
+
+// --- V-1: a guarda de pergunta estava sendo aplicada ao VALOR -------------
+// _ehPergunta foi feita para classificar LINHA de conversa. Usada sobre o
+// valor de um campo, fazia senha que comeca com "!"/"." ou termina com "?"
+// nunca ser mascarada. Um token so nunca e pergunta -- e valor.
+
+test('V-1: senha com padrao de teclado (!QAZ) na mesma linha', () => {
+  const r = redigirSegredos('senha: !QAZ2wsx');
+  assert.equal(r.texto, 'senha: ***');
+  assert.equal(r.achou, true);
+});
+
+test('V-1: senha comecando com ponto', () => {
+  const r = redigirSegredos('senha: .Segredo123');
+  assert.equal(r.texto, 'senha: ***');
+  assert.equal(r.achou, true);
+});
+
+test('V-1: senha terminando em interrogacao', () => {
+  const r = redigirSegredos('senha: Alf#2026?');
+  assert.equal(r.texto, 'senha: ***');
+  assert.equal(r.achou, true);
+});
+
+test('V-1: senha com !QAZ na linha seguinte ao rotulo', () => {
+  const r = redigirSegredos('Senha:\n!QAZ2wsx');
+  assert.equal(r.texto, 'Senha:\n***');
+  assert.equal(r.achou, true);
+});
+
+test('V-1: senha com !QAZ em celula de tabela', () => {
+  const r = redigirSegredos('| Senha | !QAZ2wsx |');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('!QAZ2wsx'), 'valor nao pode vazar');
+});
+
+test('V-1: o pior caso -- vazava a senha, apagava a conversa e dizia achou=true', () => {
+  const r = redigirSegredos('Senha:\n!QAZ2wsx\nfalou');
+  assert.ok(!r.texto.includes('!QAZ2wsx'), 'a senha nao pode vazar');
+  assert.equal(r.achou, true);
+});
+
+test('V-1: a guarda de pergunta continua valendo com 2+ palavras', () => {
+  const a = redigirSegredos('qual a senha do chatwoot?');
+  assert.equal(a.texto, 'qual a senha do chatwoot?', 'valor "do chatwoot?" tem 2 palavras');
+  assert.equal(a.achou, false);
+  const b = redigirSegredos('Senha:\nvoce pode ajudar?\nhunter2');
+  assert.equal(b.texto, 'Senha:\nvoce pode ajudar?\n***', 'pergunta pulada, valor mascarado');
+  assert.equal(b.achou, true);
+});
+
+// --- V-2: mesma linha so olhava o token colado ao separador ---------------
+// A rodada 5 corrigiu isso SO para armar o modo multilinha. Mensagem digitada
+// e justamente o caso de mesma linha -- 10 de 14 fraseados naturais em pt-BR.
+
+test('V-2: rotulo antes do separador, nao colado nele (fraseados naturais)', () => {
+  const casos = [
+    'senha nova: X7k9Qm2p',
+    'a senha do wifi: X7k9Qm2p',
+    'a senha e: X7k9Qm2p',
+    'segue a senha do painel: X7k9Qm2p',
+    'o token do meta e: X7k9Qm2p',
+    'a api key e: X7k9Qm2p'
+  ];
+  for (const t of casos) {
+    const r = redigirSegredos(t);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(t)}`);
+    assert.ok(!r.texto.includes('X7k9Qm2p'), `deveria mascarar: ${JSON.stringify(t)}`);
+  }
+});
+
+test('V-2: a assimetria some -- print e mensagem digitada mascaram igual', () => {
+  const print = redigirSegredos('Senha:\nX7k9Qm2p');
+  const digitada = redigirSegredos('a senha do wifi: X7k9Qm2p');
+  assert.equal(print.achou, true);
+  assert.equal(digitada.achou, true);
+  assert.ok(!print.texto.includes('X7k9Qm2p'));
+  assert.ok(!digitada.texto.includes('X7k9Qm2p'));
+});
+
+test('V-2: linha sem separador de pontuacao continua como hoje', () => {
+  const t = 'qual a senha do chatwoot?';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'so espaco como separador -- regra antiga vale');
+  assert.equal(r.achou, false);
+});
+
+// --- V-3: sobre-redacao que apagava conversa real ------------------------
+// "secret" esta contido em "secretaria", palavra do dia a dia de uma escola
+// de musica -- e a mensagem inteira ia para o relatorio das 7h dos diretores.
+
+test('V-3: secretaria nao e rotulo de segredo', () => {
+  const t = 'Recado da secretaria: a aula de amanha foi cancelada';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t);
+  assert.equal(r.achou, false);
+});
+
+test('V-3: outras palavras que continham rotulo por substring crua', () => {
+  for (const t of ['o secretario avisou: a reuniao foi adiada', 'a resenha do livro: muito boa']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `nao deveria mascarar: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});
+
+test('V-3: rotulo tem de bater com segmento inteiro -- os validos continuam', () => {
+  const casos = [
+    ['senha_wifi: hunter2', 'hunter2'],
+    ['MinhaSenha: hunter2', 'hunter2'],
+    ['PasswordConfirm: hunter2', 'hunter2'],
+    ['SENHA_ADMIN: hunter2', 'hunter2'],
+    ['minha_senha: 123456', '123456'],
+    ['api_key: hunter2', 'hunter2'],
+    ['api-key: hunter2', 'hunter2'],
+    ['apikey: hunter2', 'hunter2'],
+    ['chave-api: hunter2', 'hunter2'],
+    ['chave: hunter2', 'hunter2']
+  ];
+  for (const [entrada, valor] of casos) {
+    const r = redigirSegredos(entrada);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(entrada)}`);
+    assert.ok(!r.texto.includes(valor), `deveria mascarar: ${JSON.stringify(entrada)}`);
+  }
+});
+
+test('V-3: "chave" so vale como primeiro segmento ou unico', () => {
+  for (const t of ['palavras-chave: marketing digital', 'pontos-chave: tres itens']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `nao deveria mascarar: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});
+
+// --- V-4: idempotencia incompleta ----------------------------------------
+// Com delimitador de ABERTURA, a 1a passagem come o de fechamento e a 2a
+// re-arma. A suite nao pegava porque so afirmava p2 === p3.
+
+test('V-4: idempotencia com delimitador de abertura -- p1 === p2 === p3', () => {
+  const entradas = [
+    '**Senha:** hunter2\nfalou',
+    '*Senha:* hunter2\nfalou',
+    '`Senha:` hunter2\nfalou',
+    '"Senha:" hunter2\nfalou',
+    '_Senha:_ hunter2\nfalou',
+    '{"senha": "hunter2"}\nfalou',
+    'senha: abc123\nfalou',
+    '| Senha | hunter2 |\nfalou',
+    '**Senha:**\nabc123\nfalou pessoal',
+    '***Senha:***\nabc123',
+    'SENHA=hunter2\nfalou',
+    '| Campo | Valor |\n|---|---|\n| Senha | hunter2 |'
+  ];
+  for (const t of entradas) {
+    const p1 = redigirSegredos(t).texto;
+    const p2 = redigirSegredos(p1).texto;
+    const p3 = redigirSegredos(p2).texto;
+    assert.equal(p1, p2, `1a e 2a passagem divergem em ${JSON.stringify(t)}: ${JSON.stringify(p1)} vs ${JSON.stringify(p2)}`);
+    assert.equal(p2, p3, `2a e 3a passagem divergem em ${JSON.stringify(t)}`);
+  }
+});
+
+test('V-4: a mascara nao e delimitador de fechamento', () => {
+  const r = redigirSegredos('**Senha:** hunter2\nfalou');
+  assert.ok(!r.texto.includes('hunter2'));
+  const p2 = redigirSegredos(r.texto).texto;
+  assert.equal(p2, r.texto, 'a 2a passagem nao pode comer a linha seguinte');
+  assert.match(p2, /falou/, 'a conversa depois da credencial tem de sobreviver');
+});
+
+// --- Bonus: separadores de traco e seta ----------------------------------
+
+test('bonus: traco, travessao e seta como separadores (regra do espaco)', () => {
+  for (const t of ['Senha - hunter2', 'Senha — hunter2', 'Senha → hunter2']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(t)}`);
+    assert.ok(!r.texto.includes('hunter2'), `deveria mascarar: ${JSON.stringify(t)}`);
+  }
+});
+
+test('bonus: traco com valor de frase nao dispara (regra do espaco vale)', () => {
+  const t = 'Senha - nao lembro qual e';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'valor com espacos nao qualifica com separador tipo espaco');
+  assert.equal(r.achou, false);
+});
+
+// --- As 8 travas ---------------------------------------------------------
+
+test('round 8: as 8 travas seguem byte a byte identicas com achou=false', () => {
+  const travas = [
+    'qual a senha do chatwoot?',
+    'a chave da porta esta emprestada com o joao',
+    'me manda o link da anamnese por favor',
+    'Deixa eu te contar um segredo:\nvi ela na academia ontem',
+    '| Nome | Valor |',
+    '| Coluna A | Coluna B |',
+    '|---|---|',
+    '|:-:|:-:|'
+  ];
+  for (const t of travas) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `deveria sair identico: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false, `nao deveria sinalizar: ${JSON.stringify(t)}`);
+  }
+});
+
+// Regressao pega pela comparacao antes/depois desta rodada: a primeira versao
+// do V-2 elegia uma barra DENTRO do valor como separador, cortava o valor em
+// dois e deixava o segundo pedaco em claro.
+test('V-2 regressao: separador colado ao rotulo nao cede lugar a um do valor', () => {
+  for (const t of ['| Senha: | hunter2 |', '| **"Senha"**: | hunter2 |', '| Senha | hunter2 |']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(t)}`);
+    assert.ok(!r.texto.includes('hunter2'), `valor nao pode sobrar em claro: ${JSON.stringify(t)}`);
+  }
+});
+
+test('V-2: campo unico por linha -- o valor nao vira campo novo', () => {
+  const r = redigirSegredos('senha: abc123 token: xyz789');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('abc123'));
+  assert.ok(!r.texto.includes('xyz789'));
+  assert.match(r.texto, /token/i, 'o rotulo do segundo campo continua preservado');
+});
+
+test('V-3: plural continua sendo rotulo (nao regredir o que ja pegava)', () => {
+  for (const t of ['senhas: hunter2', 'tokens: hunter2', 'chaves: hunter2']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(t)}`);
+    assert.ok(!r.texto.includes('hunter2'));
+  }
+});
+
+// --- Round 8: limites conhecidos novos, com teste fixando o atual ---------
+
+test('R8 limite conhecido: passphrase de 3+ palavras cai na regra de prosa', () => {
+  const t = 'Senha:\ncorrect horse battery staple';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'baixar MIN_PALAVRAS_PROSA apagaria conversa real');
+  assert.equal(r.achou, false);
+});
+
+test('R8 limite conhecido: connection string e heading markdown', () => {
+  for (const t of ['postgres://user:hunter2@host:5432/db', '## Senha\nhunter2']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `limite conhecido: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});
+
+test('R8 limite conhecido: rotulo DEPOIS do separador nao dispara', () => {
+  const t = 'o painel: a senha e X7k9Qm2p';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'o V-2 so olha o que vem antes do separador');
+  assert.equal(r.achou, false);
 });
