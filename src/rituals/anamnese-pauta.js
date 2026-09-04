@@ -54,9 +54,12 @@ const REFRESH_FRACAO_MAXIMA = 0.6;
 // UTC vira 21h do dia ANTERIOR e a pauta inteira sai um dia adiantada — em silêncio, sem
 // exception nenhuma pra avisar (known issue desta casa: LOCALYMD-UTC-SHIFT). getUTCDay() sobre
 // Date.UTC() nunca lê hora local, então é imune ao fuso do processo que roda o código.
+// A implementação mudou de casa (04/09): mora em services/anamnese-pauta.diaSemanaBrt, porque o
+// horário de abertura de cada unidade agora depende do dia da semana e precisa da MESMA leitura —
+// duas cópias divergiriam no dia em que alguém corrigisse só uma. É o mesmo Date.UTC +
+// getUTCDay do parágrafo acima, que continua valendo palavra por palavra.
 function _diaSemanaBrt(hoje) {
-  const [y, m, d] = String(hoje || '').split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return pura.diaSemanaBrt(hoje);
 }
 
 // Prefixo do título do container — ÚNICO lugar onde este texto existe. _tituloDoContainer
@@ -945,7 +948,12 @@ async function relatorioDeFimDeDia({ supabase, laReport, unidadeId, hoje, deps =
 //
 // Quem decide se a unidade PODE ser cobrada agora (a mensagem de abertura dela já saiu?) é o
 // dispatcher, lendo marker_logs: é lá que mora o horário de abertura de cada unidade.
-async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora }) {
+// `recuperacao` = esta é a PRIMEIRA passada do dia nesta unidade. Quem sabe disso é o
+// dispatcher (é ele que tem o marker_logs), não este ritual — aqui só muda o recorte: a faixa vai
+// do começo do dia até `hora`, em vez de só `hora`. O porquê está inteiro no comentário de
+// services/anamnese-pauta.lembreteDaProximaHora: sem isso, quem tem aula na hora em que a unidade
+// ABRE nunca entra em lembrete nenhum — 25 aulas por semana, medido na fonte.
+async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recuperacao = false }) {
   const vazio = { texto: null, alunos: [] };
 
   // Mesma guarda barata dos outros blocos: `hoje` torto viraria um dia da semana que casa com
@@ -988,11 +996,11 @@ async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora }) {
   // Dois recortes, UMA leitura. A ordem (anamnese antes de contrato) é a do rótulo combinado.
   const anamnese = pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'anamnese'), diaSemana);
   const contrato = pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'contrato'), diaSemana);
-  const alunos = pura.alunosDaHora({ anamnese, contrato, hora });
+  const alunos = pura.alunosDaHora({ anamnese, contrato, hora, recuperacao });
 
   // texto null com motivo null = ninguém chegando pendente nesta hora. Silêncio é notícia boa —
   // e quem registra que a passada RODOU e não achou ninguém é o marcador, no dispatcher.
-  return { texto: pura.lembreteDaProximaHora({ itens: alunos, hora }), alunos, motivo: null };
+  return { texto: pura.lembreteDaProximaHora({ itens: alunos, hora, recuperacao }), alunos, motivo: null };
 }
 
 module.exports = {

@@ -6,6 +6,57 @@
 
 const DIAS = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
 
+// ── QUANDO CADA UNIDADE ABRE (correção 04/09) ────────────────────────────────────────────────
+// O horário em que a equipe chega DEPENDE DO DIA DA SEMANA. O dono informou os reais:
+//   Seg a Sex   Recreio 08:00 · Barra 09:00 · Campo Grande 10:00
+//   Sábado      Recreio 08:00 · Barra 08:00 · Campo Grande 08:00
+// O código usava os de dia útil todos os dias: no sábado a Barra recebia a pauta às 09:00 e o
+// Campo Grande às 10:00 — com a equipe em pé desde as 08:00 e com aula acontecendo.
+//
+// DOMINGO NÃO EXISTE. Conferido na fonte em 04/09 antes de virar código: zero aulas em domingo
+// nas três unidades, contando TODAS as pessoas (com ou sem pendência). Devolver null é o que faz
+// o dispatcher não abrir o bloco — mais honesto que inventar horário pra um dia sem ninguém.
+//
+// A tabela mora AQUI, no módulo puro, e não no dispatcher: é decisão testável, e as duas pontas
+// que dependem dela — a hora da mensagem de abertura e a hora a partir da qual o lembrete de
+// hora em hora pode cobrar aquela unidade — precisam ler a MESMA tabela. Duas cópias
+// divergiriam no dia em que uma unidade mudasse de horário e só um dos lados soubesse.
+//
+// A chave é o nome que situacao-aluno.nomeDaUnidade() devolve.
+const ABERTURA_DIA_UTIL = { Recreio: '08:00', Barra: '09:00', 'Campo Grande': '10:00' };
+const ABERTURA_SABADO = { Recreio: '08:00', Barra: '08:00', 'Campo Grande': '08:00' };
+
+// O dia da semana sai da string YYYY-MM-DD quebrada em DÍGITOS, montada com Date.UTC e lida com
+// getUTCDay. NUNCA `new Date(ymd).getDay()`: essa forma lê a data como meia-noite UTC e devolve o
+// dia em hora LOCAL DO PROCESSO. Numa VPS em UTC as duas coincidem POR SORTE — no dia em que
+// alguém setar TZ=America/Sao_Paulo o sábado vira sexta, a Barra volta a abrir às 09:00 e a
+// pauta inteira anda um dia, em silêncio, sem exception nenhuma (LOCALYMD-UTC-SHIFT).
+// Ponto ÚNICO de verdade: o ritual (_diaSemanaBrt) chama esta função.
+function diaSemanaBrt(hoje) {
+  const [y, m, d] = String(hoje || '').split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+// null = esta unidade não abre neste dia (domingo, ou unidade que eu não conheço). Quem chama
+// NÃO pode transformar null em "usa o de dia útil": falar antes de a equipe chegar é exatamente
+// o que a amarra da abertura existe pra impedir.
+function horaDeAberturaDaUnidade(unidadeNome, diaSemana) {
+  if (!Number.isInteger(diaSemana) || diaSemana < 0 || diaSemana > 6) return null;
+  if (diaSemana === 0) return null;                    // domingo: não há aula
+  const mapa = diaSemana === 6 ? ABERTURA_SABADO : ABERTURA_DIA_UTIL;
+  return mapa[unidadeNome] || null;
+}
+
+// Os horários DISTINTOS do dia, ordenados: é com isto que o dispatcher decide se o slot de agora
+// é hora de alguma unidade falar. No sábado é um só ('08:00'); no domingo é lista vazia, e é ela
+// que mantém o bloco fechado o dia inteiro sem precisar de um `if (domingo)` espalhado por aí.
+function horariosDeAberturaDoDia(diaSemana) {
+  const horas = Object.keys(ABERTURA_DIA_UTIL)
+    .map((nome) => horaDeAberturaDaUnidade(nome, diaSemana))
+    .filter(Boolean);
+  return [...new Set(horas)].sort();
+}
+
 function _norm(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
@@ -276,12 +327,17 @@ const ORDEM_PENDENCIAS = ['anamnese', 'contrato'];
 // A identidade é `pessoa_chave`, NUNCA o nome: uma unidade tem dezenas de "Maria", e juntar por
 // nome faria duas alunas virarem uma linha só — com a pendência de uma colada na outra. Sem
 // chave nenhuma o item é DESCARTADO em vez de virar linha fantasma no zap.
-function alunosDaHora({ anamnese, contrato, hora } = {}) {
+// `recuperacao` muda o RECORTE, não o critério: em vez da hora exata, tudo do começo do dia até
+// `hora` (inclusive). É o primeiro lembrete do dia de cada unidade — ver o comentário do texto,
+// logo abaixo. Comparação de string funciona porque a hora vem sempre "HH:MM" com zero à
+// esquerda (horaDaAula garante isso); um "9:00" quebraria a ordem e o corte ao mesmo tempo.
+function alunosDaHora({ anamnese, contrato, hora, recuperacao = false } = {}) {
   if (!hora) return [];   // sem hora não há "próxima hora" — nada a dizer
   const porChave = new Map();
   const somar = (lista, pendencia) => {
     for (const item of (lista || [])) {
-      if (!item || item.hora !== hora) continue;
+      if (!item || !item.hora) continue;
+      if (recuperacao ? item.hora > hora : item.hora !== hora) continue;
       const chave = item.pessoa && item.pessoa.pessoa_chave;
       if (!chave) continue;
       const ja = porChave.get(chave);
@@ -294,11 +350,15 @@ function alunosDaHora({ anamnese, contrato, hora } = {}) {
   };
   somar(anamnese, 'anamnese');
   somar(contrato, 'contrato');
-  // Ordem alfabética: dentro de uma hora só, o horário não desempata nada, e a ordem em que a RPC
-  // devolveu as linhas mudaria de um slot pro outro sem motivo nenhum que a equipe entenda.
+  // HORÁRIO e, dentro da mesma hora, ordem alfabética. No lembrete normal a hora é única, então
+  // isto se degrada exatamente na ordem alfabética de sempre — nada muda ali. Na recuperação é o
+  // que faz a mensagem se ler na ordem em que o dia aconteceu: quem já está na escola primeiro.
+  // O que NUNCA pode aparecer é a ordem em que a RPC devolveu as linhas: ela muda de um slot pro
+  // outro sem motivo nenhum que a equipe entenda.
   return [...porChave.values()]
     .map((i) => ({ ...i, pendencias: ORDEM_PENDENCIAS.filter((p) => i.pendencias.has(p)) }))
-    .sort((a, b) => String(a.pessoa.nome || '').localeCompare(String(b.pessoa.nome || ''), 'pt-BR'));
+    .sort((a, b) => String(a.hora).localeCompare(String(b.hora))
+      || String(a.pessoa.nome || '').localeCompare(String(b.pessoa.nome || ''), 'pt-BR'));
 }
 
 // O texto. Curto por desenho: quem lê é a secretaria no meio do expediente, de pé, com aluno na
@@ -308,7 +368,20 @@ function alunosDaHora({ anamnese, contrato, hora } = {}) {
 // A HORA no cabeçalho não é enfeite: a primeira linha é a chave da guarda de duplicata do
 // dispatcher (`like('content', cabeçalho%)`), e sem a hora o lembrete das 16:00 casaria o
 // cabeçalho do das 15:00 — e nunca sairia.
-function lembreteDaProximaHora({ itens, hora } = {}) {
+// A RECUPERAÇÃO (correção 04/09). O primeiro lembrete do dia de cada unidade fala da hora
+// SEGUINTE — então quem tem aula às 08:00 numa unidade que abre às 08:00 (ou às 09:00 numa que
+// abre às 09:00) nunca aparecia em lembrete nenhum: 25 aulas por semana invisíveis, medido na
+// fonte. Nessa primeira passada a mensagem cobre do começo do dia até o fim da hora seguinte; do
+// segundo lembrete em diante volta a ser só a próxima hora, senão a mesma gente sairia 11 vezes
+// e a equipe pararia de ler — que é o ruído que este lembrete existe pra evitar.
+//
+// O TEXTO MUDA JUNTO, e não é estilo: "⏰ *Próxima hora — 10:00*" numa mensagem que carrega gente
+// das 08:00 é uma afirmação FALSA, todo dia, em três grupos reais. O cabeçalho da recuperação diz
+// a FAIXA e cada linha carrega a hora do aluno — sem ela a equipe não sabe quem já está na escola
+// e quem ainda vai chegar. Os dois cabeçalhos são distintos e nenhum é prefixo do outro: a guarda
+// de duplicata do dispatcher casa `like('content', primeiraLinha%)`, e um prefixo comum a deixaria
+// cega justo na mensagem nova. Os dois levam a HORA, que é o que separa um slot do outro.
+function lembreteDaProximaHora({ itens, hora, recuperacao = false } = {}) {
   if (!hora) return null;
   const linhas = [];
   for (const i of (itens || [])) {
@@ -316,16 +389,26 @@ function lembreteDaProximaHora({ itens, hora } = {}) {
     const rotulo = (i && i.pendencias || []).join(' e ');
     if (!rotulo) continue;
     const nome = (i.pessoa && i.pessoa.nome) || '?';
-    linhas.push(`· ${nome}${i.curso ? ` (${i.curso})` : ''} — ${rotulo}`);
+    // No lembrete normal a hora já está no cabeçalho e é a mesma pra todo mundo — repetir em
+    // cada linha seria ruído. Na recuperação ela é a única coisa que distingue as linhas.
+    const quando = recuperacao ? `${i.hora || '--:--'} ` : '';
+    linhas.push(`· ${quando}${nome}${i.curso ? ` (${i.curso})` : ''} — ${rotulo}`);
   }
   // Hora sem ninguém pendente NÃO gera mensagem: silêncio ali é notícia boa. Quem distingue "zero
   // por saúde" de "zero por falha" é o marcador que o dispatcher grava, não a ausência de texto.
   if (!linhas.length) return null;
-  return [`⏰ *Próxima hora — ${hora}*`, ...linhas].join('\n');
+  const cabecalho = recuperacao
+    ? `⏰ *Do começo do dia até as ${hora}*`
+    : `⏰ *Próxima hora — ${hora}*`;
+  return [cabecalho, ...linhas].join('\n');
 }
 
 module.exports = {
   diaDaAula, horaDaAula, pautaDoDia, DIAS,
+  // O horário de abertura sai daqui pro dispatcher e pros testes lerem a MESMA tabela — uma
+  // cópia redigitada lá faria a suíte continuar verde no dia em que alguém mudasse o valor aqui.
+  diaSemanaBrt, horaDeAberturaDaUnidade, horariosDeAberturaDoDia,
+  ABERTURA_DIA_UTIL, ABERTURA_SABADO,
   degrau, tituloDaFilha, tituloDaEscalada, separarPorDegrau,
   mensagemDoGrupo, PRIMEIROS_NO_ZAP,
   mensagemDeFimDeDia, FALTARAM_NO_ZAP,

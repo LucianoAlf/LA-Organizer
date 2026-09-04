@@ -484,3 +484,167 @@ test('o lembrete não muta o que recebeu', () => {
   lembreteDaProximaHora({ itens, hora: '15:00' });
   assert.strictEqual(JSON.stringify(itens), antes);
 });
+
+// ── O HORÁRIO DE ABERTURA DE CADA UNIDADE (correção 04/09) ───────────────────────────────────
+// O dono informou os horários REAIS em que a equipe chega. Sábado é um conjunto próprio: a
+// equipe inteira abre às 08:00. O mapa fixo de dia útil fazia a Barra receber a pauta do sábado
+// às 09:00 e o Campo Grande às 10:00 — com gente em pé desde as 08:00 e aula acontecendo.
+const {
+  diaSemanaBrt, horaDeAberturaDaUnidade, horariosDeAberturaDoDia,
+} = require('./anamnese-pauta');
+
+test('abertura: dia útil segue exatamente como antes (Recreio 08, Barra 09, Campo Grande 10)', () => {
+  for (const dia of [1, 2, 3, 4, 5]) {
+    assert.strictEqual(horaDeAberturaDaUnidade('Recreio', dia), '08:00', `dia ${dia}`);
+    assert.strictEqual(horaDeAberturaDaUnidade('Barra', dia), '09:00', `dia ${dia}`);
+    assert.strictEqual(horaDeAberturaDaUnidade('Campo Grande', dia), '10:00', `dia ${dia}`);
+  }
+});
+
+test('abertura: no SÁBADO as três unidades abrem às 08:00', () => {
+  assert.strictEqual(horaDeAberturaDaUnidade('Recreio', 6), '08:00');
+  assert.strictEqual(horaDeAberturaDaUnidade('Barra', 6), '08:00');
+  assert.strictEqual(horaDeAberturaDaUnidade('Campo Grande', 6), '08:00');
+  assert.deepStrictEqual(horariosDeAberturaDoDia(6), ['08:00'],
+    'as três no mesmo slot — o bloco abre uma vez só e as três falam nele');
+});
+
+// Medido na fonte em 04/09: zero aulas em domingo nas três unidades (todas as pessoas, com ou
+// sem pendência). Não é "a gente acha que não tem": foi conferido antes de virar código.
+test('abertura: DOMINGO não existe — nenhuma unidade abre, e o bloco nem chega a rodar', () => {
+  for (const u of ['Recreio', 'Barra', 'Campo Grande']) {
+    assert.strictEqual(horaDeAberturaDaUnidade(u, 0), null, `${u} não abre domingo`);
+  }
+  assert.deepStrictEqual(horariosDeAberturaDoDia(0), [],
+    'lista vazia é o que faz o `some()` do dispatcher ser falso o domingo inteiro');
+});
+
+test('abertura: unidade desconhecida devolve null — não chuto horário de escola que não conheço', () => {
+  assert.strictEqual(horaDeAberturaDaUnidade('Unidade Nova', 1), null);
+  assert.strictEqual(horaDeAberturaDaUnidade('Unidade Nova', 6), null);
+});
+
+test('abertura: dia da semana torto não vira horário de dia útil por descuido', () => {
+  assert.strictEqual(horaDeAberturaDaUnidade('Barra', null), null);
+  assert.strictEqual(horaDeAberturaDaUnidade('Barra', 7), null);
+  assert.deepStrictEqual(horariosDeAberturaDoDia('sábado'), []);
+});
+
+test('abertura: os horários do dia saem ORDENADOS e sem repetição', () => {
+  assert.deepStrictEqual(horariosDeAberturaDoDia(3), ['08:00', '09:00', '10:00']);
+});
+
+test('diaSemanaBrt lê o dia da string YYYY-MM-DD', () => {
+  assert.strictEqual(diaSemanaBrt('2026-09-04'), 5, 'sexta');
+  assert.strictEqual(diaSemanaBrt('2026-09-05'), 6, 'sábado');
+  assert.strictEqual(diaSemanaBrt('2026-09-06'), 0, 'domingo');
+});
+
+// LOCALYMD-UTC-SHIFT: `new Date(ymd).getDay()` lê a data como meia-noite UTC e devolve o dia em
+// hora LOCAL do processo. Numa VPS em UTC os dois coincidem POR SORTE. Este teste liga o fuso de
+// São Paulo no meio da rodada e mostra a forma proibida errando o dia — é a diferença entre o
+// sábado receber o horário de sábado e receber o de sexta.
+test('diaSemanaBrt não depende do fuso do processo (LOCALYMD-UTC-SHIFT)', () => {
+  const tzOriginal = process.env.TZ;
+  try {
+    process.env.TZ = 'America/Sao_Paulo';
+    assert.strictEqual(new Date('2026-09-05').getDay(), 5,
+      'a forma proibida devolve SEXTA para um sábado — é por isso que ela é proibida');
+    assert.strictEqual(diaSemanaBrt('2026-09-05'), 6, 'a nossa continua devolvendo sábado');
+    assert.strictEqual(horaDeAberturaDaUnidade('Barra', diaSemanaBrt('2026-09-05')), '08:00',
+      'e é isso que faz a Barra abrir às 08:00 no sábado em vez de às 09:00');
+  } finally {
+    if (tzOriginal === undefined) delete process.env.TZ; else process.env.TZ = tzOriginal;
+  }
+});
+
+test('diaSemanaBrt devolve NaN para data torta — quem chama tem que checar antes de usar', () => {
+  assert.ok(Number.isNaN(diaSemanaBrt('ontem')));
+  assert.ok(Number.isNaN(diaSemanaBrt(null)));
+});
+
+// ── O PRIMEIRO LEMBRETE DO DIA É DE RECUPERAÇÃO (correção 04/09) ─────────────────────────────
+// O primeiro lembrete fala da hora SEGUINTE. Quem tem aula às 08:00 numa unidade que abre às
+// 08:00 nunca aparecia em lembrete nenhum: 25 aulas por semana invisíveis (medido na fonte —
+// Recreio 4, Barra 13, Campo Grande 8, com os horários de sábado já corrigidos). A recuperação
+// varre do começo do dia até o fim da hora seguinte; do segundo lembrete em diante volta a ser
+// só a próxima hora, senão a mesma gente sairia 11 vezes e a equipe pararia de ler.
+test('recuperação: o primeiro lembrete pega TODO MUNDO desde o começo do dia até a hora seguinte', () => {
+  const r = alunosDaHora({
+    anamnese: [ITEM('Ana', '08:00', 'Canto'), ITEM('Bento', '09:00', 'Violão'), ITEM('Célia', '10:00', 'Piano')],
+    contrato: [],
+    hora: '10:00',
+    recuperacao: true,
+  });
+  assert.deepStrictEqual(r.map((x) => `${x.hora} ${x.pessoa.nome}`), ['08:00 Ana', '09:00 Bento', '10:00 Célia']);
+});
+
+test('recuperação: quem chega DEPOIS da hora seguinte fica pro lembrete dele', () => {
+  const r = alunosDaHora({
+    anamnese: [ITEM('Ana', '08:00', 'Canto'), ITEM('Zeca', '15:00', 'Bateria')],
+    contrato: [],
+    hora: '10:00',
+    recuperacao: true,
+  });
+  assert.deepStrictEqual(r.map((x) => x.pessoa.nome), ['Ana'],
+    'a recuperação é uma FAIXA que termina na hora seguinte, não a lista do dia inteiro');
+});
+
+test('recuperação desligada: o segundo lembrete em diante NÃO repete quem já passou', () => {
+  const anamnese = [ITEM('Ana', '08:00', 'Canto'), ITEM('Bento', '09:00', 'Violão'), ITEM('Célia', '10:00', 'Piano')];
+  const r = alunosDaHora({ anamnese, contrato: [], hora: '10:00' });
+  assert.deepStrictEqual(r.map((x) => x.pessoa.nome), ['Célia'],
+    'sem o flag, o comportamento é exatamente o de hoje: só a próxima hora');
+});
+
+test('recuperação: a ordem é por HORÁRIO e o nome só desempata dentro da mesma hora', () => {
+  const r = alunosDaHora({
+    anamnese: [ITEM('Zeca', '08:00', 'Canto'), ITEM('Ana', '09:00', 'Violão'), ITEM('Bento', '09:00', 'Piano')],
+    contrato: [], hora: '09:00', recuperacao: true,
+  });
+  assert.deepStrictEqual(r.map((x) => x.pessoa.nome), ['Zeca', 'Ana', 'Bento'],
+    'quem já está na escola vem primeiro — a mensagem se lê na ordem em que o dia aconteceu');
+});
+
+// O CABEÇALHO NÃO PODE MENTIR. "Próxima hora — 10:00" numa mensagem que carrega gente das 08:00
+// seria uma afirmação falsa, todo dia, em três grupos reais.
+test('recuperação: o cabeçalho diz a FAIXA, e cada linha carrega a hora do aluno', () => {
+  const itens = alunosDaHora({
+    anamnese: [ITEM('Arthur Bezerra', '08:00', 'Teclado'), ITEM('Levi Freire', '10:00', 'Bateria')],
+    contrato: [ITEM('Levi Freire', '10:00', 'Bateria'), ITEM('Gabriela da Silva', '09:00', 'Contrabaixo')],
+    hora: '10:00', recuperacao: true,
+  });
+  assert.strictEqual(lembreteDaProximaHora({ itens, hora: '10:00', recuperacao: true }),
+    '⏰ *Do começo do dia até as 10:00*\n'
+    + '· 08:00 Arthur Bezerra (Teclado) — anamnese\n'
+    + '· 09:00 Gabriela da Silva (Contrabaixo) — contrato\n'
+    + '· 10:00 Levi Freire (Bateria) — anamnese e contrato');
+});
+
+test('recuperação: o lembrete normal NÃO ganhou hora na linha — lá ela já está no cabeçalho', () => {
+  const itens = alunosDaHora({ anamnese: [ITEM('Ana', '15:00', 'Canto')], contrato: [], hora: '15:00' });
+  assert.strictEqual(lembreteDaProximaHora({ itens, hora: '15:00' }),
+    '⏰ *Próxima hora — 15:00*\n· Ana (Canto) — anamnese');
+});
+
+// A guarda de duplicata do dispatcher casa `like('content', primeiraLinha%)`. Se o cabeçalho da
+// recuperação fosse prefixo do normal (ou vice-versa), a guarda ficaria cega justo na mensagem
+// nova — e a recuperação sairia duas vezes num grupo real.
+test('recuperação: o cabeçalho novo é COBERTO pela guarda de duplicata (distinto e com a hora)', () => {
+  const itens = alunosDaHora({ anamnese: [ITEM('Ana', '10:00', 'Canto')], contrato: [], hora: '10:00', recuperacao: true });
+  const recup = lembreteDaProximaHora({ itens, hora: '10:00', recuperacao: true }).split('\n')[0];
+  const normal = lembreteDaProximaHora({ itens, hora: '10:00' }).split('\n')[0];
+  assert.notStrictEqual(recup, normal);
+  assert.ok(!recup.startsWith(normal) && !normal.startsWith(recup),
+    'um não pode ser prefixo do outro: a guarda casa por PREFIXO de conteúdo');
+  assert.ok(recup.includes('10:00'), 'sem a hora, a recuperação das 11:00 casaria o cabeçalho da das 10:00');
+  const outraHora = lembreteDaProximaHora({
+    itens: alunosDaHora({ anamnese: [ITEM('Ana', '11:00', 'Canto')], contrato: [], hora: '11:00', recuperacao: true }),
+    hora: '11:00', recuperacao: true,
+  }).split('\n')[0];
+  assert.notStrictEqual(recup, outraHora);
+});
+
+test('recuperação: faixa sem ninguém pendente continua sendo SILÊNCIO, não mensagem vazia', () => {
+  assert.strictEqual(lembreteDaProximaHora({ itens: [], hora: '10:00', recuperacao: true }), null);
+});

@@ -1534,7 +1534,7 @@ const alunoDaHora = (nome, hora, { anamnese = true, contrato = true } = {}) => (
 // função apareceria como falha aqui, não como escrita silenciosa em produção.
 const supabaseProibido = { from() { throw new Error('o lembrete não pode tocar o banco'); } };
 
-function rodarLembrete({ alunos = [], rpcErro = null, lanca = false, hora = '15:00', hoje = SEGUNDA } = {}) {
+function rodarLembrete({ alunos = [], rpcErro = null, lanca = false, hora = '15:00', hoje = SEGUNDA, recuperacao = false } = {}) {
   const chamadas = [];
   const laReport = {
     rpc: async (nome, args) => {
@@ -1543,7 +1543,7 @@ function rodarLembrete({ alunos = [], rpcErro = null, lanca = false, hora = '15:
       return { data: rpcErro ? null : alunos, error: rpcErro };
     },
   };
-  return lembreteDaProximaHora({ laReport, unidadeId: 'u1', hoje, hora })
+  return lembreteDaProximaHora({ laReport, unidadeId: 'u1', hoje, hora, recuperacao })
     .then((r) => ({ ...r, chamadas }));
 }
 
@@ -1620,4 +1620,61 @@ test('lembrete: hora torta não monta nada', async () => {
   const r = await rodarLembrete({ hora: '25h', alunos: [alunoDaHora('Ana', '15:00', { anamnese: false })] });
   assert.strictEqual(r.texto, null);
   assert.match(r.motivo, /hora inválida/);
+});
+
+// ── O PRIMEIRO LEMBRETE DO DIA É DE RECUPERAÇÃO (correção 04/09) ─────────────────────────────
+// Quem tem aula na hora em que a unidade ABRE nunca entrava em lembrete nenhum: o primeiro
+// lembrete do dia fala da hora SEGUINTE. Medido na fonte: 25 aulas por semana invisíveis. Na
+// primeira passada do dia o ritual varre do começo do dia até o fim da hora seguinte; da segunda
+// em diante volta a ser só a próxima hora. Ele CONTINUA só lendo — nada de banco, nada no LA
+// Report.
+test('lembrete de recuperação: a primeira passada do dia pega quem chegou na hora da abertura', async () => {
+  const r = await rodarLembrete({
+    hora: '10:00',
+    recuperacao: true,
+    alunos: [
+      alunoDaHora('Arthur Bezerra', '08:00', { anamnese: false }),   // hora da abertura da unidade
+      alunoDaHora('Gabriela da Silva', '09:00', { contrato: false }),
+      alunoDaHora('Levi Freire', '10:00', { anamnese: false, contrato: false }),
+      alunoDaHora('Zeca Pagodinho', '15:00', { anamnese: false }),   // ainda vai ter o lembrete dele
+    ],
+  });
+  assert.strictEqual(r.motivo, null);
+  assert.strictEqual(r.texto,
+    '⏰ *Do começo do dia até as 10:00*\n'
+    + '· 08:00 Arthur Bezerra (Canto) — anamnese\n'
+    + '· 09:00 Gabriela da Silva (Canto) — contrato\n'
+    + '· 10:00 Levi Freire (Canto) — anamnese e contrato');
+  assert.doesNotMatch(r.texto, /Zeca/, 'a recuperação é uma FAIXA, não a lista do dia inteiro');
+});
+
+test('lembrete de recuperação: da SEGUNDA passada em diante não repete quem já passou', async () => {
+  const alunos = [
+    alunoDaHora('Arthur Bezerra', '08:00', { anamnese: false }),
+    alunoDaHora('Levi Freire', '11:00', { anamnese: false }),
+  ];
+  const r = await rodarLembrete({ hora: '11:00', alunos });   // sem recuperacao: o comportamento de hoje
+  assert.strictEqual(r.texto, '⏰ *Próxima hora — 11:00*\n· Levi Freire (Canto) — anamnese');
+  assert.doesNotMatch(r.texto, /Arthur/, 'ele já saiu na recuperação — repetir 11 vezes é o ruído que mata a leitura');
+});
+
+test('lembrete de recuperação: fonte fora do ar NÃO vira faixa vazia', async () => {
+  const r = await rodarLembrete({ hora: '10:00', recuperacao: true, rpcErro: { message: 'timeout' } });
+  assert.strictEqual(r.texto, null, 'nunca "ninguém pendente" quando não deu pra apurar — nem na recuperação');
+  assert.match(r.motivo, /lembrete/i);
+});
+
+test('lembrete de recuperação: faixa sem ninguém pendente é silêncio, com motivo null', async () => {
+  const r = await rodarLembrete({ hora: '10:00', recuperacao: true, alunos: [alunoDaHora('Carla Dias', '08:00')] });
+  assert.strictEqual(r.texto, null);
+  assert.strictEqual(r.motivo, null, 'zero por SAÚDE não pode sair com cara de zero por FALHA');
+});
+
+test('lembrete de recuperação: SÓ LÊ — uma consulta à fonte e nada de banco', async () => {
+  const r = await lembreteDaProximaHora({
+    supabase: supabaseProibido,
+    laReport: { rpc: async () => ({ data: [alunoDaHora('Ana', '08:00', { anamnese: false })], error: null }) },
+    unidadeId: 'u1', hoje: SEGUNDA, hora: '10:00', recuperacao: true,
+  });
+  assert.match(r.texto, /08:00 Ana/);
 });

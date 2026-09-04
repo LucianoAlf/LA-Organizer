@@ -101,8 +101,13 @@ const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": conso
 const PAUTA_ANAMNESE_MONTA_TIME = '06:00';
 // A fala sai quando a unidade ABRE, nao numa hora unica. 07:30 era hora de ninguem: a equipe
 // ainda nao chegou na escola e o recado fica boiando no grupo ate alguem aparecer. Pedido do
-// Alf em 04/09. A chave e o nome que situacao-aluno.nomeDaUnidade() devolve.
-const PAUTA_ANAMNESE_FALA_POR_UNIDADE = { 'Recreio': '08:00', 'Barra': '09:00', 'Campo Grande': '10:00' };
+// Alf em 04/09.
+// A TABELA DE HORARIOS NAO MORA MAIS AQUI (correcao 04/09). Ela depende do DIA DA SEMANA — no
+// sabado a equipe inteira chega as 08:00, e domingo nao tem aula — e virou decisao testavel em
+// services/anamnese-pauta.js: horaDeAberturaDaUnidade() e horariosDeAberturaDoDia(). O mapa fixo
+// de dia util que ficava aqui fazia a Barra receber a pauta do sabado as 09:00 e o Campo Grande
+// as 10:00, com a equipe em pe desde as 08:00 e com aula acontecendo. Deixar a constante aqui
+// como copia seria pior que remove-la: dois horarios pra mesma unidade, e um deles mentindo.
 const PAUTA_ANAMNESE_FECHA_TIME = '23:00';
 // RELATORIO DE FIM DE DIA (pedido do Alf, 04/09): "no final do dia ele manda uma lista do que foi
 // feito ali no dia. Alunos que tiveram na escola e nao preencheram a anamnese." Horarios dados
@@ -4342,8 +4347,20 @@ async function run(opts = {}) {
   // não antes. Às 09:00 os dois caem no mesmo slot, e a ordem antiga fazia a Barra receber uma
   // mensagem com a pendência cheia segundos antes de a atualização apagar parte daquelas linhas
   // da tela. Quem mexer nesta ordem de novo reabre exatamente essa contradição.
+  // O HORARIO DE ABERTURA DEPENDE DO DIA DA SEMANA (correcao 04/09): sabado tem conjunto proprio
+  // (as tres as 08:00) e domingo nao existe — nesse caso horariosDeAberturaDoDia() devolve lista
+  // VAZIA, o `some()` e falso o dia inteiro e o bloco nao abre. Sem `if (domingo)` solto por aqui:
+  // quem sabe quando cada unidade abre e a tabela, num lugar so, testavel.
+  //
+  // O dia sai de diaSemanaBrt (a string YYYY-MM-DD quebrada em digitos, Date.UTC + getUTCDay),
+  // NUNCA de `new Date(now.ymd).getDay()`: essa forma le a hora LOCAL do processo e so acerta por
+  // sorte numa VPS em UTC. No dia em que alguem setar TZ=America/Sao_Paulo, o sabado vira sexta, a
+  // Barra volta a abrir as 09:00 e a pauta inteira anda um dia — em silencio (LOCALYMD-UTC-SHIFT).
+  const _pautaAbertura = require('../services/anamnese-pauta');
+  const _pautaDiaSemana = _pautaAbertura.diaSemanaBrt(now.ymd);
+  const _pautaHorasAbertura = _pautaAbertura.horariosDeAberturaDoDia(_pautaDiaSemana);
   if (opts.force === 'pauta_anamnese_fala'
-      || Object.values(PAUTA_ANAMNESE_FALA_POR_UNIDADE).some((h) => timeToSlot(h) === slotNow)) {
+      || _pautaHorasAbertura.some((h) => timeToSlot(h) === slotNow)) {
     try {
       const pura = require('../services/anamnese-pauta');
       const situAl = require('../services/situacao-aluno');
@@ -4351,12 +4368,20 @@ async function run(opts = {}) {
       // do painel, porque a pauta não cria tarefa de contrato. Ver o comentário longo lá embaixo.
       const { laReportClient } = require('../services/la-report-client');
       for (const unidadeId of situAl.UNIDADES_IDS) {
-        // Cada unidade fala na SUA hora (Recreio 08:00, Barra 09:00, Campo Grande 10:00). O bloco
-        // abre quando QUALQUER uma bate o slot, entao aqui sai quem nao e a da vez.
-        const horaDaFala = PAUTA_ANAMNESE_FALA_POR_UNIDADE[situAl.nomeDaUnidade(unidadeId)];
+        // Cada unidade fala na SUA hora — que depende do dia (dia util: Recreio 08:00, Barra
+        // 09:00, Campo Grande 10:00; sabado: as tres as 08:00). O bloco abre quando QUALQUER uma
+        // bate o slot, entao aqui sai quem nao e a da vez.
+        const horaDaFala = _pautaAbertura.horaDeAberturaDaUnidade(situAl.nomeDaUnidade(unidadeId), _pautaDiaSemana);
         if (!horaDaFala) {
-          // Unidade nova sem horario definido: nao falo no escuro, mas tambem nao calo sobre isso.
-          console.warn(`[Pauta] fala: unidade sem horario definido (${unidadeId}) -- nao vou falar`);
+          // null tem DOIS significados e eles nao podem virar o mesmo rastro: domingo e rotina (a
+          // escola nao abre), unidade sem horario e coisa pra alguem olhar. Em nenhum dos dois eu
+          // caio no horario de dia util por descuido — falar antes de a equipe chegar e exatamente
+          // o que esta amarra existe pra impedir.
+          if (_pautaDiaSemana === 0) {
+            console.log(`[Pauta] fala: domingo nao tem aula (${situAl.nomeDaUnidade(unidadeId)}) -- nao falo`);
+          } else {
+            console.warn(`[Pauta] fala: unidade sem horario de abertura definido (${unidadeId}) -- nao vou falar`);
+          }
           continue;
         }
         if (opts.force !== 'pauta_anamnese_fala' && timeToSlot(horaDaFala) !== slotNow) continue;
@@ -4708,6 +4733,49 @@ async function run(opts = {}) {
             continue;
           }
 
+          // O PRIMEIRO LEMBRETE DO DIA DESTA UNIDADE E DE RECUPERACAO (correcao 04/09). Cada
+          // lembrete fala da hora SEGUINTE, entao quem tem aula na hora em que a unidade ABRE
+          // nunca aparecia em lembrete nenhum: 25 aulas por semana invisiveis, medido na fonte
+          // (Recreio 4, Barra 13, Campo Grande 8, ja com os horarios de sabado corrigidos). Na
+          // primeira passada a mensagem cobre do comeco do dia ate o fim da hora seguinte; da
+          // segunda em diante volta a ser so a proxima hora — a lista repetida 11 vezes vira
+          // ruido, a equipe para de ler, e a mensagem que importa morre junto.
+          //
+          // A amarra da abertura CONTINUA valendo: a recuperacao so acontece depois que a pauta
+          // do dia daquela unidade saiu (checagem logo acima). Ninguem fica invisivel E nenhuma
+          // mensagem chega antes de a equipe existir.
+          //
+          // CHAVE PROPRIA, e nao o prefixo `pauta_lembrete:<unidade>:<ymd>:`: as horas em que a
+          // unidade ainda nao tinha aberto gravam 'skipped' com ESSA chave, e a recuperacao
+          // morreria antes de acontecer justo em quem abre mais tarde (Campo Grande) — o bug ao
+          // contrario. Os dois LIKEs sao por prefixo e nao se cruzam: o ':' de 'pauta_lembrete:'
+          // separa de 'pauta_lembrete_recup:'.
+          //
+          // Falha-fechada na leitura: escolher entre faixa e hora unica no escuro significa ou
+          // repetir gente num grupo real, ou deixar alguem invisivel de novo.
+          const chaveRecup = `pauta_lembrete_recup:${unidadeId}:${now.ymd}`;
+          const { data: jaRecuperou, error: erroJaRecuperou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveRecup}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaRecuperou) {
+            console.error(`[Pauta] lembrete: checagem da recuperacao do dia falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaRecuperou.message}`);
+            continue;
+          }
+          const ehRecuperacao = !(jaRecuperou && jaRecuperou.length);
+          // Aposenta a recuperacao desta unidade hoje. So e chamada nos desfechos RESOLVIDOS
+          // (mandou / rodou e nao tinha ninguem / a mensagem ja estava no grupo) e sempre DEPOIS
+          // do marcador da hora: se o envio falhar ou a fonte cair, a recuperacao continua
+          // pendente e o proximo tick refaz a faixa inteira — um retry que virasse lembrete de
+          // uma hora so perderia exatamente quem a recuperacao existe pra pegar.
+          const fecharRecuperacao = async () => {
+            if (!ehRecuperacao) return;
+            const { error: erroRecup } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'executed',
+              reason: `${chaveRecup} faixa ate ${_lembreteProxima} coberta`.slice(0, 120),
+            });
+            if (erroRecup) console.error(`[Pauta] lembrete: marker_logs insert (recuperacao) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroRecup.message}`);
+          };
+
           const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
             .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
           if (erroGrupo) {
@@ -4723,6 +4791,7 @@ async function run(opts = {}) {
           // orquestracao: idempotencia, guardas e envio.
           const r = await lembreteDaProximaHora({
             laReport: laReportClient, unidadeId, hoje: now.ymd, hora: _lembreteProxima,
+            recuperacao: ehRecuperacao,
           });
           if (r.motivo) {
             // FONTE FORA DO AR: nao fala. Nunca "ninguem pendente" quando na verdade nao deu pra
@@ -4745,6 +4814,8 @@ async function run(opts = {}) {
               reason: `${chaveLembrete} ninguem pendente chegando`.slice(0, 120),
             });
             if (erroMarkerVazio) console.error(`[Pauta] lembrete: marker_logs insert (silencio) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerVazio.message}`);
+            // A faixa FOI varrida e nao tinha ninguem — desfecho resolvido, recuperacao cumprida.
+            await fecharRecuperacao();
             continue;
           }
 
@@ -4781,6 +4852,8 @@ async function run(opts = {}) {
               reason: `${chaveLembrete} ja enviado (achado por conteudo — marcador anterior falhou)`.slice(0, 120),
             });
             if (erroMarkerJa) console.error(`[Pauta] lembrete: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerJa.message}`);
+            // A faixa ja esta no grupo (so o marcador anterior falhou) — tambem e desfecho resolvido.
+            await fecharRecuperacao();
             continue;
           }
 
@@ -4800,7 +4873,7 @@ async function run(opts = {}) {
           }
           const { error: erroMarker } = await supabase.from('marker_logs').insert({
             marker_type: 'PAUTA_ANAMNESE', result: 'executed',
-            reason: `${chaveLembrete} alunos=${(r.alunos || []).length}`.slice(0, 120),
+            reason: `${chaveLembrete}${ehRecuperacao ? ' recup' : ''} alunos=${(r.alunos || []).length}`.slice(0, 120),
           });
           if (erroMarker) {
             // A mensagem JA SAIU pro grupo real e o marcador que travaria a retentativa nao
@@ -4808,6 +4881,11 @@ async function run(opts = {}) {
             // alto existe pra alguem descobrir a tempo se ela tambem falhar.
             console.error(`[Pauta] lembrete: ATENCAO — lembrete enviado mas marker_logs nao gravou (${situAl.nomeDaUnidade(unidadeId)}), risco de reenvio no proximo tick: ${erroMarker.message}`);
           }
+          // DEPOIS do marcador da hora, nunca antes: se este gravasse primeiro e o de cima
+          // falhasse, o proximo tick mandaria um lembrete de uma hora so — com o cabecalho
+          // normal, que a guarda de conteudo nao casaria contra a faixa ja enviada, e a mensagem
+          // sairia duas vezes num grupo real com menos gente na segunda.
+          await fecharRecuperacao();
         } catch (eUnidade) {
           console.error(`[Pauta] lembrete ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
         }

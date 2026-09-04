@@ -82,6 +82,10 @@ const UNIDADES = ['u-recreio', 'u-barra', 'u-cg'];
 const NOMES = { 'u-recreio': 'Recreio', 'u-barra': 'Barra', 'u-cg': 'Campo Grande' };
 const YMD = '2026-09-04';
 const TEXTO = (hora) => `⏰ *Próxima hora — ${hora}*\n· Ana (Canto) — anamnese`;
+// O texto da RECUPERACAO: cabecalho de FAIXA e hora em cada linha. Ele existe aqui porque a
+// guarda de duplicata do bloco casa pelo PRIMEIRO caractere ate o fim da primeira linha — se o
+// cabecalho novo nao for visto por ela, a faixa sai duas vezes num grupo real de WhatsApp.
+const TEXTO_RECUP = (hora) => `⏰ *Do começo do dia até as ${hora}*\n· 08:00 Ana (Canto) — anamnese`;
 
 async function semBarulho(fn, saida) {
   const original = { log: console.log, warn: console.warn, error: console.error };
@@ -96,10 +100,18 @@ async function semBarulho(fn, saida) {
 function mundo({
   marcadores = null, mensagens = [], abertura = UNIDADES, resultado = null, explode = null,
   unidades = UNIDADES, erroMensagemJaEnviada = null,
+  // O DEFAULT e "a recuperacao do dia JA aconteceu": os cenarios de idempotencia, guarda e falha
+  // abaixo sao sobre o comportamento de REGIME, que continua sendo o de sempre (so a proxima
+  // hora). Quem exercita a PRIMEIRA passada do dia passa recuperacaoFeita:false — sao os testes
+  // do fim do arquivo.
+  recuperacaoFeita = true, erroEnvioMensagem = null, erroChecagemRecuperacao = null,
 } = {}) {
   // Abertura de cada unidade ja registrada: e a prova, em marker_logs, de que a pauta do dia saiu
   // no grupo. Sem ela o lembrete nao pode cobrar (Campo Grande abre as 10:00).
   const logs = marcadores || abertura.map((u) => ({ result: 'executed', reason: `pauta_fala:${u}:${YMD} itens=4 contrato=1` }));
+  if (recuperacaoFeita) {
+    for (const u of unidades) logs.push({ result: 'executed', reason: `pauta_lembrete_recup:${u}:${YMD} faixa ate 09:00 coberta` });
+  }
   const chamadas = [];
   const inseridos = [];
   const enviadas = [];
@@ -118,6 +130,9 @@ function mundo({
     }
     if (q.tabela === 'marker_logs' && q.op === 'select') {
       const prefixo = String(q.like || '').replace(/%$/, '');
+      if (erroChecagemRecuperacao && prefixo.startsWith('pauta_lembrete_recup:')) {
+        return { data: null, error: { message: erroChecagemRecuperacao } };
+      }
       const achou = logs.some((m) => String(m.reason).startsWith(prefixo)
         && ['executed', 'skipped'].includes(m.result));
       return { data: achou ? [{ id: 1 }] : [], error: null };
@@ -129,6 +144,7 @@ function mundo({
       return { data: achou ? [{ id: 1 }] : [], error: null };
     }
     if (q.tabela === 'group_chat_messages' && q.op === 'insert') {
+      if (erroEnvioMensagem) return { error: { message: erroEnvioMensagem } };
       mensagens.push(q.dados); enviadas.push(q.dados);
       return { error: null };
     }
@@ -158,11 +174,16 @@ function mundo({
   const requireFake = (nome) => {
     if (nome === './anamnese-pauta') {
       return {
-        lembreteDaProximaHora: async ({ unidadeId, hora }) => {
-          chamadas.push([unidadeId, hora]);
+        lembreteDaProximaHora: async ({ unidadeId, hora, recuperacao }) => {
+          // A terceira posicao e o flag da recuperacao: e o que o bloco DECIDE, e por isso o que
+          // os testes olham. Os cenarios antigos so leem [0] e [1] e nao mudaram de significado.
+          chamadas.push([unidadeId, hora, !!recuperacao]);
           if (unidadeId === explode) throw new Error('dado ruim so desta unidade');
-          if (resultado) return resultado(unidadeId, hora);
-          return { texto: TEXTO(hora), alunos: [{ pessoa: { nome: 'Ana' } }], motivo: null };
+          if (resultado) return resultado(unidadeId, hora, !!recuperacao);
+          return {
+            texto: recuperacao ? TEXTO_RECUP(hora) : TEXTO(hora),
+            alunos: [{ pessoa: { nome: 'Ana' } }], motivo: null,
+          };
         },
       };
     }
@@ -348,4 +369,110 @@ test('bloco do lembrete: o harness nao vaza log na suite — o rastro do bloco f
   await w.tick('09:00');
   assert.ok(w.console.length > 0, 'o bloco fala mesmo — e esse rastro que salva a depuracao em producao');
   assert.ok(w.console.every((l) => l.startsWith('log ') || l.startsWith('warn ') || l.startsWith('error ')));
+});
+
+// ── O PRIMEIRO LEMBRETE DO DIA E DE RECUPERACAO ─────────────────────────────────────────────
+// Cada lembrete fala da hora SEGUINTE — entao quem tem aula na hora em que a unidade ABRE nunca
+// aparecia em lembrete nenhum: 25 aulas por semana invisiveis, medido na fonte. Na primeira
+// passada do dia de cada unidade a mensagem cobre do comeco do dia ate o fim da hora seguinte; da
+// segunda em diante volta a ser so a proxima hora. A escolha e do BLOCO — ele e quem tem o
+// marker_logs — e por isso so este harness alcanca.
+
+test('recuperacao: o PRIMEIRO lembrete do dia cobre a faixa; do segundo em diante, so a proxima hora', async () => {
+  const w = mundo({ recuperacaoFeita: false });
+  await w.tick('09:00');
+  assert.deepStrictEqual(w.chamadas, UNIDADES.map((u) => [u, '10:00', true]));
+  assert.ok(w.enviadas.every((m) => m.content.startsWith('⏰ *Do começo do dia até as 10:00*')),
+    `cabecalho da primeira mensagem: ${JSON.stringify(w.enviadas.map((m) => m.content.split('\n')[0]))}`);
+  const antes = w.chamadas.length;
+  await w.tick('10:00');
+  assert.deepStrictEqual(w.chamadas.slice(antes), UNIDADES.map((u) => [u, '11:00', false]),
+    'a mesma gente 11 vezes e o ruido que este lembrete existe pra evitar');
+  assert.ok(w.enviadas.slice(3).every((m) => m.content.startsWith('⏰ *Próxima hora — 11:00*')));
+});
+
+test('recuperacao: a unidade que abre mais tarde faz a faixa DELA, na primeira hora dela', async () => {
+  // Campo Grande abre as 10:00: as 09:00 ela grava 'skipped' com a chave do lembrete daquela
+  // hora. Esse marcador NAO pode aposentar a recuperacao dela — senao a unidade que abre por
+  // ultimo seria justamente a que ficaria sem, que e o bug ao contrario.
+  const w = mundo({ recuperacaoFeita: false, abertura: ['u-recreio', 'u-barra'] });
+  await w.tick('09:00');
+  assert.deepStrictEqual(w.chamadas, [['u-recreio', '10:00', true], ['u-barra', '10:00', true]]);
+  w.marcadores.push({ result: 'executed', reason: `pauta_fala:u-cg:${YMD} itens=3` });
+  const antes = w.chamadas.length;
+  await w.tick('10:00');
+  assert.deepStrictEqual(w.chamadas.slice(antes),
+    [['u-recreio', '11:00', false], ['u-barra', '11:00', false], ['u-cg', '11:00', true]],
+    'o Campo Grande faz a faixa dele quando abre; as outras duas ja fizeram a delas');
+});
+
+test('recuperacao: envio que falha NAO gasta a recuperacao — o proximo tick refaz a faixa inteira', async () => {
+  const w = mundo({ recuperacaoFeita: false, erroEnvioMensagem: 'PostgREST caiu' });
+  await w.tick('09:00');
+  assert.deepStrictEqual(w.enviadas, []);
+  assert.ok(w.inseridos.every((m) => m.result === 'fallback'), 'falha nao trava a chave da hora');
+  const antes = w.chamadas.length;
+  await w.tick('09:00', 5);
+  assert.deepStrictEqual(w.chamadas.slice(antes), UNIDADES.map((u) => [u, '10:00', true]),
+    'um retry que virasse lembrete de uma hora so perderia exatamente quem a recuperacao existe pra pegar');
+});
+
+test('recuperacao: fonte fora do ar NAO gasta a recuperacao', async () => {
+  const w = mundo({ recuperacaoFeita: false, resultado: () => ({ texto: null, alunos: [], motivo: 'fonte fora: timeout' }) });
+  await w.tick('11:00');
+  assert.deepStrictEqual(w.enviadas, [], 'nunca "ninguem pendente" quando nao deu pra apurar');
+  const antes = w.chamadas.length;
+  await w.tick('11:00', 5);
+  assert.ok(w.chamadas.slice(antes).every(([, , recup]) => recup === true),
+    'a faixa continua devendo enquanto a fonte nao responder');
+});
+
+test('recuperacao: faixa sem ninguem pendente APOSENTA a recuperacao — rodou e nao tinha ninguem', async () => {
+  const w = mundo({ recuperacaoFeita: false, resultado: () => ({ texto: null, alunos: [], motivo: null }) });
+  await w.tick('09:00');
+  assert.deepStrictEqual(w.enviadas, [], 'silencio ali e noticia boa');
+  assert.ok(w.inseridos.some((m) => /^pauta_lembrete_recup:/.test(m.reason)),
+    'zero por SAUDE tambem precisa deixar rastro — senao a faixa sairia de novo toda hora');
+  const antes = w.chamadas.length;
+  await w.tick('10:00');
+  assert.ok(w.chamadas.slice(antes).every(([, , recup]) => recup === false),
+    'a faixa foi coberta: a hora seguinte volta ao comportamento normal');
+});
+
+test('recuperacao: a guarda de duplicata cobre o cabecalho NOVO', async () => {
+  const mensagens = [{ group_id: 'grp-u-barra', content: TEXTO_RECUP('10:00'), role: 'tom' }];
+  const w = mundo({ recuperacaoFeita: false, mensagens });
+  await w.tick('09:00');
+  assert.deepStrictEqual(w.enviadas.filter((m) => m.group_id === 'grp-u-barra'), [],
+    'a faixa ja estava no grupo — se a guarda nao enxergar o cabecalho novo, ela sai duas vezes');
+  assert.strictEqual(w.enviadas.length, 2, 'as outras duas falam normalmente');
+  const marcador = w.inseridos.find((m) => m.reason.includes('u-barra') && !/^pauta_lembrete_recup:/.test(m.reason));
+  assert.strictEqual(marcador.result, 'skipped', 'so fecha o marcador que faltou');
+  const antes = w.chamadas.length;
+  await w.tick('10:00');
+  const daBarra = w.chamadas.slice(antes).find(([u]) => u === 'u-barra');
+  assert.strictEqual(daBarra[2], false, 'achar a faixa no grupo tambem aposenta a recuperacao');
+});
+
+test('recuperacao: checagem que falha NAO escolhe entre faixa e hora unica no escuro', async () => {
+  const w = mundo({ recuperacaoFeita: false, erroChecagemRecuperacao: 'PostgREST caiu' });
+  await w.tick('09:00');
+  assert.deepStrictEqual(w.enviadas, [],
+    'no escuro, ou repete gente num grupo real ou deixa alguem invisivel de novo');
+  assert.deepStrictEqual(w.chamadas, [], 'nem chega a gastar a RPC de 6-8s');
+});
+
+test('recuperacao: a chave propria nao colide com a do lembrete e cabe no corte de 120 chars', async () => {
+  const w = mundo({
+    unidades: [UUID_UNIDADE], recuperacaoFeita: false,
+    marcadores: [{ result: 'executed', reason: `pauta_fala:${UUID_UNIDADE}:${YMD} itens=4` }],
+  });
+  await w.tick('15:00');
+  const recup = w.inseridos.find((m) => /^pauta_lembrete_recup:/.test(m.reason));
+  assert.ok(recup, 'sem o marcador da faixa, a recuperacao sairia em todo tick do dia');
+  assert.ok(recup.reason.length <= 120, `reason acima de 120: ${recup.reason.length}`);
+  assert.strictEqual(recup.result, 'executed');
+  assert.ok(!recup.reason.startsWith(`pauta_lembrete:${UUID_UNIDADE}`),
+    "'pauta_lembrete:' nao pode ser prefixo de 'pauta_lembrete_recup:' — as duas chaves sao lidas por LIKE de prefixo");
+  assert.ok(!CHAVE_ESPERADA.startsWith('pauta_lembrete_recup:'));
 });
