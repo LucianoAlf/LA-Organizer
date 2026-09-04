@@ -791,8 +791,40 @@ function depsRefresh({
     pessoasDoDia: async () => { throw new Error('PROIBIDO: a atualização tocou anamnese_pauta'); },
     gravarResultado: async () => { throw new Error('PROIBIDO: a atualização tocou anamnese_pauta'); },
   };
+
+  // ── O DUBLÊ DESCEU UMA CAMADA (lacuna 3, 04/09) ────────────────────────────────────────────
+  // Antes, `fecharFilha` era dublado e o teste guardava o ARGUMENTO ({id, status, notes}). Só que
+  // a regra desta feature é "fecha como done E carimba `completed_at`", e o `completed_at` nasce
+  // DENTRO do _fecharFilha real — nunca chegava ao argumento, e por isso não era asserido em
+  // lugar nenhum da suíte. Um dia em que o carimbo se perdesse (refatoração do helper, ou um
+  // fecho por outro caminho) a suíte continuaria verde, e a filha ficaria `done` sem hora — o
+  // painel e os relatórios contam por `completed_at`.
+  //
+  // Agora o dublê é o CLIENTE, não o helper: o _fecharFilha REAL roda contra este supabase de
+  // mentira e o teste guarda o payload que ele de fato monta. É o que a produção grava, não uma
+  // cópia da regra reescrita aqui — que seria uma asserção vazia, sempre verde por construção.
+  // `fecharFilhaOk` continua injetando falha, agora pela porta real: o UPDATE que não casa linha
+  // nenhuma (o falso-sucesso do PostgREST) devolve `data: []`.
+  const tabelasEscritas = [];
+  const supabaseTasks = {
+    from(tabela) {
+      tabelasEscritas.push(tabela);
+      let payload = null;
+      const chain = {
+        update(p) { payload = { ...p }; return chain; },
+        eq(_coluna, valor) { payload = { ...payload, id: valor }; return chain; },
+        select: async () => {
+          filhasFechadas.push(payload);
+          return { data: fecharFilhaOk(payload) ? [{ id: payload.id }] : [], error: null };
+        },
+      };
+      return chain;
+    },
+  };
+
   return {
-    filhasFechadas, containerFechadoChamadas, titulosChecados, repo: repoProibido,
+    filhasFechadas, containerFechadoChamadas, titulosChecados, tabelasEscritas, supabaseTasks,
+    repo: repoProibido,
     laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
     acharContainer: async (_sb, { titulo }) => {
       titulosChecados.push(titulo);
@@ -803,14 +835,23 @@ function depsRefresh({
       if (erroListarFilhas) return { filhas: null, erro: erroListarFilhas };
       return { filhas: filhasPendentes, erro: null };
     },
-    fecharFilha: async (_sb, arg) => { filhasFechadas.push(arg); return fecharFilhaOk(arg); },
+    // `fecharFilha` NÃO entra em deps de propósito: sem ele, atualizarPautaDaUnidade cai no
+    // _fecharFilha real e é o payload dele que o supabaseTasks acima captura.
     fecharContainer: async (_sb, arg) => { containerFechadoChamadas.push(arg); return true; },
   };
 }
 
 const rodarRefresh = (d, extra = {}) => atualizarPautaDaUnidade({
-  supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d, ...extra,
+  supabase: d.supabaseTasks, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d, ...extra,
 });
+
+// `completed_at` tem que ser hora de verdade, não um truthy qualquer: um `true` ou uma string
+// vazia passariam num assert.ok e chegariam ao banco como lixo na coluna que o painel usa.
+function assertFechouComoDone(payload, msg) {
+  assert.strictEqual(payload.status, 'done', `${msg}: no meio do dia a única escrita permitida é done`);
+  assert.ok(typeof payload.completed_at === 'string' && !Number.isNaN(Date.parse(payload.completed_at)),
+    `${msg}: fechar é "done E completed_at" — sem o carimbo a filha some da tela sem hora (recebido: ${JSON.stringify(payload.completed_at)})`);
+}
 
 // O CASO CENTRAL. Ana preencheu no tablet às 10h; Bia ainda não. Às 11:00 a lista encolhe pela
 // Ana — e a Bia CONTINUA lá, porque o dia dela não acabou. Fechar a Bia agora seria mentir.
@@ -826,7 +867,7 @@ test('atualização: quem preencheu fecha como done; quem não preencheu CONTINU
   assert.strictEqual(r.atualizou, true);
   assert.strictEqual(d.filhasFechadas.length, 1, 'só a Ana pode ser tocada');
   assert.strictEqual(d.filhasFechadas[0].id, 'f-ana');
-  assert.strictEqual(d.filhasFechadas[0].status, 'done');
+  assertFechouComoDone(d.filhasFechadas[0], 'a Ana saiu da tela');
   assert.strictEqual(r.fechadas, 1);
   assert.strictEqual(r.continuamPendentes, 1, 'a Bia segue na tela — ela ainda pode preencher às 19h');
   assert.strictEqual(r.motivo, null, 'dia saudável: motivo null é o sensor de "zero por saúde" desta casa');
@@ -897,6 +938,31 @@ test('atualização: NENHUM caminho grava em anamnese_pauta', async () => {
   const r = await rodarRefresh(d);
   assert.strictEqual(r.fechadas, 1, 'o caminho feliz rodou até o fim sem tocar no repo da escada');
   assert.strictEqual(r.motivo, null, 'se o repo tivesse sido chamado, o throw viraria motivo — e este assert quebraria');
+  // Segunda tranca, agora pelo CLIENTE: o repo é a porta que a noite usa, mas quem escrevesse
+  // direto em `anamnese_pauta` pelo supabase passaria por baixo dele. A única tabela que esta
+  // passada pode tocar é `tasks`.
+  assert.deepStrictEqual(d.tabelasEscritas, ['tasks'],
+    'a atualização do meio do dia só pode escrever em tasks — anamnese_pauta é gravada UMA vez, às 23:00');
+});
+
+// LACUNA 3 (04/09): a regra é "fecha como done E carimba completed_at", e o carimbo não era
+// asserido em canto nenhum da suíte. Ele é o que o painel e os relatórios usam pra saber QUANDO
+// a filha saiu da tela; sem ele a linha vira `done` sem hora e some da contagem do dia.
+test('atualização: fechar é done E completed_at — o carimbo de hora chega ao UPDATE', async () => {
+  const antes = Date.now();
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true)],
+    filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }],
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.fechadas, 1);
+  const payload = d.filhasFechadas[0];
+  assertFechouComoDone(payload, 'o UPDATE que foi pro banco');
+  const carimbo = Date.parse(payload.completed_at);
+  assert.ok(carimbo >= antes && carimbo <= Date.now(),
+    `completed_at tem que ser a hora do fecho, não uma data qualquer (recebido: ${payload.completed_at})`);
+  assert.ok(!('notes' in payload),
+    'sair da tela porque o aluno preencheu é o caminho normal — não leva bilhete de exceção');
 });
 
 test('atualização: NENHUMA filha é fechada como cancelled, em nenhum cenário', async () => {
@@ -914,6 +980,7 @@ test('atualização: NENHUMA filha é fechada como cancelled, em nenhum cenário
   await rodarRefresh(d);
   assert.ok(d.filhasFechadas.every((f) => f.status === 'done'),
     'no meio do dia "não fez" é mentira — cancelled é decisão de fim de dia, e só a noite pode tomá-la');
+  for (const f of d.filhasFechadas) assertFechouComoDone(f, `filha ${f.id}`);
   assert.deepStrictEqual(d.filhasFechadas.map((f) => f.id), ['f-cid']);
 });
 
@@ -981,9 +1048,16 @@ test('atualização: container sem filha pendente é saúde (motivo null), não 
 });
 
 // Sem este `else` a falha seria MUDA: o contador não sobe, motivo fica null, o marcador diz
-// `executed` e trava o slot — a filha some do radar até as 23:00. Nomeia a filha: "alguma coisa
-// falhou" não dá pra investigar. Mesmo raciocínio do IMPORTANT 2 no fechamento da noite.
-test('atualização: filha que não fecha entra no motivo, NOMEADA', async () => {
+// `executed` e trava o slot — a filha some do radar até as 23:00. Mesmo raciocínio do
+// IMPORTANT 2 no fechamento da noite.
+//
+// EXPECTATIVA MUDADA (lacuna 4, 04/09): este teste exigia a filha NOMEADA no motivo. O nome não
+// cabia — o reason do marcador tem 120 chars, a chave gasta 67, e com ` falha=N` na frente o
+// motivo só tinha ~18: o banco guardava `erro=nenhuma filha fech`, sem nome E sem número. A
+// exigência virou a CONTAGEM, que cabe; os nomes continuam saindo um a um no console.error de
+// dentro do laço, que é onde a depuração precisa deles. O teste não afrouxou de escopo — mudou
+// de canal: o que se cobra do marcador agora é o que o marcador consegue carregar.
+test('atualização: filha que não fecha entra no motivo, CONTADA (o nome fica no console.error)', async () => {
   const d = depsRefresh({
     alunos: [aluno('Ana', '09:00', true)],
     filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }],
@@ -992,7 +1066,8 @@ test('atualização: filha que não fecha entra no motivo, NOMEADA', async () =>
   const r = await rodarRefresh(d);
   assert.strictEqual(r.fechadas, 0, 'não gravou — não pode contar como fechada');
   assert.strictEqual(r.continuamPendentes, 1, 'ela continua na tela; o contador tem que dizer isso');
-  assert.ok(r.motivo && /Ana/.test(r.motivo), 'a filha precisa ser nomeada no motivo');
+  assert.ok(r.motivo && /\b1 filha/.test(r.motivo),
+    `"alguma coisa falhou" não dá pra investigar — o motivo precisa dizer QUANTAS: ${r.motivo}`);
 });
 
 test('atualização: sem groupId não sai procurando container no escuro', async () => {
@@ -1084,7 +1159,9 @@ test('atualização: NENHUMA fechou e houve falha → motivo (fallback), porque 
   assert.strictEqual(r.fechadas, 0);
   assert.strictEqual(r.falhasAoFechar, 2);
   assert.ok(r.motivo, 'zero trabalho + erro é FALHA: tem que voltar como fallback e retentar');
-  assert.ok(/Ana/.test(r.motivo) && /Bia/.test(r.motivo), 'as filhas travadas precisam ser NOMEADAS');
+  // Mesma troca de canal do teste acima (lacuna 4): a lista de nomes não sobrevivia ao corte de
+  // 120 chars do reason, a contagem sobrevive, e os nomes saem no console.error, um por um.
+  assert.ok(/\b2 filha/.test(r.motivo), `as filhas travadas precisam ser CONTADAS: ${r.motivo}`);
   assert.notStrictEqual(r.semPauta, true, 'falha nunca pode virar desfecho resolvido');
 });
 
@@ -1139,6 +1216,43 @@ test('atualização: 4 de 5 (80%) NÃO dispara o disjuntor — proporção alta 
   assert.strictEqual(r.motivo, null);
 });
 
+// ── A FRONTEIRA DA FRAÇÃO (lacuna 1, 04/09) ─────────────────────────────────────────────────
+// POR QUE ESTE PAR EXISTE: sem ele, REFRESH_FRACAO_MAXIMA não era travada por teste NENHUM.
+// Os seis cenários acima usam 100% (30/30, 15/15, 16/16, 40/40), 41,7% (20/48) e 80% (4/5, que
+// nem chega ao teto absoluto) — nenhum deles encosta em 0,6. Medido: trocar a constante por 0,9
+// (ou 0,99) deixava a suíte INTEIRA verde, e um incidente real de 24 de 27 (88,9%) deixaria de
+// disparar em produção, em silêncio. O lado de BAIXO já estava protegido (qualquer valor abaixo
+// de ~0,42 quebra o teste do dia movimentado, 20 de 48); faltava o de CIMA.
+//
+// 18 de 30 é EXATAMENTE 60%: o gatilho é `>` estrito, então `18 > 30*0,6` é `18 > 18` = falso e
+// a pauta encolhe normalmente. 19 de 30 é o primeiro caso acima da fração, e trava. Subir a
+// constante mantém o primeiro verde e derruba o segundo — que é o ponto do par.
+test('atualização: 18 de 30 é EXATAMENTE 60% e NÃO dispara — o gatilho da fração é ">" estrito', async () => {
+  const preencheram = 18; const pendentes = 30;
+  const d = depsRefresh({
+    alunos: Array.from({ length: pendentes }, (_, i) => aluno(`P${i}`, '09:00', i < preencheram)),
+    filhasPendentes: Array.from({ length: pendentes }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.fechadas, preencheram,
+    'em cima da fração o disjuntor NÃO dispara: 18 > 30*0,6 é 18 > 18, falso');
+  assert.strictEqual(d.filhasFechadas.length, preencheram);
+  assert.strictEqual(r.motivo, null, 'a fronteira exata é saúde, não fallback');
+});
+
+test('atualização: 19 de 30 (63,3%) DISPARA — é o primeiro lote acima da fração', async () => {
+  const preencheram = 19; const pendentes = 30;
+  const d = depsRefresh({
+    alunos: Array.from({ length: pendentes }, (_, i) => aluno(`P${i}`, '09:00', i < preencheram)),
+    filhasPendentes: Array.from({ length: pendentes }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(d.filhasFechadas.length, 0,
+    'um passo acima da fração já trava — e é ESTE assert que fica vermelho se alguém subir REFRESH_FRACAO_MAXIMA');
+  assert.strictEqual(r.fechadas, 0);
+  assert.ok(r.motivo && /disjuntor/i.test(r.motivo));
+});
+
 // A fronteira exata, escrita como teste pra que mexer nos números quebre algo visível em vez de
 // mudar o comportamento em produção em silêncio.
 test('atualização: os dois gatilhos do disjuntor são EXPORTADOS e o teto é "> teto E > fração"', async () => {
@@ -1162,6 +1276,86 @@ test('atualização: os dois gatilhos do disjuntor são EXPORTADOS e o teto é "
   });
   const r2 = await rodarRefresh(d2);
   assert.strictEqual(r2.fechadas, 0, `${acima} de ${acima} passa dos DOIS gatilhos e trava`);
+});
+
+// ── LACUNA 4 (04/09): os NÚMEROS têm que sobreviver ao corte do marcador ─────────────────────
+// O dispatcher grava o reason em `marker_logs` cortado em 120 caracteres, e a chave de
+// idempotência do slot (`pauta_refresh:<uuid>:<ymd>:<HH:MM>`) já come 67 deles. Somando o que o
+// dispatcher escreve antes do motivo — ` fech=0 pend=NN nd=N` e ` erro=` — sobram 27 caracteres.
+// O texto antigo abria com prosa ("disjuntor do meio do dia: 30 de 30 filhas pendentes...") e o
+// banco guardava `erro=disjuntor do meio do dia: 3`: quem audita por marker_logs via QUE o
+// disjuntor abriu, mas nunca o TAMANHO do lote barrado — que é justamente o número que separa
+// "incidente de dado" de "dia estranho". O console.error tem o texto inteiro, mas o banco é onde
+// se audita, e ninguém abre o journal do processo pra conferir uma pauta.
+//
+// O orçamento é DERIVADO aqui, não redigitado: se um dia o dispatcher passar a imprimir mais um
+// contador antes do `erro=`, o número muda junto e o teste continua medindo a verdade. A prova
+// de ponta a ponta (fórmula REAL do dispatcher, chave REAL de 67 chars) está no harness.
+const ORCAMENTO_MOTIVO_NO_MARCADOR = 120
+  - 'pauta_refresh:11111111-2222-3333-4444-555555555555:2026-09-04:17:00'.length
+  - ' fech=0 pend=30 nd=0'.length
+  - ' erro='.length;
+
+test('atualização: o motivo do disjuntor põe os NÚMEROS antes do corte de 120 chars do marcador', async () => {
+  const preencheram = 19; const pendentes = 30;   // assimétrico de propósito: 19 e 30 são distinguíveis
+  const d = depsRefresh({
+    alunos: Array.from({ length: pendentes }, (_, i) => aluno(`P${i}`, '09:00', i < preencheram)),
+    filhasPendentes: Array.from({ length: pendentes }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+  });
+  const r = await rodarRefresh(d);
+  const sobrevive = r.motivo.slice(0, ORCAMENTO_MOTIVO_NO_MARCADOR);
+  assert.ok(/disjuntor/i.test(sobrevive),
+    `o sensor tem que sobreviver ao corte, senão o marcador não diz nem QUE guarda abriu: ${JSON.stringify(sobrevive)}`);
+  assert.ok(/\b19\b/.test(sobrevive),
+    `o tamanho do lote barrado tem que sobreviver ao corte: ${JSON.stringify(sobrevive)}`);
+  assert.ok(/\b30\b/.test(sobrevive),
+    `o total de pendentes tem que sobreviver ao corte: ${JSON.stringify(sobrevive)}`);
+});
+
+// O sensor não pode ser distinto só do texto INTEIRO: ele é lido cortado. "disjuntor" é a
+// palavra que diz a quem audita "vá olhar o LA Report, não a rede" — e ela precisa ser exclusiva
+// deste desfecho entre TODOS os motivos do arquivo.
+test('atualização: "disjuntor" é palavra EXCLUSIVA deste desfecho entre todos os motivos', async () => {
+  const filha = [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }];
+  const motivos = [
+    (await rodarRefresh(depsRefresh({ containerId: null }))).motivo,
+    (await rodarRefresh(depsRefresh({ erroAcharContainer: 'boom' }))).motivo,
+    (await rodarRefresh(depsRefresh({ rpcErro: { message: 'timeout' }, filhasPendentes: filha }))).motivo,
+    (await rodarRefresh(depsRefresh({ erroListarFilhas: 'boom', alunos: [aluno('Ana', '09:00', true)] }))).motivo,
+    (await rodarRefresh(depsRefresh({}), { groupId: null })).motivo,
+    (await rodarRefresh(depsRefresh({
+      alunos: [aluno('Ana', '09:00', true)], filhasPendentes: filha, fecharFilhaOk: () => false,
+    }))).motivo,
+    (await rodarRefresh(depsRefresh({
+      alunos: Array.from({ length: 30 }, (_, i) => aluno(`P${i}`, '09:00', true)),
+      filhasPendentes: Array.from({ length: 30 }, (_, i) => ({ id: `f-${i}`, title: `09:00 Anamnese — P${i}` })),
+    }))).motivo,
+  ];
+  assert.strictEqual(motivos.filter((m) => /disjuntor/i.test(m)).length, 1,
+    'dois motivos com "disjuntor" = sensor cego: quem lê marker_logs deixa de saber qual guarda abriu');
+});
+
+// A mesma conta do outro desfecho que fala em número: "nenhuma fechou E N travaram". Aqui o
+// orçamento é MENOR, porque o dispatcher ainda imprime ` falha=N` antes do `erro=` — e era esse
+// o desfecho que gastava o pouco espaço listando NOMES de filhas. Os nomes já saem, um por um,
+// no console.error de dentro do laço; no marcador o que importa é o TAMANHO do estrago.
+const ORCAMENTO_MOTIVO_COM_CONTADOR_DE_FALHA = ORCAMENTO_MOTIVO_NO_MARCADOR - ' falha=80'.length;
+
+test('atualização: "nenhuma fechou" põe a CONTAGEM antes do corte, e não gasta o espaço com nomes', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', true)],
+    filhasPendentes: [
+      { id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' },
+      { id: 'f-bia', title: '08:00 Anamnese — Bia (Canto)' },
+    ],
+    fecharFilhaOk: () => false,
+  });
+  const r = await rodarRefresh(d);
+  const sobrevive = r.motivo.slice(0, ORCAMENTO_MOTIVO_COM_CONTADOR_DE_FALHA);
+  assert.ok(/\b2\b/.test(sobrevive),
+    `quantas filhas travaram é o número que o marcador precisa carregar: ${JSON.stringify(sobrevive)}`);
+  assert.ok(!/Ana|Bia/.test(r.motivo),
+    'nome de filha no reason come o orçamento e não cabe: os nomes ficam no console.error, um por um');
 });
 
 // A ordem importa: o disjuntor decide ANTES de qualquer UPDATE. Se ele contasse depois de

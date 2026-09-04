@@ -764,8 +764,18 @@ async function atualizarPautaDaUnidade({ supabase, laReport, unidadeId, groupId,
       // Se ele saísse com o texto de outra guarda, quem lê marker_logs não distinguiria "a fonte
       // caiu" de "a fonte respondeu uma coisa absurda" — que é exatamente a diferença que faz
       // alguém ir olhar o LA Report em vez de olhar a rede.
-      const motivo = `disjuntor do meio do dia: ${aFechar.length} de ${pendentes} filhas pendentes (${pct}%) `
-        + `fechariam de uma vez, acima de ${REFRESH_LOTE_MAXIMO} E de ${Math.round(REFRESH_FRACAO_MAXIMA * 100)}% `
+      //
+      // A ORDEM DAS PALAVRAS É REGRA, NÃO ESTILO (lacuna 4, 04/09). O dispatcher corta o reason
+      // do marcador em 120 caracteres, e a chave de idempotência do slot já gasta 67 deles
+      // (`pauta_refresh:<uuid>:<ymd>:<HH:MM>`). Com ` fech=0 pend=NN nd=N` e ` erro=` na frente,
+      // sobram 27 pro motivo. A versão anterior começava por prosa ("disjuntor do meio do dia:
+      // 30 de 30 filhas pendentes...") e o banco guardava `erro=disjuntor do meio do dia: 3`:
+      // quem audita por marker_logs sabia QUE a guarda abriu e nunca o TAMANHO do lote barrado —
+      // que é o número que separa incidente de dado de dia estranho. Por isso sensor e números
+      // vêm PRIMEIRO e a explicação vem depois: o começo é o que chega ao banco, o resto só
+      // sobrevive no console.error abaixo.
+      const motivo = `disjuntor ${aFechar.length}/${pendentes} (${pct}%) `
+        + `acima de ${REFRESH_LOTE_MAXIMO} E de ${Math.round(REFRESH_FRACAO_MAXIMA * 100)}% dos pendentes `
         + '— não fechei ninguém; o fechamento das 23:00 relê a fonte e decide';
       // Alto de propósito: é a única forma de um humano descobrir hoje, e não pelo painel vazio.
       console.error(`[Pauta] ${motivo}`);
@@ -804,12 +814,16 @@ async function atualizarPautaDaUnidade({ supabase, laReport, unidadeId, groupId,
     // Cuidado pra não jogar o SINAL fora junto com o ruído: se NENHUMA filha fechou e houve
     // falha, não houve trabalho nenhum — só erro. Aí `fallback` é a verdade e retentar é o certo.
     // Com pelo menos uma fechada, o slot fez o que tinha que fazer e o desfecho é `executed`.
-    // A amostra de nomes é cortada em 3 porque o reason do marcador tem 120 caracteres: o rastro
-    // completo, filha por filha, já saiu no console.error acima.
-    const amostra = naoFecharam.slice(0, 3).map((t) => `"${t}"`).join(', ');
+    //
+    // CONTAGEM, NÃO NOMES (lacuna 4, 04/09). Aqui o orçamento no reason do marcador é o MENOR de
+    // todos: além dos 67 da chave e do ` fech=0 pend=NN nd=N`, o dispatcher ainda imprime
+    // ` falha=N` antes do ` erro=` — sobram ~18 caracteres. A amostra de três nomes entre aspas
+    // não cabia em espaço nenhum: o banco guardava `erro=nenhuma filha fech` e nem o número
+    // chegava. Os nomes já saem INDIVIDUALMENTE no console.error de dentro do laço, que é onde a
+    // depuração precisa deles; o marcador carrega o que o auditor precisa e cabe — quantas.
     const motivoFalhas = fechadas === 0 && naoFecharam.length
-      ? `nenhuma filha fechou na atualização do meio do dia e ${naoFecharam.length} falharam ao fechar: `
-        + `${amostra}${naoFecharam.length > 3 ? ` e mais ${naoFecharam.length - 3}` : ''}`
+      ? `${naoFecharam.length} filha(s) travaram e nenhuma fechou na atualização do meio do dia `
+        + '— nomes no console.error'
       : null;
 
     return {
