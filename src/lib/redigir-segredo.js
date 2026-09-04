@@ -159,6 +159,13 @@
 //    o primeiro token e volta a mascarar (round 11) -- e a unica situacao em
 //    que da para distinguir "resto de frase" de "credencial seguida de outro
 //    campo" sem quebrar aquela trava.
+// 13. Tabela com o cabecalho ABAIXO dos valores vaza EM SILENCIO:
+//    '| admin | hunter2XY |\n| Usuario | Senha |' sai intacto com achou=false.
+//    E estrutural: o desenho e forward-only (a linha do rotulo arma o modo
+//    para as SEGUINTES), e cobrir isso exigiria backtracking de linha.
+// 14. Acento DENTRO da palavra do rotulo nao dispara ('SÉNHA:'). Os rotulos
+//    sao comparados sem acento, entao a palavra acentuada nao bate com
+//    nenhum segmento. E erro de digitacao raro.
 // 6. Connection string ('postgres://user:hunter2@host:5432/db') nao casa.
 // 7. Heading markdown sem separador ('## Senha\nhunter2') nao arma -- e o
 //    limite 1 com outra roupa.
@@ -292,9 +299,15 @@ function _palavrasDaLinha(texto) {
   while ((m = re.exec(texto))) {
     const limpo = _limpaEnfase(m[0]);
     const desloc = limpo ? m[0].indexOf(limpo) : 0;
+    // O par so existe para o rotulo de DUAS palavras ("api key"), e por isso
+    // usa RE_API_KEY direto, nao _tokenValido: passando um par por
+    // _tokenValido, a regra de segmento separa por espaco e QUALQUER par cuja
+    // primeira palavra seja rotulo passava -- "Senha hunter2" virava rotulo, e
+    // com a lista de campos do round 12 isso transformava a barra depois do
+    // valor em campo, cortando o valor em dois.
     const ehRotulo = _tokenValido(m[0])
       || (limpo !== '' && _tokenValido(limpo))
-      || (anterior !== null && limpo !== '' && _tokenValido(`${anterior} ${limpo}`));
+      || (anterior !== null && limpo !== '' && RE_API_KEY.test(`${anterior} ${limpo}`));
     out.push({ fim: m.index + desloc + limpo.length, ehRotulo });
     anterior = limpo;
   }
@@ -310,13 +323,23 @@ function _temRotuloEmAlgumaPalavra(texto) {
 // corpus de 20 mensagens reais de escola de musica, 7 eram destruidas
 // ('...so preciso confirmar uma coisa: o email do aluno' virava '...coisa: ***').
 // Agora o rotulo tem de estar entre as ultimas 4 palavras antes do separador.
-const JANELA_ROTULO = 4;
+// ROUND 12: a janela subiu de 4 para 6 palavras. Com 4, o segundo campo de
+// 'segue a senha do painel: X e o token de acesso ao financeiro: Y' nao era
+// reconhecido -- "token" fica a 5 palavras de "financeiro:". Medido: com 6 as
+// 17 travas e as 20 mensagens do corpus continuam intactas.
+const JANELA_ROTULO = 6;
 
-function _temRotuloPerto(palavras, sepPos) {
+// `limite` e o fim do separador do ultimo campo de PONTUACAO ja aceito: um
+// rotulo que ja foi consumido por um campo anterior nao pode justificar um
+// campo novo. E o que impede a barra que fecha a celula do valor em
+// '| Senha | hunter2 |' de virar campo por causa do "Senha" da celula
+// anterior. Campo com separador tipo espaco nao move o limite, porque ele
+// pode nao ser campo de verdade (o valor ainda precisa qualificar).
+function _temRotuloPerto(palavras, sepPos, limite) {
   const antes = [];
   for (const p of palavras) {
     if (p.fim > sepPos) break;
-    antes.push(p);
+    if (p.fim > limite) antes.push(p);
   }
   return antes.slice(-JANELA_ROTULO).some(p => p.ehRotulo);
 }
@@ -326,25 +349,42 @@ function _temRotuloPerto(palavras, sepPos) {
 // fecha a celula do VALOR viraria um campo novo, o valor de "Senha" ficaria
 // vazio e a linha saia intacta -- o V-2 abriria um vazamento ao consertar
 // outro. Aqui so interessa o separador onde o valor comeca.
+// ROUND 12 (V-NOVO-1): a linha guarda a LISTA de todos os campos, nao uma
+// posicao unica. O cache anterior travava na primeira posicao varrida do
+// inicio, entao quando o SEGUNDO rotulo tambem estava distante do proprio
+// separador -- 'a senha do wifi: abc123 e o token de acesso: xyz789', que e
+// como se escreve em portugues -- o segundo separador nunca era reconhecido
+// como campo e o segundo valor saia em claro. E saia com achou=true e um
+// "***" visivel ao lado: quem le o log ve "parece redigido" e nao percebe o
+// segredo em claro. Falso negativo silencioso e pior que nenhuma redacao.
 let _cacheLinha = null;
-let _cachePosV2 = -1;
+let _cacheCampos = null;
 
-function _posV2DaLinha(linha) {
-  if (linha === _cacheLinha) return _cachePosV2;
+function _camposDaLinha(linha) {
+  if (linha === _cacheLinha) return _cacheCampos;
   _cacheLinha = linha;
-  _cachePosV2 = -1;
+  const campos = [];
   const palavras = _palavrasDaLinha(linha);
-  if (!palavras.some(p => p.ehRotulo)) return _cachePosV2;
+  const temRotulo = palavras.some(p => p.ehRotulo);
   const scan = new RegExp(RE_CAMPO.source, 'gi');
+  let limite = 0;
   let m;
   while ((m = scan.exec(linha))) {
+    const sepPontuacao = RE_SEP_PONTUACAO.test(m[2]);
+    const base = { start: m.index, matchEnd: scan.lastIndex, token: m[1], sepChar: m[2] };
+    if (_tokenValido(m[1])) {
+      campos.push({ ...base, viaPrefixo: false });
+      if (sepPontuacao) limite = scan.lastIndex;
+      continue;
+    }
     // O separador e um unico caractere, logo antes de lastIndex.
-    if (RE_SEP_PONTUACAO.test(m[2]) && _temRotuloPerto(palavras, scan.lastIndex - 1)) {
-      _cachePosV2 = m.index;
-      return _cachePosV2;
+    if (temRotulo && sepPontuacao && _temRotuloPerto(palavras, scan.lastIndex - 1, limite)) {
+      campos.push({ ...base, viaPrefixo: true });
+      limite = scan.lastIndex;
     }
   }
-  return _cachePosV2;
+  _cacheCampos = campos;
+  return campos;
 }
 
 const RE_ENFASE_FINAL = /[ \t]*[*`"_]+[ \t]*$/;
@@ -455,23 +495,15 @@ function _valorQualifica(sepEhPontuacao, v) {
 // separador contiver rotulo conhecido, o que vem depois e o valor -- sujeito
 // as mesmas regras de qualificacao de sempre. Linha so com espaco/traco como
 // separador continua como antes, senao 'qual a senha do chatwoot?' quebra.
+// Primeiro campo da lista da linha que comece em `from` ou depois. Campo com
+// `viaPrefixo` e aquele cujo rotulo nao esta colado ao separador, achado pela
+// varredura da linha: nesse caso o valor tem de ter forma de credencial colada
+// (token unico de 4+), senao 'Motivo: muita gente conectada' numa mensagem que
+// so MENCIONA senha vira '*** '.
 function _acharProximoCampo(linha, from) {
-  RE_CAMPO.lastIndex = from;
-  let m;
-  while ((m = RE_CAMPO.exec(linha))) {
-    if (_tokenValido(m[1])) {
-      return { start: m.index, matchEnd: RE_CAMPO.lastIndex, token: m[1], sepChar: m[2] };
-    }
-    if (RE_SEP_PONTUACAO.test(m[2]) && m.index === _posV2DaLinha(linha)) {
-      // viaPrefixo: o rotulo nao esta colado ao separador, foi achado pela
-      // varredura da linha. Nesse caso o valor tem de ter forma de credencial
-      // colada (token unico de 4+), senao 'Motivo: muita gente conectada'
-      // numa mensagem que so MENCIONA senha vira '*** '.
-      return { start: m.index, matchEnd: RE_CAMPO.lastIndex, token: m[1], sepChar: m[2], viaPrefixo: true };
-    }
-    // Token invalido: o regex global ja avancou lastIndex sozinho; a proxima
-    // tentativa ainda enxerga a fronteira real via lookbehind (nao depende
-    // do que este match "consumiu").
+  const campos = _camposDaLinha(linha);
+  for (const c of campos) {
+    if (c.start >= from) return c;
   }
   return null;
 }

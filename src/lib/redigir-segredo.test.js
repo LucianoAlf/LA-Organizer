@@ -1259,3 +1259,99 @@ test('R10 limite conhecido: tabela transposta de 3+ colunas ainda vaza', () => {
   assert.equal(r.texto, t, 'a linha de valores tem 3 palavras -> e prosa -> fecha o modo');
   assert.equal(r.achou, false);
 });
+
+// =========================================================================
+// Round 12 -- V-NOVO-1: a linha precisa de uma LISTA de campos, nao de uma
+// posicao. _posV2DaLinha cacheava uma unica posicao por linha (a primeira
+// varrida do inicio); quando o SEGUNDO rotulo tambem estava distante do
+// proprio separador -- que e como se escreve em portugues -- o cache ja
+// estava travado na posicao do primeiro e o segundo separador nunca era
+// reconhecido como campo. Bastava acrescentar duas palavras ao caso positivo
+// da rodada 11 para o segundo valor sair em claro, COM achou=true e um "***"
+// visivel ao lado: falso negativo silencioso, pior que nao redigir nada.
+// =========================================================================
+
+test('V-NOVO-1: os cinco casos medidos mascaram os DOIS valores', () => {
+  const casos = [
+    ['a senha do wifi: abc123 e o token de acesso: xyz789', ['abc123', 'xyz789']],
+    ['senha: abc123 e o token de acesso: xyz789', ['abc123', 'xyz789']],
+    ['login: admin senha: abc123 e a chave da api: sk-xyz789', ['abc123', 'sk-xyz789']],
+    ['segue a senha do painel: X7k9Qm2p e o token de acesso ao financeiro: sk-9pQ2mZ', ['X7k9Qm2p', 'sk-9pQ2mZ']],
+    ['primeiro a senha: abc123 depois o token de acesso completo: xyz789', ['abc123', 'xyz789']]
+  ];
+  for (const [entrada, valores] of casos) {
+    const r = redigirSegredos(entrada);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(entrada)}`);
+    for (const val of valores) {
+      assert.ok(!r.texto.includes(val), `${val} vazou em ${JSON.stringify(entrada)} -> ${JSON.stringify(r.texto)}`);
+    }
+  }
+});
+
+test('V-NOVO-1: duas palavras a mais nao podem quebrar o caso da rodada 11', () => {
+  const curto = redigirSegredos('a senha do wifi: abc123 e o token: xyz789');
+  const longo = redigirSegredos('a senha do wifi: abc123 e o token de acesso: xyz789');
+  for (const r of [curto, longo]) {
+    assert.equal(r.achou, true);
+    assert.ok(!r.texto.includes('abc123'));
+    assert.ok(!r.texto.includes('xyz789'));
+  }
+});
+
+test('V-NOVO-1: tres campos na mesma linha', () => {
+  const casos = [
+    ['login: admin senha do painel: abc123 e o token de acesso: xyz789', ['abc123', 'xyz789']],
+    ['a senha do wifi: aaa11111 a chave do cofre: bbb22222 o token da api: ccc33333', ['aaa11111', 'bbb22222', 'ccc33333']],
+    ['senha: aaa11111 token: bbb22222 chave: ccc33333', ['aaa11111', 'bbb22222', 'ccc33333']]
+  ];
+  for (const [entrada, valores] of casos) {
+    const r = redigirSegredos(entrada);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(entrada)}`);
+    for (const val of valores) {
+      assert.ok(!r.texto.includes(val), `${val} vazou em ${JSON.stringify(entrada)} -> ${JSON.stringify(r.texto)}`);
+    }
+  }
+});
+
+// O quinto numero do metodo: a suite inteira nao tinha NENHUM caso com dois
+// segredos de verdade na mesma linha -- foi essa lacuna que deixou o bug
+// passar. Aqui ficam, com valores distintos e verificacao de que os dois
+// sumiram e as duas mascaras aparecem.
+test('V-NOVO-1: dois segredos de verdade na mesma linha, com duas mascaras', () => {
+  const r = redigirSegredos('a senha do wifi: Tr0ub4dor#1 e o token de acesso: sk-9pQ2mZ7x');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('Tr0ub4dor#1'), 'primeiro segredo nao pode vazar');
+  assert.ok(!r.texto.includes('sk-9pQ2mZ7x'), 'segundo segredo nao pode vazar');
+  const marcas = (r.texto.match(/\*\*\*/g) || []).length;
+  assert.equal(marcas, 2, `deveria haver duas mascaras, ha ${marcas}: ${JSON.stringify(r.texto)}`);
+});
+
+// --- Limites documentados nesta rodada, NAO corrigidos --------------------
+
+test('R12 limite conhecido: cabecalho de tabela ABAIXO dos valores vaza', () => {
+  const t = '| admin | hunter2XY |\n| Usuario | Senha |';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'estrutural ao desenho forward-only; consertar exigiria backtracking de linha');
+  assert.equal(r.achou, false, 'e pior por ser silencioso: nem sinaliza');
+});
+
+test('R12 limite conhecido: acento DENTRO da palavra do rotulo nao dispara', () => {
+  for (const t of ['SÉNHA: hunter2', 'sénha: hunter2', 'a sénha do wifi: hunter2']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `erro de digitacao raro, documentado: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});
+
+// Bug latente que a lista de campos do round 12 expos: _palavrasDaLinha
+// testava o PAR de palavras com _tokenValido, e a regra de segmento separa por
+// espaco -- entao qualquer par cuja primeira palavra fosse rotulo passava
+// ("Senha hunter2"). Com a posicao unica isso ficava escondido; com a lista,
+// transformava a barra depois do valor num campo e cortava o valor em dois.
+test('R12: par de palavras so e rotulo na forma "api key"', () => {
+  const a = redigirSegredos('| Senha:| hunter2 |');
+  assert.equal(a.texto, '| Senha: ***', '"Senha hunter2" nao pode ser lido como rotulo de duas palavras');
+  const b = redigirSegredos('a api key e: X7k9Qm2p');
+  assert.equal(b.achou, true, 'o par de verdade continua valendo');
+  assert.ok(!b.texto.includes('X7k9Qm2p'));
+});
