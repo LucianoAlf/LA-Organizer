@@ -1463,3 +1463,74 @@ Não é falha do lever — é medição do alcance do fix. `CONFIRM-AUX-FOI-BLIN
 (o auxiliar tem que FECHAR a frase) e o acervo não tem outro turno com "Foi" pelado sob intent de
 conclusão aberta. Vale como calibragem da expectativa: **um fix estreito não drena acervo, e isso
 não o torna menos correto.** O que 02/09 drenou (2 achados) veio de um fix de gate, que é largo.
+
+### ETAPA 2 — o achado FRESCO pode ser todo de desenho, e a rodada fica com 1 correção só
+
+**Ocorrências:** 2 (24/08, 04/09). Em 24/08 foram os 3 altos; hoje foram os 3 frescos.
+
+O teto subiu para 2 em 02/09 porque o acervo entrava mais rápido do que saía. Em 04/09 a janela
+fresca tinha exatamente 3 achados e **só um virou correção** — os outros dois se provaram, mas o
+conserto de ambos é decisão de desenho, não conserto:
+
+- `c9ce4621` (Jéssica 03/09) — o gate de ENTRADA do engine (`engine.js` ~11947,
+  `optimisticEUPattern`) dispara, e `sanitizeOptimisticConfirm(literal,'failed')` devolve o texto
+  **byte a byte igual**. O engine sabe que há claim otimista, o sanitizador não consegue removê-la,
+  e a contradição é entregue. Furo de FORMA (é o mesmo de 13/08 e 25/08), com literal fresco.
+- `00ca7ec7` (Bianca 03/09) — o briefing renderizou item numerado a partir de uma MEMÓRIA, com o
+  contexto em `tasks: 0/p0/w0`. Conserto = paridade com o fechamento (lista determinística de itens).
+
+A medição que fecha a porta do `c9ce4621`, e que vale além dele: **ampliar por FORMA um guard que
+APAGA texto tem piso de falso-fire medível.** Testei a forma candidata (`<artefato> + <particípio>`
+fechando a linha) contra outbound real, em três larguras: **145/3766 linhas (3,85%)** na versão
+ampla — dominada pelo briefing legítimo `"📭 Nada marcado."`; **4/3766** com vetos de
+ausência/contagem; e **8/71.845 (0,0111%)** na mais estreita, sobre a amostra cheia de 20 mil
+mensagens. Mesmo em 0,011%, **3 dos 7 hits distintos ainda são falso-fire** — métrica comparativa
+("• Comparado a julho: menos 6 tarefas registradas"), título de tarefa em lista
+("4️⃣ *Sinalizar pendências resolvidas*") e subjuntivo. Cada veto adicional seria chute.
+
+Regra: **guard que remove texto visível não entra com falso-fire medido e não explicado.** Medir a
+população ANTES de escrever o fix custa uma query e evita embarcar um guard que apaga briefing.
+Consequência de protocolo: com o teto em 2, **1 correção é resultado legítimo** quando os candidatos
+restantes são de desenho — a alternativa é furar o feature freeze ou embarcar guard com margem ruim.
+
+### ETAPA 2 (varredura) — lever novo que drenou: série recorrente crua na lista do dia
+
+**Ocorrências:** 1 (04/09). Gerador barato, e o único que fechou nesta rodada.
+
+Como: para cada achado aberto sem `verified_note`, varrer os outbound da janela e contar títulos em
+negrito repetidos na MESMA mensagem (`/\*([^*\n]{8,80})\*/g`). Título que aparece 2+ vezes numa lista
+do dia é candidato a série recorrente materializada renderizada crua.
+
+Sobre 49 abertos não-altos sem nota deu **6 candidatos**, e a precisão bruta é ruim — 5 são negrito
+de confirmação financeira ("Lançado na fatura!" 11×) ou o mesmo título citado em contextos
+diferentes. O verdadeiro foi `ed6b5360` (Jereh 18/06): o briefing das 09:31 listou
+**3 linhas do MESMO título** ("Contatos RETENÇÃO CG" — atrasada / vence hoje / vence amanhã) e ele
+respondeu por quote *"O 2 e 3 já foram feitos a muito tempo, e eu já te falei isso várias vezes tom.
+Tá dando muito mole"*.
+
+Prova de execução com as linhas reais (as 4 tarefas da janela compartilham
+`recurrence_parent_id=8b0ca780`): **ANTES (versão <19/06, a função não existia) 4 linhas → HOJE
+`dedupRecurringSeries` devolve 1**; controle de 2 tarefas distintas sem `recurrence_parent_id`
+continua 2, então a função não colapsa indiscriminadamente. Gate conferido: `system.js:1844-1849`
+aplica nos dois baldes e o briefing consome `ctx.workTasks`. Fix `9e9dce78` é de **19/06 — um dia
+depois** do incidente. Fechado.
+
+⚠️ E o mesmo lever mostrou por que "mesma família" continua não sendo conclusão (7ª ocorrência da
+regra de 13/08). Dois irmãos aparentes NÃO são deste bug:
+
+- `d59121d6` (Anne 24/07) — TOM disse *"Cancelado. Tiro TODOS do sistema"* e o banco mostra **uma
+  única linha** virando `cancelled` (956e6300) num lote de ~10 da mesma série. Não é render, é
+  escopo de cancelamento: operou na OCORRÊNCIA e prometeu a SÉRIE. O caminho de encerrar série
+  existe (`series_ended_at`, chokepoint em `src/services/recurrence-guard.js`), mas quem escolhe o
+  scope é o LLM.
+- `d1163c32` (Arthur 13/07) — parecia série duplicada e **não é**. Os 8 lembretes do dia são todos da
+  MESMA task (`be793b0d`), com `remind_at` de hora em hora (12:00→19:00 UTC) e `created_at` idêntico
+  ao microssegundo: **um único insert gerou o leque**. Dedup por `recurrence_parent_id` não tocaria
+  nisso — `checkReminders` nem seleciona essas linhas (`remind_at` da tarefa é null em todas as
+  cópias; o cobrador é o sweep de `task_reminders`, `dispatcher.js` ~5921).
+
+O caminho de criação do `d1163c32` fica registrado porque é a classe: `engine.js:5637-5646` faz
+`reminders.map((iso,i) => ({task_id, remind_at: iso, label}))` com o array vindo **cru do marker do
+LLM — sem teto, sem espaçamento mínimo, sem validação entre marker e insert**. É o mesmo desenho que
+já produziu achado em outros validadores (27/08, lista fechada de alias): o engine confia no shape
+que o prompt ensinou. Definir o teto é decisão de produto, então não entra como microajuste.

@@ -95,6 +95,22 @@ const WEEKLY_RETRO_DEFAULT_TIME = '18:00';      // Sunday only
 const MEMORY_CONSOLIDATION_TIME = '22:00';      // Sunday only
 const PENDING_APPROVAL_REMINDER_TIMES = ['09:00', '15:00'];  // 2x/dia
 const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": consolidar memórias das últimas 24h
+// Pauta de anamnese (spec 2026-09-03): monta às 6h (antes da 1ª aula, depois do health check),
+// fala às 7h30 (mesmo slot do ops_digest — zap às 6h da manhã é invasivo), fecha às 23h (depois
+// da última aula das 20h).
+const PAUTA_ANAMNESE_MONTA_TIME = '06:00';
+// A fala sai quando a unidade ABRE, nao numa hora unica. 07:30 era hora de ninguem: a equipe
+// ainda nao chegou na escola e o recado fica boiando no grupo ate alguem aparecer. Pedido do
+// Alf em 04/09. A chave e o nome que situacao-aluno.nomeDaUnidade() devolve.
+const PAUTA_ANAMNESE_FALA_POR_UNIDADE = { 'Recreio': '08:00', 'Barra': '09:00', 'Campo Grande': '10:00' };
+const PAUTA_ANAMNESE_FECHA_TIME = '23:00';
+// A lista do dia PRECISA encolher (pedido do Alf, 04/09). Sem esta passada, quem preenche a
+// anamnese no tablet as 10h fica na tela ate as 23:00 e a equipe cobra quem ja fez. De 2 em 2
+// horas, das 09:00 as 21:00: a primeira aula e 08:00 (a de 09:00 pega a turma da manha) e a
+// ultima e 20:00 (a de 21:00 pega a ultima). So ENCOLHE — nunca fecha o container, nunca marca
+// ninguem como faltoso, nunca grava na escada e nunca fala no grupo: e arrumacao silenciosa da
+// tela. Quem DECIDE o dia continua sendo o fechamento das 23:00.
+const PAUTA_ANAMNESE_REFRESH_TIMES = ['09:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00'];
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
 const OPS_DIGEST_TIME = '07:30';                // Every day — achados da auditoria no grupo de ops (após triagem das 5h)
@@ -3746,7 +3762,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -4087,6 +4103,522 @@ async function run(opts = {}) {
     } catch (err) {
       console.error('[OpsDigest] erro (retenta no próximo tick até 11h):', err.message);
     }
+  }
+
+  // ── PAUTA DE ANAMNESE (spec 2026-09-03) ─────────────────────────────────────────────────
+  // Três blocos independentes, cada um com sua própria idempotência via marker_logs (o cron
+  // bate o slot 3x — ver timeToSlot/currentSlot acima). Quem decide é anamnese-pauta.js
+  // (ritual) e o módulo puro; aqui só busca o grupo da unidade e chama.
+
+  // 06:00 — monta o pacote (container + filhas) com quem tem aula hoje e está sem anamnese.
+  if (opts.force === 'pauta_anamnese' || timeToSlot(PAUTA_ANAMNESE_MONTA_TIME) === slotNow) {
+    try {
+      const { montarPautaDaUnidade, varrerPautasVelhas } = require('./anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        // Correção 1/5 (revisão do coordenador, 04/09): try/catch por UNIDADE, não em volta do
+        // loop inteiro — mesmo padrão do GROUP_MEMORY logo acima. Um throw numa unidade (dado
+        // ruim só dela) não pode matar a pauta das outras duas: falha passageira se cura no
+        // próximo tick, falha persistente numa unidade não pode bloquear as irmãs indefinidamente.
+        try {
+          const chaveDia = `pauta_anamnese:${unidadeId}:${now.ymd}`;
+          // Correção A (revisão do coordenador, 04/09): a consulta de idempotência só trava a
+          // retentativa em EXECUTED ou SKIPPED — um desfecho RESOLVIDO. A spec é explícita: "a
+          // chave do dia impede pacote duplicado QUANDO DER CERTO". 'fallback' significa "deu
+          // errado, tenta de novo": sem este filtro, um marcador de fallback bloqueava a
+          // retentativa do mesmo jeito que um sucesso, e o bug original (mensagem/pacote perdido
+          // pro resto do dia) voltava disfarçado de "já tentei". Custo aceito: fonte fora do ar a
+          // manhã inteira grava uma linha de fallback a cada tick (5 min) até resolver — é
+          // barulho CERTO, visível e limitado ao dia.
+          const { data: jaTem, error: erroJaTem } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveDia}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaTem) {
+            console.error(`[Pauta] montagem: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaTem.message}`);
+            continue; // falha-fechada: não sei se já rodou hoje, não arrisco duplicar
+          }
+          if (jaTem && jaTem.length) continue;  // idempotência: o cron bate o slot 3x
+
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id, leader_id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] montagem: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            // Pequeno 2 (revisão do coordenador): código que ainda não rodou em produção. Se uma
+            // unidade perder o vínculo la_report_unidade_id, ela sumia da pauta em silêncio.
+            console.warn(`[Pauta] montagem: nenhum grupo com wa_group_jid vinculado à unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
+
+          // RESÍDUO 2 (04/09): a varredura das pautas velhas só era chamada dentro do fechamento
+          // das 23:00 — uma passada ATRASADA. A spec §7 é explícita: "na manhã seguinte o pacote
+          // velho é arquivado e sai do caminho". Numa noite em que a RPC cai, o ritual grava
+          // sem_verificacao (certo, ninguém é punido) e NÃO fecha nada: as até 102 filhas ficam
+          // `pending` carimbadas com context 'work', data_classification 'real' e assigned_to
+          // null — o WHERE exato do relatório de atrasadas do CEO (limit 80) e do de aderência
+          // dos líderes (limit 200), os dois por due_date CRESCENTE. Sendo as MAIS ANTIGAS do
+          // sistema, comiam a janela inteira e expulsavam trabalho real do digest por um DIA
+          // ÚTIL inteiro, até a varredura da noite seguinte. Chamando a MESMA função aqui, o
+          // envenenamento dura minutos.
+          //
+          // É a MESMA varrerPautasVelhas do fechamento — nunca uma segunda implementação: duas
+          // limpezas iguais divergem, e a que fica cega é justamente a que ninguém percebe que
+          // parou de limpar.
+          //
+          // ANTES de montar, pra o painel do dia nascer limpo. Não toca o container de HOJE: o
+          // filtro `lt('due_date', hoje)` dentro de _listarContainersVelhosAbertos é estrutural,
+          // então nem o container que a montagem logo abaixo vai criar entra no alcance dela.
+          // E o try/catch existe pra que limpeza NUNCA impeça a montagem — se a varredura cair,
+          // o dia de trabalho da equipe nasce do mesmo jeito.
+          try {
+            const varr = await varrerPautasVelhas({ supabase, groupId: grupo.id, hoje: now.ymd });
+            if (varr.containersVelhosFechados || varr.filhasVelhasFechadas) {
+              console.log(`[Pauta] varredura da manhã ${situAl.nomeDaUnidade(unidadeId)}: ${varr.containersVelhosFechados} pauta(s) velha(s), ${varr.filhasVelhasFechadas} filha(s) fechada(s)`);
+            }
+            for (const aviso of varr.avisos) {
+              console.error(`[Pauta] varredura da manhã ${situAl.nomeDaUnidade(unidadeId)}: ${aviso}`);
+            }
+          } catch (eVarredura) {
+            console.error(`[Pauta] varredura da manhã ${situAl.nomeDaUnidade(unidadeId)}: erro (a montagem segue):`, eVarredura.message);
+          }
+
+          const r = await montarPautaDaUnidade({
+            supabase, laReport: laReportClient, unidadeId, groupId: grupo.id,
+            criadoPor: grupo.leader_id, hoje: now.ymd,
+          });
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE',
+            // IMPORTANT 3 + IMPORTANT 1 (revisão de costura, 04/09). A ordem é o conteúdo:
+            // 1) `jaExistia` é DESFECHO RESOLVIDO — a guarda de duplicata acertou, nada falhou —
+            //    e vira `skipped`. Antes virava `fallback`, que nesta casa significa "deu
+            //    errado, tenta de novo": quem lia marker_logs via falha onde não houve, e como
+            //    fallback não trava a chave do dia, a unidade re-rodava em todo tick restante do
+            //    slot.
+            // 2) depois `motivo`, que agora pode vir preenchido MESMO com criou=true (a escada
+            //    que não pôde ser lida — Important 1). Aí o marcador tem que dizer fallback:
+            //    `executed ... escalados=0` era idêntico a um dia saudável em que ninguém está
+            //    no 2º ou 3º degrau. O custo é um tick a mais (o próximo cai na guarda de
+            //    duplicata e fecha a chave com skipped), e é barato perto de uma escada
+            //    desligada em silêncio.
+            result: r.jaExistia ? 'skipped' : (r.motivo ? 'fallback' : (r.criou ? 'executed' : 'skipped')),
+            reason: `${chaveDia} total=${r.total} escalados=${r.escalados}${r.motivo ? (r.jaExistia ? ' nota=' : ' erro=') + r.motivo : ''}`.slice(0, 120),
+          });
+          // Global Constraint: todo error de chamada Supabase é checado. Risco menor que na fala
+          // — montarPautaDaUnidade já tem guarda própria contra retentativa (_pacoteJaExiste) —
+          // mas uma falha muda de log continua sendo uma falha muda.
+          if (erroMarker) console.error(`[Pauta] montagem: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarker.message}`);
+          // Só é erro o que de fato deu errado: "pauta já montada hoje" (o acerto da guarda de
+          // duplicata) num console.error faria a equipe caçar um problema que não existe.
+          if (r.motivo && !r.jaExistia) console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+        } catch (eUnidade) {
+          console.error(`[Pauta] montagem ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
+      }
+    } catch (e) { console.error('[Pauta] montagem erro (fora do loop por unidade):', e.message); }
+  }
+
+  // 09:00-21:00, de 2 em 2 horas — ATUALIZA a pauta do dia: tira da tela quem JA preencheu.
+  // Subconjunto ESTRITO do fechamento das 23:00 (ver o comentario de atualizarPautaDaUnidade):
+  // so escreve 'done', nunca 'cancelled', nunca grava em anamnese_pauta e nunca fecha o
+  // container — o dia ainda esta correndo, e quem nao preencheu as 14h pode preencher as 19h.
+  // Este bloco nao fala em grupo nenhum: e arrumacao silenciosa da tela.
+  //
+  // BRECHA 4 (04/09) — POR QUE ESTE BLOCO VEM ANTES DO DA FALA. A ordem era monta -> fala ->
+  // fecha -> atualizacao, e as 09:00 a fala da Barra dividia o slot com a atualizacao, no MESMO
+  // processo: a mensagem anunciava a pendencia cheia e segundos depois algumas daquelas linhas
+  // sumiam da tela. O TOM se contradizendo sozinho, dentro do mesmo tick. Rodando a atualizacao
+  // primeiro, a fala sai com a lista fresca. Custo aceito: a mensagem sai alguns segundos mais
+  // tarde (a atualizacao leva 6-8s por unidade) — e o preco de a mensagem ser verdadeira.
+  const _pautaRefreshHora = PAUTA_ANAMNESE_REFRESH_TIMES.find((h) => timeToSlot(h) === slotNow);
+  if (opts.force === 'pauta_anamnese_refresh' || _pautaRefreshHora) {
+    try {
+      const { atualizarPautaDaUnidade } = require('./anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      // Idempotencia por SLOT, nao por dia — ao contrario dos outros tres blocos, este roda 7
+      // VEZES no mesmo dia de proposito. Com a chave do dia, a passada das 09:00 travaria as seis
+      // seguintes e a lista voltaria a congelar (o bug que esta feature existe pra matar). Sem
+      // chave nenhuma, o cron bate cada slot 3x (slot de 15 min / tick de 5 min) e a RPC leva 6-8s:
+      // seriam 21 consultas por unidade por dia em vez de 7.
+      // Sob --force nenhuma hora da lista casa o slot: usa o slot CORRENTE, pra que o force
+      // tambem seja idempotente dentro dos seus 15 minutos — mesmo comportamento dos outros
+      // blocos, que sob force continuam respeitando a chave deles.
+      const slotChave = _pautaRefreshHora
+        || `${String(now.hour).padStart(2, '0')}:${String(Math.floor(now.minute / 15) * 15).padStart(2, '0')}`;
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        // try/catch por UNIDADE, DENTRO do laco — mesmo motivo do bloco das 06:00 (comentario
+        // completo la): um dado ruim de uma unidade nao pode matar as outras duas no mesmo tick.
+        try {
+          const chaveRefresh = `pauta_refresh:${unidadeId}:${now.ymd}:${slotChave}`;
+          // So EXECUTED/SKIPPED travam a retentativa: 'fallback' significa "deu errado, tenta de
+          // novo" e precisa poder rodar de novo dentro do slot. Mesmo filtro dos outros tres
+          // blocos — comentario completo no das 06:00.
+          const { data: jaRodou, error: erroJaRodou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveRefresh}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaRodou) {
+            console.error(`[Pauta] atualizacao: checagem de idempotencia falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaRodou.message}`);
+            continue;  // falha-fechada: nao sei se ja rodei neste slot, nao gasto a RPC de novo
+          }
+          if (jaRodou && jaRodou.length) continue;  // idempotencia: o cron bate o slot 3x
+
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] atualizacao: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[Pauta] atualizacao: nenhum grupo com wa_group_jid vinculado a unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
+
+          const r = await atualizarPautaDaUnidade({
+            supabase, laReport: laReportClient, unidadeId, groupId: grupo.id, hoje: now.ymd,
+          });
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE',
+            // 'semPauta' (domingo, ou uma manha que nao montou) e desfecho RESOLVIDO, nao falha:
+            // vira 'skipped' e trava o slot. Sem isso seria 'fallback' — "tenta de novo" — e a
+            // unidade re-rodaria em todo tick restante dos 7 slots num dia que nem tem pauta.
+            // Mesmo par de sensores que 'jaExistia' na montagem das 06:00: o motivo textual e o
+            // sensor de quem le o RETORNO, a flag e o sensor de quem grava o MARCADOR.
+            result: r.semPauta ? 'skipped' : (r.motivo ? 'fallback' : 'executed'),
+            // BRECHA 1 (04/09): `falha=` e o contador de filhas que NAO fecharam. Ele existe
+            // porque o desfecho agora continua `executed` quando o trabalho aconteceu (uma filha
+            // travada nao pode mais reabrir o slot inteiro e custar 21 RPCs por unidade por dia)
+            // — sem este numero a falha sumiria do marcador e a unica pista seria o console.error
+            // do processo. So aparece quando e diferente de zero: o reason tem 120 caracteres, e
+            // um ` falha=0` em todo marcador saudavel comeria o espaco do `erro=` justamente no
+            // marcador que precisa dele. Mesmo criterio do `v=` no fechamento das 23:00.
+            reason: (`${chaveRefresh} fech=${r.fechadas} pend=${r.continuamPendentes} nd=${r.naoDecididas}`
+              + (r.falhasAoFechar ? ` falha=${r.falhasAoFechar}` : '')
+              + (r.motivo && !r.semPauta ? ` erro=${r.motivo}` : '')).slice(0, 120),
+          });
+          // Global Constraint: todo error de chamada Supabase e checado. Uma falha muda de log
+          // continua sendo uma falha muda — e aqui ela custaria a idempotencia do slot.
+          if (erroMarker) console.error(`[Pauta] atualizacao: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarker.message}`);
+          // So e erro o que de fato deu errado: "nao ha pauta de hoje" e o ACERTO da guarda, e
+          // num console.error faria a equipe cacar um problema que nao existe (mesmo cuidado que
+          // o 'jaExistia' recebe no bloco das 06:00).
+          if (r.motivo && !r.semPauta) {
+            console.error(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+          } else if (r.fechadas) {
+            console.log(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)} ${slotChave}: ${r.fechadas} filha(s) sairam da tela, ${r.continuamPendentes} continuam`);
+          }
+        } catch (eUnidade) {
+          console.error(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
+      }
+    } catch (e) { console.error('[Pauta] atualizacao erro (fora do loop por unidade):', e.message); }
+  }
+
+  // 07:30 — o recado no grupo (mesmo slot do ops_digest — zap às 6h da manhã é invasivo).
+  // Separado da montagem de propósito. CORREÇÃO (revisão de costura, 04/09): o comentário que
+  // estava aqui dizia que, quando a montagem falha, "aqui simplesmente não há filhas pra ler e o
+  // bloco fica em silêncio (saúde, não erro)" — e era isso que fazia a spec §7 não ser cumprida.
+  // Silêncio é saúde SÓ quando a montagem chegou ao fim e não havia aluno hoje; quando ela não
+  // montou, o grupo é avisado (ver o bloco do CRITICAL 1 lá dentro).
+  //
+  // BRECHA 4 (04/09): este bloco agora roda DEPOIS da atualização do meio do dia (bloco acima),
+  // não antes. Às 09:00 os dois caem no mesmo slot, e a ordem antiga fazia a Barra receber uma
+  // mensagem com a pendência cheia segundos antes de a atualização apagar parte daquelas linhas
+  // da tela. Quem mexer nesta ordem de novo reabre exatamente essa contradição.
+  if (opts.force === 'pauta_anamnese_fala'
+      || Object.values(PAUTA_ANAMNESE_FALA_POR_UNIDADE).some((h) => timeToSlot(h) === slotNow)) {
+    try {
+      const pura = require('../services/anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        // Cada unidade fala na SUA hora (Recreio 08:00, Barra 09:00, Campo Grande 10:00). O bloco
+        // abre quando QUALQUER uma bate o slot, entao aqui sai quem nao e a da vez.
+        const horaDaFala = PAUTA_ANAMNESE_FALA_POR_UNIDADE[situAl.nomeDaUnidade(unidadeId)];
+        if (!horaDaFala) {
+          // Unidade nova sem horario definido: nao falo no escuro, mas tambem nao calo sobre isso.
+          console.warn(`[Pauta] fala: unidade sem horario definido (${unidadeId}) -- nao vou falar`);
+          continue;
+        }
+        if (opts.force !== 'pauta_anamnese_fala' && timeToSlot(horaDaFala) !== slotNow) continue;
+        // Correção 1/5: try/catch por unidade — mesmo motivo do bloco das 06:00 (comentário lá).
+        try {
+          const chaveFala = `pauta_fala:${unidadeId}:${now.ymd}`;
+          // Correção A: só EXECUTED/SKIPPED travam a retentativa — mesmo motivo do bloco das
+          // 06:00 (comentário lá). Sem isto, o marcador 'fallback' gravado abaixo quando o envio
+          // falha bloquearia a retentativa igual um sucesso, e a mensagem se perderia pro resto
+          // do dia — o mesmo silêncio permanente que este plano inteiro existe pra evitar.
+          const { data: jaFalou, error: erroJaFalou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFala}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaFalou) {
+            console.error(`[Pauta] fala: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFalou.message}`);
+            continue;
+          }
+          if (jaFalou && jaFalou.length) continue;
+
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] fala: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[Pauta] fala: nenhum grupo com wa_group_jid vinculado à unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
+
+          // CORREÇÃO (Alf, 04/09): o plano original tinha um embed
+          // `parent:tasks!tasks_parent_task_id_fkey(title)` que não resolve — medido contra o
+          // banco, devolve "Could not find a relationship between 'tasks' and 'tasks' in the
+          // schema cache" ({data:null,error}), o que calaria esta fala pra sempre (cai direto no
+          // "!filhas.length" abaixo, em silêncio). Ninguém lê `f.parent` mesmo; embed tirado,
+          // erro checado. `.not('parent_task_id','is',null)` exclui o próprio CONTAINER da busca:
+          // o título dele também contém "Anamnese —" (ver _tituloDoContainer em
+          // rituals/anamnese-pauta.js) e bateria no mesmo LIKE das filhas, inflando a contagem da
+          // mensagem em +1 todo dia (o container tem o mesmo assigned_group_id e due_date).
+          const { data: filhas, error: erroFilhas } = await supabase.from('tasks')
+            .select('title')
+            .eq('assigned_group_id', grupo.id).eq('due_date', now.ymd)
+            .not('parent_task_id', 'is', null)
+            .like('title', '%Anamnese —%').order('title');
+          if (erroFilhas) {
+            console.error(`[Pauta] fala: consulta das filhas falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroFilhas.message}`);
+            continue;
+          }
+          // CRITICAL 1 (revisão de costura, 04/09): a spec §7 manda AVISAR no grupo quando a
+          // fonte cai de manhã — "não cria pacote e DIZ no grupo que não conseguiu montar a
+          // pauta" — e o §9 repete como critério de aceite ("nenhum pacote criado, aviso no
+          // grupo, sem_verificacao gravado"). O que existia aqui era um `continue` seco com um
+          // comentário declarando que silêncio é saúde: numa manhã em que a fonte caísse, os
+          // TRÊS grupos reais recebiam NADA e a equipe não distinguia "não tem aluno hoje" de
+          // "nossa fonte está fora" — exatamente a patologia que esta feature existe pra matar.
+          //
+          // Como distinguir os dois casos sem inventar: pelo marcador da MONTAGEM daquele dia,
+          // com a mesma semântica de "desfecho resolvido" que a idempotência usa em todos os
+          // blocos daqui. executed|skipped = a montagem chegou ao fim; se ela terminou e não há
+          // filhas, é porque não há aluno hoje, e aí silêncio É saúde. Nenhuma linha resolvida =
+          // ou só fallback, ou marcador nenhum: nos dois casos a pauta NÃO foi montada e o grupo
+          // precisa saber. Se a LEITURA do marcador falhar, não falamos: falar errado num grupo
+          // real é pior que calar.
+          let texto = null;
+          let chaveMsg = chaveFala;
+          let sufixoReason = '';
+          if (!filhas || !filhas.length) {
+            const chaveDia = `pauta_anamnese:${unidadeId}:${now.ymd}`;
+            const { data: montou, error: erroMontou } = await supabase.from('marker_logs')
+              .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveDia}%`)
+              .in('result', ['executed', 'skipped']).limit(1);
+            if (erroMontou) {
+              console.error(`[Pauta] fala: checagem do marcador da montagem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMontou.message}`);
+              continue;
+            }
+            if (montou && montou.length) continue;  // montou e não há aluno hoje: silêncio é saúde
+
+            // Chave PRÓPRIA pro aviso, não a da fala normal: se a montagem se curar num tick
+            // seguinte do mesmo slot, a mensagem de verdade ainda tem que poder sair. Esta
+            // consulta é o que impede o aviso de sair uma vez por tick.
+            const chaveAviso = `pauta_fala_aviso:${unidadeId}:${now.ymd}`;
+            const { data: jaAvisou, error: erroJaAvisou } = await supabase.from('marker_logs')
+              .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveAviso}%`)
+              .in('result', ['executed', 'skipped']).limit(1);
+            if (erroJaAvisou) {
+              console.error(`[Pauta] fala: checagem do aviso já enviado falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaAvisou.message}`);
+              continue;
+            }
+            if (jaAvisou && jaAvisou.length) continue;
+
+            // O cabeçalho é DIFERENTE do da mensagem normal de propósito: a guarda de duplicata
+            // abaixo casa por PREFIXO de conteúdo, e um cabeçalho igual faria o aviso bloquear a
+            // pauta de verdade que se curasse depois (ou o contrário). Frase sóbria: quem lê é a
+            // equipe da escola, não um engenheiro — diz o que aconteceu e o que vem depois.
+            const [, mA, dA] = now.ymd.split('-');
+            texto = `📋 *Anamnese — pauta de hoje (${dA}/${mA})*\n`
+              + 'Não consegui montar a pauta de hoje — assim que der certo, ela aparece no painel e eu aviso por aqui.';
+            chaveMsg = chaveAviso;
+            sufixoReason = 'aviso: nao consegui montar a pauta';
+          } else {
+            // Falha FECHADA (Pequeno 1, revisão do coordenador): título que não bate o formato NÃO
+            // vira "nome" — a filha é PULADA, com log. O `.replace()` de antes, sem match, devolvia
+            // o título INTEIRO como nome (fails open) — texto que a equipe LÊ no zap; um título
+            // torto tem que sumir da mensagem, não virar um nome esquisito nela. Aceita hora de 1
+            // dígito, igual ao helper de origem (_extrairNomeDaFilha, rituals/anamnese-pauta.js) —
+            // mesma regra, não reinventar. Corta o resto no primeiro ` (` ou no primeiro ` ⚠`, o
+            // que vier antes — sem curso, o título da 2ª aparição é "HH:MM Anamnese — Nome ⚠️ 2ª
+            // semana — não preencheu na anterior" e cortar só em ` (` deixaria o aviso colado no nome.
+            const itens = [];
+            for (const f of filhas) {
+              const matchTitulo = /^(\d{1,2}):(\d{2}) Anamnese — (.+)$/.exec(String(f.title || ''));
+              if (!matchTitulo) {
+                console.warn(`[Pauta] fala: título fora do formato esperado (${situAl.nomeDaUnidade(unidadeId)}), pulando filha: "${f.title}"`);
+                continue;
+              }
+              const resto = matchTitulo[3];
+              const marcas = [' (', ' ⚠'].map((marca) => resto.indexOf(marca)).filter((i) => i !== -1);
+              const nome = (marcas.length ? resto.slice(0, Math.min(...marcas)) : resto).trim();
+              if (!nome) {
+                console.warn(`[Pauta] fala: nome vazio depois do corte (${situAl.nomeDaUnidade(unidadeId)}), pulando filha: "${f.title}"`);
+                continue;
+              }
+              itens.push({ hora: `${matchTitulo[1].padStart(2, '0')}:${matchTitulo[2]}`, pessoa: { nome } });
+            }
+            if (!itens.length) continue;
+
+            const [, m, d2] = now.ymd.split('-');
+            texto = pura.mensagemDoGrupo({ itens, unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}` });
+            if (!texto) continue;
+            sufixoReason = `itens=${itens.length}`;
+          }
+
+          // Correção B (revisão do coordenador, 04/09) — o "irmão" do Important 1: mesmo com a
+          // Correção A, sobra o caso em que a mensagem ENTRA e o marker_logs falha logo depois —
+          // não fica linha nenhuma (nem executed, nem fallback). Sem esta guarda, o próximo tick
+          // não acha marcador e manda a mensagem DE NOVO, num grupo de WhatsApp real com gente
+          // lendo. Log não previne; só uma guarda no ARTEFATO previne — mesmo padrão de
+          // _pacoteJaExiste (Task 5, rituals/anamnese-pauta.js): a guarda olha o que foi
+          // GRAVADO, não o registro sobre o que foi gravado, porque o registro é exatamente o
+          // que pode falhar calado.
+          //
+          // O cabeçalho vem de `texto.split('\n')[0]`, NUNCA redigitado: se o texto consultado
+          // pudesse divergir do texto enviado, a guarda nasceria cega e a mensagem repetida
+          // voltaria em silêncio — é o detalhe que decide se ela funciona.
+          const cabecalhoMsg = String(texto).split('\n')[0];
+          // Mesmo corte de "hoje em BRT" já usado no health-check acima (todayStart).
+          const hojeInicioISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+          const { data: jaEnviada, error: erroJaEnviada } = await supabase.from('group_chat_messages')
+            .select('id')
+            .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
+            .gte('created_at', hojeInicioISO)
+            .like('content', `${cabecalhoMsg}%`)
+            .limit(1);
+          if (erroJaEnviada) {
+            // Não sei se já falei — não posso arriscar falar de novo num grupo real no escuro.
+            // 'fallback' (com a Correção A) deixa o próximo tick tentar de novo com a leitura
+            // corrigida, em vez de travar calado ou arriscar reenvio.
+            console.error(`[Pauta] fala: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviada.message}`);
+            const { error: erroMarkerChkFallback } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveMsg} checagem de duplicata falhou: ${erroJaEnviada.message}`.slice(0, 120),
+            });
+            if (erroMarkerChkFallback) console.error(`[Pauta] fala: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChkFallback.message}`);
+            continue;
+          }
+          if (jaEnviada && jaEnviada.length) {
+            // Achou o artefato: um tick anterior já mandou esta mensagem e só o marcador falhou.
+            // Não envia de novo — só fecha o marcador que faltou.
+            const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
+              reason: `${chaveMsg} mensagem já enviada (achada por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
+            });
+            if (erroMarkerSkip) console.error(`[Pauta] fala: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
+            continue;
+          }
+
+          // Important 1 (revisão do coordenador, 04/09): este bloco não tem guarda de duplicata
+          // própria como a montagem/fechamento (Tasks 5/6) — aqui a guarda é a checagem acima
+          // (Correção B) mais o marker_logs. Uma guarda que pode falhar calada não é guarda: os
+          // dois inserts abaixo checam error e MUDAM o que acontece a seguir, não só logam.
+          const { error: erroMsg } = await supabase.from('group_chat_messages').insert({
+            group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: texto, channel: 'app',
+          });
+          if (erroMsg) {
+            // A mensagem NÃO saiu. Gravar 'executed' aqui travaria a chave do dia pro resto de
+            // hoje. 'fallback' deixa o próximo tick tentar de novo — mas SÓ porque a consulta de
+            // idempotência acima (Correção A) filtra `result IN (executed, skipped)`: sem esse
+            // filtro, um marcador 'fallback' bloquearia a retentativa do mesmo jeito que um
+            // sucesso, e a mensagem se perderia pro resto do dia — o silêncio permanente que
+            // este plano inteiro existe pra evitar, só que documentado em vez de corrigido.
+            console.error(`[Pauta] fala: envio da mensagem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMsg.message}`);
+            const { error: erroMarkerFallback } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
+              reason: `${chaveMsg} envio falhou: ${erroMsg.message}`.slice(0, 120),
+            });
+            if (erroMarkerFallback) console.error(`[Pauta] fala: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerFallback.message}`);
+            continue;
+          }
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE', result: 'executed', reason: `${chaveMsg} ${sufixoReason}`.slice(0, 120),
+          });
+          if (erroMarker) {
+            // A mensagem JÁ SAIU pro grupo real e o marcador que travaria a retentativa não
+            // gravou — o próximo tick (5min, e o cron bate o slot 3x) não acha marcador e manda
+            // de novo, num grupo de WhatsApp real com gente lendo. Log alto de propósito: é a
+            // única forma de alguém descobrir isso a tempo de agir.
+            console.error(`[Pauta] fala: ATENÇÃO — mensagem enviada mas marker_logs não gravou (${situAl.nomeDaUnidade(unidadeId)}), risco de reenvio no próximo tick: ${erroMarker.message}`);
+          }
+        } catch (eUnidade) {
+          console.error(`[Pauta] fala ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
+      }
+    } catch (e) { console.error('[Pauta] fala erro (fora do loop por unidade):', e.message); }
+  }
+
+  // 23:00 — fecha o recado do dia (filhas + container) depois da última aula (20:00). Lê a
+  // fonte de novo dentro de fecharPautaDaUnidade, que também grava o resultado de cada aluno em
+  // anamnese_pauta (a verdade da escada).
+  if (opts.force === 'pauta_anamnese_fecha' || timeToSlot(PAUTA_ANAMNESE_FECHA_TIME) === slotNow) {
+    try {
+      const { fecharPautaDaUnidade } = require('./anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        // Correção 1/5: try/catch por unidade — mesmo motivo do bloco das 06:00 (comentário lá).
+        try {
+          const chaveFecha = `pauta_fecha:${unidadeId}:${now.ymd}`;
+          // Correção A: só EXECUTED/SKIPPED travam a retentativa — mesmo motivo do bloco das
+          // 06:00 (comentário lá).
+          const { data: jaFechou, error: erroJaFechou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveFecha}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaFechou) {
+            console.error(`[Pauta] fechamento: checagem de idempotência falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaFechou.message}`);
+            continue;
+          }
+          if (jaFechou && jaFechou.length) continue;
+
+          // CORREÇÃO (Alf, 04/09): fecharPautaDaUnidade ganhou `groupId` na Task 6 — sem ele,
+          // _acharContainerParaFechar (rituals/anamnese-pauta.js) nunca encontra o container e as
+          // filhas nunca fecham: é o entulho de tarefas abertas por dia que a Task 6 existiu pra
+          // evitar. Mesma busca de grupo do bloco das 06:00.
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] fechamento: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[Pauta] fechamento: nenhum grupo com wa_group_jid vinculado à unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
+
+          const r = await fecharPautaDaUnidade({
+            supabase, laReport: laReportClient, unidadeId, groupId: grupo.id, hoje: now.ymd,
+          });
+          // filhasFechadasComoFeitas/filhasFechadasComoNaoFeitas/containerFechado (Task 6) vão no
+          // reason, dentro do limite de tamanho — é o único jeito de auditar o fechamento do
+          // RECADO (painel) sem abrir o banco, distinto do fechamento da ESCADA (ok/falta/semver).
+          // `v=containers/filhas` só aparece quando a varredura de dias anteriores (Critical 3)
+          // realmente fechou alguma coisa: numa noite normal ela é 0/0 e o reason (limitado a
+          // 120 chars) não pode gastar espaço com zero.
+          const reasonFecha = `${chaveFecha} ok=${r.preencheu} falta=${r.naoPreencheu} semver=${r.semVerificacao} `
+            + `fok=${r.filhasFechadasComoFeitas} fnao=${r.filhasFechadasComoNaoFeitas} cont=${r.containerFechado}`
+            + (r.containersVelhosFechados ? ` v=${r.containersVelhosFechados}/${r.filhasVelhasFechadas}` : '');
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE',
+            result: r.motivo ? 'fallback' : 'executed',
+            reason: reasonFecha.slice(0, 120),
+          });
+          // Global Constraint: todo error de chamada Supabase é checado. Risco menor que na fala
+          // — fecharPautaDaUnidade não depende deste marker pra evitar duplicata (ela lê a fonte
+          // de novo e decide pelo estado real) — mas uma falha muda de log continua sendo muda.
+          if (erroMarker) console.error(`[Pauta] fechamento: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarker.message}`);
+          if (r.motivo) console.error(`[Pauta] fechamento ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+        } catch (eUnidade) {
+          console.error(`[Pauta] fechamento ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
+      }
+    } catch (e) { console.error('[Pauta] fechamento erro (fora do loop por unidade):', e.message); }
   }
 
   // Agente de governança — 08:00 BRT, depois do digest das 07:30 (que já mostrou os achados
