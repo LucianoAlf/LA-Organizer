@@ -110,3 +110,45 @@ test('pergunta continua intocada mesmo com rotulo composto (regressao do fix)', 
   assert.equal(r.achou, false, 'pergunta nao tem valor a redigir, nem com rotulo composto');
   assert.equal(r.texto, t);
 });
+
+// --- Fix round 2 (review C-4/C-5/C-6) -------------------------------------
+
+test('C-4: rotulos empilhados sem valor (Senha:/Token: seguidos so pelo valor de Token)', () => {
+  const r = redigirSegredos('Senha:\nToken:\nhunter2');
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /hunter2/);
+  assert.match(r.texto, /Senha:/, 'rotulo Senha nao pode sumir');
+  assert.match(r.texto, /Token:/, 'rotulo Token nao pode sumir');
+});
+
+test('C-4: fila de rotulos conta rotulo nao-secreto tambem (Login:/Senha: -> admin e hunter2 mascarados)', () => {
+  const r = redigirSegredos('Login:\nSenha:\nadmin\nhunter2');
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /admin/, 'bloco tem tamanho 2 (Login:+Senha:), os dois valores mascaram');
+  assert.doesNotMatch(r.texto, /hunter2/);
+  assert.match(r.texto, /Login:/);
+  assert.match(r.texto, /Senha:/);
+});
+
+test('C-4: caso do proprio C-1 (Usuario com valor, depois Senha:/Token: empilhados)', () => {
+  const r = redigirSegredos('Usuario: admin\nSenha:\nToken:\nT0k3n789');
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /T0k3n789/);
+  assert.match(r.texto, /Usuario: admin/, 'linha com valor proprio fica intocada');
+  assert.match(r.texto, /Senha:/);
+  assert.match(r.texto, /Token:/);
+});
+
+test('C-5: pergunta solta depois de rotulo pendente nao vira valor', () => {
+  const t = 'Senha:\nvoce pode me ajudar com outra coisa?';
+  const r = redigirSegredos(t);
+  assert.equal(r.achou, false, 'pergunta nao e valor, nao ha nada para mascarar');
+  assert.equal(r.texto, t);
+});
+
+test('C-6: separador espaco em frase idiomatica nao dispara (chave/segredo como palavra comum)', () => {
+  const t = 'a chave da porta esta emprestada com o joao';
+  const r = redigirSegredos(t);
+  assert.equal(r.achou, false);
+  assert.equal(r.texto, t);
+});
