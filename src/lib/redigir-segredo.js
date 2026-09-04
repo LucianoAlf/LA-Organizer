@@ -144,7 +144,18 @@
 //    apagaria conversa real, que e o outro lado do mesmo problema.
 // 5. Tabela transposta de 3+ colunas ('| Servico | Senha | Token |' com os
 //    valores na linha de baixo): a linha de valores tem 3 palavras e vira
-//    prosa. A de 2 colunas passou a ser coberta no round 8.
+//    prosa. A de 2 colunas fechou -- no round 8 so com o rotulo na ULTIMA
+//    coluna, e no round 10 tambem com ele na PRIMEIRA.
+// 11. Fraseado SEM pontuacao nenhuma nao dispara -- e caminho principal, nao
+//    borda: 'a senha e hunter2' e 'A imagem mostra um painel com a senha
+//    250178Alf# no campo' saem intactos. Sem separador nao ha onde ancorar o
+//    valor, e disparar por proximidade de palavra apagaria conversa comum.
+// 12. Com o rotulo NAO colado ao separador (o caminho do V-2), o valor tem de
+//    ser token unico de 4+ -- entao 'a senha do wifi: X7k 9Qm 2p' (valor com
+//    espacos) nao mascara, e em 'a senha do wifi: abc123 e o token: xyz789' o
+//    'abc123' escapa (o valor ate o proximo campo tem espacos). E o preco da
+//    correcao do item 5: a mesma regra e a que salva 'Preciso trocar a senha
+//    do wifi. Motivo: muita gente conectada'.
 // 6. Connection string ('postgres://user:hunter2@host:5432/db') nao casa.
 // 7. Heading markdown sem separador ('## Senha\nhunter2') nao arma -- e o
 //    limite 1 com outra roupa.
@@ -223,7 +234,22 @@ function _tokenValido(tok) {
 // BONUS round 8: "-", "—" e "→" entram como separadores tratados como o
 // espaco (valor tem de ser token unico de 4+ caracteres) -- 'Senha - hunter2'
 // e formato provavel de modelo de visao descrevendo formulario.
-const RE_CAMPO = /(?:^|(?<=[\s(\[*`"_|]))(api[ _-]?key|[A-Za-z0-9_-]+)[ \t*`"_]*([:=;|]|[ \t\-—→])/gi;
+//
+// ROUND 10, item 1: o token e o lookbehind aceitam letra ACENTUADA. Sem isso
+// o ":" depois de palavra acentuada era inalcancavel como separador e o V-2
+// so funcionava em portugues sem acento -- 'a senha e:' mascarava e
+// 'a senha é:' vazava. O "gap" (entre token e separador) NAO precisa de
+// acento: como a classe do token passou a incluir letra acentuada, ela e
+// absorvida pelo proprio token; por o contrario, letra no gap deixaria o
+// token pular por cima de uma palavra inteira para alcancar um separador.
+//
+// ROUND 10, item 4: "_" saiu do gap e do lookbehind (continua no token). Com
+// "_" nos tres lugares, cada posicao de um run de underscores era ponto de
+// partida valido e o casamento era O(n^3) -- 6400 "_" levavam 52 s, e o
+// engine chama o redator 3x por turno num processo single-thread. Nos dois
+// lugares o "_" era redundante: a classe do token ja o inclui, entao ele
+// nunca precisa ser fronteira nem preenchimento.
+const RE_CAMPO = /(?:^|(?<=[\s(\[*`"|À-ÖØ-öø-ÿĀ-ſ]))(api[ _-]?key|[A-Za-z0-9_\-À-ÖØ-öø-ÿĀ-ſ]+)[ \t*`"]*([:=;|]|[ \t\-—→])/gi;
 
 const RE_SEP_PONTUACAO = /^[:=;|]$/;
 
@@ -246,20 +272,50 @@ function _limpaEnfase(palavra) {
   return palavra.replace(RE_ENFASE_BORDA, '');
 }
 
-// V-2 / round 5-6: existe rotulo conhecido em ALGUMA palavra deste texto?
-// Uma palavra sozinha, ou um par adjacente (para o rotulo de duas palavras
-// "api key"). Devolve o indice logo APOS a primeira palavra que bate, ou -1.
-function _indiceAposPrimeiroRotulo(texto) {
+// Palavras da linha, com a posicao em que a palavra TERMINA depois de tirada
+// a pontuacao colada, e se ela e rotulo conhecido (sozinha ou como segunda
+// metade do par "api key").
+//
+// ROUND 10, item 2: o "fim" e o da palavra LIMPA, nao o do \S+ inteiro. Medido
+// sobre o \S+, a pontuacao colada era engolida ("Senha:|" terminava depois do
+// "|"), a guarda de posicao reprovava o separador certo e o V-2 elegia um "|"
+// de DENTRO do valor -- '| Senha:| hunter2 |' saia com hunter2 em claro. Com
+// espaco funcionava, colado nao; e era 100% da instabilidade de idempotencia.
+function _palavrasDaLinha(texto) {
   const re = /\S+/g;
+  const out = [];
   let m;
   let anterior = null;
   while ((m = re.exec(texto))) {
     const limpo = _limpaEnfase(m[0]);
-    if (_tokenValido(m[0]) || _tokenValido(limpo)) return m.index + m[0].length;
-    if (anterior !== null && _tokenValido(`${anterior} ${limpo}`)) return m.index + m[0].length;
+    const desloc = limpo ? m[0].indexOf(limpo) : 0;
+    const ehRotulo = _tokenValido(m[0])
+      || (limpo !== '' && _tokenValido(limpo))
+      || (anterior !== null && limpo !== '' && _tokenValido(`${anterior} ${limpo}`));
+    out.push({ fim: m.index + desloc + limpo.length, ehRotulo });
     anterior = limpo;
   }
-  return -1;
+  return out;
+}
+
+function _temRotuloEmAlgumaPalavra(texto) {
+  return _palavrasDaLinha(texto).some(p => p.ehRotulo);
+}
+
+// ROUND 10, item 5: proximidade. Antes bastava a palavra senha/chave/token em
+// QUALQUER lugar da linha e QUALQUER ":" depois, a qualquer distancia -- num
+// corpus de 20 mensagens reais de escola de musica, 7 eram destruidas
+// ('...so preciso confirmar uma coisa: o email do aluno' virava '...coisa: ***').
+// Agora o rotulo tem de estar entre as ultimas 4 palavras antes do separador.
+const JANELA_ROTULO = 4;
+
+function _temRotuloPerto(palavras, sepPos) {
+  const antes = [];
+  for (const p of palavras) {
+    if (p.fim > sepPos) break;
+    antes.push(p);
+  }
+  return antes.slice(-JANELA_ROTULO).some(p => p.ehRotulo);
 }
 
 // Onde o V-2 pode disparar: no PRIMEIRO separador de pontuacao que venha
@@ -268,36 +324,24 @@ function _indiceAposPrimeiroRotulo(texto) {
 // vazio e a linha saia intacta -- o V-2 abriria um vazamento ao consertar
 // outro. Aqui so interessa o separador onde o valor comeca.
 let _cacheLinha = null;
-let _cacheRotulo = -1;
 let _cachePosV2 = -1;
 
-function _preparaLinha(linha) {
-  if (linha === _cacheLinha) return;
+function _posV2DaLinha(linha) {
+  if (linha === _cacheLinha) return _cachePosV2;
   _cacheLinha = linha;
-  _cacheRotulo = _indiceAposPrimeiroRotulo(linha);
   _cachePosV2 = -1;
-  if (_cacheRotulo < 0) return;
+  const palavras = _palavrasDaLinha(linha);
+  if (!palavras.some(p => p.ehRotulo)) return _cachePosV2;
   const scan = new RegExp(RE_CAMPO.source, 'gi');
   let m;
   while ((m = scan.exec(linha))) {
-    // ">=" e nao ">": quando o separador vem colado ao proprio rotulo
-    // ("| Senha: | hunter2 |"), o fim do match coincide com o fim do rotulo.
-    // Com ">" esse separador era pulado e o V-2 elegia uma barra DENTRO do
-    // valor, cortando o valor em dois e deixando o segundo pedaco em claro.
-    if (RE_SEP_PONTUACAO.test(m[2]) && scan.lastIndex >= _cacheRotulo) {
+    // O separador e um unico caractere, logo antes de lastIndex.
+    if (RE_SEP_PONTUACAO.test(m[2]) && _temRotuloPerto(palavras, scan.lastIndex - 1)) {
       _cachePosV2 = m.index;
-      return;
+      return _cachePosV2;
     }
   }
-}
-
-function _posV2DaLinha(linha) {
-  _preparaLinha(linha);
   return _cachePosV2;
-}
-
-function _temRotuloEmAlgumaPalavra(texto) {
-  return _indiceAposPrimeiroRotulo(texto) >= 0;
 }
 
 const RE_ENFASE_FINAL = /[ \t]*[*`"_]+[ \t]*$/;
@@ -331,6 +375,25 @@ function _ehLinhaCandidata(linha) {
 // posicao da linha, nao so colado ao separador ('a minha api key e:').
 function _linhaArmaModo(linha) {
   if (!_ehLinhaCandidata(linha)) return false;
+  return _temRotuloEmAlgumaPalavra(linha);
+}
+
+// ROUND 10, item 3: linha de tabela que contem rotulo arma o modo, alem do
+// que ela mesma mascare. Sem isso, so a tabela transposta com o rotulo na
+// ULTIMA coluna funcionava ('| Usuario | Senha |'): com o rotulo na PRIMEIRA
+// ('| Senha | Usuario |'), a celula seguinte era mascarada como se fosse o
+// valor e a linha de baixo -- onde o valor de verdade estava -- saia intacta.
+// Nao da para distinguir com seguranca "linha de cabecalho" de "linha de
+// valores": o palpite erraria em '| Senha | correcthorse |'. Entao arma nos
+// dois casos e aceita a sobre-redacao da celula de cabecalho.
+function _linhaTabelaComRotulo(linha) {
+  if (!linha.includes('|')) return false;
+  if (_ehSeparadorTabela(linha.trim())) return false;
+  // Mesma guarda do _ehLinhaCandidata: linha que ja termina na MASCARA e
+  // texto JA redigido. Sem isso '| Senha| ***' re-arma a cada passagem e come
+  // a linha seguinte -- foi o que o fuzz de idempotencia pegou (6340 casos,
+  // todos desta classe) quando esta regra do item 3 entrou.
+  if (RE_TERMINA_MASCARA.test(linha.replace(/[ \t]+$/, ''))) return false;
   return _temRotuloEmAlgumaPalavra(linha);
 }
 
@@ -397,7 +460,11 @@ function _acharProximoCampo(linha, from) {
       return { start: m.index, matchEnd: RE_CAMPO.lastIndex, token: m[1], sepChar: m[2] };
     }
     if (RE_SEP_PONTUACAO.test(m[2]) && m.index === _posV2DaLinha(linha)) {
-      return { start: m.index, matchEnd: RE_CAMPO.lastIndex, token: m[1], sepChar: m[2] };
+      // viaPrefixo: o rotulo nao esta colado ao separador, foi achado pela
+      // varredura da linha. Nesse caso o valor tem de ter forma de credencial
+      // colada (token unico de 4+), senao 'Motivo: muita gente conectada'
+      // numa mensagem que so MENCIONA senha vira '*** '.
+      return { start: m.index, matchEnd: RE_CAMPO.lastIndex, token: m[1], sepChar: m[2], viaPrefixo: true };
     }
     // Token invalido: o regex global ja avancou lastIndex sozinho; a proxima
     // tentativa ainda enxerga a fronteira real via lookbehind (nao depende
@@ -445,7 +512,10 @@ function _processaLinha(linha) {
       continue;
     }
 
-    if (_ehPergunta(v) || !_valorQualifica(sepEhPontuacao, v)) {
+    // Rotulo achado pela varredura (nao colado ao separador) exige valor com
+    // forma de credencial colada, qualquer que seja o separador -- item 5.
+    const exigeTokenUnico = campo.viaPrefixo === true;
+    if (_ehPergunta(v) || !_valorQualifica(sepEhPontuacao && !exigeTokenUnico, v)) {
       out += linha.slice(campo.start, valorEnd);
       pos = valorEnd;
       continue;
@@ -487,7 +557,7 @@ function redigirSegredos(texto) {
     const r = _processaLinha(linha);
     partes[i] = r.texto;
     if (r.achou) achou = true;
-    return r.pendente || _linhaArmaModo(linha);
+    return r.pendente || _linhaArmaModo(linha) || _linhaTabelaComRotulo(linha);
   }
 
   for (let i = 0; i < partes.length; i += 2) {

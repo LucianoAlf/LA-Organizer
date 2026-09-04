@@ -1007,3 +1007,220 @@ test('R8 limite conhecido: rotulo DEPOIS do separador nao dispara', () => {
   assert.equal(r.texto, t, 'o V-2 so olha o que vem antes do separador');
   assert.equal(r.achou, false);
 });
+
+// =========================================================================
+// Round 10 -- itens 1..5 da revisao
+// =========================================================================
+
+// --- Item 1 (Critical): o V-2 so funcionava em portugues SEM acento -------
+// O token era [A-Za-z0-9_-]+ e o lookbehind nao aceitava acento, entao o ":"
+// depois de palavra acentuada era INALCANCAVEL como separador. A suite nao
+// pegou porque os 6 fraseados do teste do V-2 eram todos ASCII.
+
+test('item 1: fraseados acentuados mascaram igual aos sem acento', () => {
+  const pares = [
+    ['a senha e: X7k9Qm2p', 'a senha é: X7k9Qm2p'],
+    ['a senha do usuario: X7k9Qm2p', 'a senha do usuário: X7k9Qm2p'],
+    ['a senha do estudio: X7k9Qm2p', 'a senha do estúdio: X7k9Qm2p'],
+    ['a senha do portao: X7k9Qm2p', 'a senha do portão: X7k9Qm2p'],
+    ['a chave do escritorio: X7k9Qm2p', 'a chave do escritório: X7k9Qm2p'],
+    ['o token da camera: X7k9Qm2p', 'o token da câmera: X7k9Qm2p'],
+    ['segue a senha do Joao: X7k9Qm2p', 'segue a senha do João: X7k9Qm2p'],
+    ['senha nova: X7k9Qm2p', 'senha nova é: X7k9Qm2p'],
+    ['a senha do wifi: X7k9Qm2p', 'a senha do wifi é: X7k9Qm2p'],
+    ['a api key e: X7k9Qm2p', 'a api key é: X7k9Qm2p']
+  ];
+  for (const [semAcento, comAcento] of pares) {
+    for (const t of [semAcento, comAcento]) {
+      const r = redigirSegredos(t);
+      assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(t)}`);
+      assert.ok(!r.texto.includes('X7k9Qm2p'), `deveria mascarar: ${JSON.stringify(t)}`);
+    }
+  }
+});
+
+test('item 1: cedilha e maiuscula acentuada no rotulo e ao redor', () => {
+  for (const t of ['a senha da inscrição: X7k9Qm2p', 'ÁREA restrita, a senha é: X7k9Qm2p', 'a senha do Ônibus: X7k9Qm2p']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(t)}`);
+    assert.ok(!r.texto.includes('X7k9Qm2p'), `deveria mascarar: ${JSON.stringify(t)}`);
+  }
+});
+
+// --- Item 2 (Critical): separador colado ao rotulo, sem espaco ------------
+// _cacheRotulo era medido sobre o \S+ INTEIRO, que engole a pontuacao colada;
+// a guarda reprovava o separador certo e o V-2 elegia um "|" de DENTRO do
+// valor. Com espaco funcionava, colado nao. Era 100% da instabilidade de
+// idempotencia medida no fuzz.
+
+test('item 2: separador colado ao rotulo nao cede lugar a um do valor', () => {
+  const casos = [
+    ['| Senha:| hunter2 |', 'hunter2'],
+    ['token=| X7k9Qm2p |', 'X7k9Qm2p'],
+    ['Senha:| hunter2 |', 'hunter2'],
+    ['apikey:| x|', 'x|'],
+    ['token=| x|', 'x|'],
+    ['SENHA;| x|', 'x|'],
+    ['chave|| y|', 'y|']
+  ];
+  for (const [entrada, valor] of casos) {
+    const r = redigirSegredos(entrada);
+    assert.equal(r.achou, true, `deveria disparar: ${JSON.stringify(entrada)}`);
+    assert.ok(!r.texto.includes(valor), `valor ${JSON.stringify(valor)} nao pode sobrar em ${JSON.stringify(entrada)} -> ${JSON.stringify(r.texto)}`);
+  }
+});
+
+test('item 2: separador colado nao vaza nem apaga a conversa seguinte', () => {
+  const r = redigirSegredos('Senha:| hunter2 |\nfalou');
+  assert.ok(!r.texto.includes('hunter2'), 'a senha nao pode vazar');
+  assert.equal(r.achou, true);
+});
+
+test('item 2: os quatro minimos do shrink sao idempotentes (p1 === p2 === p3)', () => {
+  for (const t of ['apikey:| x|', 'token=| x|', 'SENHA;| x|', 'chave|| y|']) {
+    const p1 = redigirSegredos(t).texto;
+    const p2 = redigirSegredos(p1).texto;
+    const p3 = redigirSegredos(p2).texto;
+    assert.equal(p1, p2, `instavel em ${JSON.stringify(t)}: ${JSON.stringify(p1)} vs ${JSON.stringify(p2)}`);
+    assert.equal(p2, p3, `instavel em ${JSON.stringify(t)}`);
+  }
+});
+
+// --- Item 3 (Critical): tabela transposta com rotulo na PRIMEIRA coluna ---
+
+test('item 3: rotulo na primeira coluna -- valor da linha de baixo mascara', () => {
+  const r = redigirSegredos('| Senha | Usuario |\n| hunter2 | admin |');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('hunter2'), 'valor nao pode ficar intacto');
+});
+
+test('item 3: o espelho (rotulo na ultima coluna) continua funcionando', () => {
+  const r = redigirSegredos('| Usuario | Senha |\n| admin | hunter2 |');
+  assert.equal(r.texto, '| Usuario | Senha |\n***');
+  assert.equal(r.achou, true);
+});
+
+// --- Item 4 (Important, disponibilidade): backtracking cubico -------------
+// "_" estava na classe do token, na de gap E no lookbehind: cada posicao de um
+// run de "_" era ponto de partida valido -> O(n^3). O engine chama o redator
+// 3x por turno e Node e single-thread: uma linha de underscores (divisoria de
+// mensagem encaminhada, assinatura, ASCII art) congelava o bot inteiro.
+
+test('item 4: run de underscores nao explode -- curva linear', () => {
+  const tempos = [];
+  for (const n of [800, 1600, 3200, 6400]) {
+    const t = 'a' + '_'.repeat(n);
+    const t0 = process.hrtime.bigint();
+    redigirSegredos(t);
+    tempos.push(Number(process.hrtime.bigint() - t0) / 1e6);
+  }
+  assert.ok(tempos[3] < 50, `6400 underscores deveria levar <50ms, levou ${tempos[3].toFixed(1)}ms`);
+  assert.ok(tempos[0] < 50 && tempos[1] < 50 && tempos[2] < 50, `tempos: ${tempos.map(x => x.toFixed(1)).join(', ')}ms`);
+});
+
+test('item 4: mensagem normal de 3 mil caracteres continua rapida', () => {
+  const t = Array.from({ length: 60 }, (_, i) => `linha ${i} com texto normal de conversa da escola de musica`).join('\n');
+  const t0 = process.hrtime.bigint();
+  redigirSegredos(t);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.ok(ms < 50, `mensagem normal deveria levar <50ms, levou ${ms.toFixed(1)}ms`);
+});
+
+test('item 4: outros caracteres repetidos tambem seguem rapidos', () => {
+  for (const c of ['-', '*', '"', '|', '`']) {
+    const t0 = process.hrtime.bigint();
+    redigirSegredos('a' + c.repeat(6400));
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 50, `run de ${JSON.stringify(c)} levou ${ms.toFixed(1)}ms`);
+  }
+});
+
+// --- Item 5 (Important): o alargamento do V-2 apagava conversa real -------
+// Bastava a palavra senha/chave/token em QUALQUER lugar da linha e QUALQUER
+// ":" depois, a qualquer distancia. Agora: o rotulo tem de estar entre as
+// ultimas 4 palavras antes do separador, E quando ele for achado por essa
+// varredura (nao colado ao separador) o valor tem de ser token unico de 4+.
+
+test('item 5: as 7 mensagens reais destruidas pelo V-2 voltam intactas', () => {
+  const travas = [
+    'Nao esqueci da senha nao, so preciso confirmar uma coisa: o email do aluno',
+    'A chave do armario ficou com o Alfredo: ele leva amanha',
+    'Preciso trocar a senha do wifi. Motivo: muita gente conectada',
+    'Sobre o token do aluno no sistema, pergunta pro TI: eles resolvem',
+    'Perdi a chave da sala de novo, resumo da opera: vou pagar a copia',
+    'A senha do aluno ta errada no sistema, o que eu faco: abro chamado?',
+    'Falei da chave com a Marcia ontem, resposta dela: so na segunda'
+  ];
+  for (const t of travas) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `deveria sair identico: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false, `nao deveria sinalizar: ${JSON.stringify(t)}`);
+  }
+});
+
+test('item 5: proximidade -- rotulo a 3 palavras do separador ainda dispara', () => {
+  const r = redigirSegredos('segue a senha do painel: X7k9Qm2p');
+  assert.equal(r.texto, 'segue a senha do painel: ***');
+  assert.equal(r.achou, true);
+});
+
+// --- As 10 travas + as 7 novas -------------------------------------------
+
+test('round 10: as 10 travas seguem byte a byte identicas com achou=false', () => {
+  const travas = [
+    'qual a senha do chatwoot?',
+    'a chave da porta esta emprestada com o joao',
+    'me manda o link da anamnese por favor',
+    'Deixa eu te contar um segredo:\nvi ela na academia ontem',
+    '| Nome | Valor |',
+    '| Coluna A | Coluna B |',
+    '|---|---|',
+    '|:-:|:-:|',
+    'Recado da secretaria: a aula de amanha foi cancelada',
+    'palavras-chave: marketing, vendas'
+  ];
+  for (const t of travas) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `deveria sair identico: ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false, `nao deveria sinalizar: ${JSON.stringify(t)}`);
+  }
+});
+
+// --- Limite novo, documentado e nao corrigido ----------------------------
+
+test('R10 limite conhecido: fraseado sem pontuacao nenhuma nao dispara', () => {
+  for (const t of ['a senha e hunter2', 'A imagem mostra um painel com a senha 250178Alf# no campo']) {
+    const r = redigirSegredos(t);
+    assert.equal(r.texto, t, `limite conhecido (caminho principal): ${JSON.stringify(t)}`);
+    assert.equal(r.achou, false);
+  }
+});
+
+// Pego pelo fuzz de idempotencia desta rodada (6340 casos, todos desta
+// classe): a regra nova do item 3 fazia uma linha de tabela JA redigida
+// re-armar o modo e comer a linha seguinte a cada passagem.
+test('item 3: linha de tabela ja redigida nao re-arma o modo', () => {
+  for (const t of ['senha|:hunter2\nfalou', '| Senha | hunter2 |\nfalou', '| Senha | Usuario |\n| hunter2 | admin |']) {
+    const p1 = redigirSegredos(t).texto;
+    const p2 = redigirSegredos(p1).texto;
+    const p3 = redigirSegredos(p2).texto;
+    assert.equal(p1, p2, `instavel em ${JSON.stringify(t)}: ${JSON.stringify(p1)} vs ${JSON.stringify(p2)}`);
+    assert.equal(p2, p3, `instavel em ${JSON.stringify(t)}`);
+  }
+});
+
+test('R10 limite conhecido: valor com espacos no caminho do V-2 nao mascara', () => {
+  const a = redigirSegredos('a senha do wifi: X7k 9Qm 2p');
+  assert.equal(a.texto, 'a senha do wifi: X7k 9Qm 2p', 'preco da regra de token unico do item 5');
+  assert.equal(a.achou, false);
+  const b = redigirSegredos('a senha do wifi: abc123 e o token: xyz789');
+  assert.ok(!b.texto.includes('xyz789'), 'o campo com rotulo colado ao separador continua mascarando');
+  assert.match(b.texto, /abc123/, 'limite conhecido: o valor do campo via-prefixo tem espacos e escapa');
+});
+
+test('R10 limite conhecido: tabela transposta de 3+ colunas ainda vaza', () => {
+  const t = '| Servico | Senha | Token |\n| ads | hunter2 | T0k3n |';
+  const r = redigirSegredos(t);
+  assert.equal(r.texto, t, 'a linha de valores tem 3 palavras -> e prosa -> fecha o modo');
+  assert.equal(r.achou, false);
+});
