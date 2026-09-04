@@ -120,30 +120,23 @@ O guard existe para pegar o **modelo improvisando** sobre a stack interna (incid
 
 Portanto: o caminho da RPC de credenciais marca a resposta como isenta, e o guard respeita essa marca. A isenção é **estreita e explícita** — vale só para respostas construídas a partir do retorno da RPC, nunca global, e nunca para texto livre do modelo.
 
-## Fatia 0 — cifragem em repouso dos valores sensíveis
+## Fatia 0 — cifragem em repouso: DESCARTADA (03/09)
 
-Vale por si só, independente do CRUD por WhatsApp: protege as 45 credenciais que já existem. Deve ir antes do resto.
+Foi desenhada e recusada pelo Hugo. Fica registrado o que era e por que não foi feita.
 
-**O projeto já tem esse mecanismo funcionando** — em `notes` e `group_notes`, não nas credenciais:
+**O que seria:** trigger cifrando os itens de `campos` com `sensivel: true` (`pgp_sym_encrypt` + chave no Vault, prefixo `enc:v1:`), mais `reveal_credencial_campo()` com gate de acesso — o mesmo mecanismo que o projeto já usa em `notes` e `group_notes`.
 
-- `gn_encrypt_secret_fields()` — trigger `BEFORE INSERT/UPDATE` que cifra campos marcados com `pgp_sym_encrypt`, chave lida do Vault (`group_notes_secret_key`, criada em 13/06), gravando com prefixo `enc:v1:`.
-- `gn_decrypt(ciphertext)` — decifra; devolve o valor intacto se não tiver o prefixo.
-- `reveal_note_secret` / `reveal_personal_note_secret` — checam permissão **antes** de decifrar e levantam `forbidden` se falhar.
+**Por que foi recusada:** cifrar obriga a mexer no PWA. O valor deixa de vir pronto na linha, e o botão de olho da `GovernancaPage` (hoje só um `type=password` sobre um valor que já está no cliente) teria de passar a chamar a função de reveal. O Hugo preferiu não tocar na tela.
 
-Ou seja: notas pessoais estão cifradas em repouso e as senhas da empresa não. Inversão de prioridade, com a solução pronta ao lado.
+**O que fica sem solução, conscientemente:**
 
-**O que fazer:** trigger equivalente em `governance_credentials`, cifrando os itens de `campos` com `sensivel: true` (a estrutura daqui é `{label, valor, sensivel}`, não `{value, secret}` — adaptar), mais `reveal_credencial_campo(p_cred_id uuid, p_indice int)` que checa **`is_system_admin`** antes de decifrar.
+- As 45 senhas seguem em texto plano em `governance_credentials.campos`.
+- Quem tem a **`service_role` key** lê todas, sem passar por policy nenhuma: o TOM, scripts, e qualquer sessão com o MCP do Supabase. Essa é a permissão mais alta do banco e a única que a cifragem limitaria.
+- Dumps e backups saem com as senhas legíveis.
 
-**Decisão do Hugo:** o `reveal` exige `is_system_admin`, não `director`. Como Anne Susan recebe a flag, **ninguém que hoje enxerga senha deixa de enxergar** — a única que perde é a conta genérica "Admin", que é justamente o objetivo.
+**O que continua protegido mesmo sem ela:** o risco que a feature *adiciona* — `conversation_history`, `marker_logs` e o relatório das 7h — segue coberto pela redação na entrada. O que fica exposto é o risco que já existia antes desta feature.
 
-**O que a cifragem resolve e o que não resolve.** Elimina a leitura casual por quem chega ao banco por fora da tela — `service_role`, scripts, dumps, backups, sessões de debug (foi assim que os `campos` foram lidos durante esta própria sessão de design). **Não** protege contra quem tem `service_role` e chama `gn_decrypt` deliberadamente: a chave mora no Vault do mesmo projeto.
-
-**Dois cuidados obrigatórios, aprendidos ao inspecionar o código existente:**
-
-1. **Não replicar a falha muda.** A função atual faz `if k is null then return NEW; end if` — se a chave do Vault sumir ou for renomeada, ela **grava em texto plano e não avisa ninguém**. Na versão para credenciais, `raise exception`: melhor a gravação falhar visivelmente do que a senha ser salva plana em silêncio. Isso é o que o CLAUDE.md do projeto exige de todo caminho de falha.
-2. **O mecanismo nunca rodou de verdade.** `group_notes` não tem uma única linha com `enc:v1:` — está implantado desde junho sem nenhum dado cifrado. Não é código validado em produção. Testar o ciclo completo (cifrar → ler → decifrar → permissão negada) com dado descartável antes de tocar nas 45 credenciais reais.
-
-**Impacto no PWA:** a `GovernancaPage` lê `campos` diretamente e passaria a exibir `enc:v1:...`. Precisa chamar a função de reveal. Não é mudança só de banco.
+**Se um dia for retomada,** dois cuidados levantados na investigação: a função existente grava em texto plano **em silêncio** quando a chave do Vault falta (`if k is null then return NEW`), o que viola a regra de falha diagnosticável do projeto e deve virar `raise exception`; e o mecanismo **nunca rodou** — `group_notes` não tem uma única linha `enc:v1:`.
 
 ## Fora de escopo
 
@@ -157,9 +150,11 @@ Ou seja: notas pessoais estão cifradas em repouso e as senhas da empresa não. 
 
 **Identificação de alvo em `update`/`delete`.** É a classe de falha que custa 14% no `TASK_UPDATE`. Mitigada pela confirmação obrigatória e pelo engine perguntar em vez de escolher — mas nunca eliminada. Por isso o delete exige confirmação sempre.
 
-**A conta "Admin" (`admin@gmail.com`) vê todas as credenciais.** Colaborador ativo, `role = 'director'`, criado em 24/05 — pela policy atual, alcança as 45 credenciais com senha em texto plano. Investigado durante o design: tem 0 mensagens e 0 markers, mas **813 registros em `ritual_logs`**, porque cinco pontos do `dispatcher.js` buscam `role='director' AND is_active` ordenado por `full_name LIMIT 1` como placeholder de rituais de sistema — e "Admin" é o primeiro alfabeticamente.
+**A conta "Admin" (`admin@gmail.com`) — RESOLVIDO em 03/09.** Era colaborador ativo com `role = 'director'`, alcançando as 45 credenciais com senha em texto plano. Telefone `0000`, e-mail genérico, criada em 24/05 (depois do cadastro inicial do time), 0 mensagens e 0 markers — mas 813 `ritual_logs`, porque cinco pontos do `dispatcher.js` pegam o primeiro director em ordem alfabética como placeholder de rituais de sistema, e "Admin" vinha antes de "Anne".
 
-Ou seja, a conta é ao mesmo tempo um placeholder técnico legítimo e um furo de acesso. Desativá-la empurraria os rituais para o nome da Anne; trocar o `role` fecharia o acesso sem efeito colateral. **Decisão do Hugo em 03/09: deixar como está.** Fica registrado como risco aceito conscientemente. A fatia 0 reduz o impacto — com a cifragem, essa conta passa a ver os valores mascarados, já que o `reveal` exige `is_system_admin`.
+**Ação tomada:** `role` alterado de `director` para `collaborator`. Perdeu acesso a todas as credenciais. Diretoria agora são só Anne Susan, Hugo e Luciano Alf.
+
+**Efeito colateral aceito:** o placeholder dos rituais passou a ser **Anne Susan**. Os rituais seguem funcionando (os gates de idempotência filtram por `ritual_type` + data, não por pessoa), mas os novos `ritual_logs` ficam no nome dela; os 813 antigos continuam apontando para "Admin". Reversível com `update collaborators set role = 'director' where email = 'admin@gmail.com'`.
 
 **Superfície de engenharia social.** Alguém pode tentar convencer o TOM a entregar credencial se passando por Hugo. O gate é pelo `collaborator_id` resolvido a partir do telefone, não por nada que a pessoa escreva — então isso exigiria acesso ao aparelho ou ao número, não só ao TOM.
 
