@@ -56,3 +56,53 @@ for (const [nome, texto] of NEGATIVOS) {
     assert.strictEqual(pareceEscritaDeCredencial(texto), false, String(texto));
   });
 }
+
+// --- O caso de 04/09 18:25: bullet furou o gate e a mensagem virou teatro ------------------
+// Texto reconstruido do [OUT] do log, com os valores trocados. O TOM propos, o Hugo confirmou,
+// e nao existia intent nenhuma — porque sem marker o executor nunca roda, e o gate que deveria
+// salvar reprovou por UM caractere: toda linha comeca com "• ", que a ancora nao conhecia.
+const CASO_BULLET = `Agora vi os valores completos. Situação:
+
+• *Google Ads API - LA Music* — Developer Token, Customer ID e Login Customer ID já registrados
+• *Cleinte Oauth Google la.technology* — existe, mas os campos estavam vazios
+
+Vou atualizar o OAuth com os valores reais:
+• Client ID: 1041658696311-abc.apps.googleusercontent.com
+• Client Secret: ●●●●●●
+• Refresh Token: ●●●●●●
+
+Confirma?`;
+
+test('caso real 18:25: ficha com bullet e reconhecida', () => {
+  assert.strictEqual(pareceEscritaDeCredencial(CASO_BULLET), true);
+});
+
+// Terceira vez no dia que pontuacao tipografica furou uma ancora minha (aspas curvas na
+// redacao, travessao no casamento de alvo, bullet aqui). Estes casos existem pra que a
+// proxima variacao de marcador de lista nao vire incidente.
+const ORNAMENTOS = [
+  ['bullet redondo', '•'], ['bullet meio', '·'], ['bullet vazado', '◦'],
+  ['quadrado', '▪'], ['circulo cheio', '●'], ['travessao', '—'], ['en-dash', '–'],
+  ['hifen ascii', '-'], ['asterisco', '*'], ['citacao', '>'],
+];
+for (const [nome, orn] of ORNAMENTOS) {
+  test(`ornamento de lista nao cega o gate: ${nome}`, () => {
+    const t = `Vou atualizar isso:\n${orn} Senha: trocada123\n${orn} Login: a@b.com`;
+    assert.strictEqual(pareceEscritaDeCredencial(t), true, t);
+  });
+}
+
+test('lista numerada tambem conta como ficha', () => {
+  assert.strictEqual(pareceEscritaDeCredencial('Vou gravar:\n1. Senha: abc123\n2. Login: a@b.com'), true);
+  assert.strictEqual(pareceEscritaDeCredencial('Vou gravar:\n1) Token: abc123'), true);
+});
+
+test('bullet sem rotulo de credencial continua NAO disparando', () => {
+  const t = 'Vou cadastrar isso aqui:\n• a tarefa das lâmpadas da sala 3\n• e o pedido de baquetas';
+  assert.strictEqual(pareceEscritaDeCredencial(t), false);
+});
+
+test('ficha com bullet mas SEM verbo de escrita continua leitura', () => {
+  const t = '*Canva — criativos*\n• Login: a@b.com\n• Senha: xyz123';
+  assert.strictEqual(pareceEscritaDeCredencial(t), false);
+});

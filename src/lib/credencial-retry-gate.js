@@ -34,12 +34,31 @@
 // mentira — o TOM diz que gravou e nada foi gravado.
 const VERBO_ESCRITA = /\b(?:vou|posso|deixa\s+eu|quer\s+que\s+eu|j[áa]\s+vou|vou\s+j[áa]|bora)\s+(?:j[áa]\s+)?(?:cadastr|registr|grav|salv|guard|anot|atualiz|edit|apag|delet|remov)\w*|\b(?:cadastrei|registrei|gravei|salvei|guardei|anotei|atualizei|editei|apaguei|deletei|removi)\b|\bcadastr(?:o|ar|ando)\b/iu;
 
+// ORNAMENTO DE INICIO DE LINHA — o que vem ANTES do rotulo numa ficha.
+//
+// Terceira vez no mesmo dia que uma ancora minha reprovou por pontuacao TIPOGRAFICA, entao
+// aqui vai a classe inteira de uma vez, nao mais um caractere por incidente:
+//   04/09 16:58  aspas curvas “ ”  furaram a REDACAO (segredo de print ficou em claro)
+//   04/09 17:01  travessao —       furou o CASAMENTO DE ALVO ("Google Ads API — LA Music")
+//   04/09 18:25  bullet •          furou ESTE GATE — e por isso a mensagem virou teatro
+//
+// O padrao e sempre o mesmo: eu escrevo a ancora com a pontuacao que EU digitaria (ASCII), e
+// o texto chega com a que o MODELO gera (bullet, travessao, aspa curva). Vale tanto pro que o
+// modelo escreve quanto pro que a analise de imagem transcreve.
+//
+// Cobre tambem lista numerada ("1. Senha: x", "2) Token: y"), que e o outro formato que o
+// modelo alterna com o bullet.
+const ORNAMENTO_LINHA = '[\\s*_>#\\-•·‣∙◦▪▫●○–—‐]*(?:\\d{1,2}[.)][ \\t]*)?';
+
+const _ROTULOS_TODOS = '(?:e-?mail|login|usu[áa]ri[oa]|user(?:name)?|senha|password|pass|token|refresh[\\s_-]?token|access[\\s_-]?token|api[\\s_-]?key|apikey|chave(?:\\s+(?:de\\s+)?api)?|secret|client[\\s_-]?(?:id|secret)|url|link|endpoint|conta|servi[çc]o|projeto)';
+const _ROTULOS_SENSIVEIS = '(?:senha|password|pass|token|refresh[\\s_-]?token|access[\\s_-]?token|api[\\s_-]?key|apikey|chave(?:\\s+(?:de\\s+)?api)?|secret|client[\\s_-]?secret)';
+
 // Rotulo de campo de credencial no inicio de linha, seguido de separador. Ancorado em linha
 // de proposito: "a senha esta no cofre" no meio de uma frase nao e uma ficha de credencial.
-const ROTULO_QUALQUER = /^[\s*_>#-]*(?:e-?mail|login|usu[áa]ri[oa]|user(?:name)?|senha|password|pass|token|refresh[\s_-]?token|access[\s_-]?token|api[\s_-]?key|apikey|chave(?:\s+(?:de\s+)?api)?|secret|client[\s_-]?(?:id|secret)|url|link|endpoint|conta|servi[çc]o|projeto)[\s*_]*[:=]/imu;
+const ROTULO_QUALQUER = new RegExp(`^${ORNAMENTO_LINHA}${_ROTULOS_TODOS}[\\s*_]*[:=]`, 'imu');
 
 // Rotulo SENSIVEL: um so ja basta pra caracterizar ficha de credencial.
-const ROTULO_SENSIVEL = /^[\s*_>#-]*(?:senha|password|pass|token|refresh[\s_-]?token|access[\s_-]?token|api[\s_-]?key|apikey|chave(?:\s+(?:de\s+)?api)?|secret|client[\s_-]?secret)[\s*_]*[:=]/imu;
+const ROTULO_SENSIVEL = new RegExp(`^${ORNAMENTO_LINHA}${_ROTULOS_SENSIVEIS}[\\s*_]*[:=]`, 'imu');
 
 const PALAVRA_CREDENCIAL = /\bcredenci\w+/iu;
 
@@ -96,4 +115,5 @@ module.exports = {
   ROTULO_QUALQUER,
   ROTULO_SENSIVEL,
   PALAVRA_CREDENCIAL,
+  ORNAMENTO_LINHA,
 };
