@@ -599,10 +599,146 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
   };
 }
 
+// ── PASSADA DE ATUALIZAÇÃO (meio do dia) ─────────────────────────────────────────────────────
+// Pedido do Alf (04/09): hoje a lista do dia fica CONGELADA. O aluno preenche a anamnese no
+// tablet às 10h e a filha continua na tela até as 23:00 — a equipe cobra quem já fez, e a lista
+// que deveria encolher ao longo do dia não encolhe nunca. Esta passada roda de 2 em 2 horas
+// (09:00–21:00) e tira da tela SÓ quem já preencheu.
+//
+// Ela é um SUBCONJUNTO ESTRITO de fecharPautaDaUnidade — e a diferença não é de implementação, é
+// de EPISTEMOLOGIA. Às 23:00 o dia acabou: é preciso decidir sobre todo mundo, e "não sei" vira
+// `cancelled` porque não haverá outra chance. Às 14:00 o dia ainda está correndo: quem não
+// preencheu às 14h pode preencher às 19h, e o aluno ambíguo pode desempatar quando a homônima
+// dele preencher. Por isso, aqui:
+//
+//   • a ÚNICA escrita é `done` — o status literal está escrito na chamada de fecharFilha abaixo,
+//     nunca `decisao.status`, pra que nenhuma refatoração futura consiga fazer esta função
+//     escrever `cancelled` sem alterar aquela linha de propósito;
+//   • NADA é gravado em anamnese_pauta. A escada é gravada UMA vez, às 23:00. Gravar no meio do
+//     dia carimbaria `nao_preencheu` num dia que ainda não acabou — o aluno levaria falha, e a
+//     falha vira degrau na escada;
+//   • o CONTAINER nunca fecha. Fechar o container tiraria a pauta inteira da tela antes da
+//     última aula (20:00) — exatamente o oposto do que este pedido quer;
+//   • ambíguo, sem correspondência e título torto são "não sei AINDA" → a filha fica EXATAMENTE
+//     como está, e o fechamento das 23:00 resolve com a fonte da noite.
+//
+// A DECISÃO em si não é reimplementada: chamamos o MESMO _decidirFechoDaFilha da noite e só
+// agimos no `done`. Duas leituras de "quem preencheu" divergiriam, e a divergência apareceria
+// como aluno sumindo da tela sem ter preenchido — o pior erro possível nesta feature.
+async function atualizarPautaDaUnidade({ supabase, laReport, unidadeId, groupId, hoje, deps = {} }) {
+  const acharContainer = deps.acharContainer || _acharContainerParaFechar;
+  const listarFilhasPendentes = deps.listarFilhasPendentes || _listarFilhasPendentes;
+  const fecharFilha = deps.fecharFilha || _fecharFilha;
+
+  const parado = { atualizou: false, fechadas: 0, continuamPendentes: 0, naoDecididas: 0 };
+
+  // Sem grupo não dá pra achar container nenhum: `.eq('assigned_group_id', undefined)` no
+  // PostgREST não devolve "zero linhas", devolve erro ou lixo. Falha-fechada com sensor próprio
+  // em vez de sair procurando no escuro.
+  if (!groupId) {
+    return { ...parado, motivo: 'atualização do meio do dia sem grupo da unidade — não procurei pauta nenhuma' };
+  }
+
+  try {
+    // Container ANTES da RPC, de propósito: a consulta do LA Report leva 6-8s (situacao-aluno.js)
+    // e num dia sem pauta (domingo, ou uma manhã que não montou) o resultado seria descartado —
+    // 7 slots por dia × 3 unidades de consulta cara jogada fora.
+    const titulo = _tituloDoContainer(hoje);
+    const { containerId, erro: erroContainer } = await acharContainer(supabase, { groupId, hoje, titulo });
+    if (erroContainer) {
+      // "Não consegui LER" nunca pode virar "não TEM" — é o zero-linhas-silencioso que já custou
+      // dois diagnósticos errados nesta casa (03/09). Por isso este ramo NÃO carimba `semPauta`:
+      // é falha (fallback, retenta), não desfecho resolvido.
+      return { ...parado, motivo: `não consegui procurar a pauta de hoje para atualizar: ${erroContainer}` };
+    }
+    if (!containerId) {
+      // Desfecho RESOLVIDO, não falha: hoje simplesmente não tem pauta pra encolher. `semPauta` é
+      // o mesmo par de sensores que a manhã usa com `jaExistia` — o motivo textual é pra quem lê
+      // o RETORNO, a flag é pra quem grava o MARCADOR. Sem ela o dispatcher carimbaria
+      // `fallback` (que nesta casa significa "deu errado, tenta de novo"), a chave do slot não
+      // travaria, e a unidade re-rodaria em todo tick restante de cada um dos 7 slots.
+      return { ...parado, semPauta: true, motivo: 'não há pauta de hoje na tela para encolher no meio do dia' };
+    }
+
+    // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
+    // linhas" silencioso — aqui isso significaria "ninguém está mais pendente", ou seja, fechar a
+    // pauta INTEIRA como feita. É o pior caminho desta função; por isso o `error` vem antes.
+    const { data, error } = await laReport.rpc('get_situacao_alunos_v1',
+      { p_unidade_id: unidadeId, p_apenas_pendentes: false });
+    if (error) {
+      // FALHA-FECHADA: sem a fonte não dá pra AFIRMAR que alguém preencheu, e `done` no meio do
+      // dia tira o aluno da tela — ou seja, tira da cobrança. Sensor próprio, textualmente
+      // distinto dos outros dois "consulta do LA Report falhou" deste arquivo (manhã e noite).
+      return {
+        ...parado,
+        motivo: `consulta do LA Report falhou na atualização do meio do dia: ${error.message} — não fecho ninguém sem a fonte`,
+      };
+    }
+
+    const { filhas, erro: erroFilhas } = await listarFilhasPendentes(supabase, { containerId });
+    if (erroFilhas) {
+      return { ...parado, motivo: `não consegui ler as filhas pendentes para atualizar a pauta: ${erroFilhas}` };
+    }
+
+    // Mesmos dois mapas do fechamento da noite, montados pela mesma função: `semAnamnesePorNome`
+    // decide, `todosPorNome` só distingue "preencheu" de "esse nome não existe em lugar nenhum".
+    const semAnamnesePorNome = _mapaPorNome(situ.filtrarPorRecorte(data || [], 'anamnese'));
+    const todosPorNome = _mapaPorNome(data || []);
+
+    const avisos = [];
+    let fechadas = 0;
+    let continuamPendentes = 0;
+    let naoDecididas = 0;
+    for (const filha of (filhas || [])) {
+      const decisao = _decidirFechoDaFilha(filha.title, semAnamnesePorNome, todosPorNome);
+      if (decisao.status !== 'done') {
+        // Todo o resto do universo da noite — ambíguo, sem correspondência, título torto e o
+        // "não preencheu" normal — colapsa aqui em NÃO MEXE. `decisao.notes` é o que separa os
+        // dois grupos: null = "ainda não preencheu" (o caminho esperado, saúde pura); preenchido
+        // = "não sei quem é" (ambíguo/sem correspondência/torto). Contadores separados porque
+        // "não fechei ninguém porque ninguém preencheu ainda" e "não fechei porque não sei quem
+        // são" são fatos diferentes, e um sensor só pros dois esconderia um bug de parsing de
+        // título por dias. Nenhum dos dois é FALHA: não entram em `avisos`, senão o marcador
+        // viraria fallback e a RPC de 6-8s re-rodaria 3x em cada slot todo santo dia.
+        continuamPendentes++;
+        if (decisao.notes) naoDecididas++;
+        continue;
+      }
+      // `status: 'done'` LITERAL, jamais `decisao.status`. É o que torna estruturalmente
+      // impossível esta passada escrever `cancelled` — a única leitura de `decisao` que sobrevive
+      // daqui pra baixo é o `!== 'done'` acima. `notes` fica de fora: a filha sai da tela porque
+      // o aluno preencheu, e isso é o caminho normal, não uma exceção que precise de bilhete.
+      if (await fecharFilha(supabase, { id: filha.id, status: 'done', notes: null })) {
+        fechadas++;
+      } else {
+        // Sem este `else` a falha era MUDA: contador não sobe, motivo fica null, o marcador diz
+        // `executed` e TRAVA o slot — a filha some do radar até as 23:00. Mesmo raciocínio do
+        // IMPORTANT 2 no fechamento da noite. Nomeia a filha: "alguma coisa falhou" não dá pra
+        // investigar. E ela conta como pendente porque é o que ela DE FATO continua sendo.
+        continuamPendentes++;
+        avisos.push(`não consegui fechar a filha "${filha.title}" na atualização do meio do dia`);
+      }
+    }
+
+    return {
+      atualizou: true, fechadas, continuamPendentes, naoDecididas,
+      // motivo null no dia saudável (inclusive quando ninguém preencheu ainda e quando alguém
+      // está ambíguo) — é o sensor de "zero por saúde" usado no arquivo inteiro, e o que
+      // distingue "não fechei ninguém porque ninguém preencheu" de "não fechei porque a fonte
+      // caiu" (que sempre sai como string).
+      motivo: avisos.length ? avisos.join('; ') : null,
+    };
+  } catch (e) {
+    // Arrumação silenciosa da tela não pode explodir pra fora e derrubar o tick: o catch por
+    // unidade do dispatcher pegaria, mas o contrato de retorno documentado se perderia.
+    return { ...parado, motivo: `falha ao atualizar a pauta no meio do dia: ${(e && e.message) || String(e)}` };
+  }
+}
+
 module.exports = {
   // varrerPautasVelhas é exportada porque tem DOIS chamadores: o fechamento das 23:00 (aqui) e o
   // bloco das 06:00 do dispatcher, que limpa o entulho da noite anterior ANTES de montar a pauta
   // do dia. Uma implementação só, de propósito — ver o comentário da função.
-  montarPautaDaUnidade, fecharPautaDaUnidade, varrerPautasVelhas,
+  montarPautaDaUnidade, fecharPautaDaUnidade, varrerPautasVelhas, atualizarPautaDaUnidade,
   TETO_FILHAS, VARREDURA_DIAS, VARREDURA_MAX_CONTAINERS,
 };

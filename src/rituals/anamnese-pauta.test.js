@@ -760,3 +760,273 @@ test('todas as filhas de hoje fecharam → o container fecha, como sempre', asyn
   assert.strictEqual(d.containerFechadoChamadas.length, 1);
   assert.strictEqual(r.motivo, null, 'noite limpa não inventa motivo');
 });
+
+// ── PASSADA DE ATUALIZAÇÃO DO MEIO DO DIA (04/09) ────────────────────────────────────────────
+// Hoje a lista do dia fica CONGELADA: o aluno preenche a anamnese no tablet às 10h e a tarefa
+// continua na tela até as 23:00. A passada de atualização faz a lista ENCOLHER ao longo do dia.
+//
+// Ela é um SUBCONJUNTO ESTRITO do fechamento das 23:00 — a diferença não é de implementação, é
+// de EPISTEMOLOGIA: às 23:00 o dia acabou e é preciso decidir sobre todo mundo; às 14:00 o dia
+// ainda está correndo e quem não preencheu ainda pode preencher às 19:00. Por isso a única
+// escrita permitida é `done`, e "não sei ainda" é sempre "não mexe" — nunca uma decisão.
+const { atualizarPautaDaUnidade } = require('./anamnese-pauta');
+
+function depsRefresh({
+  rpcErro = null, alunos = [],
+  containerId = 'cont-1', filhasPendentes = [], erroAcharContainer = null, erroListarFilhas = null,
+  fecharFilhaOk = () => true,
+} = {}) {
+  const filhasFechadas = [];
+  const containerFechadoChamadas = [];
+  const titulosChecados = [];
+  // Um repo que EXPLODE, não um espião silencioso. Tocar anamnese_pauta no meio do dia não é
+  // "detalhe a revisar depois": a escada é gravada UMA vez, às 23:00 — gravar às 14h faz o aluno
+  // levar `nao_preencheu` por um dia que ainda não acabou. Se um dia alguém "aproveitar" esta
+  // passada pra adiantar a gravação, o teste tem que quebrar ALTO, não devolver um motivo bonito.
+  const repoProibido = {
+    registrarAparicoes: async () => { throw new Error('PROIBIDO: a atualização tocou anamnese_pauta'); },
+    contarFalhas: async () => { throw new Error('PROIBIDO: a atualização tocou anamnese_pauta'); },
+    pessoasDoDia: async () => { throw new Error('PROIBIDO: a atualização tocou anamnese_pauta'); },
+    gravarResultado: async () => { throw new Error('PROIBIDO: a atualização tocou anamnese_pauta'); },
+  };
+  return {
+    filhasFechadas, containerFechadoChamadas, titulosChecados, repo: repoProibido,
+    laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
+    acharContainer: async (_sb, { titulo }) => {
+      titulosChecados.push(titulo);
+      if (erroAcharContainer) return { containerId: null, erro: erroAcharContainer };
+      return { containerId, erro: null };
+    },
+    listarFilhasPendentes: async () => {
+      if (erroListarFilhas) return { filhas: null, erro: erroListarFilhas };
+      return { filhas: filhasPendentes, erro: null };
+    },
+    fecharFilha: async (_sb, arg) => { filhasFechadas.push(arg); return fecharFilhaOk(arg); },
+    fecharContainer: async (_sb, arg) => { containerFechadoChamadas.push(arg); return true; },
+  };
+}
+
+const rodarRefresh = (d, extra = {}) => atualizarPautaDaUnidade({
+  supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', hoje: SEGUNDA, deps: d, ...extra,
+});
+
+// O CASO CENTRAL. Ana preencheu no tablet às 10h; Bia ainda não. Às 11:00 a lista encolhe pela
+// Ana — e a Bia CONTINUA lá, porque o dia dela não acabou. Fechar a Bia agora seria mentir.
+test('atualização: quem preencheu fecha como done; quem não preencheu CONTINUA pending', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', false)],
+    filhasPendentes: [
+      { id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' },
+      { id: 'f-bia', title: '08:00 Anamnese — Bia (Canto)' },
+    ],
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.atualizou, true);
+  assert.strictEqual(d.filhasFechadas.length, 1, 'só a Ana pode ser tocada');
+  assert.strictEqual(d.filhasFechadas[0].id, 'f-ana');
+  assert.strictEqual(d.filhasFechadas[0].status, 'done');
+  assert.strictEqual(r.fechadas, 1);
+  assert.strictEqual(r.continuamPendentes, 1, 'a Bia segue na tela — ela ainda pode preencher às 19h');
+  assert.strictEqual(r.motivo, null, 'dia saudável: motivo null é o sensor de "zero por saúde" desta casa');
+});
+
+// O CONTRÁRIO DA NOITE, de propósito. Às 23:00 duas "Ana" ainda pendentes viram `cancelled`
+// porque o dia acabou e é preciso decidir. Às 14:00 ambíguo é "não sei AINDA" — a filha fica
+// exatamente como está, pro fechamento resolver com a fonte da noite.
+test('atualização: nome ambíguo NÃO é tocado (às 23:00 vira cancelled; no meio do dia, não)', async () => {
+  const ana2 = { ...aluno('Ana', '09:30', false), pessoa_chave: 'pk-Ana2' }; // homônima, pk diferente
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', false), ana2],
+    filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }],
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(d.filhasFechadas.length, 0, 'duas Anas pendentes — não dá pra saber qual é; não mexe');
+  assert.strictEqual(r.fechadas, 0);
+  assert.strictEqual(r.continuamPendentes, 1);
+  assert.strictEqual(r.naoDecididas, 1, 'ambíguo tem contador próprio: não é o mesmo que "não preencheu ainda"');
+  assert.strictEqual(r.motivo, null, 'ambíguo NÃO é falha — não pode virar fallback e re-rodar a RPC 3x no slot');
+});
+
+test('atualização: filha sem correspondência na fonte NÃO é tocada (nunca done no escuro)', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', false)],
+    filhasPendentes: [{ id: 'f-fantasma', title: '09:00 Anamnese — Alguém Que Sumiu' }],
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(d.filhasFechadas.length, 0, 'nome que não bate com ninguém não é prova de que preencheu');
+  assert.strictEqual(r.naoDecididas, 1);
+});
+
+test('atualização: título que não casa o formato da filha NÃO é tocado', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true)],
+    filhasPendentes: [{ id: 'f-torta', title: 'tarefa qualquer que alguém criou dentro do pacote' }],
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(d.filhasFechadas.length, 0, 'não deu pra extrair o nome — adivinhar aqui fecharia tarefa alheia');
+  assert.strictEqual(r.naoDecididas, 1);
+});
+
+// FALHA-FECHADA: sem a fonte não dá pra AFIRMAR que alguém preencheu. Fechar no escuro marcaria
+// `done` em quem não fez — e `done` no meio do dia some da tela, ou seja, some da cobrança.
+test('atualização: RPC falha → não fecha NADA e o motivo diz por quê', async () => {
+  const d = depsRefresh({
+    rpcErro: { message: 'timeout' },
+    filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }],
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(d.filhasFechadas.length, 0);
+  assert.strictEqual(r.fechadas, 0);
+  assert.ok(r.motivo && /atualiza/i.test(r.motivo),
+    '"não fechei porque a fonte caiu" precisa de sensor próprio, distinto de "ninguém preencheu ainda" (motivo null)');
+  assert.strictEqual(r.semPauta, undefined, 'fonte caída é FALHA (fallback), não desfecho resolvido');
+});
+
+// A regra sagrada da feature: a escada é gravada UMA vez, às 23:00. O repo injetado aqui EXPLODE
+// em qualquer método — se o caminho feliz sobrevive, é porque nenhum deles foi chamado.
+test('atualização: NENHUM caminho grava em anamnese_pauta', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true), aluno('Bia', '08:00', false)],
+    filhasPendentes: [
+      { id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' },
+      { id: 'f-bia', title: '08:00 Anamnese — Bia (Canto)' },
+    ],
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.fechadas, 1, 'o caminho feliz rodou até o fim sem tocar no repo da escada');
+  assert.strictEqual(r.motivo, null, 'se o repo tivesse sido chamado, o throw viraria motivo — e este assert quebraria');
+});
+
+test('atualização: NENHUMA filha é fechada como cancelled, em nenhum cenário', async () => {
+  const ana2 = { ...aluno('Ana', '09:30', false), pessoa_chave: 'pk-Ana2' };
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', false), ana2, aluno('Bia', '08:00', false), aluno('Cid', '10:00', true)],
+    filhasPendentes: [
+      { id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' },       // ambígua
+      { id: 'f-bia', title: '08:00 Anamnese — Bia (Canto)' },       // não preencheu
+      { id: 'f-cid', title: '10:00 Anamnese — Cid (Canto)' },       // preencheu
+      { id: 'f-x', title: '11:00 Anamnese — Ninguém' },             // sem correspondência
+      { id: 'f-y', title: 'formato torto' },                        // sem nome
+    ],
+  });
+  await rodarRefresh(d);
+  assert.ok(d.filhasFechadas.every((f) => f.status === 'done'),
+    'no meio do dia "não fez" é mentira — cancelled é decisão de fim de dia, e só a noite pode tomá-la');
+  assert.deepStrictEqual(d.filhasFechadas.map((f) => f.id), ['f-cid']);
+});
+
+test('atualização: NUNCA fecha o container — o dia não terminou', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true)],
+    filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }],
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.fechadas, 1, 'fechou TODAS as filhas pendentes — e mesmo assim o container fica aberto');
+  assert.strictEqual(d.containerFechadoChamadas.length, 0,
+    'fechar o container tiraria a pauta da tela antes da última aula (20:00)');
+});
+
+// Domingo, ou um dia em que a manhã não montou pauta: não existe container. Isso NÃO é falha —
+// é desfecho resolvido. Sem `semPauta`, o dispatcher carimbaria `fallback` (que nesta casa
+// significa "tenta de novo") e re-rodaria a unidade em todo tick restante do slot, 7 slots por
+// dia. Mesmo par de sensores da manhã: motivo textual pra quem lê o RETORNO, flag pro MARCADOR.
+test('atualização: sem container de hoje → não faz nada, motivo próprio, e semPauta:true (skipped, não fallback)', async () => {
+  const d = depsRefresh({ containerId: null, alunos: [aluno('Ana', '09:00', true)] });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.atualizou, false);
+  assert.strictEqual(r.semPauta, true);
+  assert.ok(r.motivo, 'sem container tem motivo próprio — quem lê o retorno precisa saber por quê');
+  assert.strictEqual(d.filhasFechadas.length, 0);
+});
+
+// A checagem do container vem ANTES da RPC de propósito: a consulta do LA Report leva 6-8s e num
+// dia sem pauta o resultado seria descartado de qualquer jeito, 7 vezes por dia por unidade.
+test('atualização: sem container, nem chega a bater o LA Report', async () => {
+  let bateu = 0;
+  const d = depsRefresh({ containerId: null });
+  d.laReport = { rpc: async () => { bateu += 1; return { data: [], error: null }; } };
+  await rodarRefresh(d);
+  assert.strictEqual(bateu, 0, 'RPC de 6-8s não pode rodar num dia que nem tem pauta pra atualizar');
+});
+
+test('atualização: erro ao PROCURAR o container → não fecha nada, e não é confundido com "não tem pauta"', async () => {
+  const d = depsRefresh({ erroAcharContainer: 'column tasks.due_dat does not exist' });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.atualizou, false);
+  assert.strictEqual(d.filhasFechadas.length, 0);
+  assert.ok(r.motivo && /column/.test(r.motivo), 'o erro real do banco tem que chegar em quem lê');
+  assert.notStrictEqual(r.semPauta, true,
+    'leitura que FALHOU não pode virar "não tem pauta hoje" — é o zero-linhas-silencioso que já custou dois diagnósticos aqui');
+});
+
+test('atualização: erro ao listar as filhas pendentes → não fecha nada e diz por quê', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true)],
+    erroListarFilhas: 'column tasks.parent_task does not exist',
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(d.filhasFechadas.length, 0);
+  assert.ok(r.motivo && /filha/i.test(r.motivo));
+});
+
+test('atualização: container sem filha pendente é saúde (motivo null), não falha', async () => {
+  const d = depsRefresh({ alunos: [aluno('Ana', '09:00', true)], filhasPendentes: [] });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.atualizou, true);
+  assert.strictEqual(r.fechadas, 0);
+  assert.strictEqual(r.continuamPendentes, 0);
+  assert.strictEqual(r.motivo, null);
+});
+
+// Sem este `else` a falha seria MUDA: o contador não sobe, motivo fica null, o marcador diz
+// `executed` e trava o slot — a filha some do radar até as 23:00. Nomeia a filha: "alguma coisa
+// falhou" não dá pra investigar. Mesmo raciocínio do IMPORTANT 2 no fechamento da noite.
+test('atualização: filha que não fecha entra no motivo, NOMEADA', async () => {
+  const d = depsRefresh({
+    alunos: [aluno('Ana', '09:00', true)],
+    filhasPendentes: [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }],
+    fecharFilhaOk: () => false, // UPDATE que não casa linha nenhuma (o falso-sucesso do PostgREST)
+  });
+  const r = await rodarRefresh(d);
+  assert.strictEqual(r.fechadas, 0, 'não gravou — não pode contar como fechada');
+  assert.strictEqual(r.continuamPendentes, 1, 'ela continua na tela; o contador tem que dizer isso');
+  assert.ok(r.motivo && /Ana/.test(r.motivo), 'a filha precisa ser nomeada no motivo');
+});
+
+test('atualização: sem groupId não sai procurando container no escuro', async () => {
+  const d = depsRefresh({ alunos: [aluno('Ana', '09:00', true)] });
+  const r = await rodarRefresh(d, { groupId: null });
+  assert.strictEqual(r.atualizou, false);
+  assert.strictEqual(d.titulosChecados.length, 0);
+  assert.ok(r.motivo);
+});
+
+// Fonte única do título: se a atualização montasse a string por conta própria, ela procuraria um
+// container que a manhã não cria — e a lista simplesmente nunca encolheria, em silêncio.
+test('atualização: o título procurado é o MESMO que a manhã usa pra criar', async () => {
+  const manha = deps({ alunos: [aluno('Ana', '09:00', false)] });
+  await montarPautaDaUnidade({
+    supabase: {}, laReport: manha.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
+    hoje: SEGUNDA, deps: manha,
+  });
+  const d = depsRefresh({ alunos: [aluno('Ana', '09:00', false)] });
+  await rodarRefresh(d);
+  assert.strictEqual(d.titulosChecados[0], manha.criadas[0].input.title,
+    'texto divergente = guarda cega: a atualização nunca acharia a pauta da manhã');
+});
+
+// Os motivos são SENSORES. Se dois desfechos diferentes saem com o mesmo texto, quem lê
+// marker_logs não distingue "a fonte caiu" de "não tem pauta hoje" de "não consegui procurar".
+test('atualização: cada desfecho tem motivo TEXTUALMENTE distinto', async () => {
+  const filha = [{ id: 'f-ana', title: '09:00 Anamnese — Ana (Canto)' }];
+  const motivos = [
+    (await rodarRefresh(depsRefresh({ containerId: null }))).motivo,
+    (await rodarRefresh(depsRefresh({ erroAcharContainer: 'boom' }))).motivo,
+    (await rodarRefresh(depsRefresh({ rpcErro: { message: 'timeout' }, filhasPendentes: filha }))).motivo,
+    (await rodarRefresh(depsRefresh({ erroListarFilhas: 'boom', alunos: [aluno('Ana', '09:00', true)] }))).motivo,
+    (await rodarRefresh(depsRefresh({}), { groupId: null })).motivo,
+  ];
+  assert.ok(motivos.every((m) => typeof m === 'string' && m.length),
+    'todo desfecho que NÃO é o caminho feliz precisa de motivo');
+  assert.strictEqual(new Set(motivos).size, motivos.length, 'motivos repetidos = sensores cegos');
+});
