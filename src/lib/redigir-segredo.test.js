@@ -59,3 +59,54 @@ test('entrada nula ou vazia nao quebra', () => {
 test('MASCARA e ***', () => {
   assert.equal(MASCARA, '***');
 });
+
+// --- Fix round 1 (review C-1/C-2/C-3/I-1) ---------------------------------
+
+test('C-1: valor na linha seguinte ao rotulo (print de tela de login)', () => {
+  const t = '[Imagem analisada]\nUsuario: admin\nSenha:\nTr0ub4dor&3';
+  const r = redigirSegredos(t);
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /Tr0ub4dor&3/);
+  assert.match(r.texto, /Senha:/, 'rotulo nao pode sumir, so o valor');
+});
+
+test('C-2: rotulo colado a outra palavra ainda dispara (senha_wifi)', () => {
+  const r = redigirSegredos('senha_wifi: hunter2');
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /hunter2/);
+});
+
+test('C-2: rotulo colado a outra palavra ainda dispara (minha_senha)', () => {
+  const r = redigirSegredos('minha_senha: 123456');
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /123456/);
+});
+
+test('C-2: rotulo colado a outra palavra ainda dispara (camelCase MinhaSenha)', () => {
+  const r = redigirSegredos('MinhaSenha: hunter2');
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /hunter2/);
+});
+
+test('C-3: separador ponto-e-virgula tambem dispara', () => {
+  const r = redigirSegredos('senha; hunter2');
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /hunter2/);
+});
+
+test('I-1: valor de um campo nao engole o rotulo do proximo na mesma linha', () => {
+  const r = redigirSegredos('senha: abc123 token: xyz789');
+  assert.equal(r.achou, true);
+  assert.doesNotMatch(r.texto, /abc123/);
+  assert.doesNotMatch(r.texto, /xyz789/);
+  const marcas = (r.texto.match(/\*\*\*/g) || []).length;
+  assert.equal(marcas, 2, 'os dois campos devem virar mascaras separadas, nao uma so engolindo a outra');
+  assert.match(r.texto, /token/i, 'o rotulo do segundo campo nao pode ser engolido pela mascara do primeiro');
+});
+
+test('pergunta continua intocada mesmo com rotulo composto (regressao do fix)', () => {
+  const t = 'qual eh a senha_wifi aqui?';
+  const r = redigirSegredos(t);
+  assert.equal(r.achou, false, 'pergunta nao tem valor a redigir, nem com rotulo composto');
+  assert.equal(r.texto, t);
+});

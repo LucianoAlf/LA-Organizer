@@ -43,7 +43,10 @@ function parseCredencialAction(text) {
   }
   if (!json || typeof json !== 'object') return null;
 
-  const action = String(json.action || '').toLowerCase();
+  // Fail-closed: action precisa ser string de verdade. String(['create'])
+  // vira 'create' e passaria pela validacao seguinte sem esse check.
+  if (typeof json.action !== 'string') return null;
+  const action = json.action.toLowerCase();
   if (!ACOES_VALIDAS.has(action)) return null;
 
   const nome = json.nome ? String(json.nome).trim() : '';

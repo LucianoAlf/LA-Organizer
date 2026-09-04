@@ -50,6 +50,12 @@ test('rejeita texto sem marker', () => {
   assert.equal(parseCredencialAction(null), null);
 });
 
+test('rejeita action que nao e string (fail-closed)', () => {
+  assert.equal(parseCredencialAction(MK({ action: ['create'], nome: 'X' })), null);
+  assert.equal(parseCredencialAction(MK({ action: 123, nome: 'X' })), null);
+  assert.equal(parseCredencialAction(MK({ action: { x: 1 }, nome: 'X' })), null);
+});
+
 test('normaliza campos: descarta item sem label e sensivel vira boolean', () => {
   const p = parseCredencialAction(MK({
     action: 'create', nome: 'X',
