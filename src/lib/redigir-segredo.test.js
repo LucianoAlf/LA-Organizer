@@ -1355,3 +1355,35 @@ test('R12: par de palavras so e rotulo na forma "api key"', () => {
   assert.equal(b.achou, true, 'o par de verdade continua valendo');
   assert.ok(!b.texto.includes('X7k9Qm2p'));
 });
+
+// --- R13: aspas tipograficas (o vazamento real de 04/09) ----------------------------------
+// O caminho de IMAGEM chegava aqui sem redacao nenhuma. A analise de print transcreve o
+// texto da tela entre aspas CURVAS, e nem o lookbehind nem o gap do RE_CAMPO aceitavam esse
+// caractere. Os dois formatos abaixo sao copia literal do que o modelo de visao devolveu
+// para os prints que o Hugo mandou as 16:58 BRT — e os valores ficaram em claro no
+// conversation_history, que volta pro prompt a cada turno.
+test('R13: rotulo entre aspas curvas antes do separador', () => {
+  const r = redigirSegredos('Campos: “Developer token” = “AAAAbbbb0000cccc1111dd”;');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('AAAAbbbb0000cccc1111dd'), 'valor de token nao pode sobreviver');
+});
+
+test('R13: rotulo colado na aspa curva de abertura (proximidade)', () => {
+  const r = redigirSegredos('“Chave Secreta do Cliente: GOCSPX-AAAAbbbbCCCCddddEEEE”');
+  assert.equal(r.achou, true);
+  assert.ok(!r.texto.includes('GOCSPX-AAAAbbbbCCCCddddEEEE'), 'client secret nao pode sobreviver');
+});
+
+test('R13: aspas simples curvas e angulares tambem', () => {
+  for (const [ab, fe] of [['‘', '’'], ['«', '»']]) {
+    const t = `${ab}senha${fe}: hunter2XYZ`;
+    const r = redigirSegredos(t);
+    assert.equal(r.achou, true, t);
+    assert.ok(!r.texto.includes('hunter2XYZ'), t);
+  }
+});
+
+test('R13: aspa curva sozinha nao inventa campo', () => {
+  const t = 'Ele disse “bom dia” e foi embora.';
+  assert.equal(redigirSegredos(t).texto, t);
+});

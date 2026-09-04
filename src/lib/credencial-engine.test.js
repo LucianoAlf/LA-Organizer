@@ -192,13 +192,33 @@ test('executor: alvo ambiguo pergunta qual e guarda {id, nome}', async () => {
     [{ id: 'a', nome: 'Instagram LA Music' }, { id: 'b', nome: 'Instagram LA Educa' }]);
 });
 
-test('executor: alvo inexistente pergunta o nome e NAO abre intent', async () => {
+test('executor: alvo inexistente SEM dados lista o que existe e NAO abre intent', async () => {
   cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [{ id: 'a', nome: 'Canva', campos: [] }] }) }));
   const r = await run(ctxBase({ reply: MARKER({ action: 'update', alvo: 'Notion' }) }));
-  assert.match(r.reply, /Não achei/);
+  assert.match(r.reply, /Não tenho nenhuma \*Notion\*/);
+  assert.match(r.reply, /Canva/, 'sem dados pra criar, ao menos mostra o que existe');
   assert.strictEqual(calls.upsert.length, 0);
   assert.strictEqual(calls.open.length, 0);
   assert.deepStrictEqual(markersAcao().map((m) => m.reason), ['alvo_nao_encontrado']);
+});
+
+// 04/09 17:01: o TOM afirmou que a "Cleinte Oauth Google la.technology" existia, o Hugo
+// respondeu "sim", e o turno seguinte respondeu "Me diz o nome exato?" — devolvendo o
+// trabalho pra pessoa com as 46 credenciais na mao do engine. Update com dados sobre alvo
+// inexistente vira create, atras da mesma confirmacao. Um passo, nada gravado sem OK.
+test('executor: update com dados sobre alvo inexistente vira create confirmavel', async () => {
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [{ id: 'a', nome: 'Canva', campos: [] }] }) }));
+  const r = await run(ctxBase({ reply: MARKER({
+    action: 'update', alvo: 'Cliente OAuth Google', campos: [{ label: 'Client ID', valor: '1041-abc.apps.googleusercontent.com' }],
+  }) }));
+  assert.match(r.reply, /vou criar/i);
+  assert.match(r.reply, /Confirma\?/);
+  assert.strictEqual(calls.upsert.length, 0, 'nada gravado antes do OK');
+  assert.strictEqual(calls.open.length, 1);
+  assert.strictEqual(calls.open[0].payload.modo, 'create');
+  assert.strictEqual(calls.open[0].payload.proposta.action, 'create');
+  assert.strictEqual(calls.open[0].payload.proposta.nome, 'Cliente OAuth Google', 'o alvo vira o nome');
+  assert.deepStrictEqual(markersAcao().map((m) => m.reason), ['alvo_inexistente_vira_create']);
 });
 
 test('executor: duplicata oferece merge, guarda {id, nome} e nao escreve', async () => {

@@ -201,3 +201,53 @@ test('mesmo host SOZINHO nao casa — reprovado na prova contra as 46', () => {
     existentes);
   assert.deepEqual(d, [], 'host sozinho voltou a casar');
 });
+
+// --- acharAlvo: o modelo reescreve o nome, o casamento tem que aguentar --------------------
+// 04/09: o cadastro e "Google Ads API - LA Music" (hifen ASCII) e o modelo devolve travessao.
+// O `includes` cru reprovava por UM caractere e o turno morria em "me diz o nome exato".
+const BASE_ALVO = [
+  { id: 'g', nome: 'Google Ads API - LA Music' },
+  { id: 'm', nome: 'Gmail — Escola de Música LA (YouTube/Google Ads)' },
+  { id: 'c', nome: 'Canva — criativos' },
+];
+
+test('acharAlvo: travessao no lugar do hifen ainda e o mesmo alvo', () => {
+  const { exato } = acharAlvo('Google Ads API — LA Music', BASE_ALVO);
+  assert.ok(exato && exato.id === 'g');
+});
+
+test('acharAlvo: acento e caixa nao atrapalham', () => {
+  const { exato } = acharAlvo('gmail — escola de musica la (youtube/google ads)', BASE_ALVO);
+  assert.ok(exato && exato.id === 'm');
+});
+
+test('acharAlvo: nome parcial continua casando por conter', () => {
+  const { candidatos } = acharAlvo('Google Ads API', BASE_ALVO);
+  assert.deepStrictEqual(candidatos.map(c => c.id), ['g']);
+});
+
+// "Google" casa por CONTER em dois nomes — comportamento antigo, mantido de proposito: dois
+// candidatos caem no ramo "Achei mais de uma. Qual delas?", que pergunta em vez de chutar.
+// O que nao pode e a 3a passada (tokens) eleger alvo com uma palavra generica so — por isso
+// ela exige 2+ tokens significativos.
+test('acharAlvo: token generico nunca ELEGE alvo sozinho', () => {
+  const { exato, candidatos } = acharAlvo('Google', BASE_ALVO);
+  assert.strictEqual(exato, null);
+  assert.ok(candidatos.length > 1, 'ambiguo => o engine pergunta, nao escreve');
+
+  // Sem containment, um token generico nao pode virar candidato por score.
+  const semConter = acharAlvo('Ads', [{ id: 'x', nome: 'Meta — Destino leads Ads (LPs)' }, { id: 'y', nome: 'Canva' }]);
+  assert.strictEqual(semConter.exato, null);
+});
+
+test('acharAlvo: 2+ tokens significativos em comum viram candidato ordenado', () => {
+  const { exato, candidatos } = acharAlvo('API do Google Ads da LA Music', BASE_ALVO);
+  assert.strictEqual(exato, null);
+  assert.strictEqual(candidatos[0].id, 'g', 'o de mais tokens em comum vem primeiro');
+});
+
+test('acharAlvo: nada parecido continua devolvendo vazio', () => {
+  const { exato, candidatos } = acharAlvo('Notion do financeiro', BASE_ALVO);
+  assert.strictEqual(exato, null);
+  assert.strictEqual(candidatos.length, 0);
+});

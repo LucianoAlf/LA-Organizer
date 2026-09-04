@@ -259,7 +259,15 @@ function _tokenValido(tok) {
 // engine chama o redator 3x por turno num processo single-thread. Nos dois
 // lugares o "_" era redundante: a classe do token ja o inclui, entao ele
 // nunca precisa ser fronteira nem preenchimento.
-const RE_CAMPO = /(?:^|(?<=[\s(\[*`"|À-ÖØ-öø-ÿĀ-ſ]))(api[ _-]?key|[A-Za-z0-9_\-À-ÖØ-öø-ÿĀ-ſ]+)[ \t*`"]*([:=;|]|[ \t\-—→])/gi;
+// ASPAS TIPOGRAFICAS (04/09) — o caminho de IMAGEM entrava aqui SEM redacao nenhuma.
+// A analise de print transcreve o texto da tela sempre entre “ ” (o modelo de visao usa
+// aspas curvas, nao retas), e nem o lookbehind nem o gap aceitavam esse caractere:
+//   “Developer token” = “AErty...”     -> o ” entre o rotulo e o = matava o casamento
+//   “Chave Secreta do Cliente: GOCS...” -> o “ colado em Chave matava a proximidade
+// Medido em producao: os dois valores acima ficaram EM CLARO no conversation_history, que
+// volta pro prompt a cada turno (history: 30). Print e o jeito que o Hugo mais manda
+// credencial — foram 3 numa mensagem so. Aspas retas ja estavam cobertas; faltavam as curvas.
+const RE_CAMPO = /(?:^|(?<=[\s(\[*`"“”‘’«»|À-ÖØ-öø-ÿĀ-ſ]))(api[ _-]?key|[A-Za-z0-9_\-À-ÖØ-öø-ÿĀ-ſ]+)[ \t*`"“”‘’«»]*([:=;|]|[ \t\-—→])/gi;
 
 const RE_SEP_PONTUACAO = /^[:=;|]$/;
 
@@ -276,7 +284,9 @@ function _soEnfase(v) {
 
 // Tira enfase/pontuacao das bordas de uma palavra, para comparar rotulo de
 // duas palavras ("**api key**:" -> "api" + "key").
-const RE_ENFASE_BORDA = /^[*`"_|]+|[*`"_|:=;,.?!]+$/g;
+// Aspas curvas incluidas pelo mesmo motivo do RE_CAMPO: sem elas “Chave vira a palavra
+// literal `“Chave`, que nao bate com nenhum rotulo, e a janela de proximidade nao ve nada.
+const RE_ENFASE_BORDA = /^[*`"“”‘’«»_|]+|[*`"“”‘’«»_|:=;,.?!]+$/g;
 
 function _limpaEnfase(palavra) {
   return palavra.replace(RE_ENFASE_BORDA, '');

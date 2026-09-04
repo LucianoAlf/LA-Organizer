@@ -199,19 +199,82 @@ function acharReusoDeSegredo(proposta, existentes) {
   return achados;
 }
 
+// Normalizacao SO DE NOME. Deliberadamente separada de `_norm`: aquela tambem normaliza
+// VALOR de campo, e tirar acento/pontuacao de senha faria segredos diferentes colidirem
+// ("Alfa#1" e "alfa1" virariam a mesma coisa no aviso de reuso). Aqui o alvo do casamento e
+// nome de sistema escrito por gente e reescrito por modelo, entao vale o contrario:
+//   - acento fora ("Música" = "Musica");
+//   - travessao/en-dash/hifen viram o mesmo separador (o modelo devolve "—" onde o cadastro
+//     tem "-", e o `includes` cru errava por causa de UM caractere);
+//   - aspas curvas e pontuacao de borda fora;
+//   - espaco colapsado.
+function _normNome(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[‐-―−]/g, '-')
+    .replace(/[“”‘’«»"'`]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[\s\-.:,;]+|[\s\-.:,;]+$/g, '');
+}
+
+// Palavras que aparecem em quase todo nome de credencial da base e por isso nao servem de
+// evidencia de que dois nomes falam do mesmo sistema.
+const TOKEN_VAZIO = new Set(['la', 'music', 'da', 'de', 'do', 'das', 'dos', 'e', 'o', 'a', 'para', 'pra', 'com', 'conta', 'credencial', 'login', 'acesso']);
+const MIN_TOKEN = 3;
+
+function _tokensNome(s) {
+  return _normNome(s).split(/[^a-z0-9]+/).filter(t => t.length >= MIN_TOKEN && !TOKEN_VAZIO.has(t));
+}
+
+/**
+ * Casa o `alvo` proposto pelo modelo contra as credenciais existentes.
+ *
+ * Tres passadas, da mais forte pra mais fraca. A escolha continua sendo do codigo, e
+ * havendo mais de um candidato quem decide e a pessoa — nunca o chute.
+ *
+ * A 3a passada (tokens em comum) entrou em 04/09: o modelo escreve o nome com as proprias
+ * palavras ("Google Ads API — LA Music" pro cadastro "Google Ads API - LA Music", ou so
+ * "Google Ads API"), e o `includes` cru reprovava por pontuacao. Reprovar ali custa caro:
+ * o turno terminava com "me diz o nome exato", jogando no usuario um trabalho que o engine
+ * tinha como fazer — ele esta com a lista inteira na mao.
+ */
 function acharAlvo(termo, existentes) {
   if (!termo || !Array.isArray(existentes)) return { exato: null, candidatos: [] };
-  const t = _norm(termo);
+  const t = _normNome(termo);
   if (!t) return { exato: null, candidatos: [] };
 
-  const exato = existentes.find(c => c && _norm(c.nome) === t) || null;
+  const exato = existentes.find(c => c && _normNome(c.nome) === t) || null;
   if (exato) return { exato, candidatos: [] };
 
-  const candidatos = existentes.filter(c => c && _norm(c.nome).includes(t));
-  return { exato: null, candidatos };
+  // Contem: o termo dentro do nome cadastrado, ou o nome cadastrado dentro do termo
+  // (o modelo as vezes acrescenta o servico: "Canva — criativos (Canva)").
+  const contem = existentes.filter(c => {
+    if (!c) return false;
+    const n = _normNome(c.nome);
+    if (!n) return false;
+    return n.includes(t) || (t.length >= MIN_NOME_PARECIDO && t.includes(n));
+  });
+  if (contem.length) return { exato: null, candidatos: contem };
+
+  // Tokens significativos em comum. Exige 2+ pra nao casar por "google" sozinho, que
+  // aparece em 6 cadastros. Ordena pelo numero de tokens em comum: a lista que vai pra
+  // tela comeca pelo mais provavel.
+  const alvoTokens = _tokensNome(termo);
+  if (alvoTokens.length < 2) return { exato: null, candidatos: [] };
+  const porScore = [];
+  for (const c of existentes) {
+    if (!c) continue;
+    const nt = new Set(_tokensNome(c.nome));
+    const score = alvoTokens.filter(x => nt.has(x)).length;
+    if (score >= 2) porScore.push({ c, score });
+  }
+  porScore.sort((a, b) => b.score - a.score);
+  return { exato: null, candidatos: porScore.map(x => x.c) };
 }
 
 module.exports = {
-  acharDuplicatas, acharAlvo, acharReusoDeSegredo,
+  acharDuplicatas, acharAlvo, acharReusoDeSegredo, _normNome, _tokensNome,
   LABEL_SENSIVEL_RE, LABEL_IDENTIDADE_RE, VALOR_LIXO, MIN_NOME_PARECIDO,
 };

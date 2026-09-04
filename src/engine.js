@@ -11862,10 +11862,39 @@ Output AGORA, apenas o marker:`;
         } else {
           const { exato, candidatos } = acharAlvo(_acao.alvo, creds);
           if (!exato && !candidatos.length) {
-            // Alvo nao encontrado: perguntar, NUNCA escolher.
-            await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'alvo_nao_encontrado', null);
-            _metrics.awaiting_user_confirm = true;
-            reply = 'Não achei nenhuma credencial com esse nome. Me diz o nome exato?';
+            // ALVO INEXISTENTE (04/09 17:01) — antes isto era "Me diz o nome exato?", ou seja:
+            // o engine, com as 46 credenciais na mao, devolvia o trabalho pra pessoa. No caso
+            // real nem havia nome exato pra dar — o TOM tinha afirmado no turno anterior que a
+            // "Cleinte Oauth Google la.technology" existia, o Hugo respondeu "sim", e o turno
+            // seguinte negou a existencia. Dois turnos se contradizendo e nada gravado.
+            //
+            // O certo aqui e reconhecer o que o proprio pedido ja diz: se e um update com
+            // dados, o que a pessoa quer e que aquilo PASSE A EXISTIR. Entao o engine converte
+            // em create e mostra o que vai gravar — um passo, sem perguntar de novo. A escrita
+            // continua atras da mesma confirmacao de sempre; o que sai e a ida e volta inutil.
+            //
+            // Delete nao converte: nao existe "apagar o que nao existe", e inventar um create
+            // ali seria o oposto do pedido.
+            const _temDados = Array.isArray(_acao.campos) && _acao.campos.length > 0;
+            if (_acao.action === 'update' && _temDados) {
+              const _proposta = { ..._acao, action: 'create', nome: _acao.nome || _acao.alvo };
+              const resumo = _resumoCredencial(_proposta);
+              await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', 'alvo_inexistente_vira_create', null);
+              reply = `Não tenho nenhuma *${_acao.alvo}* cadastrada ainda — vou criar:\n\n`
+                + `${resumo}${_avisoDeReuso(null)}\n\nConfirma?`;
+              const _ok = await _abrir({ modo: 'create', proposta: _proposta }, reply);
+              if (!_ok) reply = FALHA_PENDENCIA;
+            } else {
+              // Sem dados pra criar (ou e delete): nao da pra resolver sozinho, mas da pra
+              // perguntar de um jeito respondivel. Lista o que existe em vez de exigir que a
+              // pessoa acerte a grafia de cabeca.
+              await logMarker(collab.id, 'CREDENCIAL_ACTION', 'rejected', 'alvo_nao_encontrado', null);
+              _metrics.awaiting_user_confirm = true;
+              const _amostra = creds.slice(0, 8).map(c => `- ${c.nome}`).join('\n');
+              const _resto = creds.length - Math.min(creds.length, 8);
+              reply = `Não tenho nenhuma *${_acao.alvo}* cadastrada.`
+                + (creds.length ? `\n\nO que tem aqui:\n${_amostra}${_resto > 0 ? `\n_(e mais ${_resto})_` : ''}\n\nÉ alguma dessas?` : '');
+            }
           } else if (!exato && candidatos.length > 1) {
             const lista = candidatos.slice(0, 5).map((c, i) => `${i + 1}. *${c.nome}*`).join('\n');
             await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', `alvo_ambiguo:${candidatos.length}`, null);
