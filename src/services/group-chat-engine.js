@@ -108,15 +108,20 @@ function rasparMarkersResiduais(texto) {
 // FATIA 2 — o que vai como "memoria de longo prazo" no prompt. Ate 2 memorias ativas o grupo
 // segue com o resumo rolante velho; da terceira em diante, so o bloco novo (fatos datados, um
 // por linha). A troca e por GRUPO — nenhum grupo passa um dia sem contexto.
+//
+// Devolve DOIS blocos: a memoria DESTE grupo e as regras de comportamento do TOM (scope='tom'),
+// que valem em todo grupo e por isso nao podem entrar no bloco "deste grupo" — cujo cabecalho
+// diz, com todas as letras, que ali so ha resumo de sessao passada.
 function memoriaDoPrompt(ctx) {
   const gm = require('./group-memory');
   const r = gm.escolherMemoria({
     memorias: ctx.memoriasDoGrupo,
     bufferAntigo: ctx.group && ctx.group.tom_chat_memory,
   });
-  // Sensor: sem isto, "grupo sem memoria" e "leitura falhou" ficam identicos no log.
-  console.log(`[GroupMemory] grupo=${ctx.group && ctx.group.id} fonte=${r.fonte} ativas=${r.vivas}`);
-  return r.texto;
+  // Sensor: sem isto, "grupo sem memoria" e "leitura falhou" ficam identicos no log. `globais`
+  // entra junto pra "a regra global chegou neste grupo" nao ser invisivel na auditoria.
+  console.log(`[GroupMemory] grupo=${ctx.group && ctx.group.id} fonte=${r.fonte} ativas=${r.vivas} globais=${r.globais || 0}`);
+  return { longTermMemory: r.texto, comportamentoDoTom: r.comportamento || null };
 }
 
 async function loadContext(supabase, groupId, senderCollabId) {
@@ -397,7 +402,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     today: ctx.poolToday, // GROUPCHAT-POOL-DATE-NO-RELLABEL: pré-computa o dia relativo no pool (paridade 1:1)
     history: ctx.history,
     senderName: ctx.senderName,
-    longTermMemory: memoriaDoPrompt(ctx),
+    ...memoriaDoPrompt(ctx), // longTermMemory (deste grupo) + comportamentoDoTom (vale em todos)
     notesContext: notesCtx, // base de conhecimento do grupo (índice + body das fixadas)
     credentialContext: credCtx, // credenciais que casam com o pedido deste turno (secrets decifrados)
     dateAnchor: buildBrtDateAnchor(), // hoje + tabela de datas (BRT) — LLM não calcula weekday e erra
@@ -798,18 +803,32 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       const gm = require('./group-memory');
       let p = {};
       try { p = JSON.parse(licaoMatch[1].trim()) || {}; } catch (_) { p = {}; }
-      const pendentes = await gm.listarLicoesPendentes(supabase, groupId);
-      if (pendentes === null) throw new Error('nao consegui ler as licoes');
+      const pendentes = await gm.listarMemoriasPendentes(supabase, groupId);
+      if (pendentes === null) throw new Error('nao consegui ler as memorias pendentes');
 
       const acao = (p.acao === 'aprovar' || p.acao === 'descartar') ? p.acao : 'listar';
       const numeros = Array.isArray(p.itens) ? p.itens : [];
       let html;
       if (acao === 'listar' || !numeros.length) {
-        html = gm.renderLicoesPendentes(pendentes, { grupoNome: ctx.group.name });
-        actions.push({ kind: 'licao', status: 'ok', label: `Licoes pendentes (${pendentes.length})` });
+        html = gm.renderMemoriasPendentes(pendentes, { grupoNome: ctx.group.name });
+        actions.push({ kind: 'licao', status: 'ok', label: `Pendentes de aprovacao (${pendentes.length})` });
       } else {
-        const r = await gm.decidirLicoes(supabase, { licoes: pendentes, numeros, acao });
-        html = gm.renderDecisao({ ...r, acao });
+        // DUAS CHAVES pra promover uma regra a todos os grupos, e nenhuma delas abre sozinha:
+        //   1) o marker da LLM pede escopo "tom";
+        //   2) a frase da PESSOA diz, em portugues, que e pra todos os grupos.
+        // A segunda e conferida em codigo (`pediuPraTodosOsGrupos`) justamente pra a LLM nunca
+        // decidir sozinha que algo vale em todo lugar: erro dela contaminaria todo grupo de uma
+        // vez. E `podeExecutar` continua valendo — quem o banco nao reconhece nao aprova nada.
+        const pediuTom = (p.escopo === 'tom' || p.escopo === 'todos');
+        const humanoPediu = gm.pediuPraTodosOsGrupos(text);
+        const escopo = (pediuTom && humanoPediu) ? 'tom' : 'group';
+        const r = await gm.decidirMemorias(supabase, { pendentes, numeros, acao, escopo });
+        // O card DECLARA o alcance nos dois sentidos. Recusar calado ensinaria a pessoa que a
+        // promocao nao existe; promover calado esconderia uma regra que passou a valer em tudo.
+        let motivo = null;
+        if (pediuTom && !humanoPediu) motivo = 'sem_frase';
+        else if (escopo === 'tom' && r.escopoAplicado !== 'tom') motivo = 'sem_coluna';
+        html = gm.renderDecisao({ ...r, acao, motivo });
         const restam = r.total - r.feitos.length;
         if (restam > 0) html += `<p><i>Ainda faltam ${restam} esperando decisao.</i></p>`;
         // 'ok' so quando algo mudou de verdade no banco. Zero feito com cara de sucesso e a

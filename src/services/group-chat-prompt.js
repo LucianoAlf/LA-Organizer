@@ -37,7 +37,7 @@ function fmtHistoryLine(m) {
   return `${who}: ${content}`;
 }
 
-function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, credentialContext, dateAnchor, today, poolTotal, poolTruncado, remetenteDesconhecido }) {
+function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, comportamentoDoTom, notesContext, credentialContext, dateAnchor, today, poolTotal, poolTruncado, remetenteDesconhecido }) {
   const memberNames = (members || []).map((m) => m.name).filter(Boolean).join(', ') || '—';
   const poolBlock = (pool || []).length ? (pool || []).map((t) => fmtPoolLine(t, today)).join('\n') : '(nenhuma tarefa ainda)';
   // GROUPCHAT-POOL-TRUNCADO-VIRA-AUSENCIA (04/09 10:36): o TOM disse que três anamneses "não
@@ -60,6 +60,14 @@ function buildGroupChatPrompt({ soulText, groupName, members, pool, history, sen
   // "TOM se confundiu com a data — Rose corrigiu: hoje é 06/08". Um fato DATADO guardado como
   // permanente: sem isso, ele afirmaria "hoje é 06/08" em setembro.
   const memoryBlock = longTermMemory ? neutralizaDataAfirmada(longTermMemory) : '(ainda construindo)';
+  // COMO O TOM SE COMPORTA — bloco PRÓPRIO, e isso não é enfeite. O bloco de memória logo acima
+  // se declara como "resumos de sessões ANTERIORES, já encerradas": uma regra permanente lida
+  // como resumo de sessão passada é a mesma doença de datar o que não tem data. Estas linhas
+  // são de outra natureza — foram aprovadas POR UMA PESSOA pra valer em qualquer grupo, e o TOM
+  // é uma pessoa só. Vazio quando ninguém promoveu nada (o default), e aí o prompt é o de antes.
+  const comportamentoBlock = comportamentoDoTom
+    ? `\n## Como você se comporta (vale em TODOS os grupos)\nAlguém aprovou estas regras pra valerem em qualquer lugar onde você esteja. Não são resumo de sessão passada, não têm data e não vencem — são o seu jeito de ser. Valem aqui como valem em qualquer outro grupo.\n${comportamentoDoTom}\n`
+    : '';
   // Âncora de data SEMPRE presente — sem ela o LLM erra "segunda-feira" → data (BUG weekday).
   const dateBlock = dateAnchor ? `\n## Hoje (âncora temporal — leia ANTES de gerar qualquer due_date/remind_at/start_at)\n${dateAnchor}\n` : '';
 
@@ -85,7 +93,7 @@ ${dateBlock}
 ## Memória de longo prazo deste grupo
 (resumos de sessões ANTERIORES, já encerradas — qualquer "hoje/ontem/amanhã" aqui se refere ao dia daquela sessão passada, NUNCA a agora)
 ${memoryBlock}
-${notesContext ? `\n${notesContext}\n` : ''}
+${comportamentoBlock}${notesContext ? `\n${notesContext}\n` : ''}
 ${credentialContext ? `\n${credentialContext}\n` : ''}
 ## Tarefas do grupo (lista atual — NUNCA chame isso de "pool" na fala)
 (em ordem de vencimento: o que vence primeiro vem primeiro; sem prazo vai pro fim)
@@ -169,19 +177,25 @@ o cadastro, quem falta contrato — emita SÓ este marker:
   captura do grupo está fresca.
 
 
-### Licoes aprendidas do grupo (aprovar/descartar)
-O TOM guarda todo dia o que aprendeu com a conversa. FATO, CONTEXTO e PREFERENCIA ja valem
-sozinhos; LICAO — que muda o jeito dele agir — fica esperando alguem do grupo aprovar. Quando
-pedirem pra VER, APROVAR ou DESCARTAR essas licoes, emita SO este marker:
-<<LICOES>>{"acao":"listar|aprovar|descartar","itens":[1,3]}<<END>>
+### Memorias esperando aprovacao (aprovar/descartar)
+O TOM guarda todo dia o que aprendeu com a conversa. DECISAO e CONTEXTO ja valem sozinhos;
+LICAO, FATO e PREFERENCIA — que mudam o jeito dele agir ou viram verdade durável do grupo —
+ficam esperando alguem do grupo aprovar. Quando pedirem pra VER, APROVAR ou DESCARTAR isso,
+emita SO este marker:
+<<LICOES>>{"acao":"listar|aprovar|descartar","itens":[1,3],"escopo":"grupo|tom"}<<END>>
 - "listar" (padrao) quando perguntarem o que esta esperando aprovacao, o que ele aprendeu, se tem
-  licao pendente.
+  memoria pendente.
 - "aprovar" / "descartar" com os NUMEROS que a pessoa disse ("aprova a 1 e a 3" -> itens [1,3];
   "pode aprovar todas" -> liste todos os numeros do card anterior).
-- NUNCA escreva a lista nem o texto das licoes voce mesmo: o sistema le do banco e monta o card.
+- "escopo" é "grupo" SEMPRE, exceto quando a PESSOA disser com todas as letras que vale pra todos
+  os grupos ("aprova a 1 pra todos os grupos", "vale em qualquer grupo"). Aí, e so aí, mande
+  "tom". VOCE NUNCA DECIDE ISSO: nao promova por achar que a regra parece geral, nem sugira o
+  escopo por conta propria — regra promovida por engano passa a valer em TODOS os grupos de uma
+  vez. Na duvida, "grupo". O sistema confere a frase dela de novo antes de aplicar.
+- NUNCA escreva a lista nem o texto das memorias voce mesmo: o sistema le do banco e monta o card.
   Voce da UMA linha curta de abertura e so.
 - Se a pessoa disser "aprova" sem numero nenhum e nao houver card antes, mande acao "listar"
-  primeiro — aprovar a licao errada muda o comportamento dele com o time inteiro.
+  primeiro — aprovar a memoria errada muda o comportamento dele com o time inteiro.
 
 ### Relatório do grupo (sob demanda)
 Quando pedirem um resumo/relatório/listagem do que o grupo tem (agenda, tarefas, anotações, checklists) — num período (hoje/semana/mês) — emita SÓ este marker:

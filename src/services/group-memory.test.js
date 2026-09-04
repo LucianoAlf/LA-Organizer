@@ -11,7 +11,9 @@ function fakeSupabase({ mensagens = [], existentes = [], insertErro = null } = {
     _inseridas: inseridas,
     from(tbl) {
       const q = {
-        select: () => q, eq: () => q, gte: () => q, order: () => q, is: () => q,
+        // `or` entrou quando o SELECT de `existentes` passou a trazer também as memórias
+        // globais (scope='tom') dos outros grupos — sem ele o grupo reaprende a mesma regra.
+        select: () => q, eq: () => q, gte: () => q, order: () => q, is: () => q, or: () => q,
         insert: async (row) => { inseridas.push(row); return { error: insertErro }; },
         then: (ok) => ok({ data: tbl === 'group_chat_messages' ? mensagens : existentes, error: null }),
       };
@@ -221,7 +223,7 @@ test('MINIMO_PRA_TROCAR é 3, como a spec definiu', () => {
 // das 05:00 já avisava "⛔ N lições esperando seu ok" — mas não existia como responder, e sete
 // ficaram paradas. O portão está certo; faltava a maçaneta.
 const {
-  ordenarLicoes, decidirLicoes, renderLicoesPendentes, renderDecisao,
+  ordenarPendentes, decidirMemorias, renderMemoriasPendentes, renderDecisao,
 } = require('./group-memory');
 
 const L = (id, content, dia) => ({ id, content, occurred_on: dia || '2026-09-03' });
@@ -229,7 +231,7 @@ const L = (id, content, dia) => ({ id, content, occurred_on: dia || '2026-09-03'
 // A pessoa responde por NÚMERO. Se a ordem escorregar entre o card e o comando, ela aprova
 // outra coisa — e lição errada muda o comportamento dele com o time inteiro.
 test('ordem é determinística: data desc, id como desempate', () => {
-  const r = ordenarLicoes([
+  const r = ordenarPendentes([
     L('b', 'dois', '2026-09-03'), L('a', 'um', '2026-09-03'), L('c', 'velha', '2026-09-01'),
   ]);
   assert.deepStrictEqual(r.map((x) => x.id), ['a', 'b', 'c']);
@@ -237,21 +239,23 @@ test('ordem é determinística: data desc, id como desempate', () => {
 
 test('a mesma entrada em ordem embaralhada dá a mesma numeração', () => {
   const base = [L('b', 'dois'), L('a', 'um'), L('c', 'três')];
-  const n1 = ordenarLicoes(base).map((x) => x.id);
-  const n2 = ordenarLicoes([...base].reverse()).map((x) => x.id);
+  const n1 = ordenarPendentes(base).map((x) => x.id);
+  const n2 = ordenarPendentes([...base].reverse()).map((x) => x.id);
   assert.deepStrictEqual(n1, n2);
 });
 
 test('o card numera e diz como responder', () => {
-  const h = renderLicoesPendentes([L('a', 'chamar pelo nome'), L('b', 'não chutar dado')], { grupoNome: 'ADM CG' });
+  const h = renderMemoriasPendentes([L('a', 'chamar pelo nome'), L('b', 'não chutar dado')], { grupoNome: 'ADM CG' });
   assert.match(h, /ADM CG/);
   assert.match(h, /<b>1\.<\/b> chamar pelo nome/);
   assert.match(h, /<b>2\.<\/b> não chutar dado/);
   assert.match(h, /aprova a 1/);
 });
 
-test('sem lição pendente o card diz isso, não fica vazio', () => {
-  assert.match(renderLicoesPendentes([], { grupoNome: 'Barra' }), /Nenhuma lição esperando/);
+// A fila deixou de ser só de lições (fact e preference agora esperam o ok também), então a
+// palavra no card mudou junto — o card vazio não pode prometer que só lição espera aprovação.
+test('sem pendência o card diz isso, não fica vazio', () => {
+  assert.match(renderMemoriasPendentes([], { grupoNome: 'Barra' }), /Nenhuma memória esperando/);
 });
 
 function fakeSb(registro) {
@@ -268,8 +272,8 @@ function fakeSb(registro) {
 
 test('aprovar ativa e carimba a decisão', async () => {
   const escritas = [];
-  const r = await decidirLicoes(fakeSb(escritas), {
-    licoes: [L('a', 'um'), L('b', 'dois'), L('c', 'três')], numeros: [1, 3], acao: 'aprovar',
+  const r = await decidirMemorias(fakeSb(escritas), {
+    pendentes: [L('a', 'um'), L('b', 'dois'), L('c', 'três')], numeros: [1, 3], acao: 'aprovar',
   });
   assert.deepStrictEqual(escritas.map((x) => x.id), ['a', 'c']);
   assert.ok(escritas.every((x) => x.is_active === true && x.approved_at));
@@ -280,21 +284,21 @@ test('aprovar ativa e carimba a decisão', async () => {
 // dizer não pra sempre.
 test('descartar carimba a decisão para a lição não voltar pra fila', async () => {
   const escritas = [];
-  await decidirLicoes(fakeSb(escritas), { licoes: [L('a', 'um')], numeros: [1], acao: 'descartar' });
+  await decidirMemorias(fakeSb(escritas), { pendentes: [L('a', 'um')], numeros: [1], acao: 'descartar' });
   assert.strictEqual(escritas[0].is_active, false);
   assert.ok(escritas[0].approved_at, 'sem approved_at ela reaparece como pendente');
 });
 
 test('número fora da lista não vira aprovação silenciosa', async () => {
   const escritas = [];
-  const r = await decidirLicoes(fakeSb(escritas), { licoes: [L('a', 'um')], numeros: [1, 7], acao: 'aprovar' });
+  const r = await decidirMemorias(fakeSb(escritas), { pendentes: [L('a', 'um')], numeros: [1, 7], acao: 'aprovar' });
   assert.deepStrictEqual(escritas.map((x) => x.id), ['a']);
   assert.deepStrictEqual(r.foraDaLista, [7]);
 });
 
 test('número repetido não aplica duas vezes', async () => {
   const escritas = [];
-  await decidirLicoes(fakeSb(escritas), { licoes: [L('a', 'um')], numeros: [1, 1, 1], acao: 'aprovar' });
+  await decidirMemorias(fakeSb(escritas), { pendentes: [L('a', 'um')], numeros: [1, 1, 1], acao: 'aprovar' });
   assert.strictEqual(escritas.length, 1);
 });
 
@@ -437,4 +441,323 @@ test('context sem decay_at ganha prazo; com prazo, respeita o que veio', async (
   assert.strictEqual(semPrazo.decay_at, esperado, 'context sem prazo ganha o prazo padrão');
   assert.strictEqual(comPrazo.decay_at, '2026-09-12T00:00:00.000Z', 'prazo explícito da LLM manda');
   assert.strictEqual(fato.decay_at, null, 'fact não ganha prazo automático');
+});
+
+// ══ ESCOPO: A LIÇÃO QUE ATRAVESSA GRUPOS ═══════════════════════════════════════════════════
+// MEDIDO em 04/09: a regra "chame a pessoa pelo nome, não com @" existe como `lesson` aprovada
+// em ADM CG E, com outra redação, em Administração Recreio — e ia nascer uma TERCEIRA na Barra
+// naquela noite. A memória é por grupo (`group_memory.group_id` NOT NULL) e
+// `carregarMemoriasDoGrupo` lia só a do grupo corrente, então o dono ensinava a mesma coisa de
+// novo em cada grupo. O TOM é uma pessoa só: como ele FALA vale em todo lugar; onde o Arthur
+// cuida da matrícula, não.
+const {
+  ESCOPO_TOM, ehGlobal, colunaScopeAusente, montarBlocoComportamento, pediuPraTodosOsGrupos,
+  defaultsPorTipoDoGrupo, listarMemoriasPendentes, TETO_BLOCO_TOM, carregarMemoriasDoGrupo,
+} = require('./group-memory');
+
+const G = (o) => ({ content: 'combinado qualquer', importance: 'normal', occurred_on: '2026-09-02', is_active: true, scope: 'group', ...o });
+const GLOBAL = (o) => G({ scope: ESCOPO_TOM, ...o });
+
+// ── O reader tem que trazer as globais dos OUTROS grupos ───────────────────────────────────
+/** Supabase de mentira que registra o filtro usado e sabe simular a coluna `scope` ausente. */
+function sbLeitura({ linhas = [], temScope = true } = {}) {
+  const chamadas = [];
+  return {
+    chamadas,
+    from() {
+      const st = { or: null, eqs: {}, cols: '' };
+      const q = {
+        select(cols) { st.cols = cols; return q; },
+        or(f) { st.or = f; return q; },
+        eq(c, v) { st.eqs[c] = v; return q; },
+        is(c, v) { st.eqs[c] = v; return q; },
+        order() { return q; },
+        limit() { return q.then(); },
+        then(ok) {
+          chamadas.push(st);
+          // A coluna só existe depois da migration. Antes dela o PostgREST devolve 42703 —
+          // e é isso que o fallback precisa enxergar.
+          const usaScope = !!st.or || String(st.cols || '').includes('scope');
+          const r = (!temScope && usaScope)
+            ? { data: null, error: { code: '42703', message: 'column group_memory.scope does not exist' } }
+            : { data: linhas, error: null };
+          return ok ? ok(r) : Promise.resolve(r);
+        },
+      };
+      return q;
+    },
+  };
+}
+
+test('escopo: a regra de comportamento do TOM chega no grupo que nunca a aprendeu', async () => {
+  const sb = sbLeitura({ linhas: [G({ content: 'local' }), GLOBAL({ content: 'chame pelo nome' })] });
+  const r = await carregarMemoriasDoGrupo(sb, 'g-barra');
+  assert.ok(sb.chamadas[0].or, 'a consulta tem que pedir group_id OU scope=tom');
+  assert.match(sb.chamadas[0].or, /scope\.eq\.tom/);
+  assert.match(String(sb.chamadas[0].cols), /scope/, 'sem trazer a coluna, ninguém sabe o que é global');
+  assert.strictEqual(r.length, 2);
+});
+
+// Sem isto, o deploy do CÓDIGO antes da migration derrubaria a memória de TODOS os grupos de
+// uma vez: a consulta erraria 42703, o reader devolveria null e todo grupo cairia no buffer.
+test('escopo: enquanto a coluna não existe, volta ao SELECT antigo em vez de perder a memória', async () => {
+  const sb = sbLeitura({ linhas: [G({ content: 'local' })], temScope: false });
+  const r = await carregarMemoriasDoGrupo(sb, 'g-barra');
+  assert.ok(Array.isArray(r), `devia cair no SELECT antigo, veio ${JSON.stringify(r)}`);
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(sb.chamadas.length, 2, 'tentou com scope, caiu pro sem scope');
+  assert.strictEqual(sb.chamadas[1].or, null, 'a segunda tentativa é a consulta de antes');
+});
+
+test('colunaScopeAusente só reconhece o erro certo — não engole falha de verdade', () => {
+  assert.ok(colunaScopeAusente({ code: '42703', message: 'column group_memory.scope does not exist' }));
+  assert.ok(!colunaScopeAusente({ code: '08006', message: 'connection failure' }));
+  assert.ok(!colunaScopeAusente(null));
+});
+
+// ── O piso e o bloco de comportamento ──────────────────────────────────────────────────────
+test('escopo: o piso de 3 conta só as memórias DO GRUPO — global não empurra ninguém', () => {
+  const r = escolherMemoria({
+    memorias: [G({ content: 'uma' }), G({ content: 'duas' }), GLOBAL({ content: 'chame pelo nome' })],
+    bufferAntigo: 'resumo antigo', agora: AGORA,
+  });
+  assert.strictEqual(r.fonte, 'buffer', 'duas locais + uma global ainda não aposenta o buffer');
+  assert.strictEqual(r.vivas, 2, 'vivas conta o que é DO GRUPO');
+});
+
+// O grupo QUIETO é o que mais precisa da regra — se a global só viesse de carona no bloco
+// local, ele seria justamente o único a não recebê-la.
+test('escopo: a regra global sai mesmo quando o grupo ainda está no buffer velho', () => {
+  const r = escolherMemoria({
+    memorias: [G({ content: 'uma' }), GLOBAL({ content: 'chame a pessoa pelo nome, nunca com arroba' })],
+    bufferAntigo: 'resumo antigo', agora: AGORA,
+  });
+  assert.strictEqual(r.texto, 'resumo antigo');
+  assert.match(r.comportamento, /chame a pessoa pelo nome/);
+});
+
+test('escopo: a regra global também sai quando o bloco novo já venceu o buffer', () => {
+  const r = escolherMemoria({
+    memorias: [G({ content: 'uma' }), G({ content: 'duas' }), G({ content: 'tres' }), GLOBAL({ content: 'chame pelo nome' })],
+    bufferAntigo: 'resumo antigo', agora: AGORA,
+  });
+  assert.strictEqual(r.fonte, 'group_memory');
+  assert.doesNotMatch(r.texto, /chame pelo nome/, 'a global não se mistura com a memória do grupo');
+  assert.match(r.comportamento, /chame pelo nome/);
+});
+
+// O default da migration é 'group'. No dia em que ela subir, NADA pode mudar de comportamento.
+test('escopo: sem nenhuma global, a escolha é idêntica à de antes do escopo existir', () => {
+  const memorias = [G({ content: 'um' }), G({ content: 'dois' }), G({ content: 'três' })];
+  const r = escolherMemoria({ memorias, bufferAntigo: 'resumo antigo', agora: AGORA });
+  const semScope = escolherMemoria({
+    memorias: memorias.map(({ scope, ...m }) => m), bufferAntigo: 'resumo antigo', agora: AGORA,
+  });
+  assert.strictEqual(r.texto, semScope.texto);
+  assert.strictEqual(r.fonte, semScope.fonte);
+  assert.strictEqual(r.comportamento, null, 'sem global, nenhum bloco novo aparece no prompt');
+  assert.strictEqual(semScope.comportamento, null);
+});
+
+// "03/09 — chame a pessoa pelo nome" lê como evento daquele dia. Regra de comportamento não
+// tem data: ela vale enquanto ninguém desaprovar.
+test('escopo: o bloco de comportamento sai SEM data — não é fato datado', () => {
+  const b = montarBlocoComportamento([GLOBAL({ content: 'chame pelo nome', occurred_on: '2026-09-02' })]);
+  assert.match(b, /chame pelo nome/);
+  assert.doesNotMatch(b, /02\/09/);
+});
+
+test('escopo: bloco de comportamento respeita teto próprio e ignora memória local', () => {
+  assert.strictEqual(montarBlocoComportamento([G({ content: 'local' })]), null, 'local nunca vira regra global');
+  assert.strictEqual(montarBlocoComportamento([]), null);
+  const b = montarBlocoComportamento([GLOBAL({ content: 'x'.repeat(TETO_BLOCO_TOM + 500) })]);
+  assert.strictEqual(b, null, 'linha maior que o teto não entra pela metade');
+});
+
+test('escopo: global vencida ou desativada não vira regra eterna', () => {
+  assert.strictEqual(montarBlocoComportamento([GLOBAL({ decay_at: '2026-01-01T00:00:00Z' })], { agora: AGORA }), null);
+  assert.strictEqual(montarBlocoComportamento([GLOBAL({ is_active: false })], { agora: AGORA }), null);
+});
+
+test('ehGlobal: só scope=tom; ausência de scope é memória local (o default da migration)', () => {
+  assert.ok(ehGlobal(GLOBAL({})));
+  assert.ok(!ehGlobal(G({})));
+  assert.ok(!ehGlobal({ content: 'sem coluna scope ainda' }));
+});
+
+// ── A PROMOÇÃO É DA PESSOA, NUNCA DA LLM ───────────────────────────────────────────────────
+// Se a LLM pudesse decidir que algo vale pra todo lugar, um erro dela contaminaria todos os
+// grupos de uma vez. Por isso a frase de quem pediu é conferida em CÓDIGO, não no prompt.
+test('promoção exige a frase da pessoa, em português, com todas as letras', () => {
+  for (const frase of [
+    'aprova a 1 pra todos os grupos', 'aprova a 1 para todos os grupos',
+    'aprova a 2 em todos os grupos', 'aprova a 1 pra todo grupo',
+    'aprova essa em qualquer grupo', 'aprova a 3 pra valer em todos',
+  ]) assert.ok(pediuPraTodosOsGrupos(frase), `devia promover: ${frase}`);
+});
+
+test('promoção NÃO nasce de pedido comum — nem com acento, nem com maiúscula', () => {
+  for (const frase of [
+    'aprova a 1', 'aprova a 1 e a 3', 'descarta a 2', 'pode aprovar todas',
+    'aprova a 1 desse grupo', 'aprova tudo aqui', '',
+  ]) assert.ok(!pediuPraTodosOsGrupos(frase), `NÃO podia promover: ${frase}`);
+});
+
+// ── decidirMemorias: escopo gravado, e a falha nunca vira sucesso silencioso ────────────────
+function sbDecide({ escritas, falhaScope = false }) {
+  return {
+    from() {
+      const api = {
+        update(patch) { api._patch = patch; return api; },
+        eq(col, val) {
+          if (col !== 'id') return Promise.resolve({ error: null });
+          if (falhaScope && api._patch.scope) {
+            return Promise.resolve({ error: { code: '42703', message: 'column group_memory.scope does not exist' } });
+          }
+          escritas.push({ id: val, ...api._patch });
+          return Promise.resolve({ error: null });
+        },
+      };
+      return api;
+    },
+  };
+}
+
+test('aprovar pra todos os grupos grava scope=tom', async () => {
+  const escritas = [];
+  const r = await decidirMemorias(sbDecide({ escritas }), {
+    pendentes: [L('a', 'chame pelo nome')], numeros: [1], acao: 'aprovar', escopo: 'tom',
+  });
+  assert.strictEqual(escritas[0].scope, 'tom');
+  assert.strictEqual(escritas[0].is_active, true);
+  assert.strictEqual(r.escopoAplicado, 'tom');
+});
+
+// O default não muda o que já existe: aprovação normal não escreve scope nenhum.
+test('aprovar do jeito de sempre NÃO toca em scope', async () => {
+  const escritas = [];
+  const r = await decidirMemorias(sbDecide({ escritas }), {
+    pendentes: [L('a', 'um')], numeros: [1], acao: 'aprovar',
+  });
+  assert.ok(!('scope' in escritas[0]), `não podia mexer em scope: ${JSON.stringify(escritas[0])}`);
+  assert.strictEqual(r.escopoAplicado, 'group');
+});
+
+// Antes da migration, "pra todos os grupos" não tem como ser honrado. Aprovar só aqui é melhor
+// que não aprovar nada — mas quem pediu "pra todos" PRECISA ler que não foi pra todos.
+test('promoção sem a coluna no banco: aprova local e DECLARA que não promoveu', async () => {
+  const escritas = [];
+  const r = await decidirMemorias(sbDecide({ escritas, falhaScope: true }), {
+    pendentes: [L('a', 'chame pelo nome')], numeros: [1], acao: 'aprovar', escopo: 'tom',
+  });
+  assert.strictEqual(r.feitos.length, 1, 'a aprovação local tem que valer');
+  assert.strictEqual(escritas[0].is_active, true);
+  assert.strictEqual(r.escopoAplicado, 'group', 'não pode dizer que promoveu quando não promoveu');
+});
+
+test('o card da decisão diz quando a lição passou a valer em TODOS os grupos', () => {
+  const h = renderDecisao({ feitos: [L('a', 'chame pelo nome')], foraDaLista: [], acao: 'aprovar', escopoAplicado: 'tom' });
+  assert.match(h, /todos os grupos/i);
+});
+
+test('o card explica por que NÃO promoveu, em vez de calar', () => {
+  const semFrase = renderDecisao({ feitos: [L('a', 'x')], foraDaLista: [], acao: 'aprovar', escopoAplicado: 'group', motivo: 'sem_frase' });
+  assert.match(semFrase, /todos os grupos/i);
+  const semColuna = renderDecisao({ feitos: [L('a', 'x')], foraDaLista: [], acao: 'aprovar', escopoAplicado: 'group', motivo: 'sem_coluna' });
+  assert.match(semColuna, /todos os grupos/i);
+  assert.notStrictEqual(semFrase, semColuna, 'os dois motivos não podem virar a mesma frase');
+});
+
+// ══ A FILA DE APROVAÇÃO ENXERGA TODOS OS TIPOS ═════════════════════════════════════════════
+// MEDIDO em 04/09: das 35 linhas, 23 estavam ATIVAS sem ninguém ter olhado (14 fact, 4 context,
+// 3 preference, 2 decision). `listarLicoesPendentes` filtrava `.eq('memory_type','lesson')` —
+// então gatear qualquer outro tipo criava memória que NINGUÉM conseguia aprovar. Fila primeiro.
+test('a fila enxerga fact e preference, não só lesson', async () => {
+  const st = [];
+  const sb = {
+    from() {
+      const q = {
+        select() { return q; },
+        eq(c, v) { st.push([c, v]); return q; },
+        is() { return q; },
+        limit() { return Promise.resolve({ data: [], error: null }); },
+      };
+      return q;
+    },
+  };
+  await listarMemoriasPendentes(sb, 'g1');
+  assert.ok(!st.some(([c]) => c === 'memory_type'), 'filtrar por memory_type volta a criar memória inaprovável');
+  assert.ok(st.some(([c, v]) => c === 'is_active' && v === false), 'a fila é o que nasceu inativo');
+});
+
+// A pessoa responde por NÚMERO: lesson primeiro porque é o que ela quer ver antes — mas o card
+// e o comando usam o MESMO comparador, senão ela aprova outra coisa.
+test('a fila põe lição no topo e mantém a ordem determinística', () => {
+  const r = ordenarPendentes([
+    { id: 'b', memory_type: 'fact', content: 'f', occurred_on: '2026-09-04' },
+    { id: 'a', memory_type: 'lesson', content: 'l', occurred_on: '2026-09-01' },
+    { id: 'c', memory_type: 'preference', content: 'p', occurred_on: '2026-09-04' },
+  ]);
+  assert.deepStrictEqual(r.map((x) => x.id), ['a', 'b', 'c']);
+  assert.deepStrictEqual(ordenarPendentes([...r].reverse()).map((x) => x.id), ['a', 'b', 'c']);
+});
+
+test('o card mostra o TIPO de cada pendência e ensina o verbo de promover', () => {
+  const h = renderMemoriasPendentes([
+    { id: 'a', memory_type: 'lesson', content: 'chame pelo nome', occurred_on: '2026-09-03' },
+    { id: 'b', memory_type: 'fact', content: 'a Duda entra sabado', occurred_on: '2026-09-03' },
+  ], { grupoNome: 'Barra' });
+  assert.match(h, /Barra/);
+  assert.match(h, /<b>1\.<\/b>/);
+  assert.match(h, /lição/i);
+  assert.match(h, /fato/i);
+  assert.match(h, /aprova a 1/);
+  assert.match(h, /todos os grupos/i, 'sem o verbo no card, ninguém descobre que dá pra promover');
+});
+
+// ── QUEM ENTRA SOZINHO ─────────────────────────────────────────────────────────────────────
+// `preference` já tinha contrabandeado uma regra de comportamento pro prompt: a linha "Tom é
+// acionado apenas quando chamado pelo nome" (grupo Sucesso do Aluno) é a MESMA regra que existe
+// como `lesson` APROVADA em outros dois grupos — só que essa entrou sozinha. O tipo muda; o
+// efeito no comportamento do TOM, não.
+test('fact e preference passam a esperar aprovação; decision e context seguem entrando', () => {
+  assert.strictEqual(defaultsPorTipoDoGrupo('lesson').is_active, false);
+  assert.strictEqual(defaultsPorTipoDoGrupo('fact').is_active, false);
+  assert.strictEqual(defaultsPorTipoDoGrupo('preference').is_active, false);
+  assert.strictEqual(defaultsPorTipoDoGrupo('decision').is_active, true, 'registro datado do que o time combinou');
+  assert.strictEqual(defaultsPorTipoDoGrupo('context').is_active, true, 'morre em 30 dias pelo backstop');
+});
+
+test('o gate vale no que é GRAVADO, não só na tabela de política', async () => {
+  const sb = fakeSupabase({ mensagens: [
+    { role: 'member', kind: 'text', content: 'o Arthur cuida da matricula', created_at: '2026-09-02T20:00:00Z', sender: { full_name: 'Alf' } },
+  ] });
+  await consolidateGroupMemoryFor({
+    supabase: sb, group: GRUPO,
+    chat: async () => JSON.stringify([
+      { memory_type: 'fact', content: 'o Arthur cuida da matricula na Barra', importance: 'normal', evidence: 'o Arthur cuida da matricula' },
+      { memory_type: 'decision', content: 'a matricula passa a ser conferida na sexta', importance: 'normal', evidence: 'o Arthur cuida da matricula' },
+    ]),
+    getEmbedding: semEmbedding, agora: new Date('2026-09-03T06:00:00Z'),
+  });
+  const fato = sb._inseridas.find((r) => r.memory_type === 'fact');
+  const decisao = sb._inseridas.find((r) => r.memory_type === 'decision');
+  assert.strictEqual(fato.is_active, false, 'fact nasce esperando o ok');
+  assert.strictEqual(decisao.is_active, true);
+});
+
+// O grupo não pode reaprender toda noite uma regra que já é global — o extrator precisa VER as
+// globais na lista do "o que já está guardado".
+test('o extrator recebe as memórias globais na lista do que já está guardado', async () => {
+  const sb = fakeSupabase({
+    mensagens: [{ role: 'member', kind: 'text', content: 'oi', created_at: '2026-09-02T20:00:00Z', sender: { full_name: 'Alf' } }],
+    existentes: [GLOBAL({ content: 'chame a pessoa pelo nome, nunca com arroba', memory_type: 'lesson' })],
+  });
+  let sysVisto = '';
+  await consolidateGroupMemoryFor({
+    supabase: sb, group: GRUPO,
+    chat: async (sys) => { sysVisto = sys; return '[]'; },
+    getEmbedding: semEmbedding, agora: new Date('2026-09-03T06:00:00Z'),
+  });
+  assert.match(sysVisto, /chame a pessoa pelo nome/, 'sem isso o grupo reaprende a mesma regra toda noite');
 });

@@ -31,6 +31,11 @@ function pareceCredencial(texto) {
 
 // O freio do Alf: `lesson` vira REGRA de comportamento, então nasce DESLIGADA e só entra no
 // prompt com aprovação. Os outros tipos são registro do que foi dito — risco baixo, entram.
+//
+// ATENÇÃO (04/09): esta é a política do sujeito PESSOA (`collaborator_memory`), que NÃO tem
+// fila de aprovação — gatear mais tipos aqui criaria memória que ninguém consegue aprovar.
+// O sujeito GRUPO tem fila e usa política própria: `defaultsPorTipoDoGrupo` em group-memory.js,
+// onde `fact` e `preference` também esperam o ok. As duas divergem de propósito.
 function defaultsPorTipo(memoryType) {
   return { is_active: memoryType !== 'lesson' };
 }

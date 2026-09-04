@@ -56,3 +56,25 @@ test('muitas lições: mostra as 3 primeiras e diz quantas sobraram', () => {
   assert.match(r.detail, /5 lições/);
   assert.match(r.detail, /\+2/);
 });
+
+// A fila deixou de ser só de lições: `fact` e `preference` também esperam o ok. Se o aviso das
+// 05:00 continuasse contando só `lesson`, o Alf nunca ficaria sabendo do que está represado —
+// gate com fila e SEM aviso é a mesma cegueira, um andar acima.
+test('memória de outro tipo esperando aprovação também aparece no aviso', () => {
+  const r = resumirLicoesPendentes([
+    { grupo: 'Barra', dia: '2026-09-04', conteudo: 'o Arthur cuida da matricula', tipo: 'fact' },
+    { grupo: 'ADM CG', dia: '2026-09-04', conteudo: 'chame pelo nome', tipo: 'lesson' },
+  ]);
+  assert.strictEqual(r.status, 'warning');
+  assert.match(r.detail, /2 memórias/, 'com tipo misturado a palavra não pode ser "lições"');
+  assert.match(r.detail, /o Arthur cuida da matricula/);
+});
+
+// Quando tudo que espera é lição, a palavra continua sendo "lição" — o aviso não fica mais vago
+// do que era.
+test('só lições esperando: o aviso continua falando de lição', () => {
+  const r = resumirLicoesPendentes([
+    { grupo: 'ADM CG', dia: '2026-09-04', conteudo: 'chame pelo nome', tipo: 'lesson' },
+  ]);
+  assert.match(r.detail, /1 lição/);
+});

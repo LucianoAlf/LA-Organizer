@@ -727,6 +727,10 @@ function formatarLinhaGrupo({ nome, fichas, abertas, claims, memorias = 0 }) {
 // CHECK — Lições esperando o ok do Alf. O gate (lesson nasce is_active=false) só serve se ele
 // SOUBER que tem algo represado; senão o freio vira paralisia e o TOM nunca aprende. Mostra o
 // grupo e o dia pra ele decidir sem abrir tela nenhuma.
+// A fila deixou de ser so de `lesson`: `fact` e `preference` tambem esperam o ok (ver
+// `defaultsPorTipoDoGrupo` em group-memory.js). Se este aviso continuasse contando so `lesson`,
+// o gate subiria e o Alf nunca ficaria sabendo do que esta represado — gate com fila e SEM aviso
+// e a mesma cegueira, um andar acima. A palavra so muda quando o que espera nao e so licao.
 function resumirLicoesPendentes(licoes) {
   const arr = Array.isArray(licoes) ? licoes : [];
   if (!arr.length) return { status: 'ok', detail: 'Nenhuma lição esperando aprovação' };
@@ -736,18 +740,23 @@ function resumirLicoesPendentes(licoes) {
     return `“${String(l.conteudo || '').slice(0, 110)}” — ${l.grupo}, ${data}`;
   }).join(' | ');
   const resto = arr.length > 3 ? ` (+${arr.length - 3})` : '';
-  const plural = arr.length === 1 ? 'lição' : 'lições';
+  const soLicoes = arr.every((l) => !l.tipo || l.tipo === 'lesson');
+  const plural = soLicoes
+    ? (arr.length === 1 ? 'lição' : 'lições')
+    : (arr.length === 1 ? 'memória' : 'memórias');
   return { status: 'warning', detail: `⛔ ${arr.length} ${plural} esperando seu ok: ${mostra}${resto}` };
 }
 
 async function checkLicoesPendentes() {
+  // Sem `.eq('memory_type', ...)`: o aviso e "tudo que nasceu inativo e ninguem decidiu".
   const { data, error } = await supabase.from('group_memory')
-    .select('content, occurred_on, group:work_groups(name)')
-    .eq('memory_type', 'lesson').eq('is_active', false).is('approved_at', null)
+    .select('content, occurred_on, memory_type, group:work_groups(name)')
+    .eq('is_active', false).is('approved_at', null)
     .order('occurred_on', { ascending: false }).limit(20);
   if (error) return { status: 'ok', detail: `lições não consultadas (${error.message})` };
   return resumirLicoesPendentes((data || []).map((r) => ({
     grupo: (r.group && r.group.name) || 'grupo', dia: r.occurred_on, conteudo: r.content,
+    tipo: r.memory_type,
   })));
 }
 

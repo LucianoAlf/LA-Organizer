@@ -254,3 +254,40 @@ test('ZERO-REGRESSAO: com remetente conhecido nada disso aparece', () => {
   const p = buildGroupChatPrompt({ ...base });
   assert.doesNotMatch(p, /se identifi/i);
 });
+
+// ── COMO O TOM SE COMPORTA: BLOCO PRÓPRIO, EM TODO GRUPO ───────────────────────────────────
+// A regra aprovada "pra todos os grupos" NÃO pode entrar no bloco "Memória de longo prazo deste
+// grupo": aquele cabeçalho diz, com todas as letras, que ali só há "resumos de sessões
+// ANTERIORES, já encerradas". Uma regra permanente lida como resumo de sessão passada é a mesma
+// doença de datar o que não tem data. Por isso ela tem seção própria.
+test('a regra global do TOM entra em bloco separado da memória do grupo', () => {
+  const p = buildGroupChatPrompt({
+    ...base,
+    longTermMemory: 'Resumo da semana passada.',
+    comportamentoDoTom: '• chame a pessoa pelo nome, nunca com arroba',
+  });
+  assert.match(p, /chame a pessoa pelo nome/);
+  const iMem = p.indexOf('Memória de longo prazo');
+  const iComp = p.indexOf('chame a pessoa pelo nome');
+  const iResumo = p.indexOf('Resumo da semana passada.');
+  assert.ok(iComp !== iResumo);
+  assert.ok(iComp > iMem, 'o bloco novo vem depois da memória do grupo');
+  assert.match(p.slice(0, iComp), /todos os grupos/i, 'o cabeçalho precisa dizer que vale em todo lugar');
+});
+
+// Enquanto ninguém promover nada (e o default da migration é 'group'), o prompt tem que ser
+// exatamente o de hoje — byte a byte.
+test('sem regra global, o prompt não ganha nem uma linha', () => {
+  const semNada = buildGroupChatPrompt({ ...base, longTermMemory: 'Resumo.' });
+  const comNull = buildGroupChatPrompt({ ...base, longTermMemory: 'Resumo.', comportamentoDoTom: null });
+  assert.strictEqual(semNada, comNull);
+});
+
+// A promoção é da PESSOA. O marker carrega o escopo, mas quem decide é a frase dela — e o
+// prompt tem que dizer isso ao TOM, senão ele promove por conta própria e contamina todo grupo.
+test('o marker de lições ensina o escopo e proíbe o TOM de promover por conta própria', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /<<LICOES>>/);
+  assert.match(p, /escopo/i);
+  assert.match(p, /todos os grupos/i);
+});
