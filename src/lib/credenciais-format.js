@@ -44,7 +44,7 @@ function formatCredencialAdmin(cred, opts = {}) {
     linhas.push(`${c.label}: ${c.valor === undefined || c.valor === null ? '' : c.valor}`);
   }
   const restantes = campos.length - mostrados.length;
-  if (restantes > 0) linhas.push(`_(mais ${restantes} campos — peça "todos os campos" pra ver)_`);
+  if (restantes > 0) linhas.push(`_(mais ${restantes} campos)_`);
 
   const obs = mdParaWhatsapp(cred.observacoes);
   if (obs) linhas.push('', obs);

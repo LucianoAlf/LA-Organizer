@@ -78,10 +78,14 @@ test('formatCredencialAdmin: converte observacoes de markdown', () => {
   assert.doesNotMatch(out, /#/, 'nao deixa markdown cru');
 });
 
-test('formatCredencialAdmin: acima do cap avisa quantos faltam', () => {
+test('formatCredencialAdmin: acima do cap avisa quantos faltam (sem opts, cap padrao continua valendo)', () => {
   const campos = Array.from({ length: MAX_CAMPOS + 8 }, (_, i) => ({ label: `L${i}`, valor: `v${i}`, sensivel: false }));
   const out = formatCredencialAdmin({ nome: 'Sol', url_ref: null, observacoes: null, campos });
   assert.match(out, new RegExp(`mais ${8} campo`), 'diz quantos ficaram de fora');
+  // I-3 (review final 03/09): a sugestao "peça todos os campos" foi removida — o
+  // engine agora sempre passa maxCampos:Infinity pro modelo, entao a frase virou
+  // um loop sem saida (o admin pedia e recebia o mesmo bloco truncado de novo).
+  assert.doesNotMatch(out, /peça/i, 'nao sugere mais "peça todos os campos"');
 });
 
 test('formatCredencialAdmin: opts.maxCampos ilimitado mostra todos', () => {

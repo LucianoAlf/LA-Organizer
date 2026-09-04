@@ -11150,6 +11150,13 @@ async function processMessage(phone, text, raw = {}) {
   }
   let reply = response.text;
 
+  // I-1/I-2 (review final 03/09): flag do turno — liga quando a resposta é construída a
+  // partir do retorno da RPC de credenciais (bloco two-pass abaixo). Usada em dois pontos
+  // mais adiante, no guard anti-leak: (1) LEAK_BLOCKED nunca grava o `reply` cru no log
+  // quando este turno é de credenciais; (2) a isenção estreita do STACK_LEAK_RE — só vale
+  // pra este turno, nunca global.
+  let _credenciaisNoTurno = false;
+
   // TWO-PASS <<PEDIR_CREDENCIAIS>> (07/08) — o modelo decide semanticamente que precisa
   // dos links de sistemas e emite o marker; buscamos e re-perguntamos com a lista.
   // É tool-calling dentro do protocolo de markers: --tools/MCP seguem desligados
@@ -11163,6 +11170,7 @@ async function processMessage(phone, text, raw = {}) {
       const { getCredenciaisPara } = require('./services/credenciais');
       const { formatListaPublica, formatCredencialAdmin } = require('./lib/credenciais-format');
       const { isAdmin, creds } = await getCredenciaisPara(collab.id);
+      _credenciaisNoTurno = true; // resposta a partir daqui vem da RPC de credenciais
       console.log(`[PedirCredenciais] marker detectado — admin=${isAdmin} itens=${creds.length}`);
       await logMarker(collab.id, 'PEDIR_CREDENCIAIS', creds.length ? 'executed' : 'rejected',
         `admin:${isAdmin} itens:${creds.length}`, null);
@@ -11170,7 +11178,7 @@ async function processMessage(phone, text, raw = {}) {
       let bloco = '';
       if (creds.length) {
         bloco = isAdmin
-          ? creds.map(c => formatCredencialAdmin(c)).join('\n\n')
+          ? creds.map(c => formatCredencialAdmin(c, { maxCampos: Infinity })).join('\n\n')
           : formatListaPublica(creds);
       }
 
@@ -11193,7 +11201,7 @@ async function processMessage(phone, text, raw = {}) {
   } catch (e) {
     // Nunca derruba a mensagem: se o two-pass falhar, segue com o reply original
     // (o marker sobrando será removido pelo UNKNOWN_MARKER_STRIPPED adiante).
-    console.warn('[PedirCredenciais] two-pass falhou:', e.message);
+    console.warn('[PedirCredenciais] two-pass falhou:', e instanceof Error ? e.message : String(e));
   }
 
   // Ordem de strip: ONBOARDING → PROJECT → MEMORY (memória por último — não deve aparecer pro user em hipótese alguma).
@@ -13536,10 +13544,20 @@ async function processMessage(phone, text, raw = {}) {
       const leakMatch = reply.match(STACK_LEAK_RE);
       if (leakMatch) {
         console.warn(`[Engine] LEAK_BLOCKED — match="${leakMatch[0]}" reply="${reply.slice(0, 200)}"`);
-        await logMarker(collab.id, 'LEAK_BLOCKED', 'rejected', `match:${leakMatch[0]}`, reply);
-        reply = GENERIC_LEAK_REPLY;
-        _metrics.leak_blocked = true;
-        _metrics.leak_match = String(leakMatch[0]).slice(0, 100);
+        // I-1 (review final 03/09): turno de credenciais nunca grava o reply cru no
+        // marker_logs.raw_excerpt — o bloco two-pass pode conter segredo real.
+        await logMarker(collab.id, 'LEAK_BLOCKED', 'rejected', `match:${leakMatch[0]}`, _credenciaisNoTurno ? null : reply);
+        // I-2 (review final 03/09): isenção ESTREITA — vale só para o turno que passou
+        // pelo two-pass de credenciais (RPC já decidiu admin/público). Todo outro
+        // caminho (texto livre do modelo em qualquer outro contexto) continua sendo
+        // bloqueado e substituído normalmente — o guard não foi relaxado.
+        if (_credenciaisNoTurno) {
+          console.warn('[Engine] LEAK_BLOCKED isento — turno de credenciais (two-pass), resposta mantida');
+        } else {
+          reply = GENERIC_LEAK_REPLY;
+          _metrics.leak_blocked = true;
+          _metrics.leak_match = String(leakMatch[0]).slice(0, 100);
+        }
       }
       // 2b) MECHANISM-LEAK (regra 16) — vocabulário interno em PROSA ("o marker vai de verdade",
       // "com bypass_integrity", <<EVENT_CREATE>>, to_name...) que o STACK_LEAK_RE não cobre. Rede
