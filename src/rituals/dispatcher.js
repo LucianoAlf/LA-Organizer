@@ -4220,12 +4220,113 @@ async function run(opts = {}) {
     } catch (e) { console.error('[Pauta] montagem erro (fora do loop por unidade):', e.message); }
   }
 
+  // 09:00-21:00, de 2 em 2 horas — ATUALIZA a pauta do dia: tira da tela quem JA preencheu.
+  // Subconjunto ESTRITO do fechamento das 23:00 (ver o comentario de atualizarPautaDaUnidade):
+  // so escreve 'done', nunca 'cancelled', nunca grava em anamnese_pauta e nunca fecha o
+  // container — o dia ainda esta correndo, e quem nao preencheu as 14h pode preencher as 19h.
+  // Este bloco nao fala em grupo nenhum: e arrumacao silenciosa da tela.
+  //
+  // BRECHA 4 (04/09) — POR QUE ESTE BLOCO VEM ANTES DO DA FALA. A ordem era monta -> fala ->
+  // fecha -> atualizacao, e as 09:00 a fala da Barra dividia o slot com a atualizacao, no MESMO
+  // processo: a mensagem anunciava a pendencia cheia e segundos depois algumas daquelas linhas
+  // sumiam da tela. O TOM se contradizendo sozinho, dentro do mesmo tick. Rodando a atualizacao
+  // primeiro, a fala sai com a lista fresca. Custo aceito: a mensagem sai alguns segundos mais
+  // tarde (a atualizacao leva 6-8s por unidade) — e o preco de a mensagem ser verdadeira.
+  const _pautaRefreshHora = PAUTA_ANAMNESE_REFRESH_TIMES.find((h) => timeToSlot(h) === slotNow);
+  if (opts.force === 'pauta_anamnese_refresh' || _pautaRefreshHora) {
+    try {
+      const { atualizarPautaDaUnidade } = require('./anamnese-pauta');
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      // Idempotencia por SLOT, nao por dia — ao contrario dos outros tres blocos, este roda 7
+      // VEZES no mesmo dia de proposito. Com a chave do dia, a passada das 09:00 travaria as seis
+      // seguintes e a lista voltaria a congelar (o bug que esta feature existe pra matar). Sem
+      // chave nenhuma, o cron bate cada slot 3x (slot de 15 min / tick de 5 min) e a RPC leva 6-8s:
+      // seriam 21 consultas por unidade por dia em vez de 7.
+      // Sob --force nenhuma hora da lista casa o slot: usa o slot CORRENTE, pra que o force
+      // tambem seja idempotente dentro dos seus 15 minutos — mesmo comportamento dos outros
+      // blocos, que sob force continuam respeitando a chave deles.
+      const slotChave = _pautaRefreshHora
+        || `${String(now.hour).padStart(2, '0')}:${String(Math.floor(now.minute / 15) * 15).padStart(2, '0')}`;
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        // try/catch por UNIDADE, DENTRO do laco — mesmo motivo do bloco das 06:00 (comentario
+        // completo la): um dado ruim de uma unidade nao pode matar as outras duas no mesmo tick.
+        try {
+          const chaveRefresh = `pauta_refresh:${unidadeId}:${now.ymd}:${slotChave}`;
+          // So EXECUTED/SKIPPED travam a retentativa: 'fallback' significa "deu errado, tenta de
+          // novo" e precisa poder rodar de novo dentro do slot. Mesmo filtro dos outros tres
+          // blocos — comentario completo no das 06:00.
+          const { data: jaRodou, error: erroJaRodou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveRefresh}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaRodou) {
+            console.error(`[Pauta] atualizacao: checagem de idempotencia falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaRodou.message}`);
+            continue;  // falha-fechada: nao sei se ja rodei neste slot, nao gasto a RPC de novo
+          }
+          if (jaRodou && jaRodou.length) continue;  // idempotencia: o cron bate o slot 3x
+
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[Pauta] atualizacao: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[Pauta] atualizacao: nenhum grupo com wa_group_jid vinculado a unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
+            continue;
+          }
+
+          const r = await atualizarPautaDaUnidade({
+            supabase, laReport: laReportClient, unidadeId, groupId: grupo.id, hoje: now.ymd,
+          });
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_ANAMNESE',
+            // 'semPauta' (domingo, ou uma manha que nao montou) e desfecho RESOLVIDO, nao falha:
+            // vira 'skipped' e trava o slot. Sem isso seria 'fallback' — "tenta de novo" — e a
+            // unidade re-rodaria em todo tick restante dos 7 slots num dia que nem tem pauta.
+            // Mesmo par de sensores que 'jaExistia' na montagem das 06:00: o motivo textual e o
+            // sensor de quem le o RETORNO, a flag e o sensor de quem grava o MARCADOR.
+            result: r.semPauta ? 'skipped' : (r.motivo ? 'fallback' : 'executed'),
+            // BRECHA 1 (04/09): `falha=` e o contador de filhas que NAO fecharam. Ele existe
+            // porque o desfecho agora continua `executed` quando o trabalho aconteceu (uma filha
+            // travada nao pode mais reabrir o slot inteiro e custar 21 RPCs por unidade por dia)
+            // — sem este numero a falha sumiria do marcador e a unica pista seria o console.error
+            // do processo. So aparece quando e diferente de zero: o reason tem 120 caracteres, e
+            // um ` falha=0` em todo marcador saudavel comeria o espaco do `erro=` justamente no
+            // marcador que precisa dele. Mesmo criterio do `v=` no fechamento das 23:00.
+            reason: (`${chaveRefresh} fech=${r.fechadas} pend=${r.continuamPendentes} nd=${r.naoDecididas}`
+              + (r.falhasAoFechar ? ` falha=${r.falhasAoFechar}` : '')
+              + (r.motivo && !r.semPauta ? ` erro=${r.motivo}` : '')).slice(0, 120),
+          });
+          // Global Constraint: todo error de chamada Supabase e checado. Uma falha muda de log
+          // continua sendo uma falha muda — e aqui ela custaria a idempotencia do slot.
+          if (erroMarker) console.error(`[Pauta] atualizacao: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarker.message}`);
+          // So e erro o que de fato deu errado: "nao ha pauta de hoje" e o ACERTO da guarda, e
+          // num console.error faria a equipe cacar um problema que nao existe (mesmo cuidado que
+          // o 'jaExistia' recebe no bloco das 06:00).
+          if (r.motivo && !r.semPauta) {
+            console.error(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
+          } else if (r.fechadas) {
+            console.log(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)} ${slotChave}: ${r.fechadas} filha(s) sairam da tela, ${r.continuamPendentes} continuam`);
+          }
+        } catch (eUnidade) {
+          console.error(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
+        }
+      }
+    } catch (e) { console.error('[Pauta] atualizacao erro (fora do loop por unidade):', e.message); }
+  }
+
   // 07:30 — o recado no grupo (mesmo slot do ops_digest — zap às 6h da manhã é invasivo).
   // Separado da montagem de propósito. CORREÇÃO (revisão de costura, 04/09): o comentário que
   // estava aqui dizia que, quando a montagem falha, "aqui simplesmente não há filhas pra ler e o
   // bloco fica em silêncio (saúde, não erro)" — e era isso que fazia a spec §7 não ser cumprida.
   // Silêncio é saúde SÓ quando a montagem chegou ao fim e não havia aluno hoje; quando ela não
   // montou, o grupo é avisado (ver o bloco do CRITICAL 1 lá dentro).
+  //
+  // BRECHA 4 (04/09): este bloco agora roda DEPOIS da atualização do meio do dia (bloco acima),
+  // não antes. Às 09:00 os dois caem no mesmo slot, e a ordem antiga fazia a Barra receber uma
+  // mensagem com a pendência cheia segundos antes de a atualização apagar parte daquelas linhas
+  // da tela. Quem mexer nesta ordem de novo reabre exatamente essa contradição.
   if (opts.force === 'pauta_anamnese_fala'
       || Object.values(PAUTA_ANAMNESE_FALA_POR_UNIDADE).some((h) => timeToSlot(h) === slotNow)) {
     try {
@@ -4518,86 +4619,6 @@ async function run(opts = {}) {
         }
       }
     } catch (e) { console.error('[Pauta] fechamento erro (fora do loop por unidade):', e.message); }
-  }
-
-  // 09:00-21:00, de 2 em 2 horas — ATUALIZA a pauta do dia: tira da tela quem JA preencheu.
-  // Subconjunto ESTRITO do fechamento das 23:00 (ver o comentario de atualizarPautaDaUnidade):
-  // so escreve 'done', nunca 'cancelled', nunca grava em anamnese_pauta e nunca fecha o
-  // container — o dia ainda esta correndo, e quem nao preencheu as 14h pode preencher as 19h.
-  // Este bloco nao fala em grupo nenhum: e arrumacao silenciosa da tela.
-  const _pautaRefreshHora = PAUTA_ANAMNESE_REFRESH_TIMES.find((h) => timeToSlot(h) === slotNow);
-  if (opts.force === 'pauta_anamnese_refresh' || _pautaRefreshHora) {
-    try {
-      const { atualizarPautaDaUnidade } = require('./anamnese-pauta');
-      const situAl = require('../services/situacao-aluno');
-      const { laReportClient } = require('../services/la-report-client');
-      // Idempotencia por SLOT, nao por dia — ao contrario dos outros tres blocos, este roda 7
-      // VEZES no mesmo dia de proposito. Com a chave do dia, a passada das 09:00 travaria as seis
-      // seguintes e a lista voltaria a congelar (o bug que esta feature existe pra matar). Sem
-      // chave nenhuma, o cron bate cada slot 3x (slot de 15 min / tick de 5 min) e a RPC leva 6-8s:
-      // seriam 21 consultas por unidade por dia em vez de 7.
-      // Sob --force nenhuma hora da lista casa o slot: usa o slot CORRENTE, pra que o force
-      // tambem seja idempotente dentro dos seus 15 minutos — mesmo comportamento dos outros
-      // blocos, que sob force continuam respeitando a chave deles.
-      const slotChave = _pautaRefreshHora
-        || `${String(now.hour).padStart(2, '0')}:${String(Math.floor(now.minute / 15) * 15).padStart(2, '0')}`;
-      for (const unidadeId of situAl.UNIDADES_IDS) {
-        // try/catch por UNIDADE, DENTRO do laco — mesmo motivo do bloco das 06:00 (comentario
-        // completo la): um dado ruim de uma unidade nao pode matar as outras duas no mesmo tick.
-        try {
-          const chaveRefresh = `pauta_refresh:${unidadeId}:${now.ymd}:${slotChave}`;
-          // So EXECUTED/SKIPPED travam a retentativa: 'fallback' significa "deu errado, tenta de
-          // novo" e precisa poder rodar de novo dentro do slot. Mesmo filtro dos outros tres
-          // blocos — comentario completo no das 06:00.
-          const { data: jaRodou, error: erroJaRodou } = await supabase.from('marker_logs')
-            .select('id').eq('marker_type', 'PAUTA_ANAMNESE').like('reason', `${chaveRefresh}%`)
-            .in('result', ['executed', 'skipped']).limit(1);
-          if (erroJaRodou) {
-            console.error(`[Pauta] atualizacao: checagem de idempotencia falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaRodou.message}`);
-            continue;  // falha-fechada: nao sei se ja rodei neste slot, nao gasto a RPC de novo
-          }
-          if (jaRodou && jaRodou.length) continue;  // idempotencia: o cron bate o slot 3x
-
-          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
-            .select('id').eq('la_report_unidade_id', unidadeId).not('wa_group_jid', 'is', null).maybeSingle();
-          if (erroGrupo) {
-            console.error(`[Pauta] atualizacao: busca do grupo falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroGrupo.message}`);
-            continue;
-          }
-          if (!grupo) {
-            console.warn(`[Pauta] atualizacao: nenhum grupo com wa_group_jid vinculado a unidade ${situAl.nomeDaUnidade(unidadeId)} — pulando`);
-            continue;
-          }
-
-          const r = await atualizarPautaDaUnidade({
-            supabase, laReport: laReportClient, unidadeId, groupId: grupo.id, hoje: now.ymd,
-          });
-          const { error: erroMarker } = await supabase.from('marker_logs').insert({
-            marker_type: 'PAUTA_ANAMNESE',
-            // 'semPauta' (domingo, ou uma manha que nao montou) e desfecho RESOLVIDO, nao falha:
-            // vira 'skipped' e trava o slot. Sem isso seria 'fallback' — "tenta de novo" — e a
-            // unidade re-rodaria em todo tick restante dos 7 slots num dia que nem tem pauta.
-            // Mesmo par de sensores que 'jaExistia' na montagem das 06:00: o motivo textual e o
-            // sensor de quem le o RETORNO, a flag e o sensor de quem grava o MARCADOR.
-            result: r.semPauta ? 'skipped' : (r.motivo ? 'fallback' : 'executed'),
-            reason: `${chaveRefresh} fech=${r.fechadas} pend=${r.continuamPendentes} nd=${r.naoDecididas}${r.motivo && !r.semPauta ? ' erro=' + r.motivo : ''}`.slice(0, 120),
-          });
-          // Global Constraint: todo error de chamada Supabase e checado. Uma falha muda de log
-          // continua sendo uma falha muda — e aqui ela custaria a idempotencia do slot.
-          if (erroMarker) console.error(`[Pauta] atualizacao: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarker.message}`);
-          // So e erro o que de fato deu errado: "nao ha pauta de hoje" e o ACERTO da guarda, e
-          // num console.error faria a equipe cacar um problema que nao existe (mesmo cuidado que
-          // o 'jaExistia' recebe no bloco das 06:00).
-          if (r.motivo && !r.semPauta) {
-            console.error(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
-          } else if (r.fechadas) {
-            console.log(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)} ${slotChave}: ${r.fechadas} filha(s) sairam da tela, ${r.continuamPendentes} continuam`);
-          }
-        } catch (eUnidade) {
-          console.error(`[Pauta] atualizacao ${situAl.nomeDaUnidade(unidadeId)}: erro:`, eUnidade.message);
-        }
-      }
-    } catch (e) { console.error('[Pauta] atualizacao erro (fora do loop por unidade):', e.message); }
   }
 
   // Agente de governança — 08:00 BRT, depois do digest das 07:30 (que já mostrou os achados
