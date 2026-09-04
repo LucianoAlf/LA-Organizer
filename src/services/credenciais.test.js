@@ -73,3 +73,30 @@ test('getCredenciaisPara: id nulo nem chama a RPC', async () => {
 test('CACHE_TTL_MS: 30 minutos', () => {
   assert.equal(CACHE_TTL_MS, 30 * 60 * 1000);
 });
+
+test('getCredenciaisPara: excecao sem Error (null) nao lanca — fail-closed (C-1)', async () => {
+  _resetCache();
+  rpcImpl = async () => { throw null; };
+  const out = await getCredenciaisPara(ADMIN);
+  assert.deepEqual(out.creds, []);
+  assert.equal(out.isAdmin, false, 'null rejection é fail-closed, nao lanca');
+});
+
+test('getCredenciaisPara: admin com lista vazia nao fica cacheado como publico (I-1)', async () => {
+  _resetCache(); rpcCalls = 0;
+  const ADMIN_DINAMICO = '33333333-3333-3333-3333-333333333333';
+
+  // Primeira chamada: RPC devolve [] (lista vazia)
+  rpcImpl = async () => ({ data: [], error: null });
+  const out1 = await getCredenciaisPara(ADMIN_DINAMICO);
+  assert.equal(rpcCalls, 1);
+  assert.deepEqual(out1.creds, []);
+  assert.equal(out1.isAdmin, false, 'lista vazia => isAdmin false, mas nao e admin real');
+
+  // Segunda chamada: RPC agora devolve dado admin real (nao deveria servir cache)
+  rpcImpl = async () => ({ data: [{ id: 'x', nome: 'Secret', url_ref: null, campos: [{ label: 'Pass', valor: 'secret123', sensivel: true }], is_admin: true }], error: null });
+  const out2 = await getCredenciaisPara(ADMIN_DINAMICO);
+  assert.equal(rpcCalls, 2, 'lista vazia nao e cacheada — RPC bateu de novo');
+  assert.equal(out2.isAdmin, true, 'agora retorna admin verdadeiro');
+  assert.equal(out2.creds[0].campos[0].valor, 'secret123');
+});

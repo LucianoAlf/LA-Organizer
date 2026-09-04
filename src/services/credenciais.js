@@ -35,15 +35,15 @@ async function getCredenciaisPara(collaboratorId) {
     const supabase = require('../supabase/client'); // lazy: evita init no load (testes)
     const { data, error } = await supabase.rpc('get_credenciais_para', { p_collaborator_id: collaboratorId });
     if (error) {
-      console.warn('[Credenciais] RPC erro:', error.message);
+      console.warn('[Credenciais] RPC erro:', error && error.message ? error.message : String(error));
       return { isAdmin: false, creds: [] };   // fail-closed
     }
     const rows = data || [];
     const isAdmin = rows.length > 0 && rows[0].is_admin === true;
-    if (!isAdmin) _cachePublico.set(collaboratorId, { ts: Date.now(), creds: rows });
+    if (!isAdmin && rows.length > 0) _cachePublico.set(collaboratorId, { ts: Date.now(), creds: rows });
     return { isAdmin, creds: rows };
   } catch (e) {
-    console.warn('[Credenciais] fetch falhou:', e.message);
+    console.warn('[Credenciais] fetch falhou:', e instanceof Error ? e.message : String(e));
     return { isAdmin: false, creds: [] };     // fail-closed
   }
 }
