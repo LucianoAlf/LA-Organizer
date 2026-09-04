@@ -15,6 +15,8 @@ create or replace function upsert_credencial(
 )
 returns uuid
 language plpgsql
+security invoker
+set search_path = public, pg_temp
 as $$
 declare v_admin boolean; v_id uuid;
 begin
@@ -51,6 +53,8 @@ end; $$;
 create or replace function delete_credencial(p_collaborator_id uuid, p_cred_id uuid)
 returns boolean
 language plpgsql
+security invoker
+set search_path = public, pg_temp
 as $$
 declare v_admin boolean; v_ok boolean;
 begin
