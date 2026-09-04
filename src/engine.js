@@ -14,7 +14,7 @@ const { extrairConteudoMemoria } = require('./services/memory-fields');
 const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
-const { safeIsoDate, safeDate, withinConfirmWindow, todayYmdSP } = require('./utils/dates');
+const { safeIsoDate, safeDate, withinConfirmWindow, FRESH_WINDOW_MIN, todayYmdSP } = require('./utils/dates');
 const { extractMediaAnalysis } = require('./utils/media-context');
 const { hasCoordLevel, isDirector, canCreateForOther } = require('./utils/roles');
 const supabase = require('./supabase/client');
@@ -8956,9 +8956,12 @@ async function processMessage(phone, text, raw = {}) {
   // applyTaskActions e resolve a intent — determinístico, sobrevive a timeout/fallback.
   // detectUserConfirmation retorna 'yes'|'no'|null e é seguro contra negação (NO_RE pega
   // "não" primeiro; F5 barra frase-conteúdo). Sem allowDone (pergunta yes/no simples, não
-  // complete-âncora). TTL 15min (paridade com finance launch_confirm).
+  // complete-âncora). TTL = FRESH_WINDOW_MIN (paridade com o auto-resolve genérico).
   try {
-    const _rsOpen = _openIntents.find((i) => i.kind === 'reschedule_confirm' && withinConfirmWindow(i.asked_at, 15));
+    // CONFIRM-STAGED-DEADBAND (Vitoria 03/09): a janela aqui era 15 e o auto-resolve genérico
+    // (~10330) é 20 — entre os dois, o "Sim" era aceito por quem NÃO tem os dados. Ver
+    // confirm-janela-paridade.test.js. O estagiado tem que alcançar tudo que o genérico alcança.
+    const _rsOpen = _openIntents.find((i) => i.kind === 'reschedule_confirm' && withinConfirmWindow(i.asked_at, FRESH_WINDOW_MIN));
     if (_rsOpen) {
       const _yn = pendingIntents.detectUserConfirmation(String(text || ''));
       if (_yn === 'yes') {
@@ -8989,9 +8992,11 @@ async function processMessage(phone, text, raw = {}) {
   // EVENT-CREATE-CONFIRM-NOOP (Alf 16/07): a proposta estagiou a ação em event_create_confirm
   // (ver ~10715). Aqui o "isso"/"sim" cria via applyEventActions — determinístico, sobrevive a
   // timeout/fallback do LLM. detectUserConfirmation é 'yes'|'no'|null e trava negação.
-  // TTL 15min (paridade com finance/reschedule).
+  // TTL = FRESH_WINDOW_MIN (paridade com o auto-resolve genérico).
   try {
-    const _ecOpen = _openIntents.find((i) => i.kind === 'event_create_confirm' && withinConfirmWindow(i.asked_at, 15));
+    // CONFIRM-STAGED-DEADBAND (Vitoria 03/09): mesma paridade do reschedule acima — o gatilho
+    // aqui também é detectUserConfirmation, então o auto-resolve genérico sombreia este ramo.
+    const _ecOpen = _openIntents.find((i) => i.kind === 'event_create_confirm' && withinConfirmWindow(i.asked_at, FRESH_WINDOW_MIN));
     if (_ecOpen) {
       const _yn = pendingIntents.detectUserConfirmation(String(text || ''));
       if (_yn === 'yes') {
