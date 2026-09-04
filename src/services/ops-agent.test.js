@@ -190,6 +190,61 @@ test('arquivo de formato ausente não derruba o briefing', () => {
   assert.match(b, /N[ÃA]O apague dado de produ[çc][ãa]o/i);
 });
 
+// ── A VOZ DO TOM CHEGA NO GRUPO DE OPS ──────────────────────────────────────────────────────
+// Até 04/09 o briefing levava só o FORMATO (como entregar) e personalidade NENHUMA: o agente
+// daqui era o mesmo nome com outra pessoa dentro. A prova tem que ser de PROPAGAÇÃO, não de
+// redação — o que entra no briefing precisa ser byte a byte o `soul/SOUL.md`, a mesma fonte do
+// 1:1 e do chat de grupo com a equipe. Se um dia alguém "melhorar a voz" escrevendo direto no
+// briefing, nasce um segundo TOM e é este assert que cai.
+const SOUL = require('path').join(__dirname, '../../soul/SOUL.md');
+
+test('briefing carrega a voz do TOM do soul/SOUL.md — byte a byte, não em resumo', () => {
+  const soul = require('fs').readFileSync(SOUL, 'utf8').trim();
+  const m = carregar({ ...LIGADO, TOM_OPS_FORMATO: FORMATO });
+  const b = m.buildBriefing('Alf');
+  assert.ok(b.includes(soul), 'o SOUL não entrou inteiro no briefing do ops');
+  assert.match(b, /soul\/SOUL\.md/, 'a voz precisa entrar rotulada com a origem');
+  assert.ok(soul.length > 1500, `SOUL suspeito de estar vazio/truncado (${soul.length})`);
+});
+
+// A disciplina de ops é o que já era bom aqui e não pode sair junto com o formulário.
+test('a voz entra SEM tirar a disciplina de ops do briefing', () => {
+  const m = carregar({ ...LIGADO, TOM_OPS_FORMATO: FORMATO });
+  const b = m.buildBriefing('Alf');
+  assert.match(b, /Date antes de somar/i, 'conferir data antes de somar');
+  assert.match(b, /nunca diga que fez o que n[ãa]o fez/i);
+  assert.match(b, /reproduza/i, 'medir/reproduzir antes de afirmar');
+  assert.match(b, /N[ÃA]O altere a voz do TOM/i, 'ler o soul, sim; alterar, não');
+});
+
+// O eco de recebimento: nem o código o gera mais, nem o briefing pode voltar a pedi-lo.
+test('nenhum eco de recebimento sobrou no briefing montado', () => {
+  const m = carregar({ ...LIGADO, TOM_OPS_FORMATO: FORMATO });
+  const b = m.buildBriefing('Alf');
+  assert.ok(!/Peguei[^\n]*[:"]/.test(b), 'o template do eco voltou pro briefing');
+  assert.ok(!/vou olhar e te falo/i.test(b), 'a frase do eco voltou pro briefing');
+  assert.match(b, /comece pela resposta/i, 'o briefing precisa mandar começar pela resposta');
+});
+
+// RELATÓRIO DEIXOU DE SER O PADRÃO. Não basta o .md dizer "conversa também vale": enquanto a
+// estrutura obrigatória vier antes e solta, ela é lida como regra geral. A prova é de ORDEM e
+// de ESCOPO — a estrutura de laudo tem que viver dentro da seção condicional.
+test('FORMATO-GRUPO: conversa é o padrão e relatório é o caso condicional', () => {
+  const md = require('fs').readFileSync(FORMATO, 'utf8');
+  // Ancorado no TÍTULO (`## `): a seção de conversa cita o nome da outra pra dizer que ela fica
+  // desligada, e casar pelo nome solto apontava pra essa citação, não pra seção.
+  const conversa = md.indexOf('## O padrão é conversa');
+  const relatorio = md.indexOf('## Quando pedirem um relatório');
+  assert.ok(conversa > 0, 'sumiu a seção de conversa');
+  assert.ok(relatorio > 0, 'sumiu a seção de relatório — ela continua existindo, só não é padrão');
+  assert.ok(conversa < relatorio, 'conversa tem que vir antes do relatório');
+  // O alvo de 15 linhas e a estrutura 1/2/3 são de laudo: fora da seção, viram regra geral.
+  assert.ok(md.indexOf('até 15 linhas') > relatorio, 'o alvo de 15 linhas escapou pra fora do relatório');
+  assert.ok(md.indexOf('Primeira linha responde') > relatorio, 'a estrutura de laudo escapou pra fora');
+  // O que é genuinamente de WhatsApp fica valendo sempre — antes da seção condicional.
+  assert.ok(md.indexOf('Formatação') < relatorio, 'as marcações do WhatsApp valem sempre');
+});
+
 // O canal de ops JÁ ESTÁ EM PRODUÇÃO. Estes parâmetros existem para o agente de governança
 // reusar o spawn sem herdar o briefing genérico — e não podem mudar nada do que já roda.
 test('runOpsAgent aceita briefing próprio sem alterar o padrão', () => {
@@ -250,11 +305,26 @@ test('ack: pedido com itens enumerados devolve a CONTA', () => {
   assert.ok(m.ackDoPedido(pedido, 'Alf').includes('3'), m.ackDoPedido(pedido, 'Alf'));
 });
 
-test('ack: pedido longo de uma linha cita o trecho — é a prova de que leu', () => {
+// ECO DE RECEBIMENTO (invertido em 04/09). O ack longo devolvia a frase da pessoa entre aspas.
+// Como o engine posta o ack em TODO turno do canal, papo casual também levava a pergunta de
+// volta — recibo, não conversa. Este teste agora prende o contrário: NENHUM formato de pedido
+// pode aparecer citado no ack.
+test('ack: NUNCA devolve o pedido em eco — nem citado, nem parafraseado', () => {
   const m = carregar(LIGADO);
-  const a = m.ackDoPedido('Tom, conta quantos arquivos tem em src/services e me diz o numero', 'Alf');
-  assert.ok(a.includes('"'), a);
-  assert.ok(a.includes('quantos arquivos'), a);
+  const pedidos = [
+    'Tom, conta quantos arquivos tem em src/services e me diz o numero',
+    'Le os ultimos 3000 registros do tom-out.log e cruza com marker_logs pra ver o que sobrou',
+    'coe Tom, e ai, deu certo aquilo do financeiro que a gente falou ontem de manha?',
+  ];
+  for (const p of pedidos) {
+    const a = m.ackDoPedido(p, 'Alf');
+    assert.ok(!a.includes('"'), `ack citou o pedido: ${a}`);
+    // Nenhuma palavra de 6+ letras do pedido pode reaparecer no ack: é assim que o eco volta
+    // disfarçado de "resumo do que entendi".
+    for (const w of p.toLowerCase().match(/[a-z_]{6,}/g) || []) {
+      assert.ok(!a.toLowerCase().includes(w), `ack repetiu "${w}" do pedido: ${a}`);
+    }
+  }
 });
 
 test('ack: pedidos DIFERENTES não podem receber a mesma frase (a regressão de 31/08)', () => {

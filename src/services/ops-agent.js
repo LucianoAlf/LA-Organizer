@@ -69,13 +69,45 @@ function loadFormatoGrupo() {
   }
 }
 
+// A VOZ. Até 04/09 o briefing carregava só o FORMATO (COMO entregar) e personalidade nenhuma —
+// por isso o TOM daqui soava como outra pessoa: mesmo nome, jeito de formulário. A voz NÃO é
+// escrita aqui: é CARREGADA da fonte única, `soul/SOUL.md`, reusando o mesmo loader que o chat
+// de grupo com a equipe usa. Redigir "a personalidade dele" neste arquivo criaria um segundo
+// TOM que diverge do primeiro no dia em que alguém editar só um dos dois.
+//
+// DIREÇÃO DA TRAVA (ver o comentário do FORMATO acima): o que não pode vazar é ops → equipe —
+// nada do que se fala aqui pode chegar no TOM que atende as escolas. Trazer a voz da equipe
+// PRA cá é o caminho inverso, e é exatamente o que o dono pediu.
+//
+// Lido a cada pedido, igual ao FORMATO: editar o SOUL muda a resposta na hora.
+function loadSoulDoTom() {
+  try {
+    // Require tardio de propósito: o módulo de grupo puxa utils próprios e está em mudança por
+    // outras frentes. Um problema lá não pode derrubar o canal de ops — sem a voz ele ainda
+    // responde, só volta a soar genérico, e o warn diz por quê.
+    return String(require('./group-chat-prompt').loadGroupChatSoul() || '').trim();
+  } catch (e) {
+    console.warn(`[OpsAgent] sem a voz do TOM (soul/SOUL.md): ${e.message}`);
+    return '';
+  }
+}
+
 // O briefing existe pra ele não redescobrir a casa a cada pedido, e pra fixar o que NÃO faz.
 function buildBriefing(quem) {
+  const soul = loadSoulDoTom();
   const formato = loadFormatoGrupo();
   return `Você é o TOM operando no grupo de engenharia "LA ORGANIZER - TOM", no WhatsApp.
 Quem está te pedindo agora: ${quem}. O grupo tem só o Alf (desenvolvedor, dono do produto) e
 o Hugo (coordenador de tecnologia) — os dois têm autonomia total sobre este sistema.
 
+Você é o MESMO TOM do 1:1 com a equipe. O que muda aqui é o assunto (engenharia deste sistema)
+e o que você pode fazer (tem ferramenta de verdade) — não a pessoa que fala. Nada abaixo te
+autoriza a virar um relatório com nome de gente.
+${soul ? `
+── QUEM VOCÊ É (soul/SOUL.md — a mesma voz do 1:1, não um resumo dela) ──
+${soul}
+── FIM DE QUEM VOCÊ É ──
+` : ''}
 VOCÊ TEM ACESSO REAL. O diretório atual é o repositório em produção (${REPO}), você roda Bash
 nesta VPS e pode ler/escrever arquivos. Para o banco (Supabase, service_role), escreva e rode
 um script node que use \`src/supabase/client\`. Você NÃO precisa pedir permissão para
@@ -106,6 +138,11 @@ COMO RESPONDER
 Sua resposta vai direto pro WhatsApp, num celular. Curto e concreto: o que você fez, o que
 achou, o número que importa. Se mediu, diga o número. Se não conseguiu, diga o que faltou —
 nunca diga que fez o que não fez.
+
+A disciplina acima é sobre o que você AFIRMA, não sobre como você fala: ela não te transforma
+em relatório. O padrão aqui é conversa — responda como o TOM responderia no 1:1, e monte
+relatório só quando pedirem um. Não abra a resposta confirmando o recebimento nem repetindo o
+pedido de volta: comece pela resposta.
 ${formato ? `\n${formato}` : ''}`;
 }
 
@@ -195,6 +232,17 @@ function contarItensDoPedido(texto) {
   return n;
 }
 
+// ECO DE RECEBIMENTO — REMOVIDO EM 04/09. O ack longo devolvia a frase da pessoa entre aspas
+// ("👽 Peguei, Alf: '<a pergunta dele>' — vou olhar e te falo"). A intenção de 31/08 era boa
+// (provar leitura), mas o efeito medido no grupo foi o oposto do TOM: como o group-chat-engine
+// posta o ack em TODO turno do canal, um "coé Tom" também levava a pergunta de volta, e o
+// personagem virou formulário de protocolo. Citar o que a pessoa acabou de escrever não é
+// conversa em lugar nenhum — é recibo.
+//
+// O que sobra continua distinguindo as três formas de pedido (o contrato de 31/08 era não ter
+// UMA frase só pra tudo): pauta enumerada devolve a CONTA — que ainda prova leitura, porque
+// exigiu ler o pedido inteiro —, mensagem curta ganha aceno curto, pedido denso avisa que a
+// medição começou. Nenhuma delas repete o que a pessoa disse.
 function ackDoPedido(texto, quem = null) {
   const t = String(texto || '').trim();
   const nome = (quem && quem !== 'alguém do grupo') ? `, ${quem}` : '';
@@ -203,9 +251,7 @@ function ackDoPedido(texto, quem = null) {
   const itens = contarItensDoPedido(t);
   if (itens >= 2) return `👽 Peguei os ${itens}${nome}. Vou medir e te falo.`;
   if (t.length <= ACK_CURTO_MAX) return `👽 Opa${nome} — deixa eu ver aqui.`;
-  const primeira = (t.split('\n').find((l) => l.trim().length > 0) || t).trim();
-  const trecho = primeira.length > 70 ? `${primeira.slice(0, 70).trimEnd()}…` : primeira;
-  return `👽 Peguei${nome}: "${trecho}" — vou olhar e te falo.`;
+  return `👽 Tô nessa${nome} — vou medir e já te falo.`;
 }
 
 // Governança reusa este spawn com protocolo próprio. Extraído em funções puras para o
