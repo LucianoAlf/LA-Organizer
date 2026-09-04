@@ -25,7 +25,13 @@ const ORPHAN_MIN_S = 25;       // idade mínima da msg de membro órfã antes de
 
 let _ticking = false;
 const _recovered = new Map();  // id -> ts (evita re-recuperar a mesma msg infinitamente)
-setInterval(() => { const cut = Date.now() - 60 * 60 * 1000; for (const [k, t] of _recovered) if (t < cut) _recovered.delete(k); }, 60 * 60 * 1000);
+// unref: faxina de memória não pode segurar o event loop. Sem isso o módulo é impossível de
+// carregar num teste (o processo nunca termina) — e o watcher era justamente a superfície sem
+// teste nenhum onde o descarte mudo de 04/09 viveu meses.
+{
+  const _faxina = setInterval(() => { const cut = Date.now() - 60 * 60 * 1000; for (const [k, t] of _recovered) if (t < cut) _recovered.delete(k); }, 60 * 60 * 1000);
+  if (typeof _faxina.unref === 'function') _faxina.unref();
+}
 
 // "O TOM está esperando uma resposta?" — sinal barato (sem IA) pra deixar passar um "sim"/"R$ 320"
 // sem precisar repetir o nome. Degrada gracioso: na dúvida, retorna false (silêncio).
@@ -48,7 +54,31 @@ async function computeTomAwaiting(supabase, groupId) {
   return false;
 }
 
-async function processOne(supabase, msg) {
+// GROUPCHAT-SENDER-NULL-DESCARTE-MUDO (auditoria 04/09) — o defeito mais grave do dia.
+//
+// O que havia aqui era `const senderCollabId = msg.sender_id; if (!senderCollabId) return;`,
+// DEPOIS do claim e ANTES do gate de vocativo. Medido: 13 mensagens de membro entraram com
+// `sender_id` NULL (o remetente do WhatsApp não casou com nenhum colaborador cadastrado) e
+// foram descartadas em silêncio — exatamente as 13 que ficaram sem `tom_done_at`. Nenhuma
+// mensagem com remetente válido ficou sem tratamento. A gerente Krissya chamou o TOM pelo
+// nome às 11:15 e nunca foi respondida; o pedido da Fernanda das 09:33 só foi atendido às
+// 10:27 de carona no histórico de outra pessoa. E o TOM, perguntado por que calou, INVENTOU
+// um motivo — ele não tinha como saber que fora descartado antes de chegar nele.
+//
+// A DECISÃO, e por quê: o TOM RESPONDE mesmo sem saber quem é, tratando como pessoa
+// desconhecida. Uma gerente pedindo e sendo ignorada é o pior desfecho possível justamente
+// porque não tem recuperação — ninguém, nem ela nem nós, fica sabendo que houve pedido. O
+// segundo pior (executar em nome de alguém que ele não sabe quem é) NÃO precisa acontecer
+// junto: são duas portas diferentes. CONVERSAR não exige identidade; EXECUTAR exige, e a
+// porta de execução continua fechada — o engine recebe `remetenteDesconhecido` e recusa
+// qualquer marker de escrita, dizendo na cara do grupo que não reconhece quem falou e
+// pedindo que se identifique. Responder-e-recusar é honesto; calar não é.
+//
+// `deps` existe pro teste: o watcher era a superfície sem teste nenhum onde este descarte
+// morou meses. Em produção os defaults são os módulos reais.
+async function processOne(supabase, msg, deps = {}) {
+  const processMessage = deps.processMessage || processGroupChatMessage;
+  const typing = deps.sendTyping || sendGroupTyping;
   // Claim atômico: só processa quem marcar tom_seen_at de NULL (evita 2 processos pegarem a mesma).
   const { data: claimed } = await supabase.from('group_chat_messages')
     .update({ tom_seen_at: new Date().toISOString() })
@@ -62,8 +92,8 @@ async function processOne(supabase, msg) {
     const extracted = await extractMediaText({ supabase, message: msg });
     if (extracted) text = text ? `${text}\n${extracted}` : extracted;
   }
-  const senderCollabId = msg.sender_id;
-  if (!senderCollabId) return;
+  const senderCollabId = msg.sender_id || null;
+  const remetenteDesconhecido = !senderCollabId;
 
   const { data: group } = await supabase.from('work_groups')
     .select('tom_chat_engaged_at, wa_group_jid').eq('id', msg.group_id).maybeSingle();
@@ -80,7 +110,25 @@ async function processOne(supabase, msg) {
   if (!shouldRun) {
     // Marca como TRATADA (silêncio intencional) pra recuperação de órfã NÃO re-disparar.
     await supabase.from('group_chat_messages').update({ tom_done_at: new Date().toISOString() }).eq('id', msg.id);
+    // O silêncio nunca mais pode ser MUDO: sem esta linha, "o TOM calou porque a conversa não
+    // era com ele" e "o TOM calou porque quebrou" são byte-a-byte iguais no log — a doença que
+    // esta casa persegue. Aqui é o ramo SAUDÁVEL, e ele se declara como tal.
+    console.log(`[GroupChat] silencio intencional msg=${msg.id} grupo=${msg.group_id} (janela fechada, sem vocativo)`);
     return; // janela fechada e ninguém chamou → silêncio real
+  }
+  // Rastro do turno DEGRADADO: o TOM vai responder, mas sem saber quem pediu. Log + marker_logs
+  // (result só aceita executed|rejected|skipped|fallback) porque este é o sintoma que ficou
+  // invisível 13 vezes num único dia — e o laudo diário lê marker_logs, não o console.
+  if (remetenteDesconhecido) {
+    console.warn(`[GroupChat] remetente DESCONHECIDO msg=${msg.id} grupo=${msg.group_id} — responde como conversa, execução bloqueada`);
+    try {
+      const { error: _e } = await supabase.from('marker_logs').insert({
+        collaborator_id: null,
+        marker_type: 'GROUP_SENDER', result: 'skipped',
+        reason: `remetente desconhecido (sender_id null) grupo=${msg.group_id}`.slice(0, 120),
+      });
+      if (_e) console.error(`[GroupChat] sensor de remetente falhou: ${_e.message}`);
+    } catch (e) { console.error('[GroupChat] sensor de remetente erro:', e.message); }
   }
   if (opensWindow) {
     // Abre a janela (início da sessão, não desliza) — fica ativa até "valeu Tom" ou ~8 min de silêncio.
@@ -90,9 +138,9 @@ async function processOne(supabase, msg) {
   }
 
   // "Tom escrevendo…" só quando já sabemos que ele vai responder (fim do "escreve e some").
-  if (group?.wa_group_jid) sendGroupTyping(group.wa_group_jid);
+  if (group?.wa_group_jid) typing(group.wa_group_jid);
 
-  await processGroupChatMessage({ supabase, groupId: msg.group_id, senderCollabId, text });
+  await processMessage({ supabase, groupId: msg.group_id, senderCollabId, text, remetenteDesconhecido });
 
   if (clearAfter) {
     await supabase.from('work_groups').update({ tom_chat_engaged_at: null }).eq('id', msg.group_id);
@@ -172,4 +220,4 @@ function startGroupChatWatcher(supabaseMain) {
   return timer;
 }
 
-module.exports = { startGroupChatWatcher, tick, computeTomAwaiting };
+module.exports = { startGroupChatWatcher, tick, computeTomAwaiting, processOne };
