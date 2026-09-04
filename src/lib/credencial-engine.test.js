@@ -40,8 +40,9 @@ function exigir(i, oque) {
   return i;
 }
 
-const iHelper = exigir(idx((l) => l.startsWith('const { LABEL_SENSIVEL_RE: _LABEL_SENSIVEL_RE }')), 'helper _resumoCredencial');
-const iHelperEnd = exigir(idx((l) => l === '}', iHelper), 'fim de _resumoCredencial');
+const iHelper = exigir(idx((l) => l.startsWith('const { LABEL_SENSIVEL_RE: _LABEL_SENSIVEL_RE }')), 'helpers de credencial');
+const iEfetivo = exigir(idx((l) => l.startsWith('function _resumoCredencialEfetivo(')), 'helper _resumoCredencialEfetivo');
+const iHelperEnd = exigir(idx((l) => l === '}', iEfetivo), 'fim de _resumoCredencialEfetivo');
 const iTwoPass = exigir(idx((l) => l.includes('TWO-PASS <<PEDIR_CREDENCIAIS>>')), 'bloco TWO-PASS');
 const iConfirm = exigir(idx((l) => l.includes('---- CONFIRMACAO de escrita de credencial pendente')), 'bloco CredencialConfirm');
 const iExec = exigir(idx((l) => l.includes('---- EXECUTOR DETERMINISTICO <<CREDENCIAL_ACTION>>')), 'bloco EXECUTOR');
@@ -308,6 +309,12 @@ test('E: credencial_write que NAO e a mais recente nao e tratada', async () => {
   assert.strictEqual(r._pendingIntentToResolve, pend, 'descartou a resolucao da intent que era realmente a alvo');
   assert.strictEqual(r.reply, 'resposta normal');
   assert.strictEqual(r._credenciaisNoTurno, false);
+  // Achado 4 (round 3): o ramo tem de aparecer numa serie consultavel, com identificador.
+  assert.strictEqual(calls.markers.length, 1, 'ramo mudo — nao aparece em serie nenhuma');
+  assert.strictEqual(calls.markers[0].result, 'skipped');
+  assert.match(calls.markers[0].reason, /intent_nao_mais_recente/);
+  assert.match(calls.markers[0].reason, /i1/, 'sem o id da intent o registro nao acha nada');
+  assert.strictEqual(calls.markers[0].raw, null);
 });
 
 test('confirmacao: mensagem que nao e confirmacao passa reto e a intent segue aberta', async () => {
@@ -561,11 +568,96 @@ test('B: update com alvo que nao volta na leitura fresca e fail-closed', async (
   // Sem os campos atuais o merge nao existe — gravar so a lista da proposta apagaria o resto.
   cenario(piStub([intentCred({ modo: 'update', proposta: { action: 'update', alvo: 'Canva', campos: [{ label: 'Senha', valor: 'nova', sensivel: true }] }, alvo_id: 'sumiu', alvo_nome: 'Canva' })]),
     credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [] }) }));
-  const r = await run(ctxBase({ inboundVerbatimText: 'sim' }));
+  const c = ctxBase({ inboundVerbatimText: 'sim' });
+  const r = await run(c);
   assert.strictEqual(calls.upsert.length, 0, 'gravou sem poder mergear');
   assert.strictEqual(calls.resolve[0].res, 'denied');
   assert.match(r.reply, /nome exato/);
   assert.deepStrictEqual(calls.markers.map((m) => m.result + ':' + m.reason), ['rejected:confirmacao:update_alvo_nao_lido']);
+  assert.strictEqual(c._metrics.awaiting_user_confirm, true, 'achado 5: o turno responde com pergunta');
+});
+
+test('achado 5: alvo nao lido na escolha numerica tambem seta awaiting_user_confirm', async () => {
+  cenario(piStub([intentCred({ modo: 'duplicata', proposta: { action: 'create', nome: 'X', campos: [] }, candidatos: [{ id: 'sumiu', nome: 'Canva' }] })]),
+    credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [] }) }));
+  const c = ctxBase({ inboundVerbatimText: '1' });
+  const r = await run(c);
+  assert.strictEqual(calls.upsert.length, 0);
+  assert.strictEqual(calls.open.length, 0, 'abriu 2a etapa sem conseguir ler o alvo');
+  assert.strictEqual(c._metrics.awaiting_user_confirm, true);
+  assert.match(r.reply, /nome exato/);
+  assert.deepStrictEqual(calls.markers.map((m) => m.result + ':' + m.reason), ['rejected:confirmacao:alvo_nao_lido']);
+});
+
+// =====================================================================
+// Round 3 — a pessoa confirma sabendo o que vai acontecer
+// =====================================================================
+
+test('1: campo com label e SEM valor nao apaga o segredo guardado', async () => {
+  // `parseCredencialAction` normaliza valor ausente pra '' e o Object.assign deixava esse
+  // '' vencer o valor guardado. Zerar campo tem de ser pedido explicito.
+  const alvo = { id: 'c1', nome: 'Canva', campos: [
+    { label: 'Senha', valor: 's3cr3t', sensivel: true },
+    { label: 'E-mail', valor: 'a@b.c' },
+  ] };
+  cenario(piStub([intentCred({ modo: 'update', proposta: { action: 'update', alvo: 'Canva', campos: [{ label: 'Senha', valor: '' }] }, alvo_id: 'c1', alvo_nome: 'Canva' })]),
+    credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [alvo] }) }));
+  await run(ctxBase({ inboundVerbatimText: 'sim' }));
+  assert.strictEqual(calls.upsert.length, 1);
+  const porLabel = Object.fromEntries(calls.upsert[0].campos.map((c) => [c.label, c.valor]));
+  assert.strictEqual(porLabel['Senha'], 's3cr3t', 'valor vazio apagou o segredo guardado');
+  assert.strictEqual(porLabel['E-mail'], 'a@b.c');
+});
+
+test('1: campo sem valor aparece como (vazio) no resumo, nunca mascarado', async () => {
+  // A mascara existe pra esconder segredo, nao ausencia: pintar `●●●●●●` nos dois casos
+  // deixava apagar e preservar visualmente identicos na hora do "sim".
+  cenario(piStub([]), credStub());
+  const r = await run(ctxBase({ reply: MARKER({ action: 'create', nome: 'Canva', campos: [{ label: 'Senha' }, { label: 'E-mail', valor: 'a@b.c' }] }) }));
+  assert.match(r.reply, /Senha: \(vazio\)/, 'campo sem valor foi mascarado: ' + r.reply);
+  assert.ok(!/●●●●●●/.test(r.reply), 'mascara usada para ausencia de valor');
+  assert.match(r.reply, /E-mail: a@b\.c/);
+});
+
+test('2: o resumo do caminho de ALVO EXATO mostra o resultado, nao a proposta', async () => {
+  // Era o caminho mais usado e o unico que ainda mostrava a proposta crua: o campo
+  // sobrevivente sumia da tela e a pessoa confirmava sem ver o que sobra.
+  const alvo = { id: 'c1', nome: 'Canva', campos: [
+    { label: 'E-mail', valor: 'la@la.com' },
+    { label: 'Senha', valor: 'velha', sensivel: true },
+  ] };
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [alvo] }) }));
+  const r = await run(ctxBase({ reply: MARKER({ action: 'update', alvo: 'Canva', nome: 'Canva Pro', campos: [{ label: 'Senha', valor: 'nova', sensivel: true }] }) }));
+  assert.match(r.reply, /Vou atualizar \*Canva\*/);
+  assert.match(r.reply, /E-mail: la@la\.com/, 'o campo sobrevivente nao aparece no resumo');
+  assert.match(r.reply, /\*Canva Pro\*/, 'o rename precisa aparecer');
+  assert.match(r.reply, /Senha: ●●●●●●/);
+  assert.ok(!/nova|velha/.test(r.reply), 'valor de senha vazou no resumo');
+  assert.strictEqual(calls.upsert.length, 0, 'executor nao pode gravar');
+});
+
+test('3: observacoes aparecem no resumo (substituicao deixa de ser silenciosa)', async () => {
+  const alvo = { id: 'c1', nome: 'Canva', observacoes: 'nota antiga', campos: [] };
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [alvo] }) }));
+  const r = await run(ctxBase({ reply: MARKER({ action: 'update', alvo: 'Canva', observacoes: 'nota nova' }) }));
+  assert.match(r.reply, /Obs\.: nota nova/, 'observacoes trocadas sem disclosure: ' + r.reply);
+});
+
+test('3: observacoes existentes sobrevivem e aparecem quando a proposta nao as cita', async () => {
+  const alvo = { id: 'c1', nome: 'Canva', observacoes: 'nota antiga', campos: [] };
+  cenario(piStub([]), credStub({ getCredenciaisPara: async () => ({ isAdmin: true, creds: [alvo] }) }));
+  const r = await run(ctxBase({ reply: MARKER({ action: 'update', alvo: 'Canva', url_ref: 'https://x' }) }));
+  assert.match(r.reply, /Obs\.: nota antiga/);
+});
+
+test('3: observacao longa e truncada no resumo', async () => {
+  cenario(piStub([]), credStub());
+  const longa = 'z'.repeat(400);
+  const r = await run(ctxBase({ reply: MARKER({ action: 'create', nome: 'X', observacoes: longa }) }));
+  const linha = r.reply.split('\n').find((x) => x.startsWith('Obs.: '));
+  assert.ok(linha, 'linha de observacoes ausente');
+  assert.ok(linha.length < 200, 'observacao longa nao foi truncada: ' + linha.length);
+  assert.match(linha, /…$/);
 });
 
 test('C: o resumo mascara por LABEL quando o modelo esquece a flag `sensivel`', async () => {

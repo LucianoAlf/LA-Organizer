@@ -264,16 +264,55 @@ async function logMarker(collaboratorId, markerType, result, reason = null, raw 
   }
 }
 
-// Resumo de credencial para a mensagem de confirmacao (executor <<CREDENCIAL_ACTION>>).
+// Helpers de credencial (executor <<CREDENCIAL_ACTION>>). Ficam juntos e no nivel do
+// modulo porque os DOIS blocos usam — o executor, pra montar a pergunta; a confirmacao,
+// pra montar a escrita. Ter uma copia local em cada um foi o que deixou o caminho de
+// alvo exato mostrando a proposta enquanto as duas segundas etapas ja mostravam o
+// resultado (achado 2, round 3).
+const { LABEL_SENSIVEL_RE: _LABEL_SENSIVEL_RE } = require('./lib/credencial-duplicata');
+
+// "Sem valor" e um estado REAL, diferente de "segredo". O parser normaliza valor ausente
+// pra '', e tratar os dois igual foi o achado 1 do round 3: o resumo pintava `●●●●●●`
+// tanto pro segredo preservado quanto pro campo que ia ser ZERADO, e a pessoa confirmava
+// sem ter como distinguir apagar de manter.
+function _valorVazioCredencial(v) {
+  return v === undefined || v === null || String(v).trim() === '';
+}
+
+// MERGE POR LABEL. A RPC faz `campos = coalesce(p_campos, g.campos)` — lista nao-nula
+// SUBSTITUI a lista inteira. "Troca a senha do Canva" faz o modelo emitir campos:[{Senha}]
+// e apagaria o e-mail, que e o caso de uso PRINCIPAL de update. Parte do que esta no
+// banco, sobrescreve o que a proposta cita (label case/trim-insensitive) e acrescenta o
+// que nao existia.
+function _mergeCamposCredencial(existentes, novos) {
+  const _k = (s) => String(s === undefined || s === null ? '' : s).trim().toLowerCase();
+  const out = (Array.isArray(existentes) ? existentes : []).slice();
+  for (const n of (Array.isArray(novos) ? novos : [])) {
+    if (!n || !_k(n.label)) continue;
+    const i = out.findIndex((c) => c && _k(c.label) === _k(n.label));
+    if (i < 0) { out.push(n); continue; }
+    const antigo = out[i] || {};
+    // `sensivel` nunca REBAIXA no merge: o parser normaliza pra Boolean, entao um
+    // `sensivel` esquecido pelo modelo desmarcaria um campo que ja era segredo.
+    const merged = Object.assign({}, antigo, n, { sensivel: Boolean(antigo.sensivel) || Boolean(n.sensivel) });
+    // Campo com label e SEM valor NAO apaga o que esta guardado (achado 1, round 3):
+    // `{label:"Senha"}` virava `{label:"Senha",valor:""}` e o Object.assign deixava o ''
+    // vencer o segredo. Zerar campo tem de ser pedido explicito, nunca efeito colateral.
+    if (_valorVazioCredencial(n.valor) && !_valorVazioCredencial(antigo.valor)) merged.valor = antigo.valor;
+    out[i] = merged;
+  }
+  return out;
+}
+
+// Resumo de credencial para a mensagem de confirmacao.
 // Valor sensivel SEMPRE mascarado: confirmar uma escrita nao exige devolver a senha
 // pro WhatsApp. `categoria` entra no resumo pra pessoa ver em que balde vai cair antes
 // de confirmar (o parser ja validou contra o CHECK do banco; null vira 'outro' na RPC).
 //
-// C (review 04/09): mascarar so por `c.sensivel` nao basta — a flag vem do MODELO, e na
-// base de producao 3 de 134 campos tem label de segredo com `sensivel: false`. Um esquecido
+// C (round 2): mascarar so por `c.sensivel` nao basta — a flag vem do MODELO, e na base
+// de producao 3 de 134 campos tem label de segredo com `sensivel: false`. Um esquecido
 // devolvia a senha na mensagem de confirmacao, que vai pro WhatsApp E pro logConversation
 // outbound. Mesma regex que o motivo da duplicata usa (fonte unica).
-const { LABEL_SENSIVEL_RE: _LABEL_SENSIVEL_RE } = require('./lib/credencial-duplicata');
 function _resumoCredencial(a) {
   if (!a) return '';
   const l = [`*${a.nome || a.alvo || 'sem nome'}*`];
@@ -281,12 +320,37 @@ function _resumoCredencial(a) {
   if (a.servico) l.push(`Serviço: ${a.servico}`);
   if (a.projeto) l.push(`Projeto: ${a.projeto}`);
   if (a.url_ref) l.push(`Link: ${a.url_ref}`);
+  // Observacoes era SUBSTITUIDA sem aparecer em resumo nenhum (achado 3, round 3):
+  // "nota antiga" virava "nota nova" com zero disclosure.
+  if (a.observacoes) {
+    const _obs = String(a.observacoes).trim();
+    l.push(`Obs.: ${_obs.length > 160 ? `${_obs.slice(0, 160)}…` : _obs}`);
+  }
   for (const c of (a.campos || [])) {
     const _label = String((c && c.label) || '');
+    // (vazio) e nao mascara: a mascara existe pra esconder segredo, nunca ausencia.
+    if (_valorVazioCredencial(c && c.valor)) { l.push(`${_label}: (vazio)`); continue; }
     const _sens = Boolean(c && c.sensivel) || _LABEL_SENSIVEL_RE.test(_label);
-    l.push(`${_label}: ${_sens ? '●●●●●●' : (c && c.valor)}`);
+    l.push(`${_label}: ${_sens ? '●●●●●●' : c.valor}`);
   }
   return l.join('\n');
+}
+
+// Resumo do que a credencial vai VIRAR: espelha o `coalesce(p_x, g.x)` da RPC campo a
+// campo e ja aplica o merge dos campos. E o unico jeito de a pessoa ver, ANTES do "sim",
+// que um "atualizar" vai renomear a credencial, trocar a observacao, ou que o e-mail que
+// ela nao citou continua lá.
+function _resumoCredencialEfetivo(alvo, proposta) {
+  const d = proposta || {};
+  return _resumoCredencial({
+    nome: d.nome || (alvo && alvo.nome),
+    categoria: d.categoria || (alvo && alvo.categoria),
+    servico: d.servico || (alvo && alvo.servico),
+    projeto: d.projeto || (alvo && alvo.projeto),
+    url_ref: d.url_ref || (alvo && alvo.url_ref),
+    observacoes: d.observacoes || (alvo && alvo.observacoes),
+    campos: _mergeCamposCredencial(alvo && alvo.campos, d.campos),
+  });
 }
 
 // Ambiguidade real (linhagens distintas) NÃO é resolvida na Fatia A — mantém o comportamento
@@ -11289,9 +11353,14 @@ async function processMessage(phone, text, raw = {}) {
     const _maisNova = _abertas[0] || null;
     const _ehAMaisNova = !!(intent && _maisNova && _maisNova.id === intent.id);
     if (intent && !_ehAMaisNova) {
-      console.warn(`[CredencialConfirm] intent credencial_write NAO e a mais recente `
-        + `(mais nova: kind=${_maisNova && _maisNova.kind}) — nao trato este turno, `
-        + 'a confirmacao pertence a outra pergunta');
+      // Achado 4 (round 3): warn sem identificador nao acha o registro, e este ramo nao
+      // aparecia em serie nenhuma que alguem consulte. O marker entra como `skipped`
+      // (nao e escrita tentada — nao suja `marker_attempted`, que so conta executed/rejected).
+      console.warn(`[CredencialConfirm] intent credencial_write ${String(intent.id).slice(0, 8)} NAO e a mais recente `
+        + `(mais nova: id=${String((_maisNova && _maisNova.id) || '?').slice(0, 8)} kind=${_maisNova && _maisNova.kind}) — `
+        + `collab=${String(collab.id).slice(0, 8)}: nao trato este turno, a confirmacao pertence a outra pergunta`);
+      await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped',
+        `confirmacao:intent_nao_mais_recente intent:${String(intent.id).slice(0, 8)} mais_nova:${_maisNova && _maisNova.kind}`, null);
     } else if (intent) {
       // O resolvedor generico (~10340) pega `openIntents.find(i => i.kind !== 'approval_pending')`
       // — a mais recente de QUALQUER tipo, que logo depois de "Confirma?" e justamente esta — e
@@ -11328,24 +11397,9 @@ async function processMessage(phone, text, raw = {}) {
         const p = intent.payload || {};
         const { upsertCredencial, deleteCredencial, getCredenciaisPara } = require('./services/credenciais');
 
-        // B (review 04/09): MERGE POR LABEL. A RPC faz `campos = coalesce(p_campos, g.campos)`
-        // — lista nao-nula SUBSTITUI a lista inteira. "Troca a senha do Canva" faz o modelo
-        // emitir campos:[{Senha}] e APAGA o e-mail; e esse e o caso de uso PRINCIPAL de
-        // update, nao uma borda. Parte do que esta no banco, sobrescreve o que a proposta
-        // cita (label case/trim-insensitive) e acrescenta o que nao existia.
-        const _kLabel = (s) => String(s === undefined || s === null ? '' : s).trim().toLowerCase();
-        const _mergeCampos = (existentes, novos) => {
-          const out = (Array.isArray(existentes) ? existentes : []).slice();
-          for (const n of (Array.isArray(novos) ? novos : [])) {
-            if (!n || !_kLabel(n.label)) continue;
-            const i = out.findIndex((c) => c && _kLabel(c.label) === _kLabel(n.label));
-            // `sensivel` nunca REBAIXA no merge: o parser normaliza pra Boolean, entao um
-            // `sensivel` esquecido pelo modelo desmarcaria um campo que ja era segredo.
-            if (i >= 0) out[i] = Object.assign({}, out[i], n, { sensivel: Boolean(out[i].sensivel) || Boolean(n.sensivel) });
-            else out.push(n);
-          }
-          return out;
-        };
+        // O merge por label e o resumo do RESULTADO moram no nivel do modulo
+        // (_mergeCamposCredencial / _resumoCredencialEfetivo, ~287 e ~343): o executor
+        // precisa dos mesmos dois pra montar a pergunta do caminho de alvo exato.
 
         // Le a credencial-alvo FRESCA do banco. O merge e o resumo da 2a etapa precisam do
         // que esta la AGORA — o payload da intent pode ter minutos. Fail-closed: sem o alvo
@@ -11355,21 +11409,6 @@ async function processMessage(phone, text, raw = {}) {
           const { isAdmin, creds } = await getCredenciaisPara(collab.id);
           if (!isAdmin) return null;
           return (creds || []).find((c) => c && c.id === credId) || null;
-        };
-
-        // Resumo do que a credencial vai VIRAR (espelha o coalesce da RPC campo a campo,
-        // com os campos ja mergeados) — nao do que o modelo propos. E o unico jeito de a
-        // pessoa ver, ANTES do "sim", que um "atualizar" vai renomear a credencial.
-        const _resumoEfetivo = (alvo, proposta) => {
-          const d = proposta || {};
-          return _resumoCredencial({
-            nome: d.nome || (alvo && alvo.nome),
-            categoria: d.categoria || (alvo && alvo.categoria),
-            servico: d.servico || (alvo && alvo.servico),
-            projeto: d.projeto || (alvo && alvo.projeto),
-            url_ref: d.url_ref || (alvo && alvo.url_ref),
-            campos: _mergeCampos(alvo && alvo.campos, d.campos),
-          });
         };
 
         const _gravar = async (credId, alvoCred) => {
@@ -11385,7 +11424,7 @@ async function processMessage(phone, text, raw = {}) {
           };
           const _camposProp = Array.isArray(d.campos) ? d.campos : [];
           if (credId) {
-            const _merged = _mergeCampos(alvoCred && alvoCred.campos, _camposProp);
+            const _merged = _mergeCamposCredencial(alvoCred && alvoCred.campos, _camposProp);
             if (_merged.length) dados.campos = _merged;
           } else if (_camposProp.length) {
             dados.campos = _camposProp;
@@ -11400,7 +11439,7 @@ async function processMessage(phone, text, raw = {}) {
         // desambiguacao/duplicata fecha como 'superseded', sem janela com as duas abertas.
         const _abrirSegundaEtapa = async (acao, alvo, nomeFallback) => {
           const _nome = (alvo && alvo.nome) || nomeFallback || 'essa credencial';
-          const _detalhe = acao === 'delete' ? '' : `\n\n${_resumoEfetivo(alvo, p.proposta)}`;
+          const _detalhe = acao === 'delete' ? '' : `\n\n${_resumoCredencialEfetivo(alvo, p.proposta)}`;
           const _pergunta = `Vou ${acao === 'delete' ? 'APAGAR' : 'atualizar'} *${_nome}*.${_detalhe}\n\nConfirma?`;
           const _novoId = await pi.openIntent(collab.id, 'credencial_write',
             { modo: acao, proposta: p.proposta, alvo_id: (alvo && alvo.id) || null, alvo_nome: _nome }, _pergunta);
@@ -11477,6 +11516,7 @@ async function processMessage(phone, text, raw = {}) {
               // merge e o bug do item B (apaga o que a proposta nao citou).
               gravou = false;
               motivo = 'alvo_nao_lido';
+              _metrics.awaiting_user_confirm = true;   // achado 5: o turno responde com pergunta
               console.warn(`[CredencialConfirm] alvo ${alvoId} nao foi lido do banco — nao abro 2a etapa`);
               reply = ALVO_SUMIU;
             } else {
@@ -11532,6 +11572,7 @@ async function processMessage(phone, text, raw = {}) {
               gravou = false;
               motivo = 'update_alvo_nao_lido';
               await _fechar('denied', 'alvo nao encontrado na leitura fresca');
+              _metrics.awaiting_user_confirm = true;   // achado 5: o turno responde com pergunta
               console.warn(`[CredencialConfirm] update abortado — alvo ${p.alvo_id} nao lido do banco`);
               reply = ALVO_SUMIU;
             } else {
@@ -11661,7 +11702,11 @@ async function processMessage(phone, text, raw = {}) {
           } else {
             const alvo = exato || candidatos[0];
             const verbo = _acao.action === 'delete' ? 'APAGAR' : 'atualizar';
-            const detalhe = _acao.action === 'delete' ? '' : `\n\n${_resumoCredencial(_acao)}`;
+            // Achado 2 (round 3): aqui mostrava a PROPOSTA, enquanto as duas segundas
+            // etapas ja mostravam o RESULTADO. E este e o caminho mais usado: com alvo
+            // exato, "troca a senha do Canva" exibia o nome novo e a senha, e o E-mail
+            // sobrevivente nao aparecia — a pessoa confirmava sem ver o que sobra.
+            const detalhe = _acao.action === 'delete' ? '' : `\n\n${_resumoCredencialEfetivo(alvo, _acao)}`;
             await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', `aguardando_confirmacao:${_acao.action}`, null);
             reply = `Vou ${verbo} *${alvo.nome}*.${detalhe}\n\nConfirma?`;
             const _ok = await _abrir(
