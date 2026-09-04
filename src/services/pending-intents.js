@@ -35,9 +35,14 @@ async function openIntent(collaboratorId, kind, payload = {}, questionText = nul
   if (!collaboratorId) throw new Error('collaboratorId required');
   if (!VALID_KINDS.has(kind)) throw new Error(`invalid kind: ${kind}`);
 
-  // Supersede intents abertas do mesmo kind
+  // Supersede intents abertas do mesmo kind.
+  // D (review 04/09): o try/catch pega throw, mas o client Supabase devolve `{ error }`
+  // SEM lancar — supersede que falhava era mudo e deixava duas intents do mesmo kind
+  // abertas. O fluxo de duas etapas da credencial se apoia exatamente nesta garantia
+  // (a intent de desambiguacao tem de morrer quando a de confirmacao nasce). Seguir pro
+  // INSERT continua certo; o que muda e existir rastro.
   try {
-    await supabase
+    const { error: supErr } = await supabase
       .from('pending_intents')
       .update({
         resolved_at: new Date().toISOString(),
@@ -47,8 +52,13 @@ async function openIntent(collaboratorId, kind, payload = {}, questionText = nul
       .eq('collaborator_id', collaboratorId)
       .eq('kind', kind)
       .is('resolved_at', null);
+    if (supErr) {
+      console.warn(`[PendingIntents] supersede FALHOU collab=${String(collaboratorId).slice(0, 8)} kind=${kind}:`,
+        supErr.message || String(supErr), '— pode haver mais de uma intent aberta deste kind');
+    }
   } catch (err) {
-    console.warn('[PendingIntents] supersede err:', err.message);
+    console.warn(`[PendingIntents] supersede err collab=${String(collaboratorId).slice(0, 8)} kind=${kind}:`,
+      err instanceof Error ? err.message : String(err));
   }
 
   const { data, error } = await supabase

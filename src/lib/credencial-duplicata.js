@@ -98,4 +98,4 @@ function acharAlvo(termo, existentes) {
   return { exato: null, candidatos };
 }
 
-module.exports = { acharDuplicatas, acharAlvo };
+module.exports = { acharDuplicatas, acharAlvo, LABEL_SENSIVEL_RE };

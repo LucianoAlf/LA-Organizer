@@ -268,6 +268,12 @@ async function logMarker(collaboratorId, markerType, result, reason = null, raw 
 // Valor sensivel SEMPRE mascarado: confirmar uma escrita nao exige devolver a senha
 // pro WhatsApp. `categoria` entra no resumo pra pessoa ver em que balde vai cair antes
 // de confirmar (o parser ja validou contra o CHECK do banco; null vira 'outro' na RPC).
+//
+// C (review 04/09): mascarar so por `c.sensivel` nao basta — a flag vem do MODELO, e na
+// base de producao 3 de 134 campos tem label de segredo com `sensivel: false`. Um esquecido
+// devolvia a senha na mensagem de confirmacao, que vai pro WhatsApp E pro logConversation
+// outbound. Mesma regex que o motivo da duplicata usa (fonte unica).
+const { LABEL_SENSIVEL_RE: _LABEL_SENSIVEL_RE } = require('./lib/credencial-duplicata');
 function _resumoCredencial(a) {
   if (!a) return '';
   const l = [`*${a.nome || a.alvo || 'sem nome'}*`];
@@ -276,7 +282,9 @@ function _resumoCredencial(a) {
   if (a.projeto) l.push(`Projeto: ${a.projeto}`);
   if (a.url_ref) l.push(`Link: ${a.url_ref}`);
   for (const c of (a.campos || [])) {
-    l.push(`${c.label}: ${c.sensivel ? '●●●●●●' : c.valor}`);
+    const _label = String((c && c.label) || '');
+    const _sens = Boolean(c && c.sensivel) || _LABEL_SENSIVEL_RE.test(_label);
+    l.push(`${_label}: ${_sens ? '●●●●●●' : (c && c.valor)}`);
   }
   return l.join('\n');
 }
@@ -11272,22 +11280,34 @@ async function processMessage(phone, text, raw = {}) {
     const pi = require('./services/pending-intents');
     // listOpenIntents NAO filtra por kind (opts so aceita limit/expiryHours) — filtra aqui.
     // Sem isso, uma intent de outro kind mais recente seria pega no lugar e a confirmacao
-    // de credencial nunca seria processada.
-    const _abertas = await pi.listOpenIntents(collab.id, { limit: 5 });
-    const intent = (_abertas || []).find((i) => i && i.kind === 'credencial_write');
-    if (intent) {
+    // de credencial nunca seria processada. Vem ordenado por asked_at DESC.
+    const _abertas = (await pi.listOpenIntents(collab.id, { limit: 5 }) || []).filter(Boolean);
+    const intent = _abertas.find((i) => i.kind === 'credencial_write');
+    // E (review 04/09): so trata se a intent de credencial for a MAIS RECENTE. Com uma
+    // pergunta mais nova de outro kind aberta, um "sim" destinado a ela gravava a credencial
+    // — e ainda descartava a resolucao da outra pelo `_pendingIntentToResolve = null`.
+    const _maisNova = _abertas[0] || null;
+    const _ehAMaisNova = !!(intent && _maisNova && _maisNova.id === intent.id);
+    if (intent && !_ehAMaisNova) {
+      console.warn(`[CredencialConfirm] intent credencial_write NAO e a mais recente `
+        + `(mais nova: kind=${_maisNova && _maisNova.kind}) — nao trato este turno, `
+        + 'a confirmacao pertence a outra pergunta');
+    } else if (intent) {
       // O resolvedor generico (~10340) pega `openIntents.find(i => i.kind !== 'approval_pending')`
       // — a mais recente de QUALQUER tipo, que logo depois de "Confirma?" e justamente esta — e
       // agenda `_pendingIntentToResolve`, aplicado la em ~13870, DEPOIS deste bloco. Se ele
       // fechasse a intent de credencial como 'confirmed' sem ninguem ter gravado, a pessoa
       // acharia que cadastrou, nada teria sido escrito, e a intent ja fechada faria a
       // repeticao nao achar mais nada. Perda silenciosa. Esta intent e deste bloco resolver.
+      // (Ha tambem um guard no proprio resolvedor generico, ~10382; isto e a 2a linha.)
       _pendingIntentToResolve = null;
 
       // Janela de 15min (mesma de finance_source / reschedule_confirm / event_create_confirm).
       // listOpenIntents so corta em 24h: sem esta guarda um "sim" 20 horas depois gravaria
       // credencial. Fora da janela nao grava — e fecha como 'expired' pra que o resolvedor
       // generico (janela de 20min) nao a marque 'confirmed' sem escrita nenhuma.
+      // A janela e sempre a da intent VIGENTE: no fluxo de duas etapas, a 2a intent nasce
+      // no turno da escolha, entao o relogio recomeca ali.
       if (!withinConfirmWindow(intent.asked_at, 15)) {
         // I-4: resolveIntent devolve false em erro, sem lancar — se o fechamento falhar a
         // intent segue aberta e volta a ser candidata no proximo turno. Precisa de rastro.
@@ -11306,9 +11326,53 @@ async function processMessage(phone, text, raw = {}) {
         const escolha = String(_confirmText || '').trim().match(/^([1-5])$/);
         const querCriar = /^\s*criar\s*$/i.test(String(_confirmText || ''));
         const p = intent.payload || {};
-        const { upsertCredencial, deleteCredencial } = require('./services/credenciais');
+        const { upsertCredencial, deleteCredencial, getCredenciaisPara } = require('./services/credenciais');
 
-        const _gravar = async (credId) => {
+        // B (review 04/09): MERGE POR LABEL. A RPC faz `campos = coalesce(p_campos, g.campos)`
+        // — lista nao-nula SUBSTITUI a lista inteira. "Troca a senha do Canva" faz o modelo
+        // emitir campos:[{Senha}] e APAGA o e-mail; e esse e o caso de uso PRINCIPAL de
+        // update, nao uma borda. Parte do que esta no banco, sobrescreve o que a proposta
+        // cita (label case/trim-insensitive) e acrescenta o que nao existia.
+        const _kLabel = (s) => String(s === undefined || s === null ? '' : s).trim().toLowerCase();
+        const _mergeCampos = (existentes, novos) => {
+          const out = (Array.isArray(existentes) ? existentes : []).slice();
+          for (const n of (Array.isArray(novos) ? novos : [])) {
+            if (!n || !_kLabel(n.label)) continue;
+            const i = out.findIndex((c) => c && _kLabel(c.label) === _kLabel(n.label));
+            // `sensivel` nunca REBAIXA no merge: o parser normaliza pra Boolean, entao um
+            // `sensivel` esquecido pelo modelo desmarcaria um campo que ja era segredo.
+            if (i >= 0) out[i] = Object.assign({}, out[i], n, { sensivel: Boolean(out[i].sensivel) || Boolean(n.sensivel) });
+            else out.push(n);
+          }
+          return out;
+        };
+
+        // Le a credencial-alvo FRESCA do banco. O merge e o resumo da 2a etapa precisam do
+        // que esta la AGORA — o payload da intent pode ter minutos. Fail-closed: sem o alvo
+        // nao da pra mergear, e gravar sem merge e exatamente o bug do item B.
+        const _buscarAlvo = async (credId) => {
+          if (!credId) return null;
+          const { isAdmin, creds } = await getCredenciaisPara(collab.id);
+          if (!isAdmin) return null;
+          return (creds || []).find((c) => c && c.id === credId) || null;
+        };
+
+        // Resumo do que a credencial vai VIRAR (espelha o coalesce da RPC campo a campo,
+        // com os campos ja mergeados) — nao do que o modelo propos. E o unico jeito de a
+        // pessoa ver, ANTES do "sim", que um "atualizar" vai renomear a credencial.
+        const _resumoEfetivo = (alvo, proposta) => {
+          const d = proposta || {};
+          return _resumoCredencial({
+            nome: d.nome || (alvo && alvo.nome),
+            categoria: d.categoria || (alvo && alvo.categoria),
+            servico: d.servico || (alvo && alvo.servico),
+            projeto: d.projeto || (alvo && alvo.projeto),
+            url_ref: d.url_ref || (alvo && alvo.url_ref),
+            campos: _mergeCampos(alvo && alvo.campos, d.campos),
+          });
+        };
+
+        const _gravar = async (credId, alvoCred) => {
           const d = p.proposta || {};
           const dados = {
             id: credId || null,
@@ -11319,14 +11383,47 @@ async function processMessage(phone, text, raw = {}) {
             url_ref: d.url_ref,
             observacoes: d.observacoes,
           };
-          // C-2 (review 04/09): `parseCredencialAction` devolve `campos: []` quando o modelo
-          // nao manda campo nenhum, e a RPC faz `campos = coalesce(p_campos, g.campos)` —
-          // `'[]'::jsonb` NAO e null, entao um update parcial ("troca so o link do Canva")
-          // APAGAVA login e senha sem aviso. So manda `campos` quando ha campo de verdade;
-          // o servico converte a ausencia em null e o coalesce preserva o que ja esta la.
-          if (Array.isArray(d.campos) && d.campos.length) dados.campos = d.campos;
+          const _camposProp = Array.isArray(d.campos) ? d.campos : [];
+          if (credId) {
+            const _merged = _mergeCampos(alvoCred && alvoCred.campos, _camposProp);
+            if (_merged.length) dados.campos = _merged;
+          } else if (_camposProp.length) {
+            dados.campos = _camposProp;
+          }
+          // C-2: `campos` ausente vira null no servico, e o coalesce da RPC preserva o que
+          // ja esta la (no insert ela faz coalesce(p_campos, '[]'), entao create segue ok).
           return upsertCredencial(collab.id, dados);
         };
+
+        // Abre a 2a etapa (itens C-1 e A): a escolha numerica RESOLVE o alvo, nunca executa.
+        // openIntent supersede a intent aberta do mesmo kind na MESMA operacao — a de
+        // desambiguacao/duplicata fecha como 'superseded', sem janela com as duas abertas.
+        const _abrirSegundaEtapa = async (acao, alvo, nomeFallback) => {
+          const _nome = (alvo && alvo.nome) || nomeFallback || 'essa credencial';
+          const _detalhe = acao === 'delete' ? '' : `\n\n${_resumoEfetivo(alvo, p.proposta)}`;
+          const _pergunta = `Vou ${acao === 'delete' ? 'APAGAR' : 'atualizar'} *${_nome}*.${_detalhe}\n\nConfirma?`;
+          const _novoId = await pi.openIntent(collab.id, 'credencial_write',
+            { modo: acao, proposta: p.proposta, alvo_id: (alvo && alvo.id) || null, alvo_nome: _nome }, _pergunta);
+          if (!_novoId) {
+            console.warn('[CredencialConfirm] openIntent da 2a confirmacao falhou — nada gravado');
+            return null;
+          }
+          _metrics.awaiting_user_confirm = true;
+          return _pergunta;
+        };
+
+        // `_msgErro` (services/credenciais.js) descarta o code do erro (42501 / P0002) e
+        // devolve so a mensagem — forbidden e not_found so se distinguem pela string.
+        // A negativa de permissao mantem a MESMA discricao do ramo nao-admin: nunca revela
+        // que existe funcionalidade de credenciais.
+        const _replyErro = (erro, verbo) => {
+          const e = String(erro || '');
+          if (/forbidden/i.test(e)) return 'Isso eu não consigo te ajudar por aqui — fala com o Luciano.';
+          if (/not_found|nao_encontrada/i.test(e)) return '_Não achei essa credencial. Me diz o nome exato?_';
+          return `_Não consegui ${verbo}. Tenta de novo?_`;
+        };
+        const FALHA_PENDENCIA = '_Não consegui deixar isso pendente agora. Me pede de novo daqui a pouco?_';
+        const ALVO_SUMIU = '_Não achei mais essa credencial. Me diz o nome exato?_';
 
         // I-4 (review 04/09): resolveIntent devolve `false` em erro, SEM lancar. Se a escrita
         // deu certo e o fechamento falhou, a intent segue ABERTA e um segundo "confirma"
@@ -11341,17 +11438,6 @@ async function processMessage(phone, text, raw = {}) {
           return ok;
         };
 
-        // `_msgErro` (services/credenciais.js) descarta o code do erro (42501 / P0002) e
-        // devolve so a mensagem — forbidden e not_found so se distinguem pela string.
-        // A negativa de permissao mantem a MESMA discricao do ramo nao-admin: nunca revela
-        // que existe funcionalidade de credenciais.
-        const _replyErro = (erro, verbo) => {
-          const e = String(erro || '');
-          if (/forbidden/i.test(e)) return 'Isso eu não consigo te ajudar por aqui — fala com o Luciano.';
-          if (/not_found|nao_encontrada/i.test(e)) return '_Não achei essa credencial. Me diz o nome exato?_';
-          return `_Não consegui ${verbo}. Tenta de novo?_`;
-        };
-
         let tratou = true;
         let gravou = null;      // null = este ramo nao tentou escrever
         let motivo = String(p.modo || 'desconhecido');
@@ -11360,71 +11446,61 @@ async function processMessage(phone, text, raw = {}) {
           await _fechar('denied', 'usuario negou');
           motivo = `negada:${p.modo}`;
           reply = 'Ok, não gravei nada.';
-        } else if (p.modo === 'duplicata' && escolha) {
-          const alvoId = (p.candidatos || [])[Number(escolha[1]) - 1];
+        } else if ((p.modo === 'duplicata' || p.modo === 'alvo_ambiguo') && escolha) {
+          // A + C-1 (review 04/09): a escolha numerica RESOLVE O ALVO, nao executa —
+          // nos DOIS menus.
+          //
+          // alvo_ambiguo: a pergunta ("Achei mais de uma. Qual delas?" + lista) e identica
+          // para update e delete e nao diz o que vai acontecer; como `acharAlvo` casa por
+          // substring, "apaga o Instagram" listava as duas e um "2" solto destruia uma.
+          //
+          // duplicata: a pergunta diz "atualizar", mas nao O QUE. A proposta e de CREATE e
+          // costuma trazer campos e nome — e a RPC SUBSTITUI a lista de campos inteira e
+          // RENOMEIA a credencial existente. "Atualizei a credencial que já existia" podia
+          // significar: perdeu dois campos e mudou de nome.
+          const _c = (p.candidatos || [])[Number(escolha[1]) - 1];
+          // Payload novo guarda {id,nome}; payload em voo do formato antigo traz so o id.
+          const alvoId = _c && typeof _c === 'object' ? _c.id : _c;
+          const _acaoAlvo = p.modo === 'duplicata'
+            ? 'update'   // escolher uma duplicata e, por definicao, atualizar a existente
+            : ((p.proposta && p.proposta.action) === 'delete' ? 'delete' : 'update');
           if (!alvoId) {
             gravou = false;
             motivo = 'indice_invalido';
             _metrics.awaiting_user_confirm = true;   // M-2: o turno e pergunta
             reply = '_Número fora da lista. Responde de novo com o número certo?_';
           } else {
-            // A pergunta da duplicata JA diz o que vai acontecer ("Quer atualizar uma dessas
-            // (responde o número) ou criar assim mesmo?") — o numero aqui e consentimento
-            // informado, diferente do ramo alvo_ambiguo abaixo.
-            const r = await _gravar(alvoId);
-            gravou = !!r.ok;
-            motivo = `duplicata_merge:${alvoId}`;
-            await _fechar(r.ok ? 'confirmed' : 'denied', r.erro);
-            reply = r.ok ? '✅ Atualizei a credencial que já existia.' : _replyErro(r.erro, 'atualizar');
+            const _nomePayload = (_c && typeof _c === 'object' && _c.nome) ? _c.nome : null;
+            const _alvo = await _buscarAlvo(alvoId);
+            if (!_alvo && _acaoAlvo === 'update') {
+              // Fail-closed: sem o alvo fresco nao da pra mergear os campos, e gravar sem
+              // merge e o bug do item B (apaga o que a proposta nao citou).
+              gravou = false;
+              motivo = 'alvo_nao_lido';
+              console.warn(`[CredencialConfirm] alvo ${alvoId} nao foi lido do banco — nao abro 2a etapa`);
+              reply = ALVO_SUMIU;
+            } else {
+              const _pergunta = await _abrirSegundaEtapa(_acaoAlvo, _alvo || { id: alvoId, nome: _nomePayload }, _nomePayload || (p.proposta && p.proposta.alvo));
+              if (_pergunta) {
+                motivo = `alvo_escolhido:${p.modo}:${_acaoAlvo}:${alvoId}`;
+                reply = _pergunta;
+              } else {
+                gravou = false;
+                motivo = 'segunda_intent_nao_aberta';
+                reply = FALHA_PENDENCIA;
+              }
+            }
           }
         } else if (p.modo === 'duplicata' && querCriar) {
-          const r = await _gravar(null);
+          // Unico ramo do menu de duplicata que executa direto: "criar" CRIA uma credencial
+          // nova, nao sobrescreve nada. Nao ha o que a pessoa possa perder sem saber.
+          const r = await _gravar(null, null);
           gravou = !!r.ok;
           motivo = 'duplicata_criar_assim_mesmo';
           await _fechar(r.ok ? 'confirmed' : 'denied', r.erro);
           reply = r.ok ? '✅ Criei a credencial nova.' : _replyErro(r.erro, 'criar');
-        } else if (p.modo === 'alvo_ambiguo' && escolha) {
-          // C-1 (review 04/09): a escolha numerica RESOLVE O ALVO, nao executa.
-          // A pergunta que abre este ramo ("Achei mais de uma. Qual delas?" + lista) e
-          // IDENTICA para update e delete e nao diz o que vai acontecer — e `acharAlvo`
-          // casa por substring, entao "apaga o Instagram" listava as duas e um "2" solto
-          // destruia uma, irreversivel. O caminho nao-ambiguo faz o certo
-          // (`Vou APAGAR *X*. Confirma?`); era exatamente essa etapa que faltava aqui.
-          // Agora o numero abre uma SEGUNDA intent com o resumo explicito, e a escrita
-          // so acontece no "sim" seguinte.
-          const _c = (p.candidatos || [])[Number(escolha[1]) - 1];
-          // Payload novo guarda {id,nome}; payload em voo do formato antigo traz so o id.
-          const alvoId = _c && typeof _c === 'object' ? _c.id : _c;
-          const alvoNome = (_c && typeof _c === 'object' && _c.nome) ? _c.nome : null;
-          const _acaoAlvo = (p.proposta && p.proposta.action) === 'delete' ? 'delete' : 'update';
-          if (!alvoId) {
-            gravou = false;
-            motivo = 'indice_invalido';
-            _metrics.awaiting_user_confirm = true;   // M-2: o turno e pergunta
-            reply = '_Número fora da lista. Responde de novo com o número certo?_';
-          } else {
-            const _nome = alvoNome || String((p.proposta && p.proposta.alvo) || 'essa credencial');
-            const _detalhe = _acaoAlvo === 'delete'
-              ? ''
-              : `\n\n${_resumoCredencial(Object.assign({}, p.proposta || {}, { nome: _nome }))}`;
-            const _pergunta = `Vou ${_acaoAlvo === 'delete' ? 'APAGAR' : 'atualizar'} *${_nome}*.${_detalhe}\n\nConfirma?`;
-            // openIntent supersede a intent aberta do mesmo kind: a de desambiguacao fecha
-            // como 'superseded' na MESMA operacao — nao existe janela com as duas abertas.
-            const _novoId = await pi.openIntent(collab.id, 'credencial_write',
-              { modo: _acaoAlvo, proposta: p.proposta, alvo_id: alvoId, alvo_nome: _nome }, _pergunta);
-            if (_novoId) {
-              motivo = `alvo_escolhido:${_acaoAlvo}:${alvoId}`;
-              _metrics.awaiting_user_confirm = true;
-              reply = _pergunta;
-            } else {
-              gravou = false;
-              motivo = 'segunda_intent_nao_aberta';
-              console.warn('[CredencialConfirm] openIntent da 2a confirmacao falhou — nada gravado');
-              reply = '_Não consegui deixar isso pendente agora. Me pede de novo daqui a pouco?_';
-            }
-          }
         } else if (conf === 'yes' && p.modo === 'create') {
-          const r = await _gravar(null);
+          const r = await _gravar(null, null);
           gravou = !!r.ok;
           motivo = 'create';
           await _fechar(r.ok ? 'confirmed' : 'denied', r.erro);
@@ -11449,13 +11525,24 @@ async function processMessage(phone, text, raw = {}) {
               ? (p.alvo_nome ? `✅ Apaguei *${p.alvo_nome}*.` : '✅ Apaguei.')
               : _replyErro(r.erro, 'apagar');
           } else {
-            const r = await _gravar(p.alvo_id);
-            gravou = !!r.ok;
-            motivo = 'update';
-            await _fechar(r.ok ? 'confirmed' : 'denied', r.erro);
-            reply = r.ok
-              ? (p.alvo_nome ? `✅ Atualizei *${p.alvo_nome}*.` : '✅ Atualizei.')
-              : _replyErro(r.erro, 'atualizar');
+            const _alvo = await _buscarAlvo(p.alvo_id);
+            if (!_alvo) {
+              // Fail-closed (item B): sem os campos atuais o merge nao existe, e mandar a
+              // lista da proposta sozinha apagaria os campos que ela nao cita.
+              gravou = false;
+              motivo = 'update_alvo_nao_lido';
+              await _fechar('denied', 'alvo nao encontrado na leitura fresca');
+              console.warn(`[CredencialConfirm] update abortado — alvo ${p.alvo_id} nao lido do banco`);
+              reply = ALVO_SUMIU;
+            } else {
+              const r = await _gravar(p.alvo_id, _alvo);
+              gravou = !!r.ok;
+              motivo = 'update';
+              await _fechar(r.ok ? 'confirmed' : 'denied', r.erro);
+              reply = r.ok
+                ? (p.alvo_nome ? `✅ Atualizei *${p.alvo_nome}*.` : '✅ Atualizei.')
+                : _replyErro(r.erro, 'atualizar');
+            }
           }
         } else {
           tratou = false;   // nao era confirmacao: segue o fluxo normal, intent segue aberta
@@ -11542,8 +11629,10 @@ async function processMessage(phone, text, raw = {}) {
             await logMarker(collab.id, 'CREDENCIAL_ACTION', 'skipped', `duplicata:${dups.length}`, null);
             reply = `Antes de criar: já existe algo parecido.\n\n${lista}\n\n`
               + `Quer atualizar uma dessas (responde o número) ou criar assim mesmo (responde *criar*)?`;
+            // Guarda {id, nome} (igual ao alvo_ambiguo): a 2a etapa precisa do nome pra
+            // dizer QUAL credencial vai ser atualizada antes de qualquer escrita.
             const _ok = await _abrir(
-              { modo: 'duplicata', proposta: _acao, candidatos: dups.slice(0, 3).map(d => d.cred.id) }, reply);
+              { modo: 'duplicata', proposta: _acao, candidatos: dups.slice(0, 3).map(d => ({ id: d.cred.id, nome: d.cred.nome })) }, reply);
             if (!_ok) reply = FALHA_PENDENCIA;
           } else {
             const resumo = _resumoCredencial(_acao);
