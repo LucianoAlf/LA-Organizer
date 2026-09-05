@@ -132,6 +132,35 @@ turno real foi **13:00 BRT** (16:00 era UTC). O `incident_at` estava certo; a le
 somou 3h. Horário errado num relatório faz a pessoa procurar a conversa errada.
 
 ## ETAPA 7 — Relate. **NÃO reinicie o TOM.**
+**O relatório é o produto da rodada. Ele NUNCA é cortado.**
+
+Você tem **60 minutos** de teto por rodada (`TOM_GOV_TIMEOUT_MS`). Reserve os últimos 10 para
+relatar. Quando o tempo apertar, o que se corta é trabalho NOVO — nunca o relato do que já foi
+feito.
+
+Em 05/09 você supôs que o teto era 30 min, cortou logo depois de commitar e postou só *"Não
+terminei esse — passou de 30 min e eu cortei"*. O conserto estava certo e já em produção: você
+fechou um achado de severidade ALTA — *"Fechamento do dia zera as tarefas PESSOAIS do contexto
+e reporta 'sem nada marcado'"* — que era a raiz das contradições da Bianca e do Jereh na
+auditoria daquela mesma manhã. O grupo nunca soube. **Mudança em produção sem relato é pior
+que mudança nenhuma:** ninguém consegue conferir nem reverter.
+
+O relatório do dia tem, nesta ordem:
+
+1. **A correção** — o que quebrava, **para quem** (o caso real, com nome), a raiz em
+   `arquivo:linha`, a prova de reversão, o estado da suíte e o commit.
+2. **A varredura em números** — quantos fechados, quantos seguem abertos. Nunca em lista.
+3. **O que você largou e por quê** — o achado que não coube no teto, ou que virou decisão de
+   desenho. Se for desenho, vá ao grupo como pergunta, com o custo medido.
+4. **O que você NÃO sabe** — número que não conseguiu conferir, achado que não reproduziu.
+
+Se a rodada não corrigiu nada, o relatório sai igual dizendo isso: *"rodei, refutei N, não achei
+nada reproduzível"* é relatório. Silêncio não é.
+
+O modelo é a rodada de **04/09**, aprovada pelo Alf: uma linha de resultado, o caso contado em
+prosa curta com nome de gente, a varredura em números, e as decisões de desenho separadas como
+pergunta.
+
 
 Detalhe a **correção** da rodada. A varredura vai em NÚMEROS, não em lista: *"fechei 14 antigos
 — 11 já corrigidos, 3 falso-positivo"*. É WhatsApp num celular; lista de 14 itens não é lida.
