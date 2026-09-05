@@ -2968,17 +2968,9 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     addDaysYmd(_todayYmdBrief, 1),
   );
   const _briefVis = (t) => isVisibleForDay(t, _briefCutoff);
-  let tasksForCtx = ctx.todayTasks;
-  if (rt === 'briefing_pessoal') {
-    tasksForCtx = { personal: (ctx.personalTasks || []).filter(_briefVis), work: [] };
-  } else if (rt === 'briefing_trabalho') {
-    tasksForCtx = { personal: [], work: (ctx.workTasks || []).filter(_briefVis) };
-  } else if (rt === 'fechamento' || rt === 'daily_closing') {
-    tasksForCtx = { personal: [], work: ctx.workTasks }; // fechamento: cutoff=hoje, filtrado no engine
-  } else if (rt === 'briefing_diario' || rt === 'daily_briefing') {
-    // Unificado (cutoff=amanhã): AMBAS as listas; a skill renderiza seções *PESSOAL* e *TRABALHO*.
-    tasksForCtx = { personal: (ctx.personalTasks || []).filter(_briefVis), work: (ctx.workTasks || []).filter(_briefVis) };
-  }
+  const { tasksForRitual } = require('../lib/ritual-task-scope');
+  const _escopoRitual = tasksForRitual(rt, ctx, _briefVis);
+  const tasksForCtx = _escopoRitual || ctx.todayTasks;
 
   // Append pending decisions (extension requests) to the context block when present.
   // Habits only included for personal-context interactions: briefing pessoal OR briefing_diario

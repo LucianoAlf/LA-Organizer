@@ -15068,8 +15068,12 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
       // Balde A (audit 19/06): o fechamento é do DIA — não cobra tarefa de amanhã (caso
       // Quintela). Mantém atrasadas (due < hoje) + hoje; corta futuras (due > hoje). Sem
       // due_date entra (tarefa sem prazo pode ser fechada). O dedup por série já veio do ctx.
+      // FECHAMENTO-SO-TRABALHO (Jereh 04/09): a âncora tem que cobrir as MESMAS listas que o
+      // contexto do fechamento mostra, senão o "2" da resposta cai num índice que não existe.
       const _todayYmd = todaySaoPaulo();
-      const _closingPool = (ctx && Array.isArray(ctx.workTasks) ? ctx.workTasks : [])
+      const { tasksForRitual } = require('./lib/ritual-task-scope');
+      const _escopoFech = tasksForRitual('fechamento', ctx || {});
+      const _closingPool = [..._escopoFech.work, ..._escopoFech.personal]
         .filter((t) => isVisibleForDay(t, _todayYmd)); // BRIEFING-FUTURE-TASK-AS-TODAY: predicado único (cutoff=hoje no fechamento)
       _closingItems = buildClosingItems(_closingPool, { today: _todayYmd });
     } catch (e) { console.warn('[Closing] buildClosingItems err:', e.message); }
