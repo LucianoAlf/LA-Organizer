@@ -275,6 +275,16 @@ function _linhasPorHora(lista, quantos) {
 // passar a decidir por ele; (3) o ROTULO de lá deixar de dizer "sem data de contrato" e passar a
 // dizer o que o booleano de fato afirma. Virar este `false` antes disso devolve o bug ao ar.
 //
+// ESTE INTERRUPTOR TAMBÉM APAGA A RESSALVA (04/09). Reverter as mensagens não fechou a porta: o
+// recorte 'contrato' continuou respondendo a QUEM PERGUNTA, com o mesmo critério torto, e o dono
+// tinha acabado de dizer nos três grupos "me peça a lista de contrato que eu mando ela inteira".
+// A resposta NÃO foi bloqueada (quem está sem a data é pendência de verdade) — ela passou a sair
+// com uma ressalva dizendo que "sem data de contrato" não é "não assinou": RESSALVA_CONTRATO, em
+// services/situacao-aluno.js. Ela lê ESTE booleano em tempo de chamada, então ligar aqui apaga a
+// ressalva na lista e na ficha sozinho, sem tocar em nada lá. É de propósito: dar o número CERTO
+// com um aviso dizendo que ele é duvidoso é pior que não avisar, e um segundo botão só existiria
+// pra alguém esquecer de apertar.
+//
 // POR QUE O CÓDIGO FICA. O bloco volta — o pedido do dono não mudou, só o critério é que não
 // servia. Apagar e reescrever amanhã de memória perderia a copy que ele aprovou palavra por
 // palavra, e os testes que a travam byte a byte (services/anamnese-pauta.test.js, passando

@@ -731,3 +731,105 @@ test('ficha: fora da comunidade sem responsável distinto não aponta pra crian�
   assert.match(h, /Fora da comunidade/);
   assert.doesNotMatch(h, /quem precisa entrar é Bento/);
 });
+
+// ── A PORTA QUE FICOU ABERTA: O RECORTE 'contrato' QUANDO ALGUÉM PERGUNTA (04/09) ──────────
+// A reversão de 9aec4e0c tirou o contrato das mensagens que o TOM manda POR CONTA PRÓPRIA (a
+// pauta da manhã e o lembrete de hora em hora). Só que o recorte continuou vivo pra quem
+// PERGUNTA — e o dono disse à equipe, nos três grupos, "me peça a lista de contrato que eu
+// mando ela inteira". Ou seja: o TOM pararia de oferecer o número errado e diria o mesmo
+// número errado no segundo seguinte.
+//
+// O número sai de `data_inicio_contrato`, campo DERIVADO da data da primeira aula: ele existe
+// desde a criação da matrícula e não sabe nada sobre assinatura. Quem está sem ele É uma
+// pendência de verdade — só não é a que a pessoa está pensando ao pedir "a lista de contrato".
+// Por isso a resposta não é bloqueada (a informação vale): ela passa a DIZER o que é.
+//
+// A ressalva anda no MESMO interruptor da pauta — pura.CONTRATO_NA_PAUTA, em
+// services/anamnese-pauta.js. Não há segundo botão: o último teste deste bloco liga o
+// interruptor DE VERDADE e exige que a ressalva suma sozinha nas três superfícies.
+const pura = require('./anamnese-pauta');
+const { RESSALVA_CONTRATO } = require('./situacao-aluno');
+
+// Liga o interruptor de verdade (a propriedade exportada é a MESMA que o render lê em tempo de
+// chamada) e devolve ao lugar no finally — teste que vaza estado envenena o arquivo inteiro.
+function comOContratoReligado(fn) {
+  const antes = pura.CONTRATO_NA_PAUTA;
+  pura.CONTRATO_NA_PAUTA = true;
+  try { return fn(); } finally { pura.CONTRATO_NA_PAUTA = antes; }
+}
+
+const SEM_CONTRATO = (n) => Array.from({ length: n }, (_, i) => P(`Aluno ${String(i).padStart(2, '0')}`, { tem_data_contrato: false }));
+
+test('lista de contrato: a ressalva sai COLADA no número, na primeira página', () => {
+  const h = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92 });
+  assert.match(h, /<b>92<\/b> sem data de contrato/);
+  assert.ok(h.includes(RESSALVA_CONTRATO), 'o número saiu sem a ressalva');
+  assert.match(h, /não é o mesmo que não ter assinado/);
+  // Colada mesmo: entre a linha do número e a lista de nomes, não perdida no rodapé.
+  assert.ok(h.indexOf(RESSALVA_CONTRATO) < h.indexOf('<ul>'), 'a ressalva ficou depois dos nomes');
+});
+
+test('lista de contrato: a CONTINUAÇÃO também traz a ressalva — pedir o resto não pode limpar o aviso', () => {
+  const h = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92, pagina: 1 });
+  assert.match(h, /Continuando/);
+  assert.ok(h.includes(RESSALVA_CONTRATO), 'a página 2 mostrou o número sem a ressalva');
+});
+
+test('lista de contrato VAZIA traz a ressalva — "ninguém sem contrato" é a leitura mais perigosa de todas', () => {
+  const h = renderLista({ recorte: 'contrato', unidadeNome: 'Barra', pessoas: [], total: 0 });
+  assert.match(h, /Ninguém sem data de contrato/);
+  assert.ok(h.includes(RESSALVA_CONTRATO), 'o zero saiu sozinho, e zero sem ressalva se lê como "todo mundo assinou"');
+});
+
+test('ficha: quem está sem data de contrato leva a ressalva junto da linha de cadastro', () => {
+  const h = renderFicha({ ...ALUNO, cadastro_faltando: ['data_inicio_contrato', 'foto'] }, { hoje: HOJE });
+  assert.match(h, /falta <b>data de início do contrato, foto<\/b>/);
+  assert.ok(h.includes(RESSALVA_CONTRATO), 'a ficha apontou a pendência sem dizer o que ela é');
+});
+
+test('ficha: pendência de cadastro que NÃO é contrato não ganha ressalva nenhuma', () => {
+  const h = renderFicha({ ...ALUNO, cadastro_faltando: ['foto', 'telefone'] }, { hoje: HOJE });
+  assert.ok(!h.includes(RESSALVA_CONTRATO));
+  assert.doesNotMatch(h, /assinad/i);
+});
+
+test('ficha com cadastro completo continua limpa', () => {
+  const h = renderFicha({ ...ALUNO, cadastro_faltando: [] }, { hoje: HOJE });
+  assert.match(h, /Cadastro completo/);
+  assert.ok(!h.includes(RESSALVA_CONTRATO));
+});
+
+test('os OUTROS recortes não ganharam texto nenhum', () => {
+  for (const rec of ['anamnese', 'instagram', 'foto', 'telefone', 'comunidade']) {
+    const cheio = renderLista({ recorte: rec, unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(20), total: 20 });
+    const vazio = renderLista({ recorte: rec, unidadeNome: 'Recreio', pessoas: [], total: 0 });
+    for (const h of [cheio, vazio]) {
+      assert.ok(!h.includes(RESSALVA_CONTRATO), `${rec} ganhou a ressalva do contrato`);
+      assert.doesNotMatch(h, /assinad/i, `${rec} ganhou texto de contrato`);
+    }
+  }
+  // O resumo (o card do "quantos tem de cada coisa") fica como estava — mexer nele era mudar
+  // outro recorte, e a porta que a equipe vai usar amanhã é a lista e a ficha.
+  const resumo = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
+  assert.ok(!resumo.includes(RESSALVA_CONTRATO));
+  assert.doesNotMatch(resumo, /assinad/i);
+});
+
+test('RELIGADO o interruptor da pauta, a ressalva some SOZINHA — lista, continuação, vazio e ficha', () => {
+  comOContratoReligado(() => {
+    const cheio = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92 });
+    const cont = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92, pagina: 1 });
+    const vazio = renderLista({ recorte: 'contrato', unidadeNome: 'Barra', pessoas: [], total: 0 });
+    const ficha = renderFicha({ ...ALUNO, cadastro_faltando: ['data_inicio_contrato'] }, { hoje: HOJE });
+    for (const h of [cheio, cont, vazio, ficha]) {
+      assert.ok(!h.includes(RESSALVA_CONTRATO), 'a ressalva sobreviveu ao interruptor ligado');
+      assert.doesNotMatch(h, /não é o mesmo que não ter assinado/);
+    }
+    // E o resto do card continua inteiro: o que sai de cena é a ressalva, não o número.
+    assert.match(cheio, /<b>92<\/b> sem data de contrato/);
+    assert.match(ficha, /falta <b>data de início do contrato<\/b>/);
+  });
+  // Desligado de volta, a ressalva volta na mesma chamada — ninguém precisa mexer aqui.
+  const depois = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92 });
+  assert.strictEqual(depois.includes(RESSALVA_CONTRATO), !pura.CONTRATO_NA_PAUTA);
+});

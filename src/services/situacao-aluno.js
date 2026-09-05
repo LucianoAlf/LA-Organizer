@@ -12,6 +12,11 @@
 // esquece; código não. O contrato continua sendo a skill compartilhada (TOM, Sol, Lia, app) —
 // este arquivo é a implementação dela do lado do TOM.
 
+// O módulo puro da pauta é folha (não requer nada) — dá pra importar aqui sem ciclo. O que se
+// busca dele é UM valor: CONTRATO_NA_PAUTA, o interruptor da reversão do contrato. Ver a
+// ressalva mais abaixo; a razão de não redigitar o booleano aqui está no comentário de lá.
+const pura = require('./anamnese-pauta');
+
 const RECORTES = ['resumo', 'anamnese', 'instagram', 'comunidade', 'contrato', 'foto', 'telefone'];
 
 // Unidades do LA Report. Grupo de UMA unidade traz a dela amarrada (work_groups.la_report_unidade_id);
@@ -213,6 +218,31 @@ const ROTULO = {
   foto: 'sem foto', telefone: 'sem telefone', comunidade: 'fora da comunidade',
 };
 
+// ── A RESSALVA DO CONTRATO (04/09) ─────────────────────────────────────────────────────────
+// O recorte 'contrato' mede `tem_data_contrato`, que vem de `data_inicio_contrato` — campo
+// DERIVADO da data da primeira aula. Ele existe desde a criação da matrícula e não sabe nada
+// sobre assinatura. O Emusys tem o campo certo (`contrato_atual.contrato_assinado`), mas ele
+// ainda não chega ao LA Report. Em 04/09 as mensagens que o TOM manda por conta própria foram
+// revertidas por causa disso (9aec4e0c) — só que o recorte continuou respondendo a QUEM
+// PERGUNTA, e o dono tinha acabado de dizer nos três grupos "me peça a lista de contrato que eu
+// mando ela inteira". A porta ficou aberta: o TOM pararia de oferecer o número errado e diria o
+// mesmo número errado no segundo seguinte.
+//
+// POR QUE NÃO BLOQUEAR A RESPOSTA. Quem está sem data de contrato É uma pendência real — só não
+// é a que a pessoa tem na cabeça ao pedir "a lista de contrato". Recusar apagaria informação
+// boa; o que não pode é o número sair com uma etiqueta que a pessoa vai ler como "não assinou".
+//
+// ELA MORRE COM O MESMO INTERRUPTOR DA PAUTA, de propósito. Se fosse um `false` próprio daqui,
+// no dia em que alguém religasse a pauta (com o booleano certo já na RPC) o TOM passaria a dar
+// o número CERTO com um aviso dizendo que ele é duvidoso — e um aviso que mente é pior que
+// nenhum. Um botão só: pura.CONTRATO_NA_PAUTA, em services/anamnese-pauta.js, lido em tempo de
+// chamada (não copiado pra uma const daqui, senão religar exigiria mexer neste arquivo também).
+const RESSALVA_CONTRATO = '<p>⚠️ <b>Sem data de contrato</b> <i>não é o mesmo que não ter assinado: essa data já nasce com a matrícula e não diz nada sobre assinatura.</i></p>';
+
+function ressalvaDeContrato() {
+  return pura.CONTRATO_NA_PAUTA ? '' : RESSALVA_CONTRATO;
+}
+
 // A LINHA DA COMUNIDADE é o coração da honestidade desta tela. Só existe "fora da comunidade"
 // quando a captura é fresca; qualquer outro estado é NÃO SEI, dito com todas as letras.
 function linhaComunidade(c) {
@@ -257,9 +287,15 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNo
   const rec = normalizarRecorte(recorte);
   const rotulo = ROTULO[rec] || 'com pendência';
   const nome = cabecalhoDe({ grupoNome, unidadeNome });
+  // A ressalva do contrato (ver acima) acompanha TODA saída deste recorte. Se ela só saísse na
+  // primeira página, "manda os próximos 30" devolveria o número limpo — e a porta continuaria
+  // aberta pelo caminho que a equipe mais usa.
+  const ressalvaRecorte = rec === 'contrato' ? ressalvaDeContrato() : '';
   if (!total || !(pessoas || []).length) {
     const per = periodo ? ` ${rotuloPeriodo(periodo)}` : '';
-    return `<h3>👥 ${nome}</h3><p>Ninguém ${rotulo}${esc(per)}.</p>`;
+    // O VAZIO é o caso mais perigoso: "Ninguém sem data de contrato" se lê como "todo mundo
+    // assinou", que é uma afirmação que ninguém mediu. A ressalva vale aqui mais que nos outros.
+    return `<h3>👥 ${nome}</h3><p>Ninguém ${rotulo}${esc(per)}.</p>${ressalvaRecorte}`;
   }
   const { itens, restam } = fatiar(ordenarPessoas(pessoas), pagina);
   const li = itens.map((p) => {
@@ -299,7 +335,10 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNo
   const rodape = restam
     ? `<p>…e mais <b>${restam}</b>. Quer que eu mande ${proximos === 1 ? 'o último' : `os próximos ${proximos}`}?</p>`
     : '';
-  return `<h3>👥 ${nome}</h3>${cabeca}<ul>${li}</ul>${rodape}`;
+  // A ressalva entra ENTRE a linha do número e os nomes: é onde o olho passa obrigatoriamente
+  // depois de ler a contagem. No rodapé, embaixo de 15 nomes, ela vira nota de rodapé — e nota
+  // de rodapé não é ressalva, é álibi.
+  return `<h3>👥 ${nome}</h3>${cabeca}${ressalvaRecorte}<ul>${li}</ul>${rodape}`;
 }
 
 // ── CACHE CURTO + RETRY ────────────────────────────────────────────────────────────────────
@@ -381,6 +420,14 @@ function renderFicha(p, { grupoNome, hoje = new Date(), professores } = {}) {
   L.push(falta.length
     ? `<p>📋 Cadastro: falta <b>${falta.map((t) => esc(rotuloPendencia(t))).join(', ')}</b></p>`
     : '<p>📋 Cadastro completo ✅</p>');
+  // A ressalva do contrato cola na linha que ela explica, e só quando essa linha FALA de
+  // contrato. O gatilho é o token renderizado, não `tem_data_contrato`: assim a ressalva
+  // aparece exatamente quando a ficha afirma alguma coisa sobre contrato, e some junto com a
+  // afirmação. Casa por substring de propósito — a RPC já mandou 'contrato' e
+  // 'data_inicio_contrato' em momentos diferentes, e uma ressalva que depende de soletrar o
+  // nome da coluna certa é uma ressalva que um dia falta.
+  const ressalvaFicha = falta.some((t) => /contrato/i.test(String(t))) ? ressalvaDeContrato() : '';
+  if (ressalvaFicha) L.push(ressalvaFicha);
 
   if (p.anamnese_flag_sem_registro) L.push('<p>🧠 Anamnese: marcada como preenchida, mas <b>sem registro hoje</b> — vale conferir</p>');
   else if (p.anamnese_preenchida) L.push(`<p>🧠 Anamnese preenchida ✅${p.anamnese_em ? ` <i>(${esc(String(p.anamnese_em).slice(0, 10).split('-').reverse().join('/'))})</i>` : ''}</p>`);
@@ -468,5 +515,8 @@ module.exports = {
   resolverAluno, tempoDeCasa, renderFicha, renderAmbiguo,
   normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, filtrarPorPeriodo, rotuloPeriodo,
   renderResumo, renderLista, linhaComunidade,
+  // Exportada pro TESTE poder travar o texto byte a byte sem redigitá-lo: duas cópias da mesma
+  // frase é como uma delas envelhece calada.
+  RESSALVA_CONTRATO,
   consultarComCache, _limparCache,
 };
