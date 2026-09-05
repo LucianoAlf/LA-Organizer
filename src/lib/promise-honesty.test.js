@@ -8,7 +8,7 @@
 // de promessa (mesma REPLY_PROMISE_RE do engine — uma fonte de verdade) + anexa aviso honesto.
 const test = require('node:test');
 const assert = require('node:assert');
-const { downgradeEmptyPromise, REPLY_PROMISE_RE } = require('./promise-honesty');
+const { downgradeEmptyPromise, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER } = require('./promise-honesty');
 
 const CODEX_REUNIAO =
   'Beleza, Alf — agora sim: sexta 03/07, 9h, *Reunião Time Gestão*.\n' +
@@ -250,4 +250,49 @@ test('CONTROLE: promessa real com "qualquer coisa" continua rebaixando', () => {
 test('CONTROLE: "eu" longe do gatilho não vira oferta', () => {
   const t = 'Registrei o pedido. Amanhã eu passo na loja.';
   assert.strictEqual(downgradeEmptyPromise(t).fired, true);
+});
+
+// ---------------------------------------------------------------------------
+// PROMISE-STRIP-POR-LINHA-COME-A-FRASE-BOA (Ana, 04/09/2026 19:46:21 BRT, finding bb3cbd5d)
+//
+// Ela respondeu "Ok" por reply-quote a uma NOTIFICAÇÃO de reagendamento (nada foi pedido) e
+// o TOM devolveu "Beleza, anotado! A Mayra segue com isso pra amanhã." — a 2ª frase é
+// verdadeira e é o conteúdo todo da mensagem. O strip é por LINHA: as duas frases moram na
+// mesma linha, "anotado" casa a RE, e a linha inteira morre. O que chegou no WhatsApp foi
+// só o disclaimer de erro — mesma classe do caso Dudu 27/08 ("sumiu conteúdo que não era
+// mentira"), agora dentro de uma linha só.
+//
+// O módulo já raciocina em FRASE no veto (OFERTA_CONDICIONAL_RE usa `[^.!?]*` justamente
+// pra não atravessar fim de frase) e mesmo assim apaga por linha. É essa assimetria.
+const ANA_REPLY = 'Beleza, anotado! A Mayra segue com isso pra amanhã.';
+
+test('strip remove a frase da promessa e preserva a frase verdadeira (caso Ana 04/09)', () => {
+  const r = downgradeEmptyPromise(ANA_REPLY);
+  assert.strictEqual(r.fired, true, 'a promessa vazia segue sendo rebaixada');
+  assert.match(r.reply, /A Mayra segue com isso pra amanh[ãa]\./, 'o conteúdo verdadeiro sobrevive');
+  assert.doesNotMatch(r.reply, /anotado/i, 'a frase da promessa sai');
+  assert.match(r.reply, /NÃO foi executada/, 'o aviso honesto continua anexado');
+});
+
+test('frase única com promessa segue sendo apagada inteira (controle Arthur 04/08)', () => {
+  // "Isso" → "✅ Tá registrado, Arthur — te lembro amanhã às 10h de passar o Levy pra BIA na
+  // quinta." Promessa vazia REAL: uma frase só, claim e lembrete juntos. Tem que continuar
+  // virando só o disclaimer — senão o fix da Ana abriria a porta que o guard existe pra fechar.
+  const r = downgradeEmptyPromise('✅ Tá registrado, Arthur — te lembro amanhã às 10h de passar o Levy pra BIA na quinta.');
+  assert.strictEqual(r.fired, true);
+  assert.doesNotMatch(r.reply, /registrado/i);
+  assert.doesNotMatch(r.reply, /Levy/);
+});
+
+test('frase sem promessa na mesma linha de outra COM promessa não é arrastada', () => {
+  const r = downgradeEmptyPromise('Registrei aqui. O ensaio é às 20h no Recreio.');
+  assert.strictEqual(r.fired, true);
+  assert.match(r.reply, /O ensaio é às 20h no Recreio\./);
+  assert.doesNotMatch(r.reply, /Registrei/);
+});
+
+test('linha sem fim de frase continua caindo inteira', () => {
+  const r = downgradeEmptyPromise('Registrei o pedido do Dudu');
+  assert.strictEqual(r.fired, true);
+  assert.strictEqual(r.reply, PROMISE_NOMARKER_DISCLAIMER);
 });

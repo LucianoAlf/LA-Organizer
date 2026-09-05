@@ -82,7 +82,18 @@ function downgradeEmptyPromise(text) {
   // MANTIDAS. O reply segue daqui para o chokepoint (engine ~13946), que remove a claim junto
   // com o parágrafo dela — sem o separador, o bloco de conteúdo vira parte da claim e some.
   // Caso Dudu 27/08 18:51: o pedido dos cabos voltou como duas notas de erro e nada mais.
-  const kept = linhas.filter((line) => !ehPromessa(line));
+  // STRIP POR FRASE (Ana 04/09 19:46, finding bb3cbd5d): o veto já raciocina em frase
+  // (`OFERTA_CONDICIONAL_RE` usa `[^.!?]*` de propósito) e o strip apagava por LINHA. Quando a
+  // promessa divide a linha com conteúdo verdadeiro, o verdadeiro morre junto — "Beleza,
+  // anotado! A Mayra segue com isso pra amanhã." chegou como só o disclaimer. Linha sem fim de
+  // frase e linha de frase única com promessa seguem caindo inteiras: nenhum caso que o guard
+  // já pegava escapa.
+  const kept = [];
+  for (const line of linhas) {
+    if (!ehPromessa(line)) { kept.push(line); continue; }
+    const resto = line.split(/(?<=[.!?…])\s+/).filter((frase) => !ehPromessa(frase)).join(' ').trim();
+    if (resto) kept.push(resto);
+  }
   const stripped = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   return {
     reply: stripped ? `${stripped}\n\n${PROMISE_NOMARKER_DISCLAIMER}` : PROMISE_NOMARKER_DISCLAIMER,
