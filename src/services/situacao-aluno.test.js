@@ -808,11 +808,9 @@ test('os OUTROS recortes não ganharam texto nenhum', () => {
       assert.doesNotMatch(h, /assinad/i, `${rec} ganhou texto de contrato`);
     }
   }
-  // O resumo (o card do "quantos tem de cada coisa") fica como estava — mexer nele era mudar
-  // outro recorte, e a porta que a equipe vai usar amanhã é a lista e a ficha.
-  const resumo = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
-  assert.ok(!resumo.includes(RESSALVA_CONTRATO));
-  assert.doesNotMatch(resumo, /assinad/i);
+  // O resumo TEM a ressalva quando há pendência de contrato — é a terceira superfície que lê o
+  // mesmo número (ver testes dedicados logo abaixo). Aqui o que importa é confirmar que os
+  // OUTROS recortes continuam de fora, o que já foi checado no loop acima.
 });
 
 test('RELIGADO o interruptor da pauta, a ressalva some SOZINHA — lista, continuação, vazio e ficha', () => {
@@ -831,5 +829,35 @@ test('RELIGADO o interruptor da pauta, a ressalva some SOZINHA — lista, contin
   });
   // Desligado de volta, a ressalva volta na mesma chamada — ninguém precisa mexer aqui.
   const depois = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92 });
+  assert.strictEqual(depois.includes(RESSALVA_CONTRATO), !pura.CONTRATO_NA_PAUTA);
+});
+
+// A PORTA QUE FICOU ABERTA (04/09): o resumo também imprime "92 sem data de contrato" — a
+// mesma frase, lida como "não assinaram", numa terceira superfície que renderLista/renderFicha
+// já cobriam. Reusa ressalvaDeContrato() (mesmo interruptor, lido em tempo de chamada); nada de
+// segunda cópia da frase nem de segundo botão.
+test('resumo: pendência de data de contrato carrega a ressalva junto do número, não no fim do card', () => {
+  const h = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
+  assert.match(h, /<b>92<\/b> sem data de contrato/);
+  assert.ok(h.includes(RESSALVA_CONTRATO), 'o número saiu sem a ressalva');
+  // "Junto do número": antes da linha de fonte do rodapé, não depois dela.
+  assert.ok(h.indexOf(RESSALVA_CONTRATO) < h.indexOf('fonte:'), 'a ressalva foi parar depois do rodapé');
+});
+
+test('resumo SEM pendência de contrato não ganha a ressalva', () => {
+  const h = renderResumo({ total_pessoas: 300, pendentes: { anamnese: 40 }, regra_versao: 'v1' });
+  assert.ok(!h.includes(RESSALVA_CONTRATO));
+  assert.doesNotMatch(h, /assinad/i);
+});
+
+test('resumo RELIGADO o interruptor da pauta, a ressalva some SOZINHA — mesmo CONTRATO_NA_PAUTA das outras duas superfícies', () => {
+  comOContratoReligado(() => {
+    const h = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
+    assert.ok(!h.includes(RESSALVA_CONTRATO), 'a ressalva sobreviveu ao interruptor ligado');
+    assert.doesNotMatch(h, /não é o mesmo que não ter assinado/);
+    // O número continua saindo — o que some é só a ressalva.
+    assert.match(h, /<b>92<\/b> sem data de contrato/);
+  });
+  const depois = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
   assert.strictEqual(depois.includes(RESSALVA_CONTRATO), !pura.CONTRATO_NA_PAUTA);
 });

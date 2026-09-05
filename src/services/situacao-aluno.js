@@ -273,6 +273,14 @@ function renderResumo(resumo, opts = {}) {
   }
   if (itens.length) linhas.push(`<p>📋 <b>Cadastro</b></p><ul>${itens.join('')}</ul>`);
   else linhas.push('<p>📋 <b>Cadastro</b>: tudo em dia.</p>');
+  // A mesma ressalva de renderLista/renderFicha, na terceira porta: o resumo também imprime
+  // "92 sem data de contrato", e é a mesma frase lida como "não assinaram". Cola logo depois do
+  // bloco de Cadastro — junto do número, não no rodapé — e reusa ressalvaDeContrato() (mesmo
+  // pura.CONTRATO_NA_PAUTA, lido em tempo de chamada): nenhuma frase nova, nenhum botão novo.
+  if (pend.data_inicio_contrato) {
+    const av = ressalvaDeContrato();
+    if (av) linhas.push(av);
+  }
 
   const com = linhaComunidade(r.comunidade);
   if (com) linhas.push(`<p>${com}</p>`);
