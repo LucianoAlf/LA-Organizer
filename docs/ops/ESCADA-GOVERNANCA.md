@@ -1534,3 +1534,67 @@ O caminho de criação do `d1163c32` fica registrado porque é a classe: `engine
 LLM — sem teto, sem espaçamento mínimo, sem validação entre marker e insert**. É o mesmo desenho que
 já produziu achado em outros validadores (27/08, lista fechada de alias): o engine confia no shape
 que o prompt ensinou. Definir o teto é decisão de produto, então não entra como microajuste.
+
+### ETAPA 3 — classe nova: o VETO de um guard lê o ledger de UM canal e fica cego aos outros
+
+**Ocorrências:** 1 (06/09), e é a correção da rodada. Vale como classe, não como caso.
+
+Guard de honestidade não erra só por regex frouxo. Erra por **evidência estreita**: quando o veto
+que impede o guard de mentir é alimentado por uma tabela só, todo canal de entrega que não escreve
+naquela tabela vira invisível — e aí a "correção de confab" é ela própria a confab.
+
+`enforceSendHonesty` ganhou o veto `recentlySent` em 05/08 (caso Leo) justamente porque negava
+envio feito num turn anterior. A evidência escolhida foi `coordination_requests`. Em 04/09 o mesmo
+guard mentiu de novo, com o veto no lugar: a devolutiva de tarefa delegada sai por
+`notifyTaskReturn` (`src/services/task-return.js:78-81`), entrega via `whatsapp.sendMessage` +
+`conversation_history` e **nunca toca `coordination_requests`**. Rafinha: devolutiva ao Dudu às
+**17:13:04 BRT**, `"✅ Devolutiva enviada"` às 17:13:05 (VERDADE), e às **17:14:30** o guard anexou
+_"eu ainda NÃO avisei ninguém — nenhuma mensagem chegou a ser enviada"_ — 85s depois da entrega.
+Rafinha reofereceu e o recado saiu **de novo** às 17:17:22: o Dudu recebeu a mesma instrução duas
+vezes. O dano não é só a mentira; é a ação duplicada que a mentira provoca.
+
+Detalhe de desenho que a correção expôs, e que vale para qualquer irmão: **a linha do broadcast fica
+sob o DESTINATÁRIO**, não sob o ator. Um veto que procurasse por `collaborator_id` do falante não
+acharia nada. Aqui o recibo teve que ser o próprio texto — o template de `buildReturnMessage` é
+determinístico, então `isTaskReturnBroadcast(texto, ator)` casa a assinatura com quem MANDOU (casar
+com o destinatário transformaria o veto em carimbo, e há teste de controle pra isso).
+
+Regra: **quando um guard tem veto por evidência de banco, conte os canais.** Antes de confiar no
+veto, `grep` os pontos que produzem o efeito que ele mede (aqui: `whatsapp.sendMessage` de recado) e
+confira quais deles escrevem no ledger consultado. Um só que não escreva já basta pra o guard mentir
+com toda a aparência de estar protegido.
+
+Proposta de virar código: a evidência virou um mapa `{canal: quantidade}` consumido por
+`recentlySentFrom()` — acrescentar canal agora é uma chave, não um `||`. Falta o contrário: um teste
+de contrato que falhe quando existir um caminho de entrega de recado sem canal correspondente no
+mapa. É prima da proposta de 23/08 (paridade de `conversation_history` no `internal-api.js`), e as
+duas mediriam a mesma coisa — saída que existe e não deixa recibo onde alguém vai procurar.
+
+Subproduto medido e **não corrigido** (teto): `saveReturnComment` (`task-return.js:32`) nunca
+persiste. `task_comments` tem **zero** linhas com `comment_type='return'` em toda a história da
+tabela, e o insert morre num `catch` não-fatal. Era o ledger estruturado óbvio pra este veto — e não
+existe. Vale conferir antes que alguém o use como fonte de verdade.
+
+### ETAPA 3 — a direção causal invertida bateu 2× na MESMA rodada (5ª e 6ª ocorrências)
+
+**Ocorrências:** 5 rodadas (30/08, 02/09, 03/09, 06/09 ×2).
+
+Os dois achados que investiguei a fundo hoje tinham o `summary` com a direção trocada, e nos dois a
+leitura ingênua levaria ao conserto errado:
+
+- `6717489c` — resumo: "TOM disse que a devolutiva tinha sido enviada, mas em seguida admitiu que
+  ninguém tinha sido avisado". Lido assim, a primeira fala é a mentira e o alvo é o executor. É o
+  oposto: a entrega aconteceu, a primeira fala era VERDADE, e a mentira é a admissão.
+- `6b5f37ad` — resumo: "TOM diz 'Sem nada marcado hoje' no check-in noturno, contradizendo o próprio
+  briefing matinal". Também invertido: a Bianca tem **zero** tarefas abertas no banco, então o
+  fechamento estava certo; o BRIEFING é que renderizou `"1. ⏰ 19h — Revisar relatórios dos pacientes"`
+  sob TRABALHO sem tarefa nenhuma por trás. Mesma raiz do `00ca7ec7` (Bianca 03/09), onde ela tentou
+  fechar esse item e ouviu "não achei nenhuma tarefa aberta com esse nome" — o item nunca foi tarefa.
+
+O que 06/09 acrescenta às ocorrências anteriores: **quando o achado descreve duas falas do TOM que
+se contradizem, a pergunta certa não é "qual guard falhou" e sim "qual das duas falas é verdadeira"**
+— e essa é uma pergunta de BANCO, não de código. Nos dois casos de hoje o desempate custou uma query
+(`conversation_history` para a entrega; `tasks ... neq status done` para a lista) e mudou o alvo por
+completo. Cinco rodadas seguidas com a mesma inversão dizem que isto não é ruído do auditor: é como
+o resumo é gerado. Enquanto o `summary` não for tratado como asserção a verificar, cada rodada paga
+o mesmo pedágio.
