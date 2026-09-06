@@ -252,7 +252,7 @@ test('a copy dos DOIS blocos, byte a byte — separados por linha em branco', ()
     + 'A lista completa está no painel do grupo.\n'
     + '\n'
     + '✍️ *Contrato — hoje (qua 10/09)*\n'
-    + '2 alunos com aula hoje ainda sem data de contrato:\n'
+    + '2 alunos com aula hoje ainda sem contrato assinado:\n'
     + '🕗 *08:00* — Arthur Bezerra\n'
     + '🕚 *11:00* — Bento Alves\n'
     + '\n'
@@ -282,7 +282,7 @@ test('contrato longo corta nos primeiros e ensina a pedir a lista inteira', () =
     pessoa: { nome }, hora: `${String(9 + i).padStart(2, '0')}:00`, curso: 'Canto',
   }));
   const m = mensagemDoGrupo({ itens: ITENS, contrato: muitos, comContrato: true, unidadeNome: 'Recreio', dataBr: 'qua 10/09' });
-  assert.match(m, /5 alunos com aula hoje ainda sem data de contrato/);
+  assert.match(m, /5 alunos com aula hoje ainda sem contrato assinado/);
   assert.match(m, /Os primeiros:\n🕘 \*09:00\* — Ana\n🕙 \*10:00\* — Bia\n🕚 \*11:00\* — Caio/);
   assert.doesNotMatch(m, /Duda/, 'contrato usa o mesmo teto do bloco de anamnese');
   // Contrato NÃO tem painel (a pauta não cria tarefa de contrato — spec §8), então o único

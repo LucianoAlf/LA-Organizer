@@ -66,3 +66,47 @@ test('contrato: status ausente no payload nao vira cobranca', () => {
   const pessoas = [P('Sem o campo', { contrato_assinatura_status: undefined })];
   assert.deepStrictEqual(nomes(pessoas), []);
 });
+
+// ── A REDE DA FRASE (06/09) ───────────────────────────────────────────────────────────────────
+// O criterio foi trocado e o interruptor ligado num commit; o ROTULO ficou pra tras e so apareceu
+// numa varredura por grep depois. Ate ali a lista trazia as pessoas CERTAS embaixo do nome
+// ERRADO — "sem data de contrato" —, que e o mesmo defeito de 04/09 virado do avesso: antes o
+// nome prometia assinatura e o numero era data; ali o numero era assinatura e o nome dizia data.
+// Comentario nao segura isso. Este teste segura.
+const { mensagemDoGrupo } = require('./anamnese-pauta');
+const { renderLista } = require('./situacao-aluno');
+
+const FRASE_MORTA = /sem data de contrato/;
+
+const PESSOA = (nome) => ({
+  nome, classificacao: 'EMLA', anamnese_preenchida: true, tem_instagram: true,
+  instagram_nao_possui: false, comunidade_status: 'na_comunidade', tem_data_contrato: false,
+  tem_foto: true, tem_telefone: true,
+  contrato_assinatura_status: 'nao_assinado', contrato_dado_fresco: true,
+});
+
+test('lista de contrato (cheia) diz assinatura, nunca data', () => {
+  const h = renderLista({
+    recorte: 'contrato', unidadeNome: 'Barra',
+    pessoas: [PESSOA('Ana'), PESSOA('Bento')], total: 2,
+  });
+  assert.doesNotMatch(h, FRASE_MORTA, 'a lista voltou a chamar assinatura de data');
+  assert.match(h, /sem contrato assinado/);
+});
+
+test('lista de contrato VAZIA tambem — "Ninguem sem contrato assinado" e o que a gente pode assinar embaixo', () => {
+  const h = renderLista({ recorte: 'contrato', unidadeNome: 'Barra', pessoas: [], total: 0 });
+  assert.doesNotMatch(h, FRASE_MORTA);
+  assert.match(h, /Ninguém sem contrato assinado/);
+});
+
+test('a mensagem da manha nao leva a frase morta pro grupo', () => {
+  const item = (nome, hora) => ({ pessoa: { nome }, hora, curso: 'Teclado' });
+  const m = mensagemDoGrupo({
+    itens: [item('Ana', '08:00')],
+    contrato: [item('Bento', '09:00'), item('Clara', '10:00')],
+    unidadeNome: 'Barra', dataBr: 'seg 07/09', comContrato: true,
+  });
+  assert.doesNotMatch(m, FRASE_MORTA, 'o grupo ia receber "sem data de contrato" de novo');
+  assert.match(m, /sem contrato assinado/);
+});

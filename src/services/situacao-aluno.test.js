@@ -772,7 +772,7 @@ const SEM_CONTRATO = (n) => Array.from({ length: n }, (_, i) => P(`Aluno ${Strin
 
 test('lista de contrato: a ressalva sai COLADA no número, na primeira página', () => comOContratoDesligado(() => {
     const h = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92 });
-    assert.match(h, /<b>92<\/b> sem data de contrato/);
+    assert.match(h, /<b>92<\/b> sem contrato assinado/);
     assert.ok(h.includes(RESSALVA_CONTRATO), 'o número saiu sem a ressalva');
     assert.match(h, /não é o mesmo que não ter assinado/);
     // Colada mesmo: entre a linha do número e a lista de nomes, não perdida no rodapé.
@@ -787,7 +787,7 @@ test('lista de contrato: a CONTINUAÇÃO também traz a ressalva — pedir o res
 
 test('lista de contrato VAZIA traz a ressalva — "ninguém sem contrato" é a leitura mais perigosa de todas', () => comOContratoDesligado(() => {
     const h = renderLista({ recorte: 'contrato', unidadeNome: 'Barra', pessoas: [], total: 0 });
-    assert.match(h, /Ninguém sem data de contrato/);
+    assert.match(h, /Ninguém sem contrato assinado/);
     assert.ok(h.includes(RESSALVA_CONTRATO), 'o zero saiu sozinho, e zero sem ressalva se lê como "todo mundo assinou"');
 }));
 
@@ -834,7 +834,7 @@ test('RELIGADO o interruptor da pauta, a ressalva some SOZINHA — lista, contin
       assert.doesNotMatch(h, /não é o mesmo que não ter assinado/);
     }
     // E o resto do card continua inteiro: o que sai de cena é a ressalva, não o número.
-    assert.match(cheio, /<b>92<\/b> sem data de contrato/);
+    assert.match(cheio, /<b>92<\/b> sem contrato assinado/);
     assert.match(ficha, /falta <b>data de início do contrato<\/b>/);
   });
   // Desligado de volta, a ressalva volta na mesma chamada — ninguém precisa mexer aqui.
@@ -848,7 +848,7 @@ test('RELIGADO o interruptor da pauta, a ressalva some SOZINHA — lista, contin
 // segunda cópia da frase nem de segundo botão.
 test('resumo: pendência de data de contrato carrega a ressalva junto do número, não no fim do card', () => comOContratoDesligado(() => {
     const h = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
-    assert.match(h, /<b>92<\/b> sem data de contrato/);
+    assert.match(h, /<b>92<\/b> sem data de início do contrato/);
     assert.ok(h.includes(RESSALVA_CONTRATO), 'o número saiu sem a ressalva');
     // "Junto do número": antes da linha de fonte do rodapé, não depois dela.
     assert.ok(h.indexOf(RESSALVA_CONTRATO) < h.indexOf('fonte:'), 'a ressalva foi parar depois do rodapé');
@@ -866,7 +866,7 @@ test('resumo RELIGADO o interruptor da pauta, a ressalva some SOZINHA — mesmo 
     assert.ok(!h.includes(RESSALVA_CONTRATO), 'a ressalva sobreviveu ao interruptor ligado');
     assert.doesNotMatch(h, /não é o mesmo que não ter assinado/);
     // O número continua saindo — o que some é só a ressalva.
-    assert.match(h, /<b>92<\/b> sem data de contrato/);
+    assert.match(h, /<b>92<\/b> sem data de início do contrato/);
   });
   const depois = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
   assert.strictEqual(depois.includes(RESSALVA_CONTRATO), !pura.CONTRATO_NA_PAUTA);

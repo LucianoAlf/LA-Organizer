@@ -268,12 +268,14 @@ function _linhasPorHora(lista, quantos) {
 // dessa. Cobrar a equipe por um número que ninguém mediu é exatamente o que esta casa não faz, e
 // mensagem que cobra errado uma vez custa a confiança das que estão certas.
 //
-// QUANDO RELIGAR (a condição, não uma data): o Emusys tem o campo que responde à pergunta certa —
-// o booleano `contrato_atual.contrato_assinado`. Ele ainda NÃO é trazido nem materializado no LA
-// Report. Religar isto é o ÚLTIMO passo, e só depois de: (1) o campo chegar à RPC
-// get_situacao_alunos_v1; (2) `filtrarPorRecorte(..., 'contrato')`, em services/situacao-aluno.js,
-// passar a decidir por ele; (3) o ROTULO de lá deixar de dizer "sem data de contrato" e passar a
-// dizer o que o booleano de fato afirma. Virar este `false` antes disso devolve o bug ao ar.
+// QUANDO RELIGAR — CUMPRIDO EM 06/09. A condição eram três passos, e os três foram feitos:
+// (1) o campo chegou à RPC `get_situacao_alunos_v1` como `contrato_assinatura_status`;
+// (2) `filtrarPorRecorte(..., 'contrato')` passou a decidir por ele, com o portão de frescura;
+// (3) o ROTULO de lá passou a dizer "sem contrato assinado", e a mensagem daqui junto.
+// O passo (3) quase ficou pra trás: o critério foi trocado e o interruptor ligado no mesmo
+// commit, e o rótulo só apareceu depois de varrer a frase pelo grep. Lista certa com nome errado
+// é o MESMO defeito de antes, virado do avesso — por isso os três andam juntos, e por isso existe
+// agora um teste proibindo a frase antiga em qualquer superfície de contrato.
 //
 // ESTE INTERRUPTOR TAMBÉM APAGA A RESSALVA (04/09). Reverter as mensagens não fechou a porta: o
 // recorte 'contrato' continuou respondendo a QUEM PERGUNTA, com o mesmo critério torto, e o dono
@@ -312,9 +314,11 @@ const CONTRATO_NA_PAUTA = true;
 // 2. Bloco vazio não aparece; bloco NÃO-LIDO aparece dizendo que não leu. Ausência se lê como
 //    "hoje não tem ninguém sem contrato", que é uma afirmação — e afirmar sem medir é
 //    exatamente o que esta casa não faz.
-// 3. O rótulo é "sem data de contrato", igual ao ROTULO de situacao-aluno.js. O dono fala
-//    "contrato sem assinar"; o que a fonte SABE é que falta a data de início. Dizer "não
-//    assinado" seria inventar um fato a partir de um campo vazio.
+// 3. O rótulo é "sem contrato assinado" (06/09), igual ao ROTULO de situacao-aluno.js — os dois
+//    andam juntos de propósito. Até 05/09 dizia "sem data de contrato", porque era isso que a
+//    fonte sabia. Agora o Emusys afirma a assinatura (manual e eletrônica), então a frase antiga
+//    passou a ESCONDER o fato em vez de proteger dele: o time leria "falta preencher uma data"
+//    onde o que falta é o contrato.
 //
 // Contrato NÃO tem painel: a pauta lista, mas não cria tarefa (spec §8 — "contrato já tem dono:
 // o Clayton cria na mão com horário de assinatura combinado, e duas fontes criando a mesma
@@ -330,7 +334,7 @@ function _blocoDeContrato({ contrato, contratoErro, dataBr }) {
   const n = lista.length;
   // A lista sai SEPARADA POR HORÁRIO (04/09), igual à do bloco de anamnese. O ':' fecha a linha
   // da contagem e a lista desce — "Hoje:" no meio de uma frase que já diz "hoje" era repetição.
-  const corpo = `${cabecalho}\n${_alunosComAula(n)} ainda sem data de contrato`
+  const corpo = `${cabecalho}\n${_alunosComAula(n)} ainda sem contrato assinado`
     + `${n > PRIMEIROS_NO_ZAP ? '. Os primeiros:' : ':'}\n${_linhasPorHora(lista, PRIMEIROS_NO_ZAP)}`;
   return n > PRIMEIROS_NO_ZAP
     ? `${corpo}\nMe peça a lista de contrato que eu mando ela inteira.`

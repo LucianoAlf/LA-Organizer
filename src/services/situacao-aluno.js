@@ -238,7 +238,12 @@ function esc(s) {
 }
 
 const ROTULO = {
-  anamnese: 'sem anamnese', instagram: 'sem Instagram', contrato: 'sem data de contrato',
+  // 'contrato' mede ASSINATURA desde 06/09 (ver COMO O CONTRATO E MEDIDO, la em cima). O rotulo
+  // veio junto: enquanto o criterio era a data, dizer 'nao assinado' seria inventar um fato a
+  // partir de campo vazio — agora e o contrario, dizer 'sem data' esconde o fato que a fonte
+  // afirma. O vazio depende deste rotulo tanto quanto a lista cheia: 'Ninguem sem contrato
+  // assinado' e uma frase que agora a gente PODE assinar embaixo.
+  anamnese: 'sem anamnese', instagram: 'sem Instagram', contrato: 'sem contrato assinado',
   foto: 'sem foto', telefone: 'sem telefone', comunidade: 'fora da comunidade',
 };
 
@@ -297,7 +302,10 @@ function renderResumo(resumo, opts = {}) {
 
   const itens = [];
   for (const [chave, rotulo] of [['anamnese', 'sem anamnese'], ['instagram', 'sem Instagram'],
-    ['data_inicio_contrato', 'sem data de contrato'], ['foto', 'sem foto'], ['telefone', 'sem telefone']]) {
+    // NAO e a mesma pendencia do recorte 'contrato': aqui o numero vem de
+    // pend.data_inicio_contrato (o campo de CADASTRO), e o recorte mede assinatura. Dois numeros
+    // diferentes com o mesmo nome fazem o time achar que um dos dois esta errado.
+    ['data_inicio_contrato', 'sem data de início do contrato'], ['foto', 'sem foto'], ['telefone', 'sem telefone']]) {
     const n = pend[chave];
     if (n) itens.push(`<li><b>${n}</b> ${rotulo}</li>`);
   }
