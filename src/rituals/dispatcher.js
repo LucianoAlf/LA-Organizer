@@ -4568,6 +4568,16 @@ async function run(opts = {}) {
                 if (erroContrato) {
                   contratoErro = erroContrato.message;
                   console.error(`[Pauta] fala: consulta de contrato falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroContrato.message}`);
+                } else if (situAl.contratoConferidoHoje(baseContrato) === false) {
+                  // OS DOIS ZEROS (06/09). O recorte de contrato exige `contrato_dado_fresco`: sem
+                  // a reconciliação do dia ele devolve lista VAZIA — o que impede cobrar sem ter
+                  // conferido, e ao mesmo tempo faz o bloco sumir da mensagem (regra 2: bloco
+                  // vazio não aparece). Ausência de bloco o time lê como "hoje ninguém está sem
+                  // contrato", que é uma AFIRMAÇÃO sobre um dia que ninguém mediu — o mesmo
+                  // silêncio que a reversão de 04/09 existiu pra tirar do ar.
+                  // Aqui o zero por FALHA vira o bloco de "não consegui conferir", que já existe.
+                  contratoErro = 'a reconciliação de contrato não rodou hoje';
+                  console.error(`[Pauta] fala: contrato sem reconciliação do dia (${situAl.nomeDaUnidade(unidadeId)}) — o bloco sai dizendo que não conferiu`);
                 } else {
                   // filtrarPorRecorte é a ÚNICA definição de cada pendência nesta casa — a mesma
                   // que a montagem usa pra 'anamnese'. Uma cópia do critério de contrato aqui

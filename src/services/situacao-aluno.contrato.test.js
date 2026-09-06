@@ -74,7 +74,7 @@ test('contrato: status ausente no payload nao vira cobranca', () => {
 // nome prometia assinatura e o numero era data; ali o numero era assinatura e o nome dizia data.
 // Comentario nao segura isso. Este teste segura.
 const { mensagemDoGrupo } = require('./anamnese-pauta');
-const { renderLista } = require('./situacao-aluno');
+const { renderLista, contratoConferidoHoje } = require('./situacao-aluno');
 
 const FRASE_MORTA = /sem data de contrato/;
 
@@ -109,4 +109,33 @@ test('a mensagem da manha nao leva a frase morta pro grupo', () => {
   });
   assert.doesNotMatch(m, FRASE_MORTA, 'o grupo ia receber "sem data de contrato" de novo');
   assert.match(m, /sem contrato assinado/);
+});
+
+// ── ZERO POR FALHA x ZERO POR SAUDE, NO CONTRATO (06/09) ──────────────────────────────────────
+// O portao de frescura protege contra cobrar sem ter conferido: sem a reconciliacao do dia,
+// `filtrarPorRecorte` devolve LISTA VAZIA. Só que lista vazia faz o bloco de contrato sumir da
+// mensagem (regra 2 do bloco: bloco vazio nao aparece), e ausencia de bloco o time le como
+// "hoje ninguem esta sem contrato" — uma AFIRMACAO, em cima de um dia que ninguem mediu.
+// Este helper e o sensor que separa os dois zeros. Ele nao decide nada sozinho: quem monta a
+// mensagem usa a resposta pra escolher entre o bloco normal e o "nao consegui conferir".
+test('conferido hoje: alguem com dado fresco basta', () => {
+  assert.strictEqual(contratoConferidoHoje([
+    { contrato_dado_fresco: false }, { contrato_dado_fresco: true },
+  ]), true);
+});
+
+test('conferido hoje: ninguem fresco = a reconciliacao do dia nao rodou', () => {
+  assert.strictEqual(contratoConferidoHoje([
+    { contrato_dado_fresco: false }, { contrato_dado_fresco: false },
+  ]), false);
+});
+
+test('conferido hoje: campo ausente conta como NAO conferido, nunca como conferido', () => {
+  assert.strictEqual(contratoConferidoHoje([{}, { contrato_dado_fresco: undefined }]), false);
+});
+
+test('conferido hoje: sem gente devolve null — nao da pra afirmar nem negar', () => {
+  assert.strictEqual(contratoConferidoHoje([]), null);
+  assert.strictEqual(contratoConferidoHoje(null), null);
+  assert.strictEqual(contratoConferidoHoje(undefined), null);
 });

@@ -104,6 +104,21 @@ function fatiar(pessoas, pagina = 0) {
 // e, nem afirmar que ninguem mandou o contrato.
 const COBRAVEIS_DE_CONTRATO = new Set(['nao_assinado', 'sem_contrato']);
 
+// O SENSOR DOS DOIS ZEROS (06/09). O portao de frescura acima faz `filtrarPorRecorte` devolver
+// lista VAZIA quando a reconciliacao do dia nao rodou — o que protege contra cobrar sem conferir,
+// e ao mesmo tempo cria o pior silencio desta casa: bloco de contrato vazio nao aparece na
+// mensagem, e ausencia de bloco o time le como "hoje ninguem esta sem contrato". Zero por FALHA
+// sai identico a zero por SAUDE.
+// Este helper e o unico jeito de distinguir os dois de fora, e nao decide nada sozinho: quem
+// monta a mensagem escolhe entre o bloco normal e o "nao consegui conferir".
+// `null` pra lista vazia de proposito — sem gente nao da pra afirmar NEM negar que houve rodada,
+// e devolver `false` ali faria a unidade sem alunos anunciar uma falha que nao existe.
+function contratoConferidoHoje(pessoas) {
+  const arr = pessoas || [];
+  if (!arr.length) return null;
+  return arr.some((p) => p && p.contrato_dado_fresco === true);
+}
+
 const PENDENCIA = {
   anamnese: (p) => !p.anamnese_preenchida,
   instagram: (p) => !p.tem_instagram && !p.instagram_nao_possui,
@@ -560,6 +575,7 @@ module.exports = {
   rotuloPendencia, responsavelDistinto,
   resolverAluno, tempoDeCasa, renderFicha, renderAmbiguo,
   normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, filtrarPorPeriodo, rotuloPeriodo,
+  contratoConferidoHoje,
   renderResumo, renderLista, linhaComunidade,
   // Exportada pro TESTE poder travar o texto byte a byte sem redigitá-lo: duas cópias da mesma
   // frase é como uma delas envelhece calada.
