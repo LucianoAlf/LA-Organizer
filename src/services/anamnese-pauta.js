@@ -117,6 +117,40 @@ function _curso(resumo) {
 
 // Uma linha por ALUNO por dia (não por aula), na hora da PRIMEIRA aula — que é quando ele
 // chega na escola, e é aí que o tablet funciona.
+// ── QUEM TEM AULA HOJE VEM DO CALENDARIO (06/09/2026) ────────────────────────────────────────
+// `pautaDoDia`, logo abaixo, deduz a pauta do horario FIXO do aluno (`aulas_resumo`:
+// "Segunda-feira das 15:00..."). Isso e o padrao SEMANAL — ele nao sabe o que e feriado, recesso,
+// aula cancelada nem reposicao. Medido no feriado de 07/09/2026: pelo horario fixo entrariam 148
+// pessoas nas tres unidades; pelo calendario real, ZERO (as 3 aulas do Recreio no dia eram 2
+// canceladas e 1 sem nenhum aluno ligado). Cobrar 148 pessoas num feriado, em tres grupos, e
+// exatamente o tipo de mensagem que faz a equipe parar de ler as que estao certas.
+//
+// O `roster` e um Map aluno_id -> {hora, curso} do DIA, montado da mesma fonte que alimenta a
+// Agenda do LA Report (aulas_emusys + aula_alunos_emusys). Quem monta e `rosterDoDia`, no ritual;
+// aqui so se decide quem entra.
+//
+// A pessoa entra se QUALQUER um dos `aluno_ids_locais` dela estiver no roster — uma pessoa pode
+// ter mais de um cadastro local, e casar so pelo canonico deixaria gente de fora em silencio.
+//
+// FALHA-FECHADA: roster nulo devolve lista VAZIA, nunca a pauta inteira. Quem distingue "hoje nao
+// tem aula" de "nao consegui ler o calendario" e o `motivo` que `rosterDoDia` devolve — aqui a
+// ausencia de roster nunca pode virar cobranca.
+function pautaDoDiaPeloRoster(pessoas, roster) {
+  if (!roster || typeof roster.get !== 'function') return [];
+  const saida = [];
+  for (const pessoa of (pessoas || [])) {
+    const ids = (pessoa && pessoa.aluno_ids_locais) || [];
+    let achado = null;
+    for (const id of ids) {
+      const aula = roster.get(id);
+      if (aula && aula.hora) { achado = aula; break; }
+    }
+    if (!achado) continue;
+    saida.push({ pessoa, hora: achado.hora, curso: achado.curso || null });
+  }
+  return saida.sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
+}
+
 function pautaDoDia(pessoas, diaSemana) {
   const saida = [];
   for (const pessoa of (pessoas || [])) {
@@ -609,7 +643,7 @@ function lembreteDaProximaHora({ itens, hora, recuperacao = false } = {}) {
 }
 
 module.exports = {
-  diaDaAula, horaDaAula, pautaDoDia, DIAS,
+  diaDaAula, horaDaAula, pautaDoDia, pautaDoDiaPeloRoster, DIAS,
   // O horário de abertura sai daqui pro dispatcher e pros testes lerem a MESMA tabela — uma
   // cópia redigitada lá faria a suíte continuar verde no dia em que alguém mudasse o valor aqui.
   diaSemanaBrt, horaDeAberturaDaUnidade, horariosDeAberturaDoDia,

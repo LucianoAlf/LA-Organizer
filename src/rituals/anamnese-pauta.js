@@ -150,7 +150,17 @@ async function montarPautaDaUnidade({ supabase, laReport, unidadeId, groupId, cr
   // Fonte ÚNICA de "sem anamnese" — se a pauta reimplementasse o filtro, um dia o card diria
   // 225 e a pauta 231, e ninguém confiaria em nenhum dos dois.
   const semAnamnese = situ.filtrarPorRecorte(data || [], 'anamnese');
-  const itens = pura.pautaDoDia(semAnamnese, diaSemana);
+
+  // QUEM TEM AULA HOJE VEM DO CALENDARIO (06/09), nao do horario fixo semanal. `rosterDoDia`
+  // distingue "hoje nao tem aula" (Map vazio) de "nao consegui ler" (null + motivo) — e so o
+  // segundo pode virar falha-fechada. Sem isso, feriado com 148 pessoas na pauta.
+  const { roster, motivo: motivoRoster } = await rosterDoDia({ laReport, unidadeId, hoje });
+  if (motivoRoster) {
+    // FALHA-FECHADA #1b: sem o calendario nao da pra saber quem tem aula. Sensor proprio, pra
+    // nunca sair igual ao motivo da RPC nem ao silencio saudavel de dia sem aula.
+    return { criou: false, total: 0, escalados: 0, motivo: motivoRoster, itens: [] };
+  }
+  const itens = pura.pautaDoDiaPeloRoster(semAnamnese, roster);
   if (!itens.length) {
     // Pauta vazia por SAÚDE (ninguém sem anamnese tem aula hoje) — motivo null, nunca uma
     // string de erro. É o sensor que distingue "zero por falha" de "zero por saúde".
@@ -916,7 +926,13 @@ async function relatorioDeFimDeDia({ supabase, laReport, unidadeId, hoje, deps =
   // noite é a ordem da manhã. Quem a grade de hoje não reconhece mais (aula trocada durante o
   // dia) entra DEPOIS, com hora nula: a mensagem imprime '--:--' em vez de sumir com a pessoa.
   // Perder gente da conta é pior que um traço feio — o número é o que a equipe olha primeiro.
-  const comHorario = pura.pautaDoDia(pendentes, diaSemana);
+  // TOLERANTE DE PROPOSITO (06/09): o horario passou a vir do calendario do dia, e quem o
+  // calendario nao reconhece mais cai no `semHorario` logo abaixo, com '--:--'. Se a leitura do
+  // calendario falhar, `roster` vem null e TODO MUNDO cai la — a conta da noite continua certa,
+  // que e o que a equipe olha. Perder gente do numero seria pior que um traco feio.
+  const { roster: rosterNoite, motivo: motivoRosterNoite } = await rosterDoDia({ laReport, unidadeId, hoje });
+  if (motivoRosterNoite) console.error(`[Pauta] fim de dia: sem calendário, horários saem como '--:--' — ${motivoRosterNoite}`);
+  const comHorario = pura.pautaDoDiaPeloRoster(pendentes, rosterNoite);
   const jaListados = new Set(comHorario.map((i) => i.pessoa.pessoa_chave));
   const semHorario = pendentes
     .filter((p) => !jaListados.has(p.pessoa_chave))
@@ -957,6 +973,88 @@ async function relatorioDeFimDeDia({ supabase, laReport, unidadeId, hoje, deps =
 // hora em hora. Nao da pra reaproveitar `recuperacao` pra isso — ela cobre do comeco do dia
 // ATE a hora dada, e uma unica mensagem as 09:00 deixaria a tarde inteira invisivel. Aqui a
 // hora recebida serve so pro agendamento e pra idempotencia; o RECORTE e o dia todo.
+// ── O CALENDARIO REAL DO DIA (06/09/2026) ────────────────────────────────────────────────────
+// Ate hoje a pauta deduzia quem tem aula pelo horario FIXO semanal do aluno (`aulas_resumo`), que
+// nao sabe o que e feriado, recesso, cancelamento nem reposicao. No feriado de 07/09 isso poria
+// 148 pessoas nas tres pautas — o calendario real tinha ZERO aula valida no dia.
+//
+// A fonte aqui e a MESMA que alimenta a tela de Agenda do LA Report: `aulas_emusys` (a aula) e
+// `aula_alunos_emusys` (quem esta ligado a ela). Duas consultas simples em vez de um embed com
+// FK: embed quebrado devolve erro de relacionamento e a pauta ficaria muda pra sempre sem
+// ninguem entender por que.
+//
+// TRES DESFECHOS, e a diferenca entre eles e o coracao desta funcao:
+//   roster = Map com gente  -> tem aula hoje
+//   roster = Map VAZIO      -> hoje nao tem aula (feriado, recesso). Silencio SAUDAVEL.
+//   roster = null + motivo  -> nao consegui ler o calendario. Silencio por FALHA, e quem chama
+//                              tem que dizer isso em vez de fingir que o dia esta limpo.
+const HORA_BRT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
+});
+// Lote da segunda consulta: o `in(...)` vira querystring, e um dia cheio de uma unidade grande
+// passa de 200 aulas. Cortar em lotes evita URL gigante sem mudar o resultado.
+const ROSTER_LOTE = 200;
+
+async function rosterDoDia({ laReport, unidadeId, hoje }) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(hoje || ''))) {
+    return { roster: null, motivo: `data inválida para o calendário do dia: "${hoje}"` };
+  }
+  let aulas;
+  try {
+    const r = await laReport.from('aulas_emusys')
+      .select('id, data_hora_inicio, curso_nome')
+      .eq('unidade_id', unidadeId)
+      .eq('cancelada', false)
+      .gte('data_hora_inicio', `${hoje}T00:00:00-03:00`)
+      .lte('data_hora_inicio', `${hoje}T23:59:59.999-03:00`);
+    if (r.error) {
+      return { roster: null, motivo: `leitura do calendário do dia falhou: ${r.error.message} — não cobro sem saber quem tem aula` };
+    }
+    aulas = r.data || [];
+  } catch (e) {
+    return { roster: null, motivo: `leitura do calendário do dia falhou: ${(e && e.message) || String(e)} — não cobro sem saber quem tem aula` };
+  }
+  // Dia sem aula: Map vazio, motivo null. NAO e falha, e a pauta do dia e legitimamente vazia.
+  if (!aulas.length) return { roster: new Map(), motivo: null };
+
+  const porAula = new Map();
+  for (const a of aulas) {
+    if (!a || a.id === undefined || a.id === null) continue;
+    let hora = null;
+    const t = new Date(a.data_hora_inicio);
+    if (!Number.isNaN(t.getTime())) hora = HORA_BRT.format(t);
+    if (!hora) continue;   // aula sem hora legivel nao entra: linha torta e pior que ausencia
+    porAula.set(a.id, { hora, curso: a.curso_nome || null });
+  }
+
+  const ids = [...porAula.keys()];
+  const roster = new Map();
+  for (let i = 0; i < ids.length; i += ROSTER_LOTE) {
+    const lote = ids.slice(i, i + ROSTER_LOTE);
+    let vinculos;
+    try {
+      const r = await laReport.from('aula_alunos_emusys')
+        .select('aluno_id, aula_emusys_id')
+        .in('aula_emusys_id', lote);
+      if (r.error) {
+        return { roster: null, motivo: `leitura dos alunos do dia falhou: ${r.error.message} — não cobro sem saber quem tem aula` };
+      }
+      vinculos = r.data || [];
+    } catch (e) {
+      return { roster: null, motivo: `leitura dos alunos do dia falhou: ${(e && e.message) || String(e)} — não cobro sem saber quem tem aula` };
+    }
+    for (const v of vinculos) {
+      const aula = v && porAula.get(v.aula_emusys_id);
+      if (!aula || v.aluno_id === null || v.aluno_id === undefined) continue;
+      const ja = roster.get(v.aluno_id);
+      // A MAIS CEDO manda: e a hora em que a pessoa chega na escola, que e o que a equipe usa pra
+      // abordar. Quem tem duas aulas no dia aparece uma vez, no primeiro horario.
+      if (!ja || aula.hora < ja.hora) roster.set(v.aluno_id, aula);
+    }
+  }
+  return { roster, motivo: null };
+}
+
 const HORA_FIM_DO_DIA = '23:59';
 
 async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recuperacao = false, diaInteiro = false }) {
@@ -1007,9 +1105,13 @@ async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recupera
   // continua aqui, do jeito que volta, e quem lê este arquivo vê na hora que a lista de hoje é
   // deliberadamente só de anamnese. `alunosDaHora` também ignora o recorte por conta própria (mesmo
   // interruptor) — as duas guardas leem o MESMO valor, então não há como voltar pela metade.
-  const anamnese = pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'anamnese'), diaSemana);
+  // Mesmo calendario da montagem das 06:00 — se a fonte de "quem tem aula hoje" fosse outra aqui,
+  // a pauta da manha e o lembrete das 15:00 discordariam no mesmo dia.
+  const { roster: rosterHora, motivo: motivoRosterHora } = await rosterDoDia({ laReport, unidadeId, hoje });
+  if (motivoRosterHora) return { ...vazio, motivo: motivoRosterHora };
+  const anamnese = pura.pautaDoDiaPeloRoster(situ.filtrarPorRecorte(data || [], 'anamnese'), rosterHora);
   const contrato = pura.CONTRATO_NA_PAUTA
-    ? pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'contrato'), diaSemana)
+    ? pura.pautaDoDiaPeloRoster(situ.filtrarPorRecorte(data || [], 'contrato'), rosterHora)
     : [];
   const alunos = pura.alunosDaHora({
     anamnese, contrato,
@@ -1031,6 +1133,7 @@ module.exports = {
   // do dia. Uma implementação só, de propósito — ver o comentário da função.
   montarPautaDaUnidade, fecharPautaDaUnidade, varrerPautasVelhas, atualizarPautaDaUnidade,
   relatorioDeFimDeDia, lembreteDaProximaHora,
+  rosterDoDia,
   TETO_FILHAS, VARREDURA_DIAS, VARREDURA_MAX_CONTAINERS,
   // Os dois gatilhos do disjuntor saem daqui pra que o teste prove a FRONTEIRA (15 não dispara,
   // 16 dispara) contra o valor real, e não contra um número redigitado no teste — uma cópia lá

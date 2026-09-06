@@ -4394,6 +4394,7 @@ async function run(opts = {}) {
     try {
       const pura = require('../services/anamnese-pauta');
       const situAl = require('../services/situacao-aluno');
+      const { rosterDoDia } = require('./anamnese-pauta');
       // Entrou nesta fala com o bloco de contrato (04/09): a lista de contrato vem da FONTE, não
       // do painel, porque a pauta não cria tarefa de contrato. Ver o comentário longo lá embaixo.
       const { laReportClient } = require('../services/la-report-client');
@@ -4589,8 +4590,20 @@ async function run(opts = {}) {
                   // que a montagem usa pra 'anamnese'. Uma cópia do critério de contrato aqui
                   // faria a mensagem e o card do LA Report discordarem, e ninguém confiaria em
                   // nenhum dos dois.
-                  contrato = pura.pautaDoDia(
-                    situAl.filtrarPorRecorte(baseContrato || [], 'contrato'), now.dow);
+                  // QUEM TEM AULA HOJE VEM DO CALENDARIO (06/09), a MESMA fonte que a montagem
+                  // das 06:00 e o lembrete usam. Se aqui fosse `now.dow` (o dia da semana) e la o
+                  // calendario, a mensagem da manha e o painel discordariam no mesmo dia — e num
+                  // feriado esta linha sozinha cobraria gente que nao tem aula.
+                  const { roster, motivo: motivoRoster } = await rosterDoDia({
+                    laReport: laReportClient, unidadeId, hoje: now.ymd,
+                  });
+                  if (motivoRoster) {
+                    contratoErro = motivoRoster;
+                    console.error(`[Pauta] fala: calendário do dia falhou (${situAl.nomeDaUnidade(unidadeId)}): ${motivoRoster}`);
+                  } else {
+                    contrato = pura.pautaDoDiaPeloRoster(
+                      situAl.filtrarPorRecorte(baseContrato || [], 'contrato'), roster);
+                  }
                 }
               } catch (eContrato) {
                 // A pauta de anamnese já está pronta na mão: uma exceção na consulta de contrato

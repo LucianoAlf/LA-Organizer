@@ -3,15 +3,50 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { montarPautaDaUnidade, TETO_FILHAS } = require('./anamnese-pauta');
 
+// `aluno_ids_locais` e `_hora` (06/09): a pauta passou a decidir quem tem aula pelo CALENDARIO do
+// dia, nao pelo horario fixo de `aulas_resumo`. O id local e a chave do calendario; `_hora` e o
+// que o fake usa pra montar a aula. `aulas_resumo` fica porque outras telas ainda o mostram.
+let _proxIdLocal = 1000;
 const aluno = (nome, hora, temAnamnese) => ({
   nome, pessoa_chave: 'pk-' + nome, classificacao: 'LA',
   aulas_resumo: [`Canto — Segunda-feira ${hora}`],
+  aluno_ids_locais: [_proxIdLocal += 1], _hora: hora,
   anamnese_preenchida: !!temAnamnese, cadastro_faltando: temAnamnese ? [] : ['anamnese'],
 });
 
+// O CALENDARIO DO DIA nos fakes. Monta as duas consultas de `rosterDoDia` a partir da MESMA lista
+// de alunos do teste: cada aluno vira uma aula na hora dele. O fixture continua dizendo uma coisa
+// so, e os dois desfechos que interessam viram opcao explicita — `semAulaHoje` (feriado, Map
+// vazio) e `erroCalendario` (leitura falhou, roster nulo).
+function fakeCalendario(alunos, { semAulaHoje = false, erroCalendario = null, dia = null } = {}) {
+  return (tabela) => {
+    const q = {
+      select: () => q, eq: () => q, gte: () => q, lte: () => q, in: () => q,
+      then(res, rej) {
+        if (erroCalendario) {
+          return Promise.resolve({ data: null, error: { message: erroCalendario } }).then(res, rej);
+        }
+        const lista = semAulaHoje ? [] : (alunos || []);
+        const dados = tabela === 'aulas_emusys'
+          ? lista.map((a, i) => ({
+            id: i + 1,
+            data_hora_inicio: `${dia || '2026-09-07'}T${(a && a._hora) || '09:00'}:00-03:00`,
+            curso_nome: 'Canto',
+          }))
+          : lista.map((a, i) => ({
+            aula_emusys_id: i + 1,
+            aluno_id: ((a && a.aluno_ids_locais) || [])[0],
+          }));
+        return Promise.resolve({ data: dados, error: null }).then(res, rej);
+      },
+    };
+    return q;
+  };
+}
+
 function deps({
   rpcErro = null, alunos = [], falhas = new Map(), criar = null,
-  existente = false, erroChecagem = null,
+  existente = false, erroChecagem = null, semAulaHoje = false, erroCalendario = null, dia = null,
 } = {}) {
   const criadas = [];
   const titulosChecados = [];
@@ -20,7 +55,10 @@ function deps({
     criadas,
     titulosChecados,
     contadores,
-    laReport: { rpc: async () => { contadores.rpc += 1; return { data: rpcErro ? null : alunos, error: rpcErro }; } },
+    laReport: {
+      rpc: async () => { contadores.rpc += 1; return { data: rpcErro ? null : alunos, error: rpcErro }; },
+      from: fakeCalendario(alunos, { semAulaHoje, erroCalendario, dia }),
+    },
     repo: {
       registrarAparicoes: async () => ({ gravadas: alunos.length, erro: null }),
       contarFalhas: async () => falhas,
@@ -150,9 +188,10 @@ test('dia da semana bate também pra quarta-feira, não só segunda', async () =
   const alunoQuarta = {
     nome: 'Deb', pessoa_chave: 'pk-Deb', classificacao: 'LA',
     aulas_resumo: ['Canto — Quarta-feira 09:00'],
+    aluno_ids_locais: [9009], _hora: '09:00',
     anamnese_preenchida: false, cadastro_faltando: ['anamnese'],
   };
-  const d = deps({ alunos: [alunoQuarta] });
+  const d = deps({ alunos: [alunoQuarta], dia: QUARTA });
   const r = await montarPautaDaUnidade({
     supabase: {}, laReport: d.laReport, unidadeId: 'u1', groupId: 'grp', criadoPor: 'c1',
     hoje: QUARTA, deps: d,
@@ -247,6 +286,7 @@ const { fecharPautaDaUnidade } = require('./anamnese-pauta');
 function depsNoite({
   rpcErro = null, alunos = [], daPauta = [],
   containerId = null, filhasPendentes = [], erroAcharContainer = null, erroListarFilhas = null,
+  semAulaHoje = false, erroCalendario = null, dia = null,
 } = {}) {
   const gravados = [];
   const filhasFechadas = [];
@@ -257,7 +297,10 @@ function depsNoite({
     filhasFechadas,
     containerFechadoChamadas,
     titulosChecados,
-    laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
+    laReport: {
+      rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }),
+      from: fakeCalendario(alunos, { semAulaHoje, erroCalendario, dia }),
+    },
     repo: {
       pessoasDoDia: async () => daPauta,
       gravarResultado: async (_sb, arg) => { gravados.push(arg); return true; },
@@ -776,7 +819,7 @@ const {
 function depsRefresh({
   rpcErro = null, alunos = [],
   containerId = 'cont-1', filhasPendentes = [], erroAcharContainer = null, erroListarFilhas = null,
-  fecharFilhaOk = () => true,
+  fecharFilhaOk = () => true, semAulaHoje = false, erroCalendario = null, dia = null,
 } = {}) {
   const filhasFechadas = [];
   const containerFechadoChamadas = [];
@@ -825,7 +868,10 @@ function depsRefresh({
   return {
     filhasFechadas, containerFechadoChamadas, titulosChecados, tabelasEscritas, supabaseTasks,
     repo: repoProibido,
-    laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
+    laReport: {
+      rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }),
+      from: fakeCalendario(alunos, { semAulaHoje, erroCalendario, dia }),
+    },
     acharContainer: async (_sb, { titulo }) => {
       titulosChecados.push(titulo);
       if (erroAcharContainer) return { containerId: null, erro: erroAcharContainer };
@@ -1379,11 +1425,17 @@ test('atualização: o disjuntor decide ANTES de escrever — nenhuma filha é t
 // provar que ninguém os chama.
 const { relatorioDeFimDeDia } = require('./anamnese-pauta');
 
-function depsRelatorio({ rpcErro = null, alunos = [], daPauta = [], erroPessoas = false } = {}) {
+function depsRelatorio({
+  rpcErro = null, alunos = [], daPauta = [], erroPessoas = false,
+  semAulaHoje = false, erroCalendario = null, dia = null,
+} = {}) {
   const escritas = [];
   return {
     escritas,
-    laReport: { rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }) },
+    laReport: {
+      rpc: async () => ({ data: rpcErro ? null : alunos, error: rpcErro }),
+      from: fakeCalendario(alunos, { semAulaHoje, erroCalendario, dia }),
+    },
     repo: {
       pessoasDoDia: async () => (erroPessoas ? null : daPauta),
       // Qualquer uma destas sendo chamada é BUG: o relatório é leitura.
@@ -1526,13 +1578,26 @@ const { lembreteDaProximaHora } = require('./anamnese-pauta');
 const alunoDaHora = (nome, hora, { anamnese = true, contrato = true } = {}) => ({
   nome, pessoa_chave: 'pk-' + nome, classificacao: 'LA',
   aulas_resumo: [`Canto — Segunda-feira ${hora}`],
+  aluno_ids_locais: [_proxIdLocal += 1], _hora: hora,
   anamnese_preenchida: !!anamnese, tem_data_contrato: !!contrato,
+  contrato_assinatura_status: contrato ? 'assinado' : 'nao_assinado', contrato_dado_fresco: true,
 });
 
 // supabase que EXPLODE se alguém encostar: o lembrete não recebe cliente de banco nenhum, e este
 // fake é o que transforma essa promessa em teste. Um `from()` que escorregasse pra dentro da
 // função apareceria como falha aqui, não como escrita silenciosa em produção.
 const supabaseProibido = { from() { throw new Error('o lembrete não pode tocar o banco'); } };
+
+// Os dois cenarios de REVERSAO abaixo provam o contrato DESLIGADO. Desde 06/09 o padrao e ligado,
+// entao eles DECLARAM o estado que exercitam em vez de herda-lo — o mesmo espelho de
+// services/situacao-aluno.test.js. A propriedade exportada e a MESMA que o ritual le em tempo de
+// chamada, e volta ao lugar no finally: teste que vaza estado envenena o arquivo inteiro.
+const puraDoContrato = require('../services/anamnese-pauta');
+async function comOContratoDesligado(fn) {
+  const antes = puraDoContrato.CONTRATO_NA_PAUTA;
+  puraDoContrato.CONTRATO_NA_PAUTA = false;
+  try { return await fn(); } finally { puraDoContrato.CONTRATO_NA_PAUTA = antes; }
+}
 
 function rodarLembrete({ alunos = [], rpcErro = null, lanca = false, hora = '15:00', hoje = SEGUNDA, recuperacao = false } = {}) {
   const chamadas = [];
@@ -1542,6 +1607,9 @@ function rodarLembrete({ alunos = [], rpcErro = null, lanca = false, hora = '15:
       if (lanca) throw new Error('rede caiu no meio da consulta');
       return { data: rpcErro ? null : alunos, error: rpcErro };
     },
+    // O lembrete tambem passou a ler o calendario do dia (06/09) — sem ele o fake devolveria
+    // roster nulo e TODO teste de lembrete viraria "nao consegui ler o calendario".
+    from: fakeCalendario(alunos, { dia: hoje }),
   };
   return lembreteDaProximaHora({ laReport, unidadeId: 'u1', hoje, hora, recuperacao })
     .then((r) => ({ ...r, chamadas }));
@@ -1570,7 +1638,7 @@ test('lembrete: fala SÓ de quem chega na próxima hora, não da lista do dia', 
 // o interruptor é CONTRATO_NA_PAUTA, em services/anamnese-pauta.js. Este teste é o que prova que
 // a REVERSÃO chegou até a ponta que fala com o grupo — o rótulo combinado continua travado, byte
 // a byte, no teste irmão de services/anamnese-pauta.test.js (que passa `comContrato: true`).
-test('reversão: quem estava na lista SÓ por contrato não aparece mais, e os dois rótulos viram um', async () => {
+test('reversão: quem estava na lista SÓ por contrato não aparece mais, e os dois rótulos viram um', async () => comOContratoDesligado(async () => {
   const r = await rodarLembrete({
     alunos: [
       alunoDaHora('Levi Freire', '15:00', { anamnese: false, contrato: false }),
@@ -1582,16 +1650,16 @@ test('reversão: quem estava na lista SÓ por contrato não aparece mais, e os d
     + '· Levi Freire (Canto) — *anamnese*');
   assert.deepStrictEqual(r.alunos.map((a) => a.pessoa.nome), ['Levi Freire'],
     'Gabriela só devia contrato — sem o critério, ela sai da cobrança');
-});
+}));
 
-test('reversão: hora em que só havia pendência de contrato não gera mensagem nenhuma', async () => {
+test('reversão: hora em que só havia pendência de contrato não gera mensagem nenhuma', async () => comOContratoDesligado(async () => {
   const r = await rodarLembrete({
     alunos: [alunoDaHora('Gabriela da Silva', '15:00', { contrato: false })],
   });
   assert.strictEqual(r.texto, null, 'silêncio, não um cabeçalho sozinho num grupo real');
   assert.strictEqual(r.motivo, null, 'e é zero por SAÚDE — o dispatcher grava skipped, não fallback');
   assert.deepStrictEqual(r.alunos, []);
-});
+}));
 
 test('lembrete: hora sem ninguém pendente NÃO vira mensagem — e o motivo é null (zero por saúde)', async () => {
   const r = await rodarLembrete({ alunos: [alunoDaHora('Carla Dias', '15:00')] });
@@ -1616,7 +1684,8 @@ test('lembrete: exceção na consulta vira motivo, não explosão', async () => 
 test('lembrete: SÓ LÊ — uma consulta à fonte, e nada de banco', async () => {
   const r = await lembreteDaProximaHora({
     supabase: supabaseProibido,
-    laReport: { rpc: async () => ({ data: [alunoDaHora('Ana', '15:00', { anamnese: false })], error: null }) },
+    laReport: (() => { const _a = [alunoDaHora('Ana', '15:00', { anamnese: false })];
+      return { rpc: async () => ({ data: _a, error: null }), from: fakeCalendario(_a) }; })(),
     unidadeId: 'u1', hoje: SEGUNDA, hora: '15:00',
   });
   assert.match(r.texto, /Ana/);
@@ -1666,8 +1735,11 @@ test('lembrete de recuperação: a primeira passada do dia pega quem chegou na h
     + '🕗 *08:00*\n'
     + '· Arthur Bezerra (Canto) — *anamnese*\n'
     + '\n'
+    + '🕘 *09:00*\n'
+    + '· Gabriela da Silva (Canto) — *contrato*\n'
+    + '\n'
     + '🕙 *10:00*\n'
-    + '· Levi Freire (Canto) — *anamnese*');
+    + '· Levi Freire (Canto) — *anamnese e contrato*');
   assert.doesNotMatch(r.texto, /Zeca/, 'a recuperação é uma FAIXA, não a lista do dia inteiro');
 });
 
@@ -1696,7 +1768,8 @@ test('lembrete de recuperação: faixa sem ninguém pendente é silêncio, com m
 test('lembrete de recuperação: SÓ LÊ — uma consulta à fonte e nada de banco', async () => {
   const r = await lembreteDaProximaHora({
     supabase: supabaseProibido,
-    laReport: { rpc: async () => ({ data: [alunoDaHora('Ana', '08:00', { anamnese: false })], error: null }) },
+    laReport: (() => { const _a = [alunoDaHora('Ana', '08:00', { anamnese: false })];
+      return { rpc: async () => ({ data: _a, error: null }), from: fakeCalendario(_a) }; })(),
     unidadeId: 'u1', hoje: SEGUNDA, hora: '10:00', recuperacao: true,
   });
   assert.match(r.texto, /08:00 Ana/);
