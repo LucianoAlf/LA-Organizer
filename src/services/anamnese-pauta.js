@@ -289,7 +289,16 @@ function _linhasPorHora(lista, quantos) {
 // servia. Apagar e reescrever amanhã de memória perderia a copy que ele aprovou palavra por
 // palavra, e os testes que a travam byte a byte (services/anamnese-pauta.test.js, passando
 // `comContrato: true`) continuam rodando justamente pra que o que volta seja o que saiu.
-const CONTRATO_NA_PAUTA = false;
+// ── LIGADO EM 06/09/2026 ─────────────────────────────────────────────────────────────────────
+// O que faltava era o critério, não a copy. Em 05/09 o Emusys passou a informar também a
+// assinatura MANUAL (antes só a eletrônica voltava `true`, e contrato assinado na caneta vinha
+// `false`); o LA Report expôs `contrato_assinatura_status` e o recorte em services/situacao-
+// aluno.js passou a medir assinatura em vez de data. Medição do dia da virada, nas três
+// unidades: 933 matrículas assinadas contra 238 em aberto — antes o dado dizia 138 contra
+// 1.030, e 88% da base apareceria como caloteira.
+// Ligar aqui religa a fala da manhã, o lembrete de hora em hora E apaga a ressalva, tudo no
+// mesmo instante — que é a razão de ser um botão só.
+const CONTRATO_NA_PAUTA = true;
 
 // ── O BLOCO DE CONTRATO (pedido do Alf, 04/09) ───────────────────────────────────────────────
 // "anamnese e contrato sem assinar são duas demandas extremamente importantes que precisam ser

@@ -758,34 +758,44 @@ function comOContratoReligado(fn) {
   try { return fn(); } finally { pura.CONTRATO_NA_PAUTA = antes; }
 }
 
+// O espelho do de cima. Estes testes provam a ressalva LIGADA (interruptor desligado); desde
+// 06/09 o padrão do arquivo é o contrário, então eles declaram o estado que exercitam em vez de
+// herdá-lo — teste que depende do valor atual de uma flag quebra no dia em que a flag muda, e
+// foi exatamente o que aconteceu aqui.
+function comOContratoDesligado(fn) {
+  const antes = pura.CONTRATO_NA_PAUTA;
+  pura.CONTRATO_NA_PAUTA = false;
+  try { return fn(); } finally { pura.CONTRATO_NA_PAUTA = antes; }
+}
+
 const SEM_CONTRATO = (n) => Array.from({ length: n }, (_, i) => P(`Aluno ${String(i).padStart(2, '0')}`, { tem_data_contrato: false }));
 
-test('lista de contrato: a ressalva sai COLADA no número, na primeira página', () => {
-  const h = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92 });
-  assert.match(h, /<b>92<\/b> sem data de contrato/);
-  assert.ok(h.includes(RESSALVA_CONTRATO), 'o número saiu sem a ressalva');
-  assert.match(h, /não é o mesmo que não ter assinado/);
-  // Colada mesmo: entre a linha do número e a lista de nomes, não perdida no rodapé.
-  assert.ok(h.indexOf(RESSALVA_CONTRATO) < h.indexOf('<ul>'), 'a ressalva ficou depois dos nomes');
-});
+test('lista de contrato: a ressalva sai COLADA no número, na primeira página', () => comOContratoDesligado(() => {
+    const h = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92 });
+    assert.match(h, /<b>92<\/b> sem data de contrato/);
+    assert.ok(h.includes(RESSALVA_CONTRATO), 'o número saiu sem a ressalva');
+    assert.match(h, /não é o mesmo que não ter assinado/);
+    // Colada mesmo: entre a linha do número e a lista de nomes, não perdida no rodapé.
+    assert.ok(h.indexOf(RESSALVA_CONTRATO) < h.indexOf('<ul>'), 'a ressalva ficou depois dos nomes');
+}));
 
-test('lista de contrato: a CONTINUAÇÃO também traz a ressalva — pedir o resto não pode limpar o aviso', () => {
-  const h = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92, pagina: 1 });
-  assert.match(h, /Continuando/);
-  assert.ok(h.includes(RESSALVA_CONTRATO), 'a página 2 mostrou o número sem a ressalva');
-});
+test('lista de contrato: a CONTINUAÇÃO também traz a ressalva — pedir o resto não pode limpar o aviso', () => comOContratoDesligado(() => {
+    const h = renderLista({ recorte: 'contrato', unidadeNome: 'Recreio', pessoas: SEM_CONTRATO(92), total: 92, pagina: 1 });
+    assert.match(h, /Continuando/);
+    assert.ok(h.includes(RESSALVA_CONTRATO), 'a página 2 mostrou o número sem a ressalva');
+}));
 
-test('lista de contrato VAZIA traz a ressalva — "ninguém sem contrato" é a leitura mais perigosa de todas', () => {
-  const h = renderLista({ recorte: 'contrato', unidadeNome: 'Barra', pessoas: [], total: 0 });
-  assert.match(h, /Ninguém sem data de contrato/);
-  assert.ok(h.includes(RESSALVA_CONTRATO), 'o zero saiu sozinho, e zero sem ressalva se lê como "todo mundo assinou"');
-});
+test('lista de contrato VAZIA traz a ressalva — "ninguém sem contrato" é a leitura mais perigosa de todas', () => comOContratoDesligado(() => {
+    const h = renderLista({ recorte: 'contrato', unidadeNome: 'Barra', pessoas: [], total: 0 });
+    assert.match(h, /Ninguém sem data de contrato/);
+    assert.ok(h.includes(RESSALVA_CONTRATO), 'o zero saiu sozinho, e zero sem ressalva se lê como "todo mundo assinou"');
+}));
 
-test('ficha: quem está sem data de contrato leva a ressalva junto da linha de cadastro', () => {
-  const h = renderFicha({ ...ALUNO, cadastro_faltando: ['data_inicio_contrato', 'foto'] }, { hoje: HOJE });
-  assert.match(h, /falta <b>data de início do contrato, foto<\/b>/);
-  assert.ok(h.includes(RESSALVA_CONTRATO), 'a ficha apontou a pendência sem dizer o que ela é');
-});
+test('ficha: quem está sem data de contrato leva a ressalva junto da linha de cadastro', () => comOContratoDesligado(() => {
+    const h = renderFicha({ ...ALUNO, cadastro_faltando: ['data_inicio_contrato', 'foto'] }, { hoje: HOJE });
+    assert.match(h, /falta <b>data de início do contrato, foto<\/b>/);
+    assert.ok(h.includes(RESSALVA_CONTRATO), 'a ficha apontou a pendência sem dizer o que ela é');
+}));
 
 test('ficha: pendência de cadastro que NÃO é contrato não ganha ressalva nenhuma', () => {
   const h = renderFicha({ ...ALUNO, cadastro_faltando: ['foto', 'telefone'] }, { hoje: HOJE });
@@ -836,13 +846,13 @@ test('RELIGADO o interruptor da pauta, a ressalva some SOZINHA — lista, contin
 // mesma frase, lida como "não assinaram", numa terceira superfície que renderLista/renderFicha
 // já cobriam. Reusa ressalvaDeContrato() (mesmo interruptor, lido em tempo de chamada); nada de
 // segunda cópia da frase nem de segundo botão.
-test('resumo: pendência de data de contrato carrega a ressalva junto do número, não no fim do card', () => {
-  const h = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
-  assert.match(h, /<b>92<\/b> sem data de contrato/);
-  assert.ok(h.includes(RESSALVA_CONTRATO), 'o número saiu sem a ressalva');
-  // "Junto do número": antes da linha de fonte do rodapé, não depois dela.
-  assert.ok(h.indexOf(RESSALVA_CONTRATO) < h.indexOf('fonte:'), 'a ressalva foi parar depois do rodapé');
-});
+test('resumo: pendência de data de contrato carrega a ressalva junto do número, não no fim do card', () => comOContratoDesligado(() => {
+    const h = renderResumo({ total_pessoas: 300, pendentes: { data_inicio_contrato: 92 }, regra_versao: 'v1' });
+    assert.match(h, /<b>92<\/b> sem data de contrato/);
+    assert.ok(h.includes(RESSALVA_CONTRATO), 'o número saiu sem a ressalva');
+    // "Junto do número": antes da linha de fonte do rodapé, não depois dela.
+    assert.ok(h.indexOf(RESSALVA_CONTRATO) < h.indexOf('fonte:'), 'a ressalva foi parar depois do rodapé');
+}));
 
 test('resumo SEM pendência de contrato não ganha a ressalva', () => {
   const h = renderResumo({ total_pessoas: 300, pendentes: { anamnese: 40 }, regra_versao: 'v1' });

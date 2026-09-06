@@ -81,10 +81,34 @@ function fatiar(pessoas, pagina = 0) {
   return { itens, restam, temMais: restam > 0, pagina: p };
 }
 
+// COMO O CONTRATO E MEDIDO (06/09/2026) ────────────────────────────────────────────────────
+// Ate 05/09 o recorte media `!tem_data_contrato` — data DERIVADA da primeira aula, que nasce
+// junto com a matricula e nao sabe nada sobre assinatura. Naquele dia o Emusys passou a
+// informar tambem a assinatura MANUAL (antes so a eletronica voltava `true`), e o LA Report
+// expos `contrato_assinatura_status` na RPC.
+//
+// Medido na RPC com a reconciliacao do dia, antes de trocar: o criterio velho apontava 79
+// pessoas no Recreio, o certo aponta 7 — 72 acusacoes indevidas no primeiro dia. Na Barra ele
+// errava pro outro lado, 90 contra 109 pendencias reais.
+//
+// DUAS TRAVAS, e as duas sao de HONESTIDADE, nao de performance:
+//   1. So `nao_assinado` e `sem_contrato` entram. `nao_verificado` e `dispensado` NUNCA — dado
+//      incompleto nao vira cobranca, e a precedencia da RPC ja garante que na duvida o estado
+//      cai pro lado inconclusivo.
+//   2. `contrato_dado_fresco === true` e obrigatorio. Sem a reconciliacao do dia, o TOM cala em
+//      vez de chutar. Comparacao estrita de proposito: campo ausente nao cobra ninguem.
+//
+// O QUE ESTE CRITERIO AINDA NAO SABE: o `false` do Emusys nao separa "nunca foi enviado" de "a
+// escola assinou e falta o aluno" (caso medido: Giovanna, matricula 1558 do Recreio, 05/09).
+// Os dois sao pendencia real e podem ser cobrados — o que o TOM NAO pode e dizer qual dos dois
+// e, nem afirmar que ninguem mandou o contrato.
+const COBRAVEIS_DE_CONTRATO = new Set(['nao_assinado', 'sem_contrato']);
+
 const PENDENCIA = {
   anamnese: (p) => !p.anamnese_preenchida,
   instagram: (p) => !p.tem_instagram && !p.instagram_nao_possui,
-  contrato: (p) => !p.tem_data_contrato,
+  contrato: (p) => COBRAVEIS_DE_CONTRATO.has(p.contrato_assinatura_status)
+    && p.contrato_dado_fresco === true,
   foto: (p) => !p.tem_foto,
   telefone: (p) => !p.tem_telefone,
   comunidade: (p) => p.comunidade_status === 'fora_da_comunidade',
@@ -219,7 +243,13 @@ const ROTULO = {
 };
 
 // ── A RESSALVA DO CONTRATO (04/09) ─────────────────────────────────────────────────────────
-// O recorte 'contrato' mede `tem_data_contrato`, que vem de `data_inicio_contrato` — campo
+// ⚠️ RESOLVIDO EM 06/09: o recorte NAO mede mais `tem_data_contrato` (ver o bloco COMO O
+// CONTRATO E MEDIDO, acima), e com CONTRATO_NA_PAUTA ligado esta ressalva nunca renderiza —
+// `ressalvaDeContrato()` devolve string vazia. Ela fica aqui como rede da reversao. Se
+// alguem desligar o interruptor de novo, REESCREVA o texto antes: ele fala de data, e o
+// criterio hoje fala de assinatura. Aviso que mente e pior que aviso nenhum.
+//
+// [historico] O recorte 'contrato' media `tem_data_contrato`, que vem de `data_inicio_contrato` — campo
 // DERIVADO da data da primeira aula. Ele existe desde a criação da matrícula e não sabe nada
 // sobre assinatura. O Emusys tem o campo certo (`contrato_atual.contrato_assinado`), mas ele
 // ainda não chega ao LA Report. Em 04/09 as mensagens que o TOM manda por conta própria foram
