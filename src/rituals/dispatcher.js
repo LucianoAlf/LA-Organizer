@@ -4568,6 +4568,7 @@ async function run(opts = {}) {
             // (mesmo interruptor, dentro de mensagemDoGrupo) — as duas guardas leem o MESMO valor.
             let contrato = [];
             let contratoErro = null;
+            let contratoNaoConferidos = 0;
             if (pura.CONTRATO_NA_PAUTA) {
               try {
                 const { data: baseContrato, error: erroContrato } = await laReportClient.rpc(
@@ -4603,6 +4604,12 @@ async function run(opts = {}) {
                   } else {
                     contrato = pura.pautaDoDiaPeloRoster(
                       situAl.filtrarPorRecorte(baseContrato || [], 'contrato'), roster);
+                    // QUEM NAO DEU PRA CONFERIR, entre os que tem aula HOJE. Eles nunca entram na
+                    // cobranca (o recorte ja os exclui) — e ate 06/09 tambem nao apareciam em
+                    // lugar nenhum, o que fazia "nao consegui conferir" ficar identico a "nao
+                    // existe". O bloco de contrato passa a dize-los, sem acusar.
+                    contratoNaoConferidos = pura.pautaDoDiaPeloRoster(
+                      situAl.naoVerificadosDeContrato(baseContrato || []), roster).length;
                   }
                 }
               } catch (eContrato) {
@@ -4616,7 +4623,7 @@ async function run(opts = {}) {
 
             const [, m, d2] = now.ymd.split('-');
             texto = pura.mensagemDoGrupo({
-              itens, contrato, contratoErro,
+              itens, contrato, contratoErro, contratoNaoConferidos,
               unidadeNome: situAl.nomeDaUnidade(unidadeId), dataBr: `${d2}/${m}`,
             });
             if (!texto) continue;

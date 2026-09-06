@@ -113,6 +113,26 @@ const COBRAVEIS_DE_CONTRATO = new Set(['nao_assinado', 'sem_contrato']);
 // monta a mensagem escolhe entre o bloco normal e o "nao consegui conferir".
 // `null` pra lista vazia de proposito — sem gente nao da pra afirmar NEM negar que houve rodada,
 // e devolver `false` ali faria a unidade sem alunos anunciar uma falha que nao existe.
+// QUEM NAO DEU PRA CONFERIR NAO PODE SUMIR (06/09). `nao_verificado` nunca entra na cobranca —
+// dado incompleto nao vira acusacao — mas ate aqui ele tambem nao aparecia em lugar NENHUM, e
+// entao "nao consegui conferir" ficava identico a "nao existe". A mesma familia do zero por falha
+// x zero por saude, agora no grao da pessoa.
+//
+// `dispensado` NAO entra aqui: ele e uma resposta (banda/coral nao assinam), nao uma duvida.
+// Status ausente entra: na duvida a pessoa aparece, porque o custo de mostrar demais e alguem
+// conferir a toa, e o de mostrar de menos e ninguem nunca saber.
+//
+// Caso do dia: Davi Lima Queiroz (Recreio) e Ana Luiza Marques Paiva (Campo Grande) — os dois com
+// TODAS as matriculas `contrato_assinado=true` na reconciliacao das 05:00, os dois com cadastro
+// local duplicado, e os dois saindo como `nao_verificado` da RPC. Sem esta lista, ninguem
+// descobriria: eles nao estavam em mensagem nenhuma.
+function naoVerificadosDeContrato(pessoas) {
+  return (pessoas || []).filter((p) => {
+    const st = p && p.contrato_assinatura_status;
+    return !st || st === 'nao_verificado';
+  });
+}
+
 function contratoConferidoHoje(pessoas) {
   const arr = pessoas || [];
   if (!arr.length) return null;
@@ -575,7 +595,7 @@ module.exports = {
   rotuloPendencia, responsavelDistinto,
   resolverAluno, tempoDeCasa, renderFicha, renderAmbiguo,
   normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, filtrarPorPeriodo, rotuloPeriodo,
-  contratoConferidoHoje,
+  contratoConferidoHoje, naoVerificadosDeContrato,
   renderResumo, renderLista, linhaComunidade,
   // Exportada pro TESTE poder travar o texto byte a byte sem redigitá-lo: duas cópias da mesma
   // frase é como uma delas envelhece calada.

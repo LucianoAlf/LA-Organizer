@@ -349,21 +349,33 @@ const CONTRATO_NA_PAUTA = true;
 // o Clayton cria na mão com horário de assinatura combinado, e duas fontes criando a mesma
 // tarefa colidem"). Por isso, quando a lista corta, o texto ENSINA a pedir o resto — é o único
 // caminho que existe pra ela, e o recorte 'contrato' já está no <<SITUACAO_ALUNO>> do grupo.
-function _blocoDeContrato({ contrato, contratoErro, dataBr }) {
+function _blocoDeContrato({ contrato, contratoErro, dataBr, naoConferidos = 0 }) {
   const cabecalho = `✍️ *Contrato — hoje (${dataBr})*`;
   if (contratoErro) {
+    // A fonte fora do ar tem PRECEDENCIA: com ela caida, o numero de nao conferidos tambem nao
+    // significa nada, e dois avisos de incerteza na mesma mensagem viram ruido.
     return `${cabecalho}\nNão consegui conferir contrato agora. Assim que eu conseguir, eu aviso.`;
   }
   const lista = contrato || [];
-  if (!lista.length) return null;
+  // QUEM NAO DEU PRA CONFERIR (06/09). `nao_verificado` nunca entra na cobranca — dado incompleto
+  // nao vira acusacao. So que ate aqui ele tambem nao aparecia em lugar nenhum, e lista vazia
+  // devolvia `null`: o bloco sumia, e bloco ausente o time le como "hoje ninguem esta sem
+  // contrato". Se ha gente que eu NAO consegui conferir, essa leitura e falsa e o silencio e meu.
+  // Por isso o bloco sai mesmo sem pendente — dizendo o que eu nao sei, sem acusar ninguem.
+  const nc = Number(naoConferidos) > 0 ? Math.trunc(Number(naoConferidos)) : 0;
+  const aviso = nc
+    ? `⚠️ ${nc} aluno(s) com aula hoje eu não consegui conferir o contrato — não estão na conta acima.`
+    : '';
+  if (!lista.length) return nc ? `${cabecalho}\n${aviso}` : null;
   const n = lista.length;
   // A lista sai SEPARADA POR HORÁRIO (04/09), igual à do bloco de anamnese. O ':' fecha a linha
   // da contagem e a lista desce — "Hoje:" no meio de uma frase que já diz "hoje" era repetição.
   const corpo = `${cabecalho}\n${_alunosComAula(n)} ainda sem contrato assinado`
     + `${n > PRIMEIROS_NO_ZAP ? '. Os primeiros:' : ':'}\n${_linhasPorHora(lista, PRIMEIROS_NO_ZAP)}`;
-  return n > PRIMEIROS_NO_ZAP
+  const comRodape = n > PRIMEIROS_NO_ZAP
     ? `${corpo}\nMe peça a lista de contrato que eu mando ela inteira.`
     : corpo;
+  return aviso ? `${comRodape}\n\n${aviso}` : comRodape;
 }
 
 // Os N primeiros HORÁRIOS, não os N primeiros nomes alfabéticos: quem chega às 8h é quem
@@ -376,7 +388,10 @@ function _blocoDeContrato({ contrato, contratoErro, dataBr }) {
 // isso a manhã sai hoje exatamente como saía antes de o bloco existir. Quando `false`, `contrato` e
 // `contratoErro` são IGNORADOS de propósito: o aviso "não consegui conferir contrato" é uma
 // promessa de que o TOM está olhando contrato, e prometer o que não se mede é pior que o silêncio.
-function mensagemDoGrupo({ itens, contrato, contratoErro, unidadeNome, dataBr, comContrato = CONTRATO_NA_PAUTA } = {}) {
+function mensagemDoGrupo({
+  itens, contrato, contratoErro, contratoNaoConferidos = 0,
+  unidadeNome, dataBr, comContrato = CONTRATO_NA_PAUTA,
+} = {}) {
   const lista = itens || [];
   if (!lista.length) return null;
   const n = lista.length;
@@ -390,7 +405,7 @@ function mensagemDoGrupo({ itens, contrato, contratoErro, unidadeNome, dataBr, c
     + 'A lista completa está no painel do grupo.';
   // Linha EM BRANCO entre os dois: é o "separadinho" que o dono pediu. No WhatsApp é o que faz
   // o olho ver duas demandas e não um bolo só.
-  const blocoContrato = comContrato ? _blocoDeContrato({ contrato, contratoErro, dataBr }) : null;
+  const blocoContrato = comContrato ? _blocoDeContrato({ contrato, contratoErro, dataBr, naoConferidos: contratoNaoConferidos }) : null;
   const corpo = blocoContrato ? `${blocoAnamnese}\n\n${blocoContrato}` : blocoAnamnese;
   // A LINHA DO LEMBRETE (pedido do Alf, 04/09). Vem no FIM e depois de uma linha em branco: ela
   // não pertence a nenhum dos dois blocos — é o que o TOM vai fazer com eles pelo resto do dia.

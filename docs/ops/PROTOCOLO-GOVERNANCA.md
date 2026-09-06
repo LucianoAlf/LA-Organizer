@@ -109,6 +109,21 @@ baseline é a pior das duas: ela ensina a ignorar vermelho.
 Com o id, a suíte fecha em `fail 0` (medido em 06/09: 4341 testes, 4341 pass). Se algum dia estes
 3 voltarem, é porque o colaborador do id sumiu do banco — e aí é pra você PARAR e relatar, não
 contornar.
+
+🔍 **ANTES de reverter por suíte vermelha, olhe a FORMA da falha.** "Reverta tudo" em cima de um
+vermelho de AMBIENTE joga fora um conserto bom por um motivo que não tem nada a ver com ele.
+Dois formatos, e eles querem coisas opostas:
+
+- `not ok N - /opt/LA-Organizer/src/algo/arquivo.test.js` — o **arquivo inteiro** falhou. Isso é
+  ambiente: módulo que não carregou, `.env` ausente, cliente do Supabase faltando. Medido em
+  06/09: rodar sem o `.env` dá **13 arquivos** assim, e nenhum deles é regressão. **Não reverta** —
+  conserte a invocação e rode de novo.
+- `not ok N - <nome de um teste em português>` — um teste **nomeado** falhou, com
+  `failureType: testCodeFailure` e um `expected`/`actual`. Esse é o seu. Aí sim: reverta e relate.
+
+O tell é o mesmo do golden do Mapa: `hookFailed` (o hook morreu, o teste nunca comparou nada) vs
+`testCodeFailure` (o teste rodou e o valor veio errado). Falha de fixture não é regressão até
+provar.
 Qualquer teste a mais quebrado: reverta tudo e relate.
 
 ⚠️ **Use `node --test src/`, não o glob.** Esta VPS roda Node v20 e o suporte a `**` no
