@@ -93,16 +93,28 @@ entrada real daquele turno era só "O q?", e aí errava 2/4.
 A menor mudança que faz o teste passar. Depois rode a suíte inteira:
 
 ```
-node --test src/
+TEST_COLLAB_ID=9df91fd3-c949-4ca0-a872-bfb321e7778d node --test src/
 ```
 
-Tem que terminar em **`fail 3`** (baseline de env ausente, `prompts/system-loadout.test.js`).
+Tem que terminar em **`fail 0`**. Qualquer falha é falha.
+
+⚠️ **O `TEST_COLLAB_ID` não é enfeite, e o baseline mudou por causa dele (06/09).** Até hoje este
+protocolo mandava rodar sem a variável e aceitar **`fail 3`** como "baseline de env ausente". Os 3
+eram sempre os mesmos: o golden do Mapa (`prompts/system-loadout.test.js`), que exige esse id na
+linha de comando e sem ele morre no `before()` com `invalid input syntax for type uuid:
+"undefined"`. Ou seja: **o golden do Mapa nunca rodou pra você**, e uma regressão de verdade ali
+sairia escondida dentro do número que o protocolo mandava aceitar. Falha de fixture disfarçada de
+baseline é a pior das duas: ela ensina a ignorar vermelho.
+
+Com o id, a suíte fecha em `fail 0` (medido em 06/09: 4341 testes, 4341 pass). Se algum dia estes
+3 voltarem, é porque o colaborador do id sumiu do banco — e aí é pra você PARAR e relatar, não
+contornar.
 Qualquer teste a mais quebrado: reverta tudo e relate.
 
 ⚠️ **Use `node --test src/`, não o glob.** Esta VPS roda Node v20 e o suporte a `**` no
 `--test` só entrou no Node 21 — o glob morre com `Could not find ...`. Você registrou isso na
 escada em 09/08 e estava certo: medi os dois lado a lado e dão o MESMO resultado
-(2487 testes, 2484 pass, fail 3). A nota antiga que dizia que `node --test src/` era
+(mesmos testes, mesmo desfecho). A nota antiga que dizia que `node --test src/` era
 falso-vermelho está errada para este ambiente.
 
 🔒 **COMMITE A CORREÇÃO ANTES DE COMEÇAR A VARREDURA.** Em 09/08 um deploy externo rodou

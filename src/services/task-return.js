@@ -48,13 +48,20 @@ function isTaskReturnBroadcast(text, actorName) {
 // Grava a devolutiva no histórico da tarefa (task_comments). No-op se não houver nota.
 async function saveReturnComment({ supabase, taskId, authorId, note }) {
   if (!note || !String(note).trim()) return;
+  // LER O `error` NAO E OPCIONAL (06/09). O insert do PostgREST nao lanca: devolve {error}. Com
+  // so o try/catch, o banco recusou 'return' no CHECK de comment_type desde que esta funcao
+  // existe — 1.236 linhas na tabela, TODAS 'agent_note', ZERO devolutiva na historia inteira — e
+  // ninguem soube, porque o catch nunca foi acionado. A devolutiva chegava no WhatsApp e nao
+  // ficava registrada na tarefa. A constraint foi corrigida por migration
+  // (task_comments_aceita_return); isto aqui e o sensor que impede a proxima recusa de ser muda.
   try {
-    await supabase.from('task_comments').insert({
+    const { error } = await supabase.from('task_comments').insert({
       task_id: taskId,
       content: String(note).trim().slice(0, 2000),
       comment_type: 'return',
       created_by: authorId || null,
     });
+    if (error) console.warn('[task-return] saveComment recusado pelo banco (nao-fatal):', error.message);
   } catch (e) {
     console.warn('[task-return] saveComment err (non-fatal):', e.message);
   }

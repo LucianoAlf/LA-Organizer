@@ -15104,6 +15104,41 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
     }
   }
 
+  // ANCORA DO BRIEFING (06/09) — irma da do fechamento, logo acima, e pelo mesmo caminho: uma
+  // secao que o ENGINE acrescenta ao system prompt com a lista que ELE calculou. Caso Bianca
+  // (03/09): o briefing numerou "1. ⏰ 19h — Revisar relatorios dos pacientes" com ZERO tarefa
+  // dela no contexto — a linha veio de uma MEMORIA. Ela tentou fechar e ouviu que a tarefa nao
+  // existia; a recusa estava certa, o item e que nunca devia ter sido numerado. Dois achados de
+  // auditoria, mesma raiz.
+  //
+  // O texto do briefing mora em `skills/`, que e veto do dono. Nao precisou: a ancora nunca foi
+  // template, e sim prompt calculado — mesmo lugar onde o fechamento resolveu isso.
+  if (ritualKey === 'briefing_diario' || ritualKey === 'briefing_pessoal' || ritualKey === 'briefing_trabalho') {
+    let _briefItems = [];
+    let _briefFalhou = false;
+    try {
+      const _hojeBrief = todaySaoPaulo();
+      const { tasksForRitual: _escopoBrief } = require('./lib/ritual-task-scope');
+      const _recorte = _escopoBrief(ritualKey, ctx || {}) || { work: [], personal: [] };
+      const _poolBrief = [...(_recorte.work || []), ...(_recorte.personal || [])]
+        .filter((t) => isVisibleForDay(t, _hojeBrief));
+      // Mesma ordenacao do fechamento (atrasada > com hora > sem hora), de proposito: a lista
+      // que abre o dia e a que fecha o dia tem que sair na MESMA ordem, senao o "2" da manha e o
+      // "2" da noite sao coisas diferentes. Teto maior porque o briefing apresenta o dia inteiro.
+      _briefItems = buildClosingItems(_poolBrief, { today: _hojeBrief, max: 8 });
+    } catch (e) {
+      // Falha-fechada: NAO vira "hoje nao ha tarefa". Ver o terceiro estado em briefing-anchor.js.
+      _briefFalhou = true;
+      console.warn('[Briefing] ancora err:', e.message);
+    }
+    const { secaoDoBriefing } = require('./lib/briefing-anchor');
+    systemPrompt += `
+
+---
+
+${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
+  }
+
   const directive = ritualToDirective(ritualType);
   const response = await ai.chat(systemPrompt, [{ role: 'user', content: directive }]);
 
