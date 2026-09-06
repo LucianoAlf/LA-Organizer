@@ -72,6 +72,14 @@ const SEND_NOMARKER_DISCLAIMER =
 // recado saiu num turn ANTERIOR — o caso do Leo: 2 envios executados e o guard negando os dois 51
 // min depois — a "correção de confab" é ela própria a confab. recentlySent é o fato do banco
 // (coordination_requests status=sent na janela); com ele, a fala do LLM é verdadeira e passa.
+// COORD-HONESTY-CEGO-A-DEVOLUTIVA (Rafinha 04/09): o veto do Leo nasceu lendo UM ledger
+// (coordination_requests) e ficou cego pra devolutiva de tarefa, que entrega por outro canal.
+// A evidência passa a ser um mapa {canal: quantidade}; qualquer canal com entrega veta.
+function recentlySentFrom(evidence) {
+  if (!evidence) return false;
+  return Object.values(evidence).some((n) => Number(n) > 0);
+}
+
 function enforceSendHonesty(text, opts = {}) {
   const { isQuestion = false, recentlySent = false } = opts;
   const s = String(text || '');
@@ -84,4 +92,4 @@ function enforceSendHonesty(text, opts = {}) {
   return { reply: stripped ? `${stripped}\n\n${SEND_NOMARKER_DISCLAIMER}` : SEND_NOMARKER_DISCLAIMER, fired: true };
 }
 
-module.exports = { stripOptimisticSendLines, claimsSent, enforceSendHonesty, lineIsSendClaim, SEND_STRONG_RE, SEND_WEAK_RE, SEND_NOMARKER_DISCLAIMER };
+module.exports = { stripOptimisticSendLines, claimsSent, enforceSendHonesty, recentlySentFrom, lineIsSendClaim, SEND_STRONG_RE, SEND_WEAK_RE, SEND_NOMARKER_DISCLAIMER };

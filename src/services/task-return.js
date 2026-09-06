@@ -28,6 +28,23 @@ function buildReturnMessage({ kind, recipientRole, recipientName, actorName, tit
   return `💬 ${recipientName}, o ${actorName} deixou um retorno em _"${t}"_:\n_"${String(note || '').slice(0, 400)}"_`;
 }
 
+// COORD-HONESTY-CEGO-A-DEVOLUTIVA (Rafinha 04/09): notifyTaskReturn entrega por
+// whatsapp.sendMessage + conversation_history e NÃO escreve em coordination_requests, então o
+// veto de enforceSendHonesty ficava cego a este canal e o TOM negava entrega feita. Como o
+// template de buildReturnMessage é determinístico, o próprio outbound serve de recibo: as
+// assinaturas abaixo casam o texto entregue com o ATOR (quem mandou), nunca com o destinatário.
+function returnBroadcastSignatures(actorName) {
+  const a = String(actorName || '').trim();
+  if (!a) return [];
+  return [`, o ${a} deixou um retorno em `, `, o ${a} concluiu a tarefa `];
+}
+
+function isTaskReturnBroadcast(text, actorName) {
+  const s = String(text || '');
+  const sigs = returnBroadcastSignatures(actorName);
+  return sigs.some((sig) => s.includes(sig));
+}
+
 // Grava a devolutiva no histórico da tarefa (task_comments). No-op se não houver nota.
 async function saveReturnComment({ supabase, taskId, authorId, note }) {
   if (!note || !String(note).trim()) return;
@@ -88,4 +105,4 @@ async function notifyTaskReturn({ supabase, whatsapp, taskId, actorId, kind, not
   return { sent };
 }
 
-module.exports = { resolveCircleRecipients, buildReturnMessage, saveReturnComment, notifyTaskReturn };
+module.exports = { resolveCircleRecipients, buildReturnMessage, returnBroadcastSignatures, isTaskReturnBroadcast, saveReturnComment, notifyTaskReturn };

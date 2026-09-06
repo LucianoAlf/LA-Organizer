@@ -13623,7 +13623,8 @@ Output AGORA, apenas o marker:`;
   // Sprint 16 → revisão 26/05 — <<COORDINATION_REQUEST>>: processa TODOS os
   // markers (antes só o primeiro). Caso real: broadcast pra 4 pessoas em 1 turn.
   {
-    const { stripOptimisticSendLines, claimsSent, enforceSendHonesty } = require('./lib/coord-send-honesty');
+    const { stripOptimisticSendLines, claimsSent, enforceSendHonesty, recentlySentFrom } = require('./lib/coord-send-honesty');
+    const { isTaskReturnBroadcast } = taskReturn;
     const parsedCoord = parseCoordinationRequestMarker(reply);
     if (parsedCoord && parsedCoord.malformed) {
       console.warn('[CoordinationRequest] WARN: all markers malformed, dropping block', parsedCoord.reasons);
@@ -13698,9 +13699,15 @@ Output AGORA, apenas o marker:`;
       // reclamar do lembrete às 14:58, ouviu "NÃO avisei ninguém — nenhuma mensagem chegou a ser
       // enviada". Antes de negar, confere o registro de envio na mesma janela de 2h já usada pelo
       // COORD_HINT. Se algo saiu de verdade, a afirmação do LLM não é confab.
-      let _recentlySent = false;
+      // COORD-HONESTY-CEGO-A-DEVOLUTIVA (Rafinha 04/09 17:14:29): a evidência acima é de UM
+      // canal. A devolutiva de tarefa delegada sai por notifyTaskReturn (services/task-return),
+      // que entrega em conversation_history e nunca toca coordination_requests — o Dudu recebeu
+      // o recado às 17:13:04, o TOM confirmou às 17:13:05 e 85s depois o guard anexou "nenhuma
+      // mensagem chegou a ser enviada". A linha do broadcast fica sob o DESTINATÁRIO, então a
+      // busca é pela assinatura do template com o ator, não por collaborator_id.
+      const _sendEvidence = { coordination_request: 0, task_return: 0 };
+      const _cutoffSend = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
       try {
-        const _cutoffSend = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
         const { data: _sentRows } = await supabase
           .from('coordination_requests')
           .select('id')
@@ -13708,8 +13715,22 @@ Output AGORA, apenas o marker:`;
           .eq('status', 'sent')
           .gte('sent_at', _cutoffSend)
           .limit(1);
-        _recentlySent = !!(_sentRows && _sentRows.length);
+        _sendEvidence.coordination_request = (_sentRows || []).length;
       } catch (e) { console.warn('[SendHonesty] recent-send check err:', e.message); }
+      try {
+        const _actor = String(collab.preferred_name || collab.full_name || '').split(' ')[0].trim();
+        if (_actor) {
+          const { data: _retRows } = await supabase
+            .from('conversation_history')
+            .select('content')
+            .eq('direction', 'outbound')
+            .gte('created_at', _cutoffSend)
+            .ilike('content', `%, o ${_actor} %`)
+            .limit(20);
+          _sendEvidence.task_return = (_retRows || []).filter((r) => isTaskReturnBroadcast(r.content, _actor)).length;
+        }
+      } catch (e) { console.warn('[SendHonesty] task-return check err:', e.message); }
+      const _recentlySent = recentlySentFrom(_sendEvidence);
       const _sh = enforceSendHonesty(reply, { isQuestion: hasTrailingQuestion(reply) || isInfoGatheringReply(reply), recentlySent: _recentlySent });
       if (_sh.fired) {
         // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08): o raw_excerpt guardava `reply` DEPOIS
