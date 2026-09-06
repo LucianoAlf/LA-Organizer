@@ -4,7 +4,6 @@
 
 // ---- Quem entra na pauta de hoje, em que ordem (Task 2) ----
 
-const DIAS = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
 
 // ── QUANDO CADA UNIDADE ABRE (correção 04/09) ────────────────────────────────────────────────
 // O horário em que a equipe chega DEPENDE DO DIA DA SEMANA. O dono informou os reais:
@@ -99,21 +98,8 @@ function _norm(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
-// "Canto — Segunda-feira 19:00" → 1. Sem dia no texto devolve null; NÃO chuta.
-function diaDaAula(resumo) {
-  const t = _norm(resumo);
-  for (let i = 0; i < DIAS.length; i += 1) if (t.includes(DIAS[i])) return i;
-  return null;
-}
 
-function horaDaAula(resumo) {
-  const m = String(resumo || '').match(/\b(\d{1,2}):(\d{2})\b/);
-  return m ? `${m[1].padStart(2, '0')}:${m[2]}` : null;
-}
 
-function _curso(resumo) {
-  return String(resumo || '').split('—')[0].trim() || null;
-}
 
 // Uma linha por ALUNO por dia (não por aula), na hora da PRIMEIRA aula — que é quando ele
 // chega na escola, e é aí que o tablet funciona.
@@ -150,18 +136,23 @@ function pautaDoDiaPeloRoster(pessoas, roster) {
   }
   return saida.sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
 }
-
-function pautaDoDia(pessoas, diaSemana) {
-  const saida = [];
-  for (const pessoa of (pessoas || [])) {
-    const doDia = (pessoa.aulas_resumo || [])
-      .filter((a) => diaDaAula(a) === diaSemana && horaDaAula(a))
-      .sort((a, b) => String(horaDaAula(a)).localeCompare(String(horaDaAula(b))));
-    if (!doDia.length) continue;
-    saida.push({ pessoa, hora: horaDaAula(doDia[0]), curso: _curso(doDia[0]) });
-  }
-  return saida.sort((a, b) => a.hora.localeCompare(b.hora));
-}
+// O RECORTE POR PADRAO SEMANAL FOI REMOVIDO EM 06/09/2026.
+//
+// `pautaDoDia(pessoas, diaSemana)` decidia quem tem aula hoje pelo texto do horario FIXO do
+// aluno (`aulas_resumo`: "Segunda-feira das 15:00..."), junto com os parsers `diaDaAula`,
+// `horaDaAula` e `_curso` e a tabela `DIAS`. Esse padrao nao sabe o que e feriado, recesso, aula
+// cancelada nem reposicao — medido no feriado de 07/09: entrariam 121 pessoas nas tres pautas
+// contra ZERO aula valida no calendario.
+//
+// Foi substituido por `pautaDoDiaPeloRoster`, logo abaixo, nas QUATRO superficies. Depois disso
+// o cluster inteiro ficou sem nenhum chamador de producao — e codigo morto que carrega o defeito
+// removido e pior que codigo morto qualquer: ele fica exportado, verde na suite, e com um nome
+// que convida a ser usado de novo. Comentario nao segura isso (o rotulo de hoje de manha ja
+// provou). Por isso a remocao, e nao um aviso.
+//
+// Se um dia precisar ler o texto de `aulas_resumo` de novo, ele continua no payload da RPC e a
+// ficha do aluno ainda o exibe (services/situacao-aluno.js) — mas nunca mais pra decidir quem
+// tem aula hoje.
 
 // ── A ESCADA ──────────────────────────────────────────────────────────────────────────────
 // Conta APARIÇÕES falhadas, não cliques: contar "a equipe tentou" faria a escalada depender de
@@ -643,7 +634,7 @@ function lembreteDaProximaHora({ itens, hora, recuperacao = false } = {}) {
 }
 
 module.exports = {
-  diaDaAula, horaDaAula, pautaDoDia, pautaDoDiaPeloRoster, DIAS,
+  pautaDoDiaPeloRoster,
   // O horário de abertura sai daqui pro dispatcher e pros testes lerem a MESMA tabela — uma
   // cópia redigitada lá faria a suíte continuar verde no dia em que alguém mudasse o valor aqui.
   diaSemanaBrt, horaDeAberturaDaUnidade, horariosDeAberturaDoDia,
