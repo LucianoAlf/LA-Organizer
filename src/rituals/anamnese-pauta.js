@@ -953,7 +953,13 @@ async function relatorioDeFimDeDia({ supabase, laReport, unidadeId, hoje, deps =
 // do começo do dia até `hora`, em vez de só `hora`. O porquê está inteiro no comentário de
 // services/anamnese-pauta.lembreteDaProximaHora: sem isso, quem tem aula na hora em que a unidade
 // ABRE nunca entra em lembrete nenhum — 25 aulas por semana, medido na fonte.
-async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recuperacao = false }) {
+// `diaInteiro` (06/09): Barra e Campo Grande pedem UMA mensagem por dia em vez do lembrete de
+// hora em hora. Nao da pra reaproveitar `recuperacao` pra isso — ela cobre do comeco do dia
+// ATE a hora dada, e uma unica mensagem as 09:00 deixaria a tarde inteira invisivel. Aqui a
+// hora recebida serve so pro agendamento e pra idempotencia; o RECORTE e o dia todo.
+const HORA_FIM_DO_DIA = '23:59';
+
+async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recuperacao = false, diaInteiro = false }) {
   const vazio = { texto: null, alunos: [] };
 
   // Mesma guarda barata dos outros blocos: `hoje` torto viraria um dia da semana que casa com
@@ -1005,11 +1011,18 @@ async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recupera
   const contrato = pura.CONTRATO_NA_PAUTA
     ? pura.pautaDoDia(situ.filtrarPorRecorte(data || [], 'contrato'), diaSemana)
     : [];
-  const alunos = pura.alunosDaHora({ anamnese, contrato, hora, recuperacao });
+  const alunos = pura.alunosDaHora({
+    anamnese, contrato,
+    hora: diaInteiro ? HORA_FIM_DO_DIA : hora,
+    recuperacao: diaInteiro ? true : recuperacao,
+  });
 
   // texto null com motivo null = ninguém chegando pendente nesta hora. Silêncio é notícia boa —
   // e quem registra que a passada RODOU e não achou ninguém é o marcador, no dispatcher.
-  return { texto: pura.lembreteDaProximaHora({ itens: alunos, hora, recuperacao }), alunos, motivo: null };
+  const texto = diaInteiro
+    ? pura.lembreteDoDiaInteiro({ itens: alunos, unidadeNome: situ.nomeDaUnidade(unidadeId) })
+    : pura.lembreteDaProximaHora({ itens: alunos, hora, recuperacao });
+  return { texto, alunos, motivo: null };
 }
 
 module.exports = {

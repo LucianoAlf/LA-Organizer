@@ -542,6 +542,46 @@ function alunosDaHora({ anamnese, contrato, hora, recuperacao = false, comContra
 // não dizer nada — numa hora com um aluno, isso é pior que a linha única. O lembrete normal cai
 // sempre nesse caso (alunosDaHora filtra pela hora exata); a recuperação cai nele nos dias em que
 // a faixa varrida tem gente de uma hora só, e aí a hora continua na linha, como estava.
+// ── A MENSAGEM DE DIA INTEIRO (06/09) ────────────────────────────────────────────────────────
+// Barra e Campo Grande pediram UMA mensagem por dia no lugar do lembrete de hora em hora (Barra
+// 09:00, Campo Grande 13:00). O Recreio ficou como estava — "de hora em hora vai aparecendo".
+//
+// ELA NAO RECEBE HORA, de proposito. O lembrete normal fala da hora SEGUINTE e a recuperacao
+// cobre "do comeco do dia ate as X"; qualquer um dos dois, disparado uma vez as 09:00, cobriria
+// so ate as 10:00 e deixaria a tarde inteira invisivel — o defeito de 04/09, quando 25 aulas por
+// semana nao apareciam em lembrete nenhum. Uma mensagem por dia so pode significar o DIA.
+//
+// A FORMA e a que o dono aprovou em 04/09 pra mensagem da manha: um bloco por pendencia, e
+// dentro do bloco uma linha por horario com os nomes separados por ponto. "Anamnese e contrato
+// sao duas demandas... nao pode vir dentro do mesmo bolo." Quem tem as duas aparece nas duas —
+// mesmo comportamento da mensagem da manha, e some do bloco assim que resolve aquele lado.
+const _PREPOSICAO_DA_UNIDADE = { Barra: 'na' };   // as outras sao masculinas: no Recreio, no Campo Grande
+
+const _BLOCOS_DO_DIA = [
+  { pendencia: 'anamnese', titulo: '📋 *Anamnese*' },
+  { pendencia: 'contrato', titulo: '✍️ *Contrato*' },
+];
+
+function lembreteDoDiaInteiro({ itens, unidadeNome } = {}) {
+  const validos = (itens || []).filter((i) => i && i.hora && ((i.pendencias) || []).length);
+  // Silencio, e nao cabecalho sozinho: mensagem que so tem titulo faz a equipe abrir pra nada, e
+  // dia sem pendencia e noticia boa. Quem separa "zero por saude" de "zero por falha" e o
+  // marcador do dispatcher, igual ao lembrete de hora em hora.
+  if (!validos.length) return null;
+  const prep = _PREPOSICAO_DA_UNIDADE[unidadeNome] || 'no';
+  const cabecalho = `⏰ *Hoje ${prep} ${unidadeNome} — quem ainda está pendente*`;
+  const blocos = [];
+  for (const { pendencia, titulo } of _BLOCOS_DO_DIA) {
+    const desteBloco = validos.filter((i) => i.pendencias.includes(pendencia));
+    if (!desteBloco.length) continue;   // bloco vazio nao aparece
+    blocos.push(`${titulo}\n${_linhasPorHora(desteBloco, desteBloco.length)}`);
+  }
+  if (!blocos.length) return null;
+  // Linha em branco entre os blocos: e ela que da o respiro no celular. Sem isso o agrupamento so
+  // acrescenta linhas e a mensagem continua sendo o bolo que a equipe reclamou.
+  return `${cabecalho}\n\n${blocos.join('\n\n')}`;
+}
+
 function lembreteDaProximaHora({ itens, hora, recuperacao = false } = {}) {
   if (!hora) return null;
   // Item sem pendência nenhuma não vira linha: "· Fulano — " não diz nada e é pior que ausência.
@@ -583,6 +623,7 @@ module.exports = {
   mensagemDoGrupo, PRIMEIROS_NO_ZAP,
   mensagemDeFimDeDia, FALTARAM_NO_ZAP,
   alunosDaHora, lembreteDaProximaHora, LINHA_LEMBRETE_HORA,
+  lembreteDoDiaInteiro,
   // O interruptor da reversão do contrato sai daqui pro dispatcher e pro ritual lerem o MESMO
   // valor: um `false` redigitado em cada ponta faria a reversão voltar pela metade no dia em que
   // alguém religasse só um lado — e a metade que ficasse ligada seria justamente a que cobra.

@@ -56,6 +56,12 @@ const fnTimeToSlot = recortar(LINHAS, {
 const linhaHorarios = LINHAS[acharUnica(LINHAS,
   (l) => l.startsWith('const PAUTA_ANAMNESE_LEMBRETE_TIMES ='), 'PAUTA_ANAMNESE_LEMBRETE_TIMES')];
 
+// A tabela de quem fala UMA VEZ POR DIA sai do arquivo REAL pelo mesmo motivo dos horarios: uma
+// copia aqui ficaria verde no dia em que o dono trocasse a hora da Barra la e ninguem lembrasse
+// deste arquivo.
+const linhaUnicoPorUnidade = LINHAS[acharUnica(LINHAS,
+  (l) => l.startsWith('const PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE ='), 'PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE')];
+
 const iBloco = acharUnica(LINHAS,
   (l) => l.startsWith('  const _pautaLembreteHora = PAUTA_ANAMNESE_LEMBRETE_TIMES'), 'inicio do bloco do lembrete');
 const iCatch = acharUnica(LINHAS,
@@ -67,13 +73,14 @@ if (LINHAS[iCatch + 1] !== '  }') {
 const BLOCO = LINHAS.slice(iBloco, iCatch + 2).join('\n');
 
 // eslint-disable-next-line no-new-func
-const { timeToSlot, PAUTA_ANAMNESE_LEMBRETE_TIMES } = new Function(
-  `${fnTimeToSlot}\n${linhaHorarios}\nreturn { timeToSlot, PAUTA_ANAMNESE_LEMBRETE_TIMES };`,
+const { timeToSlot, PAUTA_ANAMNESE_LEMBRETE_TIMES, UNICO_REAL } = new Function(
+  `${fnTimeToSlot}\n${linhaHorarios}\n${linhaUnicoPorUnidade}\nreturn { timeToSlot, PAUTA_ANAMNESE_LEMBRETE_TIMES, UNICO_REAL: PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE };`,
 )();
 
 // eslint-disable-next-line no-new-func
 const rodarBloco = new Function(
   'opts', 'now', 'slotNow', 'timeToSlot', 'supabase', 'require', 'PAUTA_ANAMNESE_LEMBRETE_TIMES',
+  'PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE',
   `return (async () => {\n${BLOCO}\n})();`,
 );
 
@@ -115,6 +122,12 @@ function mundo({
   // hora). Quem exercita a PRIMEIRA passada do dia passa recuperacaoFeita:false — sao os testes
   // do fim do arquivo.
   recuperacaoFeita = true, erroEnvioMensagem = null, erroChecagemRecuperacao = null,
+  // A CADENCIA POR UNIDADE (06/09). O default e a tabela REAL do dispatcher — os cenarios de
+  // cadencia no fim do arquivo provam o que o dono pediu sem redigitar hora nenhuma. Os
+  // cenarios de MECANISMO (idempotencia, abertura, guarda de duplicata, try/catch, recuperacao)
+  // passam `{}`: eles falam do caminho de hora em hora, que e o modo real do Recreio, e
+  // precisam das tres unidades falando no mesmo slot pra provar isolamento entre elas.
+  unicoPorUnidade = UNICO_REAL,
 } = {}) {
   // Abertura de cada unidade ja registrada: e a prova, em marker_logs, de que a pauta do dia saiu
   // no grupo. Sem ela o lembrete nao pode cobrar (Campo Grande abre as 10:00).
@@ -211,7 +224,7 @@ function mundo({
     const now = { ymd: YMD, hour: h, minute: m + minuto, dow: 5 };
     const slotNow = h * 60 + Math.floor((m + minuto) / 15) * 15;
     return semBarulho(
-      () => rodarBloco({ force: null }, now, slotNow, timeToSlot, supabase, requireFake, PAUTA_ANAMNESE_LEMBRETE_TIMES),
+      () => rodarBloco({ force: null }, now, slotNow, timeToSlot, supabase, requireFake, PAUTA_ANAMNESE_LEMBRETE_TIMES, unicoPorUnidade),
       console_,
     );
   };
@@ -223,17 +236,17 @@ function mundo({
 const contar = (arr, u) => arr.filter((x) => x[0] === u).length;
 
 test('bloco do lembrete: cada tick fala da PROXIMA hora (as 09:00 fala das 10:00, as 19:00 das 20:00)', async () => {
-  const w = mundo();
+  const w = mundo({ unicoPorUnidade: {} });
   await w.tick('09:00');
   assert.ok(w.chamadas.every(([, hora]) => hora === '10:00'), `esperava 10:00, veio ${JSON.stringify(w.chamadas)}`);
   assert.ok(w.enviadas.every((m) => m.content.startsWith('⏰ *Próxima hora — 10:00*')));
-  const w2 = mundo();
+  const w2 = mundo({ unicoPorUnidade: {} });
   await w2.tick('19:00');
   assert.ok(w2.chamadas.every(([, hora]) => hora === '20:00'), 'a ultima aula do dia e as 20:00');
 });
 
 test('bloco do lembrete: 3 ticks do MESMO slot mandam UMA mensagem por unidade, nao 3', async () => {
-  const w = mundo();
+  const w = mundo({ unicoPorUnidade: {} });
   await w.tick('15:00', 0);
   await w.tick('15:00', 5);
   await w.tick('15:00', 10);
@@ -242,11 +255,11 @@ test('bloco do lembrete: 3 ticks do MESMO slot mandam UMA mensagem por unidade, 
 });
 
 test('bloco do lembrete: os 11 slots disparam — e so eles', async () => {
-  const w = mundo();
+  const w = mundo({ unicoPorUnidade: {} });
   assert.strictEqual(PAUTA_ANAMNESE_LEMBRETE_TIMES.length, 11, '09:00 as 19:00, de hora em hora');
   for (const h of PAUTA_ANAMNESE_LEMBRETE_TIMES) await w.tick(h);
   assert.strictEqual(w.enviadas.length, 33, '11 slots x 3 unidades');
-  const w2 = mundo();
+  const w2 = mundo({ unicoPorUnidade: {} });
   await w2.tick('08:00');   // antes do primeiro slot
   await w2.tick('20:00');   // depois do ultimo
   await w2.tick('09:30');   // meio de hora nao e slot
@@ -256,7 +269,7 @@ test('bloco do lembrete: os 11 slots disparam — e so eles', async () => {
 
 test('bloco do lembrete: unidade SEM a mensagem de abertura fica quieta — e deixa rastro', async () => {
   // Campo Grande abre as 10:00: as 09:00 ela nao pode ser cobrada sem ter recebido a pauta do dia.
-  const w = mundo({ abertura: ['u-recreio', 'u-barra'] });
+  const w = mundo({ unicoPorUnidade: {}, abertura: ['u-recreio', 'u-barra'] });
   await w.tick('09:00');
   assert.strictEqual(w.enviadas.length, 2, 'so as duas que ja abriram');
   assert.ok(!w.enviadas.some((m) => m.group_id === 'grp-u-cg'));
@@ -269,7 +282,7 @@ test('bloco do lembrete: unidade SEM a mensagem de abertura fica quieta — e de
 });
 
 test('bloco do lembrete: hora sem ninguem pendente NAO manda mensagem, mas deixa rastro (zero por saude)', async () => {
-  const w = mundo({ resultado: () => ({ texto: null, alunos: [], motivo: null }) });
+  const w = mundo({ unicoPorUnidade: {}, resultado: () => ({ texto: null, alunos: [], motivo: null }) });
   await w.tick('13:00');
   assert.deepStrictEqual(w.enviadas, [], 'silencio ali e noticia boa, nao mensagem vazia');
   assert.strictEqual(w.inseridos.length, 3);
@@ -282,7 +295,7 @@ test('bloco do lembrete: hora sem ninguem pendente NAO manda mensagem, mas deixa
 });
 
 test('bloco do lembrete: fonte fora do ar NAO fala, diz por que, e NAO trava o slot', async () => {
-  const w = mundo({ resultado: () => ({ texto: null, alunos: [], motivo: 'fonte fora no lembrete: timeout' }) });
+  const w = mundo({ unicoPorUnidade: {}, resultado: () => ({ texto: null, alunos: [], motivo: 'fonte fora no lembrete: timeout' }) });
   await w.tick('11:00');
   assert.deepStrictEqual(w.enviadas, [], 'nunca "ninguem pendente" quando nao deu pra apurar');
   assert.ok(w.inseridos.every((m) => m.result === 'fallback'), 'falha nao pode travar a chave do slot');
@@ -296,7 +309,7 @@ test('bloco do lembrete: o MESMO lembrete nao sai duas vezes no mesmo slot, nem 
   // O pior desfecho desta feature: a mensagem entra no grupo REAL e o marker_logs falha logo
   // depois. A guarda olha o ARTEFATO (o conteudo ja no grupo), nao o registro sobre ele.
   const mensagens = [{ group_id: 'grp-u-barra', content: `${TEXTO('16:00')}`, role: 'tom' }];
-  const w = mundo({ mensagens });
+  const w = mundo({ unicoPorUnidade: {}, mensagens });
   await w.tick('15:00');
   const daBarra = w.enviadas.filter((m) => m.group_id === 'grp-u-barra');
   assert.deepStrictEqual(daBarra, [], 'a mensagem ja estava no grupo — nao pode sair de novo');
@@ -307,20 +320,20 @@ test('bloco do lembrete: o MESMO lembrete nao sai duas vezes no mesmo slot, nem 
 
 test('bloco do lembrete: cabecalho de OUTRA hora no grupo nao bloqueia o lembrete desta hora', async () => {
   const mensagens = [{ group_id: 'grp-u-barra', content: TEXTO('11:00'), role: 'tom' }];
-  const w = mundo({ mensagens });
+  const w = mundo({ unicoPorUnidade: {}, mensagens });
   await w.tick('15:00');
   assert.strictEqual(w.enviadas.length, 3, 'a guarda casa por HORA — senao o lembrete das 16:00 nunca sairia');
 });
 
 test('bloco do lembrete: checagem de duplicata que falha NAO arrisca falar no escuro', async () => {
-  const w = mundo({ erroMensagemJaEnviada: 'PostgREST caiu' });
+  const w = mundo({ unicoPorUnidade: {}, erroMensagemJaEnviada: 'PostgREST caiu' });
   await w.tick('15:00');
   assert.deepStrictEqual(w.enviadas, [], 'falar duas vezes num grupo real e o pior desfecho');
   assert.ok(w.inseridos.every((m) => m.result === 'fallback'), 'o proximo tick tenta de novo com a leitura corrigida');
 });
 
 test('bloco do lembrete: throw numa unidade NAO mata as outras duas no mesmo tick', async () => {
-  const w = mundo({ explode: 'u-barra' });
+  const w = mundo({ unicoPorUnidade: {}, explode: 'u-barra' });
   await w.tick('17:00');
   assert.deepStrictEqual(w.chamadas.map(([u]) => u), UNIDADES, 'as tres precisam ser tentadas, na ordem');
   assert.strictEqual(w.enviadas.length, 2);
@@ -377,7 +390,7 @@ test('bloco do lembrete: o harness nao toca o banco — nenhum node_modules foi 
 });
 
 test('bloco do lembrete: o harness nao vaza log na suite — o rastro do bloco fica capturado', async () => {
-  const w = mundo({ explode: 'u-barra' });
+  const w = mundo({ unicoPorUnidade: {}, explode: 'u-barra' });
   await w.tick('09:00');
   assert.ok(w.console.length > 0, 'o bloco fala mesmo — e esse rastro que salva a depuracao em producao');
   assert.ok(w.console.every((l) => l.startsWith('log ') || l.startsWith('warn ') || l.startsWith('error ')));
@@ -391,7 +404,7 @@ test('bloco do lembrete: o harness nao vaza log na suite — o rastro do bloco f
 // marker_logs — e por isso so este harness alcanca.
 
 test('recuperacao: o PRIMEIRO lembrete do dia cobre a faixa; do segundo em diante, so a proxima hora', async () => {
-  const w = mundo({ recuperacaoFeita: false });
+  const w = mundo({ unicoPorUnidade: {}, recuperacaoFeita: false });
   await w.tick('09:00');
   assert.deepStrictEqual(w.chamadas, UNIDADES.map((u) => [u, '10:00', true]));
   assert.ok(w.enviadas.every((m) => m.content.startsWith('⏰ *Do começo do dia até as 10:00*')),
@@ -407,7 +420,7 @@ test('recuperacao: a unidade que abre mais tarde faz a faixa DELA, na primeira h
   // Campo Grande abre as 10:00: as 09:00 ela grava 'skipped' com a chave do lembrete daquela
   // hora. Esse marcador NAO pode aposentar a recuperacao dela — senao a unidade que abre por
   // ultimo seria justamente a que ficaria sem, que e o bug ao contrario.
-  const w = mundo({ recuperacaoFeita: false, abertura: ['u-recreio', 'u-barra'] });
+  const w = mundo({ unicoPorUnidade: {}, recuperacaoFeita: false, abertura: ['u-recreio', 'u-barra'] });
   await w.tick('09:00');
   assert.deepStrictEqual(w.chamadas, [['u-recreio', '10:00', true], ['u-barra', '10:00', true]]);
   w.marcadores.push({ result: 'executed', reason: `pauta_fala:u-cg:${YMD} itens=3` });
@@ -419,7 +432,7 @@ test('recuperacao: a unidade que abre mais tarde faz a faixa DELA, na primeira h
 });
 
 test('recuperacao: envio que falha NAO gasta a recuperacao — o proximo tick refaz a faixa inteira', async () => {
-  const w = mundo({ recuperacaoFeita: false, erroEnvioMensagem: 'PostgREST caiu' });
+  const w = mundo({ unicoPorUnidade: {}, recuperacaoFeita: false, erroEnvioMensagem: 'PostgREST caiu' });
   await w.tick('09:00');
   assert.deepStrictEqual(w.enviadas, []);
   assert.ok(w.inseridos.every((m) => m.result === 'fallback'), 'falha nao trava a chave da hora');
@@ -430,7 +443,7 @@ test('recuperacao: envio que falha NAO gasta a recuperacao — o proximo tick re
 });
 
 test('recuperacao: fonte fora do ar NAO gasta a recuperacao', async () => {
-  const w = mundo({ recuperacaoFeita: false, resultado: () => ({ texto: null, alunos: [], motivo: 'fonte fora: timeout' }) });
+  const w = mundo({ unicoPorUnidade: {}, recuperacaoFeita: false, resultado: () => ({ texto: null, alunos: [], motivo: 'fonte fora: timeout' }) });
   await w.tick('11:00');
   assert.deepStrictEqual(w.enviadas, [], 'nunca "ninguem pendente" quando nao deu pra apurar');
   const antes = w.chamadas.length;
@@ -440,7 +453,7 @@ test('recuperacao: fonte fora do ar NAO gasta a recuperacao', async () => {
 });
 
 test('recuperacao: faixa sem ninguem pendente APOSENTA a recuperacao — rodou e nao tinha ninguem', async () => {
-  const w = mundo({ recuperacaoFeita: false, resultado: () => ({ texto: null, alunos: [], motivo: null }) });
+  const w = mundo({ unicoPorUnidade: {}, recuperacaoFeita: false, resultado: () => ({ texto: null, alunos: [], motivo: null }) });
   await w.tick('09:00');
   assert.deepStrictEqual(w.enviadas, [], 'silencio ali e noticia boa');
   assert.ok(w.inseridos.some((m) => /^pauta_lembrete_recup:/.test(m.reason)),
@@ -453,7 +466,7 @@ test('recuperacao: faixa sem ninguem pendente APOSENTA a recuperacao — rodou e
 
 test('recuperacao: a guarda de duplicata cobre o cabecalho NOVO', async () => {
   const mensagens = [{ group_id: 'grp-u-barra', content: TEXTO_RECUP('10:00'), role: 'tom' }];
-  const w = mundo({ recuperacaoFeita: false, mensagens });
+  const w = mundo({ unicoPorUnidade: {}, recuperacaoFeita: false, mensagens });
   await w.tick('09:00');
   assert.deepStrictEqual(w.enviadas.filter((m) => m.group_id === 'grp-u-barra'), [],
     'a faixa ja estava no grupo — se a guarda nao enxergar o cabecalho novo, ela sai duas vezes');
@@ -467,7 +480,7 @@ test('recuperacao: a guarda de duplicata cobre o cabecalho NOVO', async () => {
 });
 
 test('recuperacao: checagem que falha NAO escolhe entre faixa e hora unica no escuro', async () => {
-  const w = mundo({ recuperacaoFeita: false, erroChecagemRecuperacao: 'PostgREST caiu' });
+  const w = mundo({ unicoPorUnidade: {}, recuperacaoFeita: false, erroChecagemRecuperacao: 'PostgREST caiu' });
   await w.tick('09:00');
   assert.deepStrictEqual(w.enviadas, [],
     'no escuro, ou repete gente num grupo real ou deixa alguem invisivel de novo');
@@ -487,4 +500,56 @@ test('recuperacao: a chave propria nao colide com a do lembrete e cabe no corte 
   assert.ok(!recup.reason.startsWith(`pauta_lembrete:${UUID_UNIDADE}`),
     "'pauta_lembrete:' nao pode ser prefixo de 'pauta_lembrete_recup:' — as duas chaves sao lidas por LIKE de prefixo");
   assert.ok(!CHAVE_ESPERADA.startsWith('pauta_lembrete_recup:'));
+});
+
+// ── A CADENCIA POR UNIDADE (06/09) ───────────────────────────────────────────────────────────
+// Pedido do time: "Recreio deixa do jeito que ta, de hora em hora. Barra so de manha, 9:00.
+// Campo Grande as 13:00, so." Os cenarios daqui usam a tabela REAL do dispatcher (default do
+// `mundo`) — nenhuma hora e redigitada, entao trocar a hora da Barra la muda o teste aqui.
+test('cadencia: as 15:00 so o Recreio fala — Barra e Campo Grande ficam quietas', async () => {
+  const w = mundo();
+  await w.tick('15:00');
+  assert.deepStrictEqual(w.enviadas.map((m) => m.group_id), ['grp-u-recreio'],
+    'unidade de mensagem unica nao pode falar fora da hora dela');
+});
+
+test('cadencia: a Barra fala na hora dela, e o Campo Grande na dele', async () => {
+  const manha = mundo();
+  await manha.tick('09:00');
+  assert.ok(manha.enviadas.some((m) => m.group_id === 'grp-u-barra'), 'a Barra nao falou as 09:00');
+  const tarde = mundo();
+  await tarde.tick('13:00');
+  assert.ok(tarde.enviadas.some((m) => m.group_id === 'grp-u-cg'), 'o Campo Grande nao falou as 13:00');
+  assert.ok(!tarde.enviadas.some((m) => m.group_id === 'grp-u-barra'), 'a Barra falou de novo a tarde');
+});
+
+test('cadencia: no dia inteiro sao 13 mensagens — 11 do Recreio, 1 da Barra, 1 do Campo Grande', async () => {
+  const w = mundo();
+  for (const h of PAUTA_ANAMNESE_LEMBRETE_TIMES) await w.tick(h);
+  const porGrupo = (g) => w.enviadas.filter((m) => m.group_id === g).length;
+  assert.strictEqual(porGrupo('grp-u-recreio'), PAUTA_ANAMNESE_LEMBRETE_TIMES.length);
+  assert.strictEqual(porGrupo('grp-u-barra'), 1);
+  assert.strictEqual(porGrupo('grp-u-cg'), 1);
+});
+
+test('cadencia: a unidade de mensagem unica NAO grava marcador nas horas em que nao fala', async () => {
+  const w = mundo();
+  await w.tick('15:00');
+  // So os marcadores DESTE bloco: `pauta_fala:` e `pauta_lembrete_recup:` sao fixtures que o
+  // `mundo` semeia, e contar fixture como escrita faria o teste passar por acidente.
+  const escritosAgora = w.marcadores
+    .map((m) => String(m.reason || ''))
+    .filter((r) => r.startsWith('pauta_dia:u-barra') || r.startsWith('pauta_lembrete:u-barra'));
+  assert.deepStrictEqual(escritosAgora, [],
+    '10 linhas por dia por unidade so pra dizer "hoje ela nao fala nesta hora" e ruido, nao rastro');
+});
+
+test('cadencia: a chave da mensagem do dia nao carrega hora — 3 ticks da mesma hora mandam UMA', async () => {
+  const w = mundo();
+  await w.tick('09:00', 0);
+  await w.tick('09:00', 5);
+  await w.tick('09:00', 10);
+  assert.strictEqual(w.enviadas.filter((m) => m.group_id === 'grp-u-barra').length, 1);
+  const chaves = w.marcadores.map((m) => String(m.reason || '')).filter((r) => r.includes('u-barra'));
+  assert.ok(chaves.some((r) => r.startsWith('pauta_dia:u-barra:')), `chave errada: ${JSON.stringify(chaves)}`);
 });

@@ -155,6 +155,12 @@ const PAUTA_ANAMNESE_REFRESH_TIMES = ['09:00', '11:00', '13:00', '15:00', '17:00
 // mensagem de abertura da unidade. Quem faz cada unidade entrar na hora certa NAO e esta lista e
 // sim o marcador da abertura dela (Recreio 08:00, Barra 09:00, Campo Grande 10:00) — ver o bloco.
 const PAUTA_ANAMNESE_LEMBRETE_TIMES = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
+// UMA MENSAGEM POR DIA, por pedido do time (06/09). Barra e Campo Grande nao querem o lembrete
+// de hora em hora; o Recreio quer e fica como esta (unidade ausente desta tabela = de hora em
+// hora). A mensagem dessas duas cobre o DIA INTEIRO, nao a hora seguinte — uma unica mensagem
+// as 09:00 falando da proxima hora deixaria a tarde toda invisivel, que foi o defeito de 04/09.
+// Por NOME e nao por uuid: a tabela e lida por gente, e o nome e o que o dono usa pra pedir.
+const PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE = { 'Barra': '09:00', 'Campo Grande': '13:00' };
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
 const OPS_DIGEST_TIME = '07:30';                // Every day — achados da auditoria no grupo de ops (após triagem das 5h)
@@ -4736,7 +4742,19 @@ async function run(opts = {}) {
           // Idempotencia por unidade E POR HORA: o cron bate cada slot 3x, e sao 11 slots por dia.
           // Com a chave do dia, o lembrete das 09:00 travaria os dez seguintes; sem chave nenhuma,
           // a mesma mensagem sairia 3x em cada slot num grupo real de WhatsApp.
-          const chaveLembrete = `pauta_lembrete:${unidadeId}:${now.ymd}:${_lembreteProxima}`;
+          // A UNIDADE QUE FALA UMA VEZ POR DIA sai por aqui nas outras dez horas. Sem marcador:
+          // gravar 'skipped' 10x por dia por unidade so pra dizer "hoje ela nao fala nesta hora"
+          // encheria marker_logs de linha que nao e desfecho de nada.
+          const _horaUnicaDaUnidade = PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE[situAl.nomeDaUnidade(unidadeId)] || null;
+          const _ehMensagemDoDia = !!_horaUnicaDaUnidade;
+          if (_ehMensagemDoDia && _pautaLembreteHora !== _horaUnicaDaUnidade) continue;
+
+          // CHAVE PROPRIA pra mensagem do dia: `pauta_lembrete:<u>:<ymd>:<hora>` carrega a hora
+          // SEGUINTE, e a mensagem do dia nao fala de hora nenhuma. Prefixo distinto tambem evita
+          // que os dois LIKEs se cruzem se a unidade trocar de modo no meio do dia.
+          const chaveLembrete = _ehMensagemDoDia
+            ? `pauta_dia:${unidadeId}:${now.ymd}`
+            : `pauta_lembrete:${unidadeId}:${now.ymd}:${_lembreteProxima}`;
           // So EXECUTED/SKIPPED travam a retentativa: 'fallback' significa "deu errado, tenta de
           // novo" e precisa poder rodar de novo dentro do slot. Mesmo filtro dos outros blocos.
           const { data: jaLembrou, error: erroJaLembrou } = await supabase.from('marker_logs')
@@ -4808,7 +4826,9 @@ async function run(opts = {}) {
             console.error(`[Pauta] lembrete: checagem da recuperacao do dia falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaRecuperou.message}`);
             continue;
           }
-          const ehRecuperacao = !(jaRecuperou && jaRecuperou.length);
+          // A mensagem do dia JA cobre do comeco ao fim do dia — recuperacao ali seria a mesma
+          // coisa duas vezes, com a chave errada.
+          const ehRecuperacao = !_ehMensagemDoDia && !(jaRecuperou && jaRecuperou.length);
           // Aposenta a recuperacao desta unidade hoje. So e chamada nos desfechos RESOLVIDOS
           // (mandou / rodou e nao tinha ninguem / a mensagem ja estava no grupo) e sempre DEPOIS
           // do marcador da hora: se o envio falhar ou a fonte cair, a recuperacao continua
@@ -4838,7 +4858,7 @@ async function run(opts = {}) {
           // orquestracao: idempotencia, guardas e envio.
           const r = await lembreteDaProximaHora({
             laReport: laReportClient, unidadeId, hoje: now.ymd, hora: _lembreteProxima,
-            recuperacao: ehRecuperacao,
+            recuperacao: ehRecuperacao, diaInteiro: _ehMensagemDoDia,
           });
           if (r.motivo) {
             // FONTE FORA DO AR: nao fala. Nunca "ninguem pendente" quando na verdade nao deu pra
