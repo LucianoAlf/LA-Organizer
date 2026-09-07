@@ -33,6 +33,12 @@ printf '%s
 ALERTAFALSO
 chmod 0700 "$BIN/alertar.sh" "$BIN/check-backup.sh"
 CB="$BIN/check-backup.sh"
+# Foto da telemetria REAL antes de tudo: o cenario que roda o drill de verdade ja escreveu nela
+# uma vez (06/09), e nenhum teste tem o direito de mexer no arquivo que a sentinela de producao
+# le pra decidir se a casa tem backup restauravel.
+TELEM_PROD=/opt/backups/la-organizer/db/runs.jsonl
+TELEM_PROD_ANTES=$(wc -l < "$TELEM_PROD" 2>/dev/null || echo ausente)
+
 export ALERTAS_CAPTURADOS="$D/alertas-capturados.txt"; : > "$ALERTAS_CAPTURADOS"
 
 # varredura sempre saudavel: nao e o que este teste mede
@@ -157,6 +163,13 @@ echo "== o proprio restore-drill recusa conjunto sem manifesto =="
 # Sem isto, a sentinela so trataria o sintoma: quem GRAVA `ausente` e o drill. A checagem
 # fica ANTES do docker de proposito, para ser reproduzivel em qualquer host.
 RD="$AQUI/restore-drill.sh"
+# TELEMETRIA TAMBEM E PRODUCAO (06/09). O harness ja isolava os DADOS (CHECK_BACKUP_DEST) e o
+# CANAL (alertar.sh falso ao lado da copia). Faltava a TERCEIRA superficie: o drill grava no
+# runs.jsonl, e o default dele e o de producao. Enquanto o drill morria ANTES do bloco de
+# telemetria isso nao aparecia; quando ele ganhou o trap que carimba a morte (932a178b), este
+# cenario passou a escrever duas linhas `morreu` na telemetria REAL — e a sentinela de producao
+# ficou CRITICO por causa de um teste. Mesma licao das outras duas superficies, terceira vez.
+export TELEMETRY_DRILL="$D/runs-drill-teste.jsonl"
 if [ -x "$RD" ]; then
   mkdir -p "$D/semman"
   printf 'DUMP FALSO\n' > "$D/semman/x.dump"
@@ -200,6 +213,14 @@ espera critico "morreu no meio: grita hoje, com o atestado AINDA dentro da janel
 
 drill_telem reprovado 10
 espera critico "reprovado tambem grita pelo desfecho, nao so pelo atestado"
+
+echo "== a telemetria de PRODUCAO nao pode ter sido tocada =="
+TELEM_PROD_DEPOIS=$(wc -l < "$TELEM_PROD" 2>/dev/null || echo ausente)
+if [ "$TELEM_PROD_DEPOIS" = "$TELEM_PROD_ANTES" ]; then
+  ok "runs.jsonl de producao intocado ($TELEM_PROD_ANTES linha(s))"
+else
+  falhou "o teste ESCREVEU na telemetria de producao ($TELEM_PROD_ANTES -> $TELEM_PROD_DEPOIS)"
+fi
 
 echo "== o canal de alerta NAO pode ter saido do sandbox =="
 if [ -s "$ALERTAS_CAPTURADOS" ]; then
