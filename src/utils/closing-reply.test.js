@@ -495,3 +495,47 @@ test('parseClosingReply: zero-regressão — numerada, globais e negação intac
   // ALIGN (tudo COM ressalva) segue caindo no LLM
   assert.strictEqual(parseClosingReply('fiz tudo menos a 2', 3).matched, false);
 });
+
+// ---------------------------------------------------------------------------
+// PERGUNTA-VIRA-BAIXA (medido 07/09, no MESMO dia em que a regra de último recurso
+// entrou — achado pela sonda rodando sobre o acervo aberto inteiro).
+//
+// O detectUserConfirmation abre com STRONG_YES_OPEN: qualquer frase começada por
+// "isso/sim/claro", sem ressalva, volta 'yes' — inclusive uma PERGUNTA. A fala abaixo
+// é real (achado edba1c46, 20/06) e virava ["done"] com 1 item.
+//
+// No caminho ANCORADO o confirmationBindOk já barrava (frase-longa que não cita a
+// âncora não amarra). O caminho do fechamento não passa por aquele portão, então a
+// trava mora aqui e espelha a MESMA regra: ≤4 palavras é genérico e vale; frase-longa
+// só confirma com sinal explícito de conclusão ou marcador global; e pergunta nunca
+// confirma. Restringir a regra nova só devolve casos ao comportamento anterior.
+// ---------------------------------------------------------------------------
+test('parseClosingReply: PERGUNTA não dá baixa (fala real do achado edba1c46)', () => {
+  const r = parseClosingReply('isso era pra mim mesmo? 🤔', 1);
+  assert.strictEqual(r.matched, false);
+  assert.deepStrictEqual(r.statuses, ['none']);
+});
+
+for (const pergunta of ['isso aqui era pra mim?', 'era essa mesmo que você queria?', 'ok?', 'sim?']) {
+  test(`parseClosingReply: "${pergunta}" é pergunta, não confirmação`, () => {
+    assert.strictEqual(parseClosingReply(pergunta, 1).matched, false);
+  });
+}
+
+test('parseClosingReply: frase-longa SEM sinal de conclusão não fecha', () => {
+  // 6 palavras, começa com afirmador, mas não diz que fez nada.
+  assert.strictEqual(parseClosingReply('isso mesmo que eu tava pensando', 1).matched, false);
+});
+
+test('parseClosingReply: frase-longa COM sinal de conclusão continua fechando', () => {
+  // A trava não pode comer a confirmação legítima longa (fala real, 07/2026).
+  const r = parseClosingReply('Já fiz, tom, pode tirar', 1);
+  assert.strictEqual(r.matched, true);
+  assert.deepStrictEqual(r.statuses, ['done']);
+});
+
+test('parseClosingReply: a trava não mexe nas afirmativas curtas', () => {
+  for (const f of ['sim', 'Sim rolou', 'feito', 'ok', 'Tudo finalizado']) {
+    assert.strictEqual(parseClosingReply(f, 1).matched, true, `"${f}" deveria seguir fechando`);
+  }
+});

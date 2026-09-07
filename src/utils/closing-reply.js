@@ -215,7 +215,21 @@ function parseClosingReply(userText, count) {
   // n === 1: não existe alvo ambíguo — a afirmativa fecha o único item.
   // n  >  1: exige marcador GLOBAL explícito. Um "Sim" pelado com 3 itens segue indo pro LLM:
   //          fechar a tarefa errada é a dor #1 do TASK_UPDATE, pior que o drop.
+  // PERGUNTA-VIRA-BAIXA (medido 07/09, no mesmo dia em que a regra acima entrou). O
+  // detectUserConfirmation abre com STRONG_YES_OPEN: qualquer frase que COMECE com
+  // "isso/sim/claro" e nao tenha ressalva volta 'yes' — inclusive uma PERGUNTA. Achei no
+  // acervo a fala real "isso era pra mim mesmo? 🤔", que virava ["done"] com 1 item.
+  // No caminho ANCORADO isso ja era barrado pelo confirmationBindOk (frase-longa que nao
+  // cita a ancora nao amarra); o caminho do fechamento nao passa por aquele portao, entao
+  // a trava vem aqui, espelhando a MESMA regra: ate 4 palavras e generico e vale;
+  // frase-longa so confirma se carregar sinal EXPLICITO de conclusao ou marcador global.
+  // E pergunta nao e confirmacao: quem termina em "?" esta perguntando, nao dando baixa.
+  const _palavras = t.split(/\s+/).filter(Boolean).length;
+  const _ehPergunta = /\?\s*[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\s]*$/u.test(t);
+  const _sinalForte = DONE_EXPLICIT_RE.test(t) || GLOBAL_MARKER_RE.test(t);
   if (!CANCEL_RE.test(t) && !PROGRESS_RE.test(t)
+      && !_ehPergunta
+      && (_palavras <= 4 || _sinalForte)
       && detectUserConfirmation(t, { allowDone: true }) === 'yes'
       && (n === 1 || GLOBAL_MARKER_RE.test(t))) {
     return { matched: true, statuses: new Array(n).fill('done') };
