@@ -38,9 +38,16 @@ const PRESET_CONFIG = {
 //
 // A fonte é a mesma da pauta: `aulas_emusys` do LA Report, pela unidade DO GRUPO
 // (work_groups.la_report_unidade_id). Um teto nacional não serviria: a escola às vezes abre em
-// feriado e às vezes fecha fora dele — o calendário é o que manda. Medido no dia: a Barra
-// tinha 0 aula (141 na sexta, 103 na terça) e as 3 aulas do dia eram todas do Recreio, que
-// portanto SEGUE recebendo o digest. É por unidade, não por empresa.
+// feriado e às vezes fecha fora dele — o calendário é o que manda.
+//
+// Medido no dia (e a primeira leitura estava ERRADA, fica registrado): a Barra tinha 0 linha
+// no calendário — 141 na sexta, 103 na terça. O Recreio tinha 3 linhas, o que parecia dizer
+// "essa unidade trabalhou"; conferindo uma a uma, as três estavam `cancelada = true`. Ou seja,
+// 07/09 fechou nas TRÊS unidades. É por isso que o filtro `cancelada = false` está aqui e é o
+// mesmo do roster da pauta: contar linha bruta responderia a pergunta errada.
+//
+// O portão continua sendo POR UNIDADE, e não por empresa, porque o calendário permite uma
+// unidade abrir enquanto outra fecha — só que HOJE não foi esse o caso.
 //
 // SÓ os presets DIÁRIOS entram. `weekly`/`monthly` são resumos de período, não cobrança do
 // dia: calar um resumo mensal porque caiu em feriado esconderia o mês inteiro.

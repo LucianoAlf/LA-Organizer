@@ -5,9 +5,13 @@
 // O `weekdays` cobre sábado e domingo e mais nada. A pauta de anamnese já lia o calendário
 // desde 06/09 e ficou calada no mesmo dia — este ritual é OUTRO e nunca soube.
 //
-// Números reais do dia, que são o que define o desenho: Barra 0 aulas (141 na sexta, 103 na
-// terça); as 3 aulas de 07/09 eram TODAS do Recreio. Por isso o portão é POR UNIDADE: o
-// Recreio segue recebendo, a Barra não.
+// Números reais do dia: a Barra tinha 0 linha no calendário (141 na sexta, 103 na terça). O
+// Recreio tinha 3 linhas — e conferindo uma a uma, as TRÊS estavam canceladas. 07/09 fechou
+// nas três unidades. Por isso o filtro `cancelada = false` importa: contar linha bruta
+// responderia a pergunta errada e deixaria o Recreio sendo cobrado num dia sem aula.
+//
+// O portão é POR UNIDADE porque o calendário PERMITE uma abrir e outra fechar — os testes
+// abaixo exercitam esse caso com dublê, mesmo ele não tendo ocorrido em 07/09.
 
 const assert = require('node:assert');
 const { test } = require('node:test');
@@ -46,7 +50,7 @@ test('feriado: unidade SEM aula hoje → não envia (caso Barra 07/09)', async (
   assert.match(r.motivo, /nao tem aula hoje/);
 });
 
-test('mesmo dia, unidade COM aula → envia (caso Recreio 07/09)', async () => {
+test('mesmo dia, unidade COM aula → envia (uma unidade aberta não é calada pela outra)', async () => {
   const r = await escolaAbertaHoje({
     laReport: fakeLaReport({ [UNI_RECREIO]: 3 }), unidadeId: UNI_RECREIO, ymd: '2026-09-07',
   });
