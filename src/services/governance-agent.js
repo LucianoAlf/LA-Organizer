@@ -111,8 +111,33 @@ async function carregarAcervo(sb) {
   }
 }
 
+// VITALIDADE DAS FATIAS DE PARSE-ON-OPEN (07/09). A confirmacao so executa sozinha quando a
+// intent NASCE com alca no payload, e a alca vem de um parser que le a pergunta do TOM. Quando
+// a prosa do LLM deixa de casar a ancora literal do parser, a alca some SEM ERRO e SEM LOG — a
+// confirmacao volta a cair no LLM e o usuario ve "o TOM repetiu a pergunta". Foi assim que o
+// Fechamento do dia passou meses recusando o "sim" que ele mesmo pedia (69f2c51e).
+//
+// Sem isto o agente nao tem COMO enxergar essa familia: nao ha excecao pra capturar, so uma
+// ausencia. Nunca lanca — medicao que derruba o ciclo e pior que medicao ausente.
+const JANELA_VITALIDADE_DIAS = Number(process.env.TOM_GOV_VITALIDADE_DIAS || 30);
+
+async function carregarVitalidade(sb) {
+  try {
+    const desde = new Date(Date.now() - JANELA_VITALIDADE_DIAS * 86400000).toISOString();
+    const { data } = await sb.from("pending_intents")
+      .select("question_text, payload, asked_at")
+      .eq("kind", "confirmation")
+      .gte("asked_at", desde);
+    const { vitalidadeDasFatias } = require("../lib/vitalidade-parse-on-open");
+    return vitalidadeDasFatias(Array.isArray(data) ? data : []);
+  } catch (e) {
+    console.warn("[GovAgent] vitalidade nao medida:", e.message);
+    return null;
+  }
+}
+
 /** O pedido que vai ao agente. O protocolo inteiro vai no briefing; aqui vai o estado do dia. */
-function montarPedido(placar, acervo) {
+function montarPedido(placar, acervo, vitalidade) {
   const p = placar || { fechados: 0, reincidentes: [], emParada: [], taxa: 0 };
   const parada = p.emParada.length
     ? `\n\n🛑 EM PARADA — NÃO corrija nada destas famílias, elas já voltaram 2x depois de um fix seu: `
@@ -135,6 +160,12 @@ Categoria com muitos abertos espalhados por MUITOS DIAS e cronica, nao novidade:
           + `e a raiz comum dela. E NAO escreva "novo" pra defeito que aparece desde junho.`
         : '')
     : '';
+  // Bloco de vitalidade: some inteiro quando nao ha fatia doente (blocoDoLaudo devolve "").
+  let blocoVital = "";
+  try {
+    const { blocoDoLaudo } = require("../lib/vitalidade-parse-on-open");
+    blocoVital = blocoDoLaudo(vitalidade) || "";
+  } catch (e) { console.warn("[GovAgent] bloco de vitalidade:", e.message); }
   return `Rode o ciclo de governança de hoje, seguindo o protocolo do seu briefing na ordem.
 
 ETAPA 1 já foi medida pra você (confira no banco se quiser, mas não repita o trabalho):
@@ -142,7 +173,7 @@ ETAPA 1 já foi medida pra você (confira no banco se quiser, mas não repita o 
 - Reincidentes: ${p.reincidentes.length}${reincid}
 - Taxa de reincidência: ${(p.taxa * 100).toFixed(0)}%${parada}
 
-Agora siga da ETAPA 2 em diante.${blocoAcervo}
+Agora siga da ETAPA 2 em diante.${blocoAcervo}${blocoVital}
 
 TETO DE CORREÇÃO: **DUAS correções por rodada** (subiu de 1 em 02/09 — o acervo entrava mais
 rápido do que saía). Escolha o 1º achado de preferência dos últimos ${JANELA_FINDINGS_DIAS} dias,
@@ -203,11 +234,12 @@ async function rodarCicloGovernanca(sb, { postar, ymd, force = false, rodar = nu
 
   const placar = await carregarPlacar(sb);
   const acervo = await carregarAcervo(sb);
+  const vitalidade = await carregarVitalidade(sb);
   const executar = rodar || ((pedido) => opsAgent.runOpsAgent(pedido, {
     quem: 'o ciclo automático de governança', briefing, timeoutMs: GOV_TIMEOUT_MS,
   }));
 
-  const r = await executar(montarPedido(placar, acervo), { briefing });
+  const r = await executar(montarPedido(placar, acervo, vitalidade), { briefing });
   const texto = (r && typeof r.text === 'string' && r.text.trim())
     ? r.text
     : '⚠️ Rodei o ciclo de governança e voltei sem texto — isso é bug meu, não resultado. Não mexi em nada.';
@@ -245,6 +277,6 @@ function registrarLog(sb, ymd, detail) {
 }
 
 module.exports = {
-  rodarCicloGovernanca, montarPedido, montarBriefing, carregarPlacar, carregarAcervo,
+  rodarCicloGovernanca, montarPedido, montarBriefing, carregarPlacar, carregarAcervo, carregarVitalidade,
   GOV_TIMEOUT_MS, JANELA_FINDINGS_DIAS,
 };

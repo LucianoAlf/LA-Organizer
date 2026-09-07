@@ -64,6 +64,47 @@ Casos reais que criaram esta etapa (Rose):
 Na dúvida entre bug e feature, trate como FEATURE e pergunte no grupo. Errar pra esse lado
 custa uma mensagem; errar pro outro coloca funcionalidade não pedida em produção.
 
+## ETAPA 2.6 — A alça que sumiu (bloco de VITALIDADE)
+
+Quando o TOM pergunta "confirma?", a confirmação só executa **sozinha** se a intent nascer
+com uma **alça** no payload: `coordination`, `batch_complete`, `delegation`, `reschedule`.
+Cada alça é estagiada por um parser que lê a pergunta que o TOM acabou de escrever. Se a
+prosa do LLM deixa de casar a âncora literal do parser, **a alça some sem erro e sem log** —
+a confirmação volta a cair no LLM, e o usuário vê "o TOM repetiu a pergunta em vez de fazer".
+
+Essa família não tem exceção pra capturar: ela é uma **ausência**. Por isso o seu pedido traz
+um bloco de VITALIDADE com três números por fatia, e **a diferença entre eles é o**
+**diagnóstico** — não trate nenhum dos três como achado antes de ler qual é:
+
+| leitura | significa | é achado? |
+|---|---|---|
+| tema > 0 e **parser 0** | o TOM falou disso e o parser não casou nenhuma vez: a âncora literal envelheceu | **sim** — investigue a âncora |
+| parser > 0 e **estagiou 0** | o parser casou e nada foi estagiado: o furo está DEPOIS dele (a resolução título→id é fail-closed e pode estar fechada sempre) | **sim** — investigue o resolvedor |
+| **tema 0** | não houve pergunta desse assunto no período | **não.** A fatia dorme; isso não é defeito |
+
+⚠️ **Antes de abrir achado, confira a data em que o parser NASCEU:**
+
+```bash
+git log --diff-filter=A -1 --format=%ad --date=short -- <arquivo-do-parser>
+```
+
+Pergunta **anterior** ao nascimento do parser não prova nada. Isto não é zelo teórico: em
+07/09 as três fatias tinham ZERO estágios em quatro meses e a leitura ingênua era "estão as
+três quebradas" — mas todas as perguntas medidas eram de junho e julho, e os parsers nasceram
+em 16/08 e 24/08. Era falta de oportunidade, não defeito. **Quem pulou esse passo estava a um
+passo de mandar consertar o que não estava quebrado.**
+
+E a recíproca vale: no mesmo dia, com a janela certa, a medição achou um defeito real — em
+04/09 o TOM escreveu `Vou reagendar: • *tarefa 0c528968* → 04/09 … Confirma?`, exatamente o
+formato que o parser espera; ele casou e nada foi estagiado, porque o "título" era um
+**short-id** e o resolvedor procura por título. Fail-closed correto, resultado inútil.
+
+A origem da família: o Fechamento do dia pedia, com estas palavras, «fez? Me diz: "sim" ou
+"não rolou"» — e o parser recusava "sim". Nove de vinte afirmativas não fechavam nada, e em
+sete delas a intent morria como `superseded`, que é a assinatura de "o TOM repetiu a
+confirmação". Corrigido em 07/09, commit `69f2c51e`.
+
+
 ## ETAPA 3 — Refute antes de acreditar
 
 Nesta ordem, sem pular:
