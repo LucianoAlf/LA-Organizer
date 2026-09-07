@@ -9084,7 +9084,7 @@ async function processMessage(phone, text, raw = {}) {
     // confirm-janela-paridade.test.js. O estagiado tem que alcançar tudo que o genérico alcança.
     const _rsOpen = _openIntents.find((i) => i.kind === 'reschedule_confirm' && withinConfirmWindow(i.asked_at, FRESH_WINDOW_MIN));
     if (_rsOpen) {
-      const _yn = pendingIntents.detectUserConfirmation(String(text || ''));
+      const _yn = pendingIntents.detectUserConfirmation(stripReplyScaffold(String(text || '')).userText);
       if (_yn === 'yes') {
         const _acts = (_rsOpen.payload && Array.isArray(_rsOpen.payload.actions)) ? _rsOpen.payload.actions : [];
         const _res = _acts.length ? await applyTaskActions(collab, _acts, { inboundText: text }) : { okCount: 0, failCount: 0 };
@@ -9119,7 +9119,7 @@ async function processMessage(phone, text, raw = {}) {
     // aqui também é detectUserConfirmation, então o auto-resolve genérico sombreia este ramo.
     const _ecOpen = _openIntents.find((i) => i.kind === 'event_create_confirm' && withinConfirmWindow(i.asked_at, FRESH_WINDOW_MIN));
     if (_ecOpen) {
-      const _yn = pendingIntents.detectUserConfirmation(String(text || ''));
+      const _yn = pendingIntents.detectUserConfirmation(stripReplyScaffold(String(text || '')).userText);
       if (_yn === 'yes') {
         const _evs = (_ecOpen.payload && Array.isArray(_ecOpen.payload.events)) ? _ecOpen.payload.events : [];
         const _res = _evs.length ? await applyEventActions(collab, _evs) : { okCount: 0, failCount: 0 };
@@ -9164,7 +9164,7 @@ async function processMessage(phone, text, raw = {}) {
       // confirm-precedence.js.
       if (finOpen.payload && finOpen.payload.form === 'launch_confirm'
           && !confirmPrecedence.launchConfirmYields(_openIntents, finOpen)) {
-        const conf = pendingIntents.detectUserConfirmation(String(text || ''));
+        const conf = pendingIntents.detectUserConfirmation(stripReplyScaffold(String(text || '')).userText);
         // Confirmação GENEROSA (aceita "confirmado"/"pode lançar" — FIN-CONFIRM-WORD-NARROW, Alf 22/06)
         // MAS trava NEGAÇÃO: "Não lança" casava só o verbo "lança" e lançava contra o "não" (Rose
         // 11/07 23:40 → 11 itens gravados sem OK). detectLaunchConfirm resolve yes/no/null com guarda
