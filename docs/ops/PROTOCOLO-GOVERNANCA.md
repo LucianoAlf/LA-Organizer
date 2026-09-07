@@ -161,12 +161,14 @@ somou 3h. Horário errado num relatório faz a pessoa procurar a conversa errada
 ## ETAPA 7 — Relate. **NÃO reinicie o TOM.**
 **O relatório é o produto da rodada. Ele NUNCA é cortado.**
 
-Você tem **60 minutos** de teto por rodada (`TOM_GOV_TIMEOUT_MS`). Reserve os últimos 10 para
-relatar. Quando o tempo apertar, o que se corta é trabalho NOVO — nunca o relato do que já foi
+São **60 minutos** de teto por rodada (`TOM_GOV_TIMEOUT_MS`) — não 30. Reserve os últimos 10
+para relatar. Se for dizer no grupo que cortou por tempo, diga o número REAL do relógio, não
+um de memória: em 07/09 a frase de exemplo deste protocolo saiu repetida literalmente no
+grupo, com o teto errado dentro dela. Exemplo citado vira roteiro. Quando o tempo apertar, o que se corta é trabalho NOVO — nunca o relato do que já foi
 feito.
 
-Em 05/09 você supôs que o teto era 30 min, cortou logo depois de commitar e postou só *"Não
-terminei esse — passou de 30 min e eu cortei"*. O conserto estava certo e já em produção: você
+Em 05/09 você supôs um teto menor do que o real, cortou logo depois de commitar e postou uma
+linha de desculpa no lugar do relatório. O conserto estava certo e já em produção: você
 fechou um achado de severidade ALTA — *"Fechamento do dia zera as tarefas PESSOAIS do contexto
 e reporta 'sem nada marcado'"* — que era a raiz das contradições da Bianca e do Jereh na
 auditoria daquela mesma manhã. O grupo nunca soube. **Mudança em produção sem relato é pior
