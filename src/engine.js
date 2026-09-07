@@ -12678,7 +12678,13 @@ Output AGORA, apenas o marker:`;
       } else {
         const result = okCount > 0 ? 'executed' : 'rejected';
         const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
-        await logMarker(collab.id, 'EVENT_CREATE', result, reason, null);
+        // RAW-CEGO (medido 07/09): 257 rejeicoes sem payload em 90 dias, em 19 tipos de
+        // marcador. Aqui eram 16, em 6 pessoas. Sem o raw, "all_failed:2" nao diz QUAL
+        // compromisso nem por que — e a investigacao vira garimpo de log de motor, que foi
+        // o custo real do incidente da Barra hoje. Mesmo formato do TASK_UPDATE (08/07,
+        // caso Leo) pro auditor ler um dialeto so. So na REJEICAO: sucesso nao precisa.
+        await logMarker(collab.id, 'EVENT_CREATE', result, reason,
+          result === 'rejected' ? { actions: parsedEv.actions } : null);
         let base = parsedEv.cleanText || '';
         if (failCount > 0 && okCount === 0) {
           // AUDIT-OPTIMISTIC-CONFIRM: remove "✅ Agendado!" antes do honesto.
@@ -12721,7 +12727,11 @@ Output AGORA, apenas o marker:`;
       const result = okCount > 0 ? 'executed' : (evAwaitingConfirm ? 'skipped' : 'rejected');
       const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}`
         : (evAwaitingConfirm ? `awaiting_confirm:${failCount}` : `all_failed:${failCount}`);
-      await logMarker(collab.id, 'EVENT_UPDATE', result, reason, null);
+      // RAW-CEGO: 18 rejeicoes sem payload. Diferente do EVENT_CREATE, aqui existe
+      // `evFailMessages` — a fala honesta que foi pro usuario. Guardar as duas coisas
+      // (o que se tentou + o que se disse) e o que permite reconstruir o turno depois.
+      await logMarker(collab.id, 'EVENT_UPDATE', result, reason,
+        result === 'rejected' ? { actions: parsedEU.actions, fails: (evFailMessages || []).slice(0, 3) } : null);
       let base = parsedEU.cleanText || '';
       if (failCount > 0 && okCount === 0) {
         // F5: se a "falha" foi a guarda temporal, ela é uma PERGUNTA de confirmação —
