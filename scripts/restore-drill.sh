@@ -237,10 +237,16 @@ else
       [ -n "$linha" ] || continue
       nome=${linha%%:*}
       # mesma correcao do baseline: is_called vem da RELATION, nao de last_value is not null.
-      obt=$(q "select coalesce((xpath('/row/last_value/text()',q.x))[1]::text,'') || ':' || "
-             "coalesce((xpath('/row/is_called/text()',q.x))[1]::text,'false') "
-             "from pg_sequences s, lateral (select query_to_xml(format('select last_value, is_called from %I.%I', s.schemaname, s.sequencename),false,true,'') as x) q "
-             "where s.schemaname='public' and s.sequencename='$nome'" 2>/dev/null | tr -d '[:space:]')
+      # UMA string so (06/09). Antes eram QUATRO strings adjacentes separadas por quebra de
+      # linha — e bash nao concatena isso: a 1a virava SQL incompleto e as outras 3 ele tentava
+      # EXECUTAR como comando ("coalesce(...): No such file or directory"). O drill morria aqui,
+      # sem atestado e sem parcial, e ainda saia com exit 0. Quebrou em 29/08 e passou dois
+      # domingos calado; quem viu foi a sentinela, dizendo "recuperacao NAO comprovada".
+      # Aspas duplas aceitam quebra de linha DENTRO delas — o que nao pode e fechar e reabrir.
+      obt=$(q "select coalesce((xpath('/row/last_value/text()',q.x))[1]::text,'') || ':' ||
+coalesce((xpath('/row/is_called/text()',q.x))[1]::text,'false')
+from pg_sequences s, lateral (select query_to_xml(format('select last_value, is_called from %I.%I', s.schemaname, s.sequencename),false,true,'') as x) q
+where s.schemaname='public' and s.sequencename='$nome'" 2>/dev/null | tr -d '[:space:]')
       seq_verificar "$linha" "$obt"; rc=$?
       case $rc in
         0) SEQ_OK=$((SEQ_OK+1)) ;;
