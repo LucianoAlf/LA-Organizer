@@ -513,7 +513,13 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         // grupo" e ninguém — nem ela, nem nós no log — descobria QUAL nome ele tentou. Mostrar o
         // título pedido é o que transforma "não achei" em algo que dá pra conferir na hora.
         const _pedido = ((failed[0] || {}).action || {}).title;
-        actions.push({ kind: 'task', status: 'fail', label: _pedido ? `"${String(_pedido).slice(0, 60)}"` : 'Tarefa', detail: friendlyTaskFail((failed[0] || {}).why) });
+        // FALHA-COM-VERBO-ERRADO (Krissya, Barra 07/09): ela pediu "deixa essa tarefa atrasada
+        // para amanhã" — um REAGENDAMENTO — e leu "tentei mas não consegui CONCLUIR". O verbo era
+        // fixo na prosa, então toda falha virava "concluir", qualquer que fosse a ação tentada.
+        // Dizer que tentou fechar a tarefa quando tentou mover o prazo ensina a pessoa uma coisa
+        // errada sobre o que aconteceu — e essa casa trata isso como mentira, não como estilo.
+        const _verboFalho = ((failed[0] || {}).action || {}).action || null;
+        actions.push({ kind: 'task', status: 'fail', label: _pedido ? `"${String(_pedido).slice(0, 60)}"` : 'Tarefa', detail: friendlyTaskFail((failed[0] || {}).why), verbo: _verboFalho });
         console.warn(`[GroupChat] task FAIL grupo=${groupId} pedido="${String(_pedido || '').slice(0, 60)}" why=${(failed[0] || {}).why}`);
       }
       // SENSOR (03/09, caso Gabriela): sem esta linha a tarefa fecha e marker_logs nao sabe.
@@ -1058,7 +1064,13 @@ function buildTomContent(rawReply, actions, opts) {
   if (hasFailure) {
     const motivos = acts.filter((a) => a && a.status === 'fail')
       .map((a) => `${a.label || 'ação'}${a.detail ? ': ' + a.detail : ''}`).join(' · ');
-    prose = `Opa, tentei mas não consegui concluir agora — ${motivos}. Dá uma conferida ou me explica de outro jeito que eu tento de novo. 🙏`;
+    // O verbo vem da AÇÃO tentada (ver FALHA-COM-VERBO-ERRADO no chip de falha). Ação
+    // desconhecida ou falhas de tipos diferentes no mesmo turno caem no neutro: melhor genérico
+    // e verdadeiro do que específico e errado.
+    const _verbos = { complete: 'concluir', reschedule: 'remarcar', cancel: 'cancelar', create: 'criar' };
+    const _vs = new Set(acts.filter((a) => a && a.status === 'fail').map((a) => a.verbo));
+    const _verbo = (_vs.size === 1 && _verbos[[..._vs][0]]) ? _verbos[[..._vs][0]] : 'fazer isso';
+    prose = `Opa, tentei mas não consegui ${_verbo} agora — ${motivos}. Dá uma conferida ou me explica de outro jeito que eu tento de novo. 🙏`;
   }
   // A pergunta entra ANTES do chokepoint: ela não é afirmação de escrita, é coleta.
   if (!hasFailure && asks.length) {

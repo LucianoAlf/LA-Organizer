@@ -233,6 +233,49 @@ async function _resolvePackageChildByLabel({ supabase, groupId, label }) {
   } catch (_) { return null; }
 }
 
+// GROUPCHAT-PEDIDO-E-PEDACO-DO-TITULO (Krissya, Barra 07/09 14:39 BRT). O digest imprime
+// "04/09 — Arthur — anotar no campo Instagram… (Alf)". O título REAL começa em "Arthur — ",
+// mas o formato "data — X — texto (resp)" faz qualquer leitor, humano ou LLM, ler o "Arthur"
+// como responsável e citar só o resto. O `.ilike` EXATO falha, e o único fallback que existia
+// (matchPoolByPhrase) exige o TÍTULO CONTIDO NA FRASE — a direção oposta desta.
+//
+// Medido no banco no dia: exato 0 · título-contém-pedido 1 · pedido-contém-título 0. A pessoa
+// pediu "deixa essa tarefa atrasada para amanhã" e ouviu "não achei essa tarefa no grupo"
+// sobre a ÚNICA linha do digest que o próprio TOM tinha acabado de imprimir ali em cima.
+//
+// Entra nas TRÊS portas (complete, cancel, reschedule) e sempre como ÚLTIMO recurso: ligar só
+// no reschedule repetiria o erro que este arquivo já documenta três vezes — mecanismo que
+// existe mas não está na porta que falha é indistinguível de mecanismo que não existe.
+//
+// FAIL-CLOSED em dois eixos, porque agir na tarefa errada é pior que não agir:
+//   • pedido curto não resolve (< MIN_PEDACO) — "CG" casaria meia dúzia de linhas;
+//   • mais de um TÍTULO distinto casando → null + warn. Nunca escolhe no chute.
+// Nunca lança. O CHAMADOR decide sobre container (complete proíbe; reschedule permite de
+// propósito — mover o prazo do pacote é operação legítima).
+const MIN_PEDACO = 12;
+
+async function _resolveTituloContemPedido({ supabase, groupId, phrase }) {
+  try {
+    const p = String(phrase == null ? '' : phrase).trim();
+    if (p.length < MIN_PEDACO) return null;
+    const { data } = await supabase.from('tasks')
+      .select('id, title, due_date, status, is_group, recurrence_rule, recurrence_parent_id, is_recurrence_template, parent_task_id')
+      .eq('assigned_group_id', groupId)
+      .neq('status', 'cancelled')
+      .ilike('title', '%' + p + '%')
+      .limit(30);
+    const rows = (data || []).filter((r) => r && r.is_recurrence_template !== true);
+    if (!rows.length) return null;
+    const distintos = new Set(rows.map((r) => _normTitle(r.title)));
+    if (distintos.size > 1) {
+      console.warn('[GroupChat] pedaço "' + p.slice(0, 40) + '" casou ' + distintos.size
+        + ' títulos distintos — falha honesta em vez de chute');
+      return null;
+    }
+    return pickVisibleInstance(rows);
+  } catch (_) { return null; }
+}
+
 async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions }) {
   const created = [];
   const updated = [];
@@ -481,6 +524,11 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
             }
           }
         }
+        // Último degrau: a pessoa citou um PEDAÇO do título (ver a nota do resolvedor).
+        if (!target) {
+          const viaPedaco = await _resolveTituloContemPedido({ supabase, groupId, phrase: title });
+          target = semContainer(viaPedaco) ? viaPedaco : null;
+        }
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         // Anti-corrida: só marca se ainda não estava done.
         const patch = { status: 'done', completed_at: new Date().toISOString(), completed_by: senderCollabId, updated_by: senderCollabId };
@@ -516,6 +564,8 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // cancelado, então nunca mais regenera (caso Conciliação de Cartões/Rose 17/06).
         let target = pickVisibleInstance(hit || []);
         if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title, excludeCancelled: true });
+        // Último degrau: pedaço do título. Container é alvo legítimo do cancel (cascateia).
+        if (!target) target = await _resolveTituloContemPedido({ supabase, groupId, phrase: title });
         if (!target) { failed.push({ action: a, why: 'not_found_in_group' }); continue; }
         // updated_by (13/08): quem pediu o cancelamento fica registrado — inclusive na
         // cascata pras filhas, que é onde some mais trabalho de uma vez só.
@@ -549,6 +599,8 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           .order('due_date', { ascending: true }).limit(30);
         let target = pickVisibleInstance(found || []);
         if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title, excludeCancelled: true });
+        // Último degrau: pedaço do título — o caso da Krissya. Container permitido aqui.
+        if (!target) target = await _resolveTituloContemPedido({ supabase, groupId, phrase: title });
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         // updated_by (13/08): remarcar move trabalho de dia sem deixar rastro de quem moveu —
         // e desce em cascata pras filhas logo abaixo, então some prazo de várias de uma vez.
@@ -651,6 +703,7 @@ async function derecurSeries({ supabase, templateId }) {
 }
 
 module.exports = {
+  _resolveTituloContemPedido,
   applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, pickVisibleCompletionTarget, pickVisibleInstance,
   findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, matchPoolByPhrase,
   resolveSeriesTemplate, endSeries, reviveSeries, derecurSeries, _resolvePackageChildByLabel,

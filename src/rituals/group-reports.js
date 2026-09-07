@@ -31,6 +31,43 @@ const PRESET_CONFIG = {
   overdue: { scope: 'tarefas', window: 'mes', onlyOverdue: true, headingTemplate: '⏰ {grupo}: tarefas atrasadas' },
 };
 
+// FERIADO-COBRA-QUEM-NAO-TRABALHA (Alf, 07/09 — Independência). O `weekdays` cobre sábado e
+// domingo e mais nada: num feriado o digest saiu às 10:30 na Barra cobrando uma tarefa
+// atrasada de um time que não estava trabalhando. A pauta de anamnese já lia o calendário
+// desde 06/09 e ficou corretamente calada no mesmo dia — este ritual é OUTRO e nunca soube.
+//
+// A fonte é a mesma da pauta: `aulas_emusys` do LA Report, pela unidade DO GRUPO
+// (work_groups.la_report_unidade_id). Um teto nacional não serviria: a escola às vezes abre em
+// feriado e às vezes fecha fora dele — o calendário é o que manda. Medido no dia: a Barra
+// tinha 0 aula (141 na sexta, 103 na terça) e as 3 aulas do dia eram todas do Recreio, que
+// portanto SEGUE recebendo o digest. É por unidade, não por empresa.
+//
+// SÓ os presets DIÁRIOS entram. `weekly`/`monthly` são resumos de período, não cobrança do
+// dia: calar um resumo mensal porque caiu em feriado esconderia o mês inteiro.
+const PRESETS_DIARIOS = new Set(['daily_morning', 'overdue']);
+
+// TRÊS estados, e o terceiro é o que importa: sem unidade OU leitura falhou → ENVIA.
+// Silêncio por incapacidade é pior que ruído — ruído a pessoa ignora e reclama; silêncio ela
+// não vê, e some trabalho sem ninguém saber. É a mesma regra do roster da pauta.
+async function escolaAbertaHoje({ laReport, unidadeId, ymd }) {
+  if (!unidadeId) return { enviar: true, motivo: null };
+  if (!laReport) return { enviar: true, motivo: 'sem cliente do LA Report' };
+  try {
+    const r = await laReport.from('aulas_emusys')
+      .select('id')
+      .eq('unidade_id', unidadeId)
+      .eq('cancelada', false)
+      .gte('data_hora_inicio', ymd + 'T00:00:00-03:00')
+      .lte('data_hora_inicio', ymd + 'T23:59:59.999-03:00')
+      .limit(1);
+    if (r.error) return { enviar: true, motivo: 'leitura do calendario falhou: ' + r.error.message };
+    const temAula = Array.isArray(r.data) && r.data.length > 0;
+    return { enviar: temAula, motivo: temAula ? null : 'a unidade nao tem aula hoje' };
+  } catch (e) {
+    return { enviar: true, motivo: 'leitura do calendario falhou: ' + ((e && e.message) || String(e)) };
+  }
+}
+
 function presetConfig(preset) { return PRESET_CONFIG[preset]; }
 
 // 'HH:MM' → minutos do dia, arredondado ao slot de 15min (espelha dispatcher.timeToSlot).
@@ -92,7 +129,7 @@ async function dispatchGroupReports({ now, supabase, deps }) {
 
   const { data: settings, error } = await supabase
     .from('group_notification_settings')
-    .select('group_id, preset, enabled, weekdays, day_of_month, time_local, group:work_groups!group_notification_settings_group_id_fkey(name)')
+    .select('group_id, preset, enabled, weekdays, day_of_month, time_local, group:work_groups!group_notification_settings_group_id_fkey(name, la_report_unidade_id)')
     .eq('enabled', true);
   if (error) { console.error('[GroupReports] query settings:', error.message); return; }
   if (!settings || !settings.length) return;
@@ -102,6 +139,19 @@ async function dispatchGroupReports({ now, supabase, deps }) {
     const cfg = presetConfig(s.preset);
     if (!cfg) continue;
     const groupName = s.group ? s.group.name : 'grupo';
+    // Portão do calendário — ANTES do claim, senão o feriado queimaria a idempotência do dia
+    // e o relatório não sairia nem depois. Só presets diários; fail-open (ver a nota acima).
+    if (PRESETS_DIARIOS.has(s.preset)) {
+      const _lr = (deps && deps.laReport !== undefined)
+        ? deps.laReport
+        : require('../services/la-report-client').laReportClient;
+      const _cal = await escolaAbertaHoje({ laReport: _lr, unidadeId: s.group ? s.group.la_report_unidade_id : null, ymd });
+      if (!_cal.enviar) {
+        console.log('[GroupReports] ' + groupName + '/' + s.preset + ': sem envio — ' + _cal.motivo);
+        continue;
+      }
+      if (_cal.motivo) console.warn('[GroupReports] calendario indisponivel, ENVIANDO mesmo assim ' + groupName + '/' + s.preset + ': ' + _cal.motivo);
+    }
     const heading = cfg.headingTemplate.replace('{grupo}', groupName);
     let claimId = null;
     try {
@@ -175,4 +225,6 @@ async function sendPresetNow({ supabase, groupId, preset, now = new Date(), deps
   return { ok: true, sent: true, isEmpty: r.isEmpty };
 }
 
-module.exports = { PRESETS, presetConfig, matchSchedule, timeToSlot, currentSlot, isoDow, claimGroupRitual, rollbackGroupRitual, insertReportCard, dispatchGroupReports, buildPresetPreview, sendPresetNow };
+module.exports = {
+  escolaAbertaHoje,
+  PRESETS_DIARIOS, PRESETS, presetConfig, matchSchedule, timeToSlot, currentSlot, isoDow, claimGroupRitual, rollbackGroupRitual, insertReportCard, dispatchGroupReports, buildPresetPreview, sendPresetNow };

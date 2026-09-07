@@ -670,3 +670,137 @@ test('complete: label composto que NAO corresponde a filha nenhuma segue falha h
   });
   assert.strictEqual((r.completed || []).length, 0, 'nao pode concluir no chute');
 });
+
+// ---------------------------------------------------------------------------
+// GROUPCHAT-PEDIDO-E-PEDACO-DO-TITULO (Krissya, Barra 07/09 14:39 BRT).
+//
+// O digest imprimiu "04/09 — Arthur — anotar no campo Instagram que a pessoa não
+// informou na matrícula (Alf)". Ela respondeu "Tom, deixa essa tarefa atrasada para
+// amanhã". O TOM emitiu reschedule com o título SEM o prefixo "Arthur — " (o formato
+// "data — X — texto (resp)" faz qualquer leitor ler o "Arthur" como responsável) e o
+// `.ilike` exato não achou. Log: why=not_found_in_pool.
+//
+// Medido no banco no dia: exato 0 · título-contém-pedido 1 · pedido-contém-título 0
+// (esta última é a direção do matchPoolByPhrase, o único fallback que existia).
+//
+// Os títulos abaixo são LITERAIS de produção.
+// ---------------------------------------------------------------------------
+const TITULO_REAL = 'Arthur — anotar no campo Instagram que a pessoa não informou na matrícula';
+const PEDIDO_LLM = 'anotar no campo Instagram que a pessoa não informou na matrícula';
+
+test('reschedule: pedido é PEDAÇO do título — resolve (caso Krissya, 07/09)', async () => {
+  const tasks = [G({ id: 't1', title: TITULO_REAL, due_date: '2026-09-04' })];
+  const events = [];
+  const db = makeDb({ tasks, events });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: PEDIDO_LLM, new_due_date: '2026-09-08' }],
+  });
+  assert.strictEqual(r.failed.length, 0, 'não pode falhar: a tarefa está no grupo');
+  assert.strictEqual(r.updated.length, 1);
+  assert.strictEqual(r.updated[0].id, 't1');
+  assert.strictEqual(tasks[0].due_date, '2026-09-08');
+});
+
+test('complete: pedido é PEDAÇO do título — resolve', async () => {
+  const tasks = [G({ id: 't1', title: TITULO_REAL, due_date: '2026-09-04' })];
+  const db = makeDb({ tasks });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: PEDIDO_LLM }],
+  });
+  assert.strictEqual(r.failed.length, 0);
+  assert.strictEqual(r.completed.length, 1);
+  assert.strictEqual(tasks[0].status, 'done');
+});
+
+test('cancel: pedido é PEDAÇO do título — resolve', async () => {
+  const tasks = [G({ id: 't1', title: TITULO_REAL, due_date: '2026-09-04' })];
+  const db = makeDb({ tasks });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'cancel', title: PEDIDO_LLM }],
+  });
+  assert.strictEqual(r.failed.length, 0);
+  assert.strictEqual(r.cancelled.length, 1);
+  assert.strictEqual(tasks[0].status, 'cancelled');
+});
+
+// --- FAIL-CLOSED: agir na tarefa errada é pior que não agir -----------------
+test('pedaço AMBÍGUO (dois títulos distintos) NÃO resolve — falha honesta', async () => {
+  const tasks = [
+    G({ id: 't1', title: 'Ligar para a Ana sobre o contrato', due_date: '2026-09-04' }),
+    G({ id: 't2', title: 'Ligar para o Bruno sobre o contrato', due_date: '2026-09-04' }),
+  ];
+  const db = makeDb({ tasks });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'sobre o contrato', new_due_date: '2026-09-08' }],
+  });
+  assert.strictEqual(r.updated.length, 0, 'não pode escolher no chute');
+  assert.strictEqual(r.failed.length, 1);
+  assert.strictEqual(r.failed[0].why, 'not_found_in_pool');
+});
+
+test('pedaço CURTO (< 12 chars) não resolve — "CG" casaria meia dúzia', async () => {
+  const tasks = [G({ id: 't1', title: 'Comprar cadeiras CG', due_date: '2026-09-04' })];
+  const db = makeDb({ tasks });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'CG', new_due_date: '2026-09-08' }],
+  });
+  assert.strictEqual(r.updated.length, 0);
+  assert.strictEqual(r.failed.length, 1);
+});
+
+test('molde de série NUNCA é alvo do degrau novo', async () => {
+  // Só existe o MOLDE. O degrau tem que ignorá-lo: remarcar molde descasa a série.
+  const tasks = [G({
+    id: 'tpl', title: TITULO_REAL, due_date: '2026-09-04',
+    is_recurrence_template: true, recurrence_rule: 'FREQ=MONTHLY',
+  })];
+  const db = makeDb({ tasks });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: PEDIDO_LLM, new_due_date: '2026-09-08' }],
+  });
+  assert.strictEqual(r.updated.length, 0, 'molde não pode ser remarcado por pedaço');
+});
+
+test('complete: container de pacote NÃO é fechado pelo degrau novo', async () => {
+  // Concluir container fecha a pasta e deixa as filhas abertas (GROUPPKG, 05/08).
+  const tasks = [G({ id: 'pkg', title: TITULO_REAL, due_date: '2026-09-04', is_group: true })];
+  const db = makeDb({ tasks });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: PEDIDO_LLM }],
+  });
+  assert.strictEqual(r.completed.length, 0);
+  assert.strictEqual(r.failed.length, 1);
+});
+
+test('degrau novo é ÚLTIMO recurso: título exato segue mandando', async () => {
+  // Duas tarefas: uma casa exato, a outra casaria por pedaço. O exato tem que vencer.
+  const tasks = [
+    G({ id: 'exato', title: 'Relatório', due_date: '2026-09-04' }),
+    G({ id: 'pedaco', title: 'Relatório do trimestre para a diretoria', due_date: '2026-09-04' }),
+  ];
+  const db = makeDb({ tasks });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'Relatório', new_due_date: '2026-09-08' }],
+  });
+  assert.strictEqual(r.updated.length, 1);
+  assert.strictEqual(r.updated[0].id, 'exato');
+});
+
+test('tarefa de OUTRO grupo nunca é alcançada pelo degrau novo', async () => {
+  const tasks = [{ id: 'outro', title: TITULO_REAL, assigned_group_id: 'g2', status: 'pending', created_at: new Date().toISOString() }];
+  const db = makeDb({ tasks });
+  const r = await applyGroupChatTaskActions({
+    supabase: db, groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: PEDIDO_LLM, new_due_date: '2026-09-08' }],
+  });
+  assert.strictEqual(r.updated.length, 0);
+  assert.strictEqual(r.failed.length, 1);
+});
