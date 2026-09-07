@@ -49,7 +49,11 @@ const ENG = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
 test('engine: applyTaskActions captura _falharam por try/finally e devolve no retorno', () => {
   assert.match(ENG, /const _falharam = \[\];/);
   assert.match(ENG, /\} finally \{\s*if \(okCount === _okB && failCount > _failB\) _falharam\.push\(a\);/);
-  assert.match(ENG, /createdReminderTimes, falharam: _falharam \};/);
+  // A ancora era o `};` final, o que amarrava o teste a `falharam` ser o ULTIMO campo do
+  // retorno — posicao, nao intencao. Em 07/09 o retorno ganhou `awaitingConfirm` (a correcao
+  // PERGUNTA-NAO-E-FALHA) e este teste reprovou uma mudanca correta. O que ele quer garantir e
+  // que `falharam` VIAJA no retorno; quem vem depois dele nao e problema deste teste.
+  assert.match(ENG, /createdReminderTimes, falharam: _falharam[,}]/);
 });
 test('engine: o ramo parcial nomeia só quando cobre TODAS as falhas (gate de completude)', () => {
   assert.match(ENG, /const _falhasNomeaveis = \(Array\.isArray\(falharam\) && falharam\.length === failCount\)/);

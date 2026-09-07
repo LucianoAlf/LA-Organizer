@@ -1375,6 +1375,38 @@ Proposta de virar código: o `provar(literal, guard)` pedido desde 13/08 deve **
 relógio fixado no `occurred_at` do achado, e o `gov-runner` deve recusar o fechamento quando o
 módulo sob teste referenciar `Date.now()` e a prova tiver sido produzida sem pin.
 
+### ETAPA 2 (varredura) — `all_failed` ANTES de 07/09 é 71% PERGUNTA, não falha
+
+**Ocorrência:** 1 (07/09). Ajuste de leitura do acervo histórico — vale para todo achado
+anterior a 07/09/2026.
+
+Quando o TOM pergunta *"Confirma o fechamento destas N tarefas?"*, ele remove os `complete` do
+lote e devolve a pergunta. Isso reusava a plumbing de FALHA: `failCount` subia, `okCount` ficava
+zero, e o turno era gravado como `rejected all_failed:N`. **A pergunta virava recusa no log.**
+
+Medido em 07/09 sobre 60 dias — abrindo o `raw_excerpt` de cada uma das 55 linhas:
+
+| o que era, de verdade | n | pessoas |
+|---|---|---|
+| **pergunta de confirmação** (comportamento certo) | **39 (71%)** | 16 |
+| `fails: []` — falhou e não diz o quê | 11 | 8 |
+| alvo não encontrado (falha real) | **1** | 1 |
+
+**O que isso muda para você, na varredura:**
+
+1. Achado anterior a 07/09 cujo único apoio é um `TASK_UPDATE rejected all_failed:N` **não está
+   apoiado**. Abra o `raw_excerpt`: se o `fails` contém uma pergunta ("Confirma o fechamento…"),
+   o turno foi SAUDÁVEL e o achado é falso positivo — feche como tal, com o `raw` citado.
+2. De 07/09 em diante o turno-pergunta grava `result='skipped'` com `reason=awaiting_confirm:N`.
+   Então `rejected` virou sinal mais forte: quando aparecer, é recusa de verdade.
+3. As 11 linhas com `fails: []` são o alvo que sobrou, e são falha real sem diagnóstico — o
+   engine tem ~101 pontos que incrementam `failCount` e só um empurra mensagem. Se você for
+   atrás de uma delas, o valor está em nomear O QUE recusou, não em fechar o achado.
+
+A lição geral, que é a mais transferível: **um log que não distingue "recusei" de "perguntei"
+transforma comportamento correto em acervo.** Antes de tratar contagem de falha como problema,
+confira o que o instrumento chama de falha.
+
 ### ETAPA 2 (varredura) — o lever `marker_logs rejected` gera candidato pela JANELA, e janela ≠ turno
 
 **Ocorrências:** 2 (27/08, 03/09). O melhor lever medido tem um viés que precisa ficar escrito.

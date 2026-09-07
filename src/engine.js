@@ -4501,6 +4501,18 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   // LOTE-PARCIAL-NAO-DIZ-QUAIS (Yuri/Dai): acoes que FALHARAM neste lote, pra nomear no
   // parcial. Capturado por try/finally por iteracao (roda ate no continue) — sem tocar nos ~70
   // sites de failCount++. Uma acao entra aqui quando NAO incrementou okCount E incrementou failCount.
+  // PERGUNTA-NAO-E-FALHA (medido 07/09). Quando o lote termina PERGUNTANDO — o A2 de
+  // fechamento em lote remove os completes e devolve "Confirma o fechamento destas N
+  // tarefas?" — o turno reusa a plumbing de falha: failCount sobe, okCount fica zero, e o
+  // caller grava `rejected all_failed:N`. Medicao: dos 55 all_failed de 60 dias, 39 (71%,
+  // 16 pessoas) eram PERGUNTA, e so 1 era alvo nao encontrado. O dano nao e cosmetico —
+  // a escada de governanca cruza achado aberto com `result=rejected` em +/-20min, entao o
+  // agente abre achado sobre turno saudavel e gasta rodada de um teto de duas por dia.
+  // O proprio codigo ja sabia: "o auditor leu pergunta como mentira (caso Jhonatan 02/09)".
+  //
+  // Espelha `awaitingConfirm` do applyEventUpdates (ja existe neste arquivo desde 02/07) em
+  // vez de inventar nome novo. O caller so REBAIXA rejected->skipped; nunca toca em executed.
+  let _perguntouConfirmacao = false;
   const _falharam = [];
   // Sprint 31.6 (E2) — mensagens claras de falha pro user (ex: tarefa de outro dono).
   // Quando preenchido, o caller usa no lugar do genérico "não consegui registrar".
@@ -4599,10 +4611,12 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           // 'rejected all_failed:N' e o auditor leu pergunta como mentira (caso Jhonatan
           // 02/09: 3 perguntas -> 3 'rejeicoes' no log). O failCount fica igual; o que entra
           // e o registro de que houve PERGUNTA, pra a leitura do acervo parar de acusar.
-          try {
-            await logMarker(collaborator.id, 'TASK_UPDATE', 'skipped',
-              `awaiting_confirm:${completes.length} batch`, null);
-          } catch (_) { /* best-effort: registro nunca derruba a pergunta */ }
+          // A linha separada de 03/09 (9ffb9a7a) gravava `skipped awaiting_confirm` AO LADO
+          // do `rejected all_failed` — e ninguem nunca leu: zero consumidores em src/,
+          // scripts/ e docs/ops/, e zero linhas no banco em 60 dias. Log que ninguem le, do
+          // lado de uma mentira que todo mundo le, nao conserta nada. Agora a bandeira sobe
+          // e o REGISTRO DO TURNO sai certo — uma linha, com o veredito verdadeiro.
+          _perguntouConfirmacao = true;
           console.warn(`[Task] A2 batch-complete nao-ancorado (${titles.length}) -> pediu confirmacao, removido do lote`);
           }
         }
@@ -6313,7 +6327,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       if (okCount === _okB && failCount > _failB) _falharam.push(a);
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, awaitingConfirm: _perguntouConfirmacao };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -12180,7 +12194,7 @@ Output AGORA, apenas o marker:`;
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -12209,8 +12223,12 @@ Output AGORA, apenas o marker:`;
           _metrics.awaiting_user_confirm = true;
         }
       } else {
-        const result = okCount > 0 ? 'executed' : 'rejected';
-        const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+        // PERGUNTA-NAO-E-FALHA: turno que terminou perguntando nao e recusa. Rebaixa para
+        // `skipped` (ja existe no CHECK de marker_logs — nao precisa de migration) e diz o
+        // motivo. NUNCA toca em `executed`: se algo persistiu, o turno executou.
+        const result = okCount > 0 ? 'executed' : (awaitingConfirm ? 'skipped' : 'rejected');
+        const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}`
+          : (awaitingConfirm ? `awaiting_confirm:${failCount}` : `all_failed:${failCount}`);
         // TASKUPDATE-REJECTED-RAW-NULL (Leo 08/07): all_failed:2 sem raw + log esparso =
         // auditoria cega ao payload (impossível saber QUAIS alvos falharam e por quê).
         // Nas rejeições grava as actions no raw (logMarker trunca em 500) + failMessages.
@@ -12697,8 +12715,12 @@ Output AGORA, apenas o marker:`;
       // ACTIONABLE_NO_MARKER (senão o guard rebaixaria a pergunta pra "não foi executada").
       if (evAwaitingConfirm) _metrics.awaiting_user_confirm = true;
       console.log(`[Event] update batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
-      const result = okCount > 0 ? 'executed' : 'rejected';
-      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+      // Mesma correcao da porta do TASK_UPDATE: aqui a bandeira ja existia (evAwaitingConfirm,
+      // 02/07) e mesmo assim o registro saia `rejected`. Mecanismo que existe e nao chega na
+      // porta e indistinguivel de mecanismo que nao existe.
+      const result = okCount > 0 ? 'executed' : (evAwaitingConfirm ? 'skipped' : 'rejected');
+      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}`
+        : (evAwaitingConfirm ? `awaiting_confirm:${failCount}` : `all_failed:${failCount}`);
       await logMarker(collab.id, 'EVENT_UPDATE', result, reason, null);
       let base = parsedEU.cleanText || '';
       if (failCount > 0 && okCount === 0) {
