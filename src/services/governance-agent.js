@@ -67,7 +67,7 @@ const SEVERIDADE_ALTA = new Set(['alto', 'alta', 'high']);
 async function carregarAcervo(sb) {
   try {
     const { data } = await sb.from('tom_audit_findings')
-      .select('severity, incident_at')
+      .select('severity, incident_at, category, occurred_at')
       .not('status', 'in', `(${STATUS_FECHADOS.join(',')})`);
     const linhas = Array.isArray(data) ? data : [];
     const agora = Date.now();
@@ -81,6 +81,29 @@ async function carregarAcervo(sb) {
       ate2d: linhas.filter((r) => { const d = idade(r); return d !== null && d <= 2; }).length,
       ate7d: linhas.filter((r) => { const d = idade(r); return d !== null && d <= 7; }).length,
       mais30d: linhas.filter((r) => { const d = idade(r); return d !== null && d > 30; }).length,
+      // PREVALENCIA POR CATEGORIA (07/09). Sem isto o agente ve o achado de hoje como se fosse
+      // um evento isolado, e escreve "novo" pra coisa que acontece desde junho. Medido no dia
+      // em que isto entrou: dropped_request tinha 199 achados em 66 DIAS DISTINTOS (12/06 a
+      // 04/09) e 65 ainda abertos; frustration, 99 em 51 dias. Isso nao e uma fila de
+      // incidentes, e uma condicao cronica — e a diferenca muda qual alvo vale a pena.
+      //
+      // Nao da pra tirar isso do dedupe: a assinatura agrupa REDACOES do mesmo incidente
+      // (a chave e o created_at da mensagem), nunca RECORRENCIAS do mesmo defeito em dias
+      // diferentes. Sao perguntas diferentes; esta e a segunda.
+      porCategoria: (() => {
+        const m = new Map();
+        for (const r of linhas) {
+          const c = String((r && r.category) || 'sem_categoria');
+          if (!m.has(c)) m.set(c, { abertos: 0, dias: new Set() });
+          const e = m.get(c);
+          e.abertos += 1;
+          const d = String((r && (r.occurred_at || r.incident_at)) || '').slice(0, 10);
+          if (d) e.dias.add(d);
+        }
+        return [...m.entries()]
+          .map(([cat, e]) => ({ cat, abertos: e.abertos, dias: e.dias.size }))
+          .sort((x, y) => y.abertos - x.abertos);
+      })(),
     };
   } catch (e) {
     console.warn('[GovAgent] não consegui medir o acervo:', e.message);
@@ -102,6 +125,15 @@ function montarPedido(placar, acervo) {
   const blocoAcervo = (acervo && Number.isFinite(acervo.total))
     ? `\n\nACERVO ABERTO HOJE: ${acervo.total} achados — ${acervo.alto} de severidade alta, `
       + `${acervo.ate2d} nos últimos 2 dias, ${acervo.mais30d} com mais de 30 dias.`
+      + (Array.isArray(acervo.porCategoria) && acervo.porCategoria.length
+        ? `
+Por categoria (abertos / em quantos dias distintos ela ja apareceu): `
+          + acervo.porCategoria.slice(0, 4).map((c) => `${c.cat} ${c.abertos}/${c.dias}d`).join(' · ')
+          + `.
+Categoria com muitos abertos espalhados por MUITOS DIAS e cronica, nao novidade: `
+          + `antes de tratar o achado de hoje como incidente isolado, pergunte se o alvo certo nao `
+          + `e a raiz comum dela. E NAO escreva "novo" pra defeito que aparece desde junho.`
+        : '')
     : '';
   return `Rode o ciclo de governança de hoje, seguindo o protocolo do seu briefing na ordem.
 
