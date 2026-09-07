@@ -2,24 +2,37 @@
 // Lógica pura: casa a resposta do usuário à pergunta de fonte. Sem I/O.
 
 const CARD_RE = /\b(cart[ãa]o|cr[ée]dito|fatura|parcel)/i;
-const ACCT_RE = /\b(conta|carteira|d[ée]bito|corrente)\b/i;
+// Espelha o `wantsAcct` de source.js: pix/boleto/ted/doc/transferência são métodos de CONTA.
+// A própria pergunta binária promete "diz 'no débito/pix' que eu já anoto direto" — sem esses
+// termos aqui, o TOM ignorava o vocabulário que ele mesmo ensinou.
+const ACCT_RE = /\b(conta|carteira|d[ée]bito|corrente|pix|boleto|ted|doc|transfer[êe]ncia|transferencia)\b/i;
+// Prefixos que o webhook cola na frente da fala real (citação de reply, transcrição de áudio).
+// Precisam sair ANTES de qualquer medida de tamanho: a citação de uma pergunta binária carrega
+// as DUAS palavras ("cartão" e "conta"), então lê-la como fala do usuário escolhe a fonte errada.
+const SCAFFOLD_RE = /\[\s*O usu[áa]rio est[áa] RESPONDENDO a esta mensagem anterior[^:\]]*:[\s\S]*?\]\s*/giu;
+const AUDIO_RE = /^\s*\[[áa]udio transcrito\]\s*/i;
 const CASH_RE = /\b(dinheiro|esp[ée]cie|cash|em\s+m[ãa]o)\b/i;
 // Comandos de tarefa/evento — uma resposta de fonte NUNCA começa assim.
 // Protege contra falso-positivo quando há pending aberta e o user pivota de assunto.
 const COMMAND_RE = /^(marca|marque|cria|crie|criar|agenda|agende|agendar|liga|ligar|lembra|lembre|lembrar|compr|programa|avisa|chama)/i;
 
 function matchSourceReply(rawText, payload) {
-  const t = String(rawText || '').toLowerCase().trim();
+  const t = String(rawText || '')
+    .replace(SCAFFOLD_RE, '').replace(AUDIO_RE, '')
+    .toLowerCase().trim();
   if (!t || t.length > 200 || !payload) return null;
   if (COMMAND_RE.test(t)) return null; // comando de tarefa/evento, não é resposta de fonte
 
   const wordCount = t.split(/\s+/).filter(Boolean).length;
 
   if (payload.form === 'binary') {
-    if (wordCount > 5) return null;
-    if (CARD_RE.test(t)) return payload.card;
-    if (ACCT_RE.test(t)) return payload.account;
-    return null;
+    // A pergunta é fechada em dois lados: o que decide é UM lado aparecer sozinho, não o
+    // tamanho da frase. Áudio transcrito ("Não, foi no débito. Foi no débito que eu gastei…")
+    // e reply-quote passam de 5 palavras e mesmo assim são respostas inequívocas.
+    const ehCartao = CARD_RE.test(t);
+    const ehConta = ACCT_RE.test(t);
+    if (ehCartao === ehConta) return null; // nenhum lado, ou os dois: não chuta fonte
+    return ehCartao ? payload.card : payload.account;
   }
 
   // form === 'list'

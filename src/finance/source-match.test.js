@@ -117,3 +117,44 @@ test('mesma coisa na ordem inversa da lista — não é sorte de posição', () 
 test('só a palavra genérica, sem marca nenhuma, NÃO casa (evita chute silencioso)', () => {
   assert.strictEqual(matchSourceReply('cartão', { form: 'list', candidates: candsComPrefixo }), null);
 });
+
+// ── MATCHSOURCE-BINARY-PREFIXO-MATA-RESPOSTA (achado 9caa7d98, Alf 21/07 09:01 BRT) ──
+// Loop medido em produção: TOM perguntou "Nubank é carteira e cartão. Foi no *cartão* ou na
+// *conta*?"; o Alf respondeu POR REPLY-QUOTE "Paguei na conta nubank por boleto" e recebeu
+// EXATAMENTE A MESMA PERGUNTA de volta (09:01:30 → 09:01:57 → 09:02:38). Só destravou quando
+// ele digitou "Conta" pelado, às 09:03:55.
+//
+// Três travas, todas de FORMA, nenhuma de conteúdo:
+//   1. o bloco de citação entra no texto e estoura o teto de 200 chars;
+//   2. mesmo sem a citação, "paguei na conta nubank por boleto" tem 6 palavras > 5;
+//   3. "boleto"/"pix"/"ted" não estavam no ACCT_RE — e o próprio TOM promete, na dica da
+//      pergunta, que "no débito/pix" ele anota direto.
+//
+// E a citação NÃO pode só ser tolerada: ela carrega as DUAS palavras ("cartão" E "conta"),
+// então relaxar o teto sem remover o scaffold devolveria `card` — a fonte ERRADA, em silêncio.
+const QUOTE_SCAFFOLD = '[O usuário está RESPONDENDO a esta mensagem anterior: "🤔 *Nubank* é carteira e cartão. Foi no *cartão* ou na *conta*?\n_(dica: diz "no crédito" ou "no débito/pix" que eu já anoto direto 😉)_"]\n';
+
+test('REGRESSAO binary: resposta por reply-quote casa a CONTA (caso Alf 21/07)', () => {
+  assert.deepStrictEqual(
+    matchSourceReply(QUOTE_SCAFFOLD + 'Paguei na conta nubank por boleto', binaryPayload),
+    { kind: 'account', id: 'a9', name: 'Nubank' },
+  );
+});
+test('binary: a citação sozinha (sem fala real) NÃO decide nada', () => {
+  assert.strictEqual(matchSourceReply(QUOTE_SCAFFOLD, binaryPayload), null);
+});
+test('binary: áudio transcrito longo com "no débito" casa a conta (Alf 04/06)', () => {
+  assert.deepStrictEqual(
+    matchSourceReply('[áudio transcrito] Não, foi no débito. Foi no débito que eu gastei. Põe restaurante. Põe saída da Nubank no restaurante, no débito.', binaryPayload),
+    { kind: 'account', id: 'a9', name: 'Nubank' },
+  );
+});
+test('binary: o vocabulário da própria dica funciona (pix, boleto, ted)', () => {
+  for (const t of ['no pix', 'paguei por boleto', 'foi por ted']) {
+    assert.deepStrictEqual(matchSourceReply(t, binaryPayload), { kind: 'account', id: 'a9', name: 'Nubank' },
+      `"${t}" deveria casar a conta`);
+  }
+});
+test('binary: os DOIS lados na fala real continua null (não chuta fonte)', () => {
+  assert.strictEqual(matchSourceReply('foi no cartão ou na conta mesmo?', binaryPayload), null);
+});
