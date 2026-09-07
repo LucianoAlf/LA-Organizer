@@ -51,6 +51,34 @@ ANCORAS=(collaborators tasks conversation_history marker_logs health_check_runs)
 # Licao: um drill so prova recuperacao se o destino puder receber o que a origem tem.
 IMAGEM=${DRILL_IMAGE:-pgvector/pgvector:pg17}
 FALHAS=0
+
+# ── TELEMETRIA QUE SOBREVIVE A MORTE ABRUPTA (06/09/2026) ────────────────────────────────────
+# A linha de telemetria so era escrita no FIM. Com `set -euo pipefail`, qualquer morte no meio
+# — foi o que aconteceu em 30/08 e 06/09: um comando inexistente por bug de aspas — terminava o
+# script ANTES dela, e o runs.jsonl ficou sem UMA linha sequer dos dois domingos que falharam.
+# Telemetria que so registra o que deu certo e o defeito de sempre: zero por FALHA identico a
+# zero por SAUDE, agora no arquivo que existe justamente pra contar a historia.
+#
+# O backup-db.sh, no mesmo repo, ja fazia certo: grava status=inicio antes de comecar, e um
+# inicio sem fecho denuncia a morte. Aqui a mesma ideia, com o codigo de saida real no carimbo.
+TELEMETRY_DRILL=${TELEMETRY_DRILL:-/opt/backups/la-organizer/db/runs.jsonl}
+DRILL_FECHOU=0
+
+drill_telemetria() {   # $1=status  $2=falhas  $3=json extra (opcional)
+  [ -w "$TELEMETRY_DRILL" ] || return 0
+  printf '{"ts":"%s","evento":"restore-drill","status":"%s","dump":"%s","falhas":%s,"imagem":"%s"%s}\n' \
+    "$(date -Iseconds)" "$1" "$(basename "${DUMP:-?}")" "${2:-0}" "${IMAGEM:-?}" "${3:-}" \
+    >> "$TELEMETRY_DRILL" 2>/dev/null || true
+}
+
+drill_ao_sair() {
+  local rc=$?
+  # Fecho normal (aprovado ou reprovado) ja gravou a linha dele. Aqui so o que morreu no meio.
+  if [ "$DRILL_FECHOU" -eq 0 ]; then
+    drill_telemetria "morreu" "${FALHAS:-0}" ",\"exit_code\":$rc"
+  fi
+  return $rc
+}
 falha() { echo "  FALHA $1"; FALHAS=$((FALHAS+1)); }
 
 TMPD=$(mktemp -d /run/tom-drill.XXXXXX) || { echo "mktemp falhou" >&2; exit 2; }
@@ -62,7 +90,7 @@ limpar() {
       echo "REPROVADO: nao consegui destruir o container $CONT — container efemero VAZOU" >&2; exit 1; }
   fi
 }
-trap limpar EXIT INT TERM
+trap 'drill_ao_sair; limpar' EXIT INT TERM
 
 # Extrai a lista de uma categoria do baseline.
 lista_baseline() { sed -n "/^--- lista:$1 ---$/,/^--- fim:$1 ---$/p" "$BASELINE" | sed '1d;$d'; }
@@ -96,6 +124,7 @@ done
 q()     { docker exec -e PGPASSWORD="$SENHA" "$CONT" psql -U postgres -d drill -tAc "$1"; }
 lista() { docker exec -e PGPASSWORD="$SENHA" "$CONT" psql -U postgres -d drill -tAc "$1" 2>/dev/null | LC_ALL=C sort; }
 
+drill_telemetria "inicio" 0
 echo "== criando os roles do Supabase (sem eles o restore descarta os GRANTs em silencio) =="
 for r in anon authenticated service_role authenticator supabase_admin supabase_auth_admin dashboard_user; do
   q "do \$\$ begin if not exists (select 1 from pg_roles where rolname='$r') then create role \"$r\" nologin; end if; end \$\$;" >/dev/null
@@ -322,13 +351,12 @@ else
   FALHAS=$((FALHAS+1)); VEREDITO=reprovado
 fi
 
-TELEMETRY_DRILL=/opt/backups/la-organizer/db/runs.jsonl
 if [ -w "$TELEMETRY_DRILL" ]; then
-  printf '{"ts":"%s","evento":"restore-drill","status":"%s","dump":"%s","falhas":%s,"imagem":"%s"}\n' \
-    "$(date -Iseconds)" "$VEREDITO" "$(basename "$DUMP")" "$FALHAS" "$IMAGEM" >> "$TELEMETRY_DRILL"
+  drill_telemetria "$VEREDITO" "$FALHAS"
 else
   echo "[drill] aviso: telemetria $TELEMETRY_DRILL nao gravavel — este drill nao aparece no runs.jsonl" >&2
 fi
+DRILL_FECHOU=1
 
 echo
 if [ "$FALHAS" -eq 0 ]; then
