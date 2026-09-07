@@ -67,6 +67,13 @@ criar_drill() { # <nome> <dias_atras> <veredito>
   } > "$base.drill"
   touch -d "-$dias days" "$base.drill"
 }
+drill_telem() { # <status> <minutos_atras> [exit_code]
+  local st=$1 min=$2 ec=${3:-} extra=""
+  [ -n "$ec" ] && extra=",\"exit_code\":$ec"
+  printf '{"ts":"%s","evento":"restore-drill","status":"%s","dump":"x.dump","falhas":0,"imagem":"i"%s}\n' \
+    "$(date -d "-$min minutes" -Iseconds)" "$st" "$extra" >> "$D/db/runs.jsonl"
+}
+
 rodar() { CHECK_BACKUP_DEST="$D/db" CHECK_BACKUP_VARREDURA="$VARR" "$CB" 2>&1; }
 espera() { # <esperado ok|critico> <descricao>
   local out rc; out=$(rodar); rc=$?
@@ -168,6 +175,31 @@ if [ -x "$RD" ]; then
 else
   falhou "restore-drill.sh nao encontrado em $RD"
 fi
+
+echo "== DESFECHO DO ULTIMO DRILL: a falha avisa no MESMO domingo, nao no vencimento =="
+# Conjunto limpo: backup e atestado de HOJE. Assim o contrato B (vencimento) esta satisfeito,
+# e o unico que pode gritar e o desfecho do drill — que e exatamente o buraco que se fechou.
+rm -f "$D/db/runs.jsonl"; rm -f "$D/db/dia/"*
+criar_backup fresco 0; criar_drill fresco 0 aprovado
+
+drill_telem aprovado 5
+espera ok "drill aprovado ha 5 min: segue verde"
+
+# A sentinela e horaria e o drill leva ~1 min: ela pode passar no meio da execucao.
+drill_telem inicio 3
+espera ok "inicio RECENTE e drill rodando agora, nao alarme"
+
+drill_telem inicio 240
+espera critico "inicio parado ha 4h: morreu sem o trap conseguir carimbar"
+
+# O CENARIO QUE JUSTIFICA TUDO: o atestado de hoje ainda vale, entao o vencimento de 8 dias
+# nao acusaria nada — e mesmo assim a proxima prova NAO vai existir. Antes de 06/09 isso
+# passava calado por ate 8 dias (foi o que aconteceu em 30/08 e 06/09).
+drill_telem morreu 30 125
+espera critico "morreu no meio: grita hoje, com o atestado AINDA dentro da janela"
+
+drill_telem reprovado 10
+espera critico "reprovado tambem grita pelo desfecho, nao so pelo atestado"
 
 echo "== o canal de alerta NAO pode ter saido do sandbox =="
 if [ -s "$ALERTAS_CAPTURADOS" ]; then

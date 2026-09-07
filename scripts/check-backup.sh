@@ -83,6 +83,34 @@ BV=$(grep -m1 '^baseline_versao=' "$BASE.baseline" | cut -d= -f2)
 [ "${BV:-1}" = "${BASELINE_VERSAO:-1}" ] || grito "baseline na versao ${BV:-1}, o drill exige ${BASELINE_VERSAO:-1} — este backup nao e drillavel"
 echo "[check-backup] baseline: ${#CATEGORIAS[@]}/${#CATEGORIAS[@]} categorias, versao ${BV:-1}"
 
+# 5.5 O DESFECHO DO ULTIMO DRILL (06/09/2026). Ate aqui a unica coisa que denunciava um drill
+# quebrado era o VENCIMENTO do atestado, 8 dias depois. Em 29/08 uma edicao quebrou o
+# restore-drill.sh e ele morreu nos dois domingos seguintes; a sentinela so gritou no 9o dia,
+# e nesse intervalo a casa achou que tinha recuperacao comprovada e nao tinha. O erro estava
+# no backup.log desde o primeiro domingo — visivel e nao lido.
+#
+# Agora o desfecho do drill e lido da telemetria, no mesmo domingo. Vem ANTES do contrato B
+# de proposito: com o atestado ainda dentro da janela, o vencimento nao acusaria nada, e a
+# mensagem especifica ("morreu com exit 125") vale mais que a generica 8 dias depois.
+ULT_DRILL=$(grep '"evento":"restore-drill"' "$TELEMETRY" 2>/dev/null | tail -1)
+if [ -n "$ULT_DRILL" ]; then
+  D_ST=$(campo status "$ULT_DRILL"); D_TS=$(campo ts "$ULT_DRILL")
+  D_EP=$(date -d "$D_TS" +%s 2>/dev/null || echo 0)
+  D_MIN=$(( ( $(date +%s) - ${D_EP:-0} ) / 60 ))
+  case "$D_ST" in
+    aprovado) echo "[check-backup] ultimo drill: aprovado ha ${D_MIN} min" ;;
+    # `inicio` recente e drill RODANDO agora — a sentinela e horaria e o drill leva ~1 min, mas
+    # a janela existe pra ela nao gritar por passar no meio da execucao. Velho demais significa
+    # que morreu sem o trap conseguir carimbar (SIGKILL, OOM, host reiniciado).
+    inicio)
+      [ "$D_MIN" -le 60 ] || grito "o ultimo drill comecou ha ${D_MIN} min e nunca fechou (status=inicio, $D_TS) — morreu sem nem o trap carimbar"
+      echo "[check-backup] ultimo drill: em execucao ha ${D_MIN} min"
+      ;;
+    morreu)  grito "o ultimo drill MORREU no meio ($D_TS, exit_code=$(campo exit_code "$ULT_DRILL")) — a prova de restauracao nao foi produzida" ;;
+    *)       grito "o ultimo drill terminou como '$D_ST' ($D_TS) — a prova de restauracao nao foi produzida" ;;
+  esac
+fi
+
 # 6. CERTIFICADO DE RECUPERACAO (laudo v2.3). Ate aqui a sentinela provava que o CONJUNTO
 # esta integro — dump, baseline, manifesto, checksum. Integro nao e o mesmo que RESTAURAVEL:
 # so o drill responde isso, e a sentinela nunca exigia um. "Backup verde" sem drill aprovado
