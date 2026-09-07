@@ -1598,3 +1598,70 @@ se contradizem, a pergunta certa não é "qual guard falhou" e sim "qual das dua
 completo. Cinco rodadas seguidas com a mesma inversão dizem que isto não é ruído do auditor: é como
 o resumo é gerado. Enquanto o `summary` não for tratado como asserção a verificar, cada rodada paga
 o mesmo pedágio.
+
+### ETAPA 2 (varredura) — dois levers medidos SECOS na mesma rodada, e o que pagou foi o literal
+
+**Ocorrências:** 1 (07/09). Registrado para não ser refeito.
+
+Sobre os **44 abertos não-altos sem `verified_note`**, os dois melhores levers do repertório deram zero:
+
+- **`marker_logs rejected schema_invalid` em ±20 min** (o de melhor razão sinal/ruído, 27/08): **1
+  candidato** (`c84b6c27`) e o `raw_excerpt` dele veio **vazio** — o lever depende do bloco
+  preservado, e sem ele não sobra nada pra rodar.
+- **gap `inbound→outbound` ≤ 3s** (31/08): **0 candidatos em 44**. Zero em bloco é a assinatura de
+  chamada malformada (regra 18/08), então rodei o controle: a query devolve mensagens e calcula os
+  gaps normalmente (menor gap real medido: 14,3s e 17,5s). O lever está são; o acervo antigo é que
+  tem janela rala — 3 dos 5 primeiros achados têm **1 mensagem só** na janela de ±3h, que é o
+  sintoma do `occurred_at` errado, não de ausência de resposta determinística.
+
+O que pagou foi o mais barato e o mais antigo: **ler o literal da `evidence` de meia dúzia de
+achados e escolher aquele cuja resposta do TOM tem cara de guard determinístico.** `9caa7d98` saiu
+daí (`USUÁRIO: Paguei na conta nubank por boleto` / `TOM: 🤔 *Nubank* é carteira e cartão…`), e o
+`grep` da frase no `src/` levou direto ao arquivo em uma busca.
+
+Calibragem que isto sugere: os levers automáticos foram todos desenhados sobre **sinal preservado**
+(marker recusado, cronometragem, comentário datado). Quando o acervo restante é o que já sobreviveu
+a várias rodadas, esse sinal já foi consumido — e o gerador que sobra é a leitura do literal. Vale
+gastar os 5 minutos de leitura antes de rodar o terceiro lever.
+
+### ETAPA 5 — o SCAFFOLD de reply-quote é raiz de população, não detalhe de um módulo
+
+**Ocorrências:** 2 (31/08, 07/09). Reincidiu, e agora está medido como população.
+
+Em 31/08 ficou registrado que o RSVP por reply-quote nunca é reconhecido, porque o gate de
+`detect-rsvp-reply.js:48` conta palavras sobre o texto **com** o bloco de citação (38 palavras) e
+desiste. Foi tratado como detalhe daquele módulo. Não é.
+
+O `webhook.js:509` cola na frente da fala real o scaffold
+`[O usuário está RESPONDENDO a esta mensagem anterior: "<citação>"]\n`. Cada módulo que precisa
+lidar com isso escreveu **o próprio stripper**: `date-phrase.js` tem `CITACAO_RE`,
+`coordination-notify.js` tem `REPLY_TEXT_SCAFFOLD`. Não há função compartilhada — então "estar
+ciente do scaffold" é uma escolha por arquivo, e o default é ficar cego.
+
+Medido em 07/09, nos detectores determinísticos que decidem AÇÃO:
+
+| módulo | scaffold |
+|---|---|
+| `services/pending-intents.js` (`detectUserConfirmation`) | **CEGO** |
+| `finance/launch-confirm.js` | **CEGO** |
+| `events/detect-rsvp-reply.js` | **CEGO** (já medido 31/08) |
+| `utils/batch-complete.js` | **CEGO** |
+| `finance/source-match.js` | ciente (corrigido nesta rodada) |
+| `events/detect-approval-reply.js` | ciente |
+
+O caso que fecha o argumento é o par `4b19337f`/`8e6d0485` (11/07, Jéssica): o mesmo card de evento
+voltou **três vezes**. Medido contra o código de HOJE: `detectUserConfirmation("Cria")` = **`yes`**;
+`detectUserConfirmation(scaffold + "Cria")` = **`null`**. Controles válidos (`isso`/`sim`/`pode
+criar` = `yes`; `não` = `no`; `Ajustar` = `null`). A pessoa respondeu por reply-quote — que é o
+caminho natural de responder a um card — e o detector mais usado do sistema ficou cego.
+
+Tamanho da superfície, medido sobre os 125 abertos: **75 têm inbound na janela e 37 desses (49%)
+têm um reply-quote na janela.** Isso NÃO é prova de causa em nenhum achado específico — é a
+população em que o defeito pode se manifestar.
+
+Consequência de protocolo, e é por isso que fica aqui: consertar módulo a módulo é exatamente o
+microajuste que o Alf recusou. Cada porta custa um commit e o default continua sendo "cego".
+Proposta de virar código: **um `falaReal(texto)` em `src/utils/`** que remove o scaffold e o
+prefixo `[áudio transcrito]`, mais um teste de contrato que falhe quando um módulo de detecção
+determinística analisar `rawText` sem passar por ele. É decisão de desenho — vai ao grupo, não
+entra por conta do agente.
