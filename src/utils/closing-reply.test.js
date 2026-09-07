@@ -392,3 +392,106 @@ test('títulos únicos ficam iguais (sem contagem)', () => {
 test('preserva ordem de primeira aparição e ignora vazios', () => {
   assert.strictEqual(formatBatchTitles(['B', '', 'A', 'B', null]), '*B* (2×), *A*');
 });
+
+// ---------------------------------------------------------------------------
+// CLOSING-AFIRMATIVA-NAO-OUVIDA (sonda 07/09) — o ritual de fechamento PEDE, com
+// estas palavras, «fez? Me diz: "sim" ou "não rolou"» — e o parser recusava "sim".
+// Só "tudo/todas" e a resposta numerada fechavam. Medido no banco de produção:
+// 61 fechamentos receberam resposta em até 20 min desde julho; 11 fecharam e
+// 9 eram um sim inequívoco que caía no LLM — e em 7 desses 9 a intent terminou
+// 'superseded', que é a assinatura do "TOM repetiu a confirmação" (os achados
+// 07d42c92 e 688dc7e6 de julho, ainda abertos).
+//
+// As falas abaixo são LITERAIS do banco. A regra nova é ÚLTIMO RECURSO: só roda
+// depois de tudo o que já existia dar matched:false, então nenhum resultado atual
+// muda de valor — é zero-regressão por construção.
+// ---------------------------------------------------------------------------
+
+// Um item: não há alvo ambíguo possível. Qualquer afirmativa fecha.
+for (const fala of ['sim', 'Sim', 'Sim rolou', 'fiz', 'Fiz', 'feito', 'Feito', 'ok', 'Confirmado']) {
+  test(`parseClosingReply: 1 item — "${fala}" fecha (a palavra que o ritual pede)`, () => {
+    const r = parseClosingReply(fala, 1);
+    assert.strictEqual(r.matched, true, `"${fala}" deveria casar`);
+    assert.deepStrictEqual(r.statuses, ['done']);
+  });
+}
+
+test('parseClosingReply: 1 item — "Já fiz, tom, pode tirar" fecha (fala real, 07/2026)', () => {
+  const r = parseClosingReply('Já fiz, tom, pode tirar', 1);
+  assert.strictEqual(r.matched, true);
+  assert.deepStrictEqual(r.statuses, ['done']);
+});
+
+test('parseClosingReply: 1 item — "Tudo finalizado" fecha (ordem invertida não casava o global)', () => {
+  const r = parseClosingReply('Tudo finalizado', 1);
+  assert.strictEqual(r.matched, true);
+  assert.deepStrictEqual(r.statuses, ['done']);
+});
+
+// LIMITE CONHECIDO E ACEITO. Esta fala é real (08/2026) e é uma confirmação legítima,
+// mas o PROGRESS_RE casa "andando" DENTRO de "mandando" (a alternativa não tem \b) e veta.
+// Deixo documentado em vez de afrouxar o PROGRESS_RE: ele guarda a família de parcialidade
+// (CLOSING-PARTIAL-TOPICS-DONE) e mexer nele mudaria vereditos que já existem no caminho
+// numerado — o oposto do zero-regressão que esta mudança promete. O custo é fail-safe:
+// a mensagem cai no LLM, que tem as âncoras no prompt. O ganho de forçar aqui seria fechar
+// tarefa por conta própria, que é a dor #1.
+test('parseClosingReply: afirmativa com palavra que o PROGRESS_RE veta cai no LLM (fail-safe)', () => {
+  const r = parseClosingReply('Fiz, Tom! Terminei. Segunda to mandando pra gráfica', 1);
+  assert.strictEqual(r.matched, false);
+  assert.deepStrictEqual(r.statuses, ['none']);
+});
+
+// Vários itens: só fecha tudo quem disse EXPLICITAMENTE que é tudo.
+test('parseClosingReply: 3 itens — "Sim para tds" fecha os três (fala real, 07/2026)', () => {
+  const r = parseClosingReply('Sim para tds', 3);
+  assert.strictEqual(r.matched, true);
+  assert.deepStrictEqual(r.statuses, ['done', 'done', 'done']);
+});
+
+test('parseClosingReply: 3 itens — "Sim para todas" fecha os três', () => {
+  const r = parseClosingReply('Sim para todas', 3);
+  assert.strictEqual(r.matched, true);
+  assert.deepStrictEqual(r.statuses, ['done', 'done', 'done']);
+});
+
+test('parseClosingReply: 3 itens — "Sim" pelado NÃO fecha (qual dos três?) → cai no LLM', () => {
+  const r = parseClosingReply('Sim', 3);
+  assert.strictEqual(r.matched, false);
+  assert.deepStrictEqual(r.statuses, ['none', 'none', 'none']);
+});
+
+test('parseClosingReply: 3 itens — menção por TÍTULO não fecha em lote (outra família)', () => {
+  const r = parseClosingReply('Falar com William - Feito', 3);
+  assert.strictEqual(r.matched, false);
+});
+
+// Vetos: a regra nova NUNCA pode atropelar parcialidade nem pedido de outra ação.
+test('parseClosingReply: "feito pela metade" NÃO fecha (parcialidade vence a afirmativa)', () => {
+  const r = parseClosingReply('feito pela metade', 1);
+  assert.strictEqual(r.matched, false);
+});
+
+test('parseClosingReply: "feito só uma parte" NÃO fecha', () => {
+  const r = parseClosingReply('feito só uma parte', 1);
+  assert.strictEqual(r.matched, false);
+});
+
+test('parseClosingReply: "pode cancelar" NÃO fecha (pedido de outra ação)', () => {
+  const r = parseClosingReply('pode cancelar', 1);
+  assert.strictEqual(r.matched, false);
+});
+
+test('parseClosingReply: "ainda não" NÃO fecha', () => {
+  const r = parseClosingReply('ainda não', 1);
+  assert.notStrictEqual(r.statuses[0], 'done');
+});
+
+// Zero-regressão: o que já funcionava continua idêntico.
+test('parseClosingReply: zero-regressão — numerada, globais e negação intactas', () => {
+  assert.deepStrictEqual(parseClosingReply('1 e 2', 3).statuses, ['done', 'done', 'none']);
+  assert.deepStrictEqual(parseClosingReply('fiz tudo', 3).statuses, ['done', 'done', 'done']);
+  assert.strictEqual(parseClosingReply('não', 3).matched, true);
+  assert.deepStrictEqual(parseClosingReply('não', 3).statuses, ['none', 'none', 'none']);
+  // ALIGN (tudo COM ressalva) segue caindo no LLM
+  assert.strictEqual(parseClosingReply('fiz tudo menos a 2', 3).matched, false);
+});

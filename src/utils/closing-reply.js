@@ -13,6 +13,11 @@
 //   - parseClosingReply(): mapeia a resposta numérica do usuário de volta aos índices,
 //     com status por item — sem o LLM chutar alvo.
 
+// O juiz de afirmativa curta e o MESMO do auto-resolve do engine — modulo PURO (sem I/O),
+// entao este arquivo segue puro. Reusar em vez de reescrever: ele carrega 4 meses de travas
+// (ressalva, hesitacao, pedido-de-outra-acao, alongamento) que uma regex nova nao teria.
+const { detectUserConfirmation } = require('../services/user-confirmation');
+
 const TZ = 'America/Sao_Paulo';
 
 function brtDay(value, tz = TZ) {
@@ -81,6 +86,11 @@ const CANCEL_RE = /\bcancel\w*/;
 // segmento anotado. Sem \b nas raízes acentuáveis (\b em JS é ASCII — lição audit 28/06)
 // e tolerante ao word-joiner U+2060 que o WhatsApp injeta em listas ("2. ⁠feito").
 const DONE_EXPLICIT_RE = /(feit\w*|\bfiz\b|fech\w*|conclu\w*|pront\w*|resolvid\w*|finaliz\w*|termin\w*|entreg\w*|consegui|\bfoi\b|\bsim\b|\bok\b|check|done|✅|👍)/i;
+
+// Marcador GLOBAL explícito — o que autoriza uma afirmativa CURTA a fechar mais de um
+// item de uma vez ("sim para todas", "sim para tds"). Sem ele, um "Sim" pelado diante de
+// 3 itens é ambíguo e vai pro LLM.
+const GLOBAL_MARKER_RE = /\b(tod[oa]s?|tudo|tds|td|geral|ambas|ambos)\b|\bas\s+(duas|tr[êe]s|quatro|cinco)\b/;
 
 // Tokens que NÃO contam como anotação (conectivos/artigos): "1 e a 2" segue menção nua.
 const CONNECTOR_TOKENS = new Set(['e', 'a', 'o', 'as', 'os', 'da', 'de', 'do', 'das', 'dos', 'já', 'ja', 'tb', 'tbm', 'também', 'tambem']);
@@ -183,6 +193,32 @@ function parseClosingReply(userText, count) {
   const bare = t.replace(/[\s.!,]+$/g, '');
   if (/^(n[ãa]o|nao|nada|nenhuma)$/.test(bare)) {
     return { matched: true, statuses };
+  }
+
+  // CLOSING-AFIRMATIVA-NAO-OUVIDA (sonda 07/09) — ÚLTIMO RECURSO. O ritual de fechamento
+  // pede, com estas palavras, «fez? Me diz: "sim" ou "não rolou"» — e até aqui "sim" não
+  // fechava nada: só "tudo/todas" (regra 1) e a resposta numerada (regra 3). Medido no
+  // banco de produção: dos 61 fechamentos respondidos em até 20min desde julho, 11 fecharam
+  // e 9 eram um sim inequívoco que caía no LLM — e em 7 desses a intent morreu 'superseded',
+  // que é a assinatura do "TOM repetiu a confirmação" (achados 07d42c92 e 688dc7e6, julho).
+  //
+  // Roda DEPOIS de tudo: só converte matched:false em resposta, nunca muda um veredito que já
+  // existia — zero-regressão por construção (mesmo padrão do fix de alongamento em
+  // user-confirmation.js). O juiz é o detectUserConfirmation com allowDone, porque a pergunta
+  // do fechamento É "já foi feito?".
+  //
+  // Dois vetos LOCAIS por cima dele, porque este arquivo sabe o que ele não sabe: no
+  // fechamento, parcialidade e pedido de cancelamento NUNCA fecham item ("feito pela metade").
+  // PROGRESS_RE é deliberadamente largo — ele veta de vez em quando uma afirmativa legítima
+  // ("...to mandando pra gráfica" casa "andando" por substring). Isso é fail-safe: cai no LLM.
+  //
+  // n === 1: não existe alvo ambíguo — a afirmativa fecha o único item.
+  // n  >  1: exige marcador GLOBAL explícito. Um "Sim" pelado com 3 itens segue indo pro LLM:
+  //          fechar a tarefa errada é a dor #1 do TASK_UPDATE, pior que o drop.
+  if (!CANCEL_RE.test(t) && !PROGRESS_RE.test(t)
+      && detectUserConfirmation(t, { allowDone: true }) === 'yes'
+      && (n === 1 || GLOBAL_MARKER_RE.test(t))) {
+    return { matched: true, statuses: new Array(n).fill('done') };
   }
 
   return { matched: false, statuses };
