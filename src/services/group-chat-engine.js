@@ -529,10 +529,13 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         const { marcadorDeConfirmacao } = require('../utils/confirm-marker');
         const _ok = created.length + (updated || []).length + completed.length + (cancelled || []).length;
         const _fail = (failed || []).length;
-        const _mk = marcadorDeConfirmacao({ tipo: 'task', ok: _ok, total: _ok + _fail, via: 'grupo' });
+        const _mk = marcadorDeConfirmacao({ tipo: 'task', ok: _ok, total: _ok + _fail, via: 'grupo', falhas: failed });
         const { error: _e } = await supabase.from('marker_logs').insert({
           collaborator_id: senderCollabId || null,
           marker_type: _mk.marker_type, result: _mk.result, reason: _mk.reason,
+          // Sem esta linha o `all_failed:N grupo` fica cego e a investigacao vira garimpo de
+          // log de motor — foi o custo real do incidente da Barra em 07/09.
+          raw_excerpt: _mk.raw_excerpt,
         });
         if (_e) console.error(`[GroupChat] sensor de tarefa falhou: ${_e.message}`);
       } catch (e) { console.error('[GroupChat] sensor de tarefa erro:', e.message); }

@@ -25,7 +25,23 @@
 
 // Vocabulário IGUAL ao que applyTaskActions já grava ("ok=N fail=M"), senão o auditor precisaria
 // aprender um segundo dialeto pra ler a mesma coisa.
-function marcadorDeConfirmacao({ tipo, ok, total, via }) {
+// RAW-CEGO-NO-GRUPO (medido 07/09). O caminho 1:1 grava `{actions, fails}` no raw desde
+// 08/07 (TASKUPDATE-REJECTED-RAW-NULL, caso Leo) — sem isso "all_failed:2" nao diz QUAIS
+// alvos falharam nem por que. O caminho de GRUPO nunca ganhou isso: as duas rejeicoes mais
+// recentes do acervo (04/09 e 07/09) sao `all_failed:N grupo` com raw NULL, e uma delas e o
+// incidente da Krissya — quando fui investigar, o banco nao tinha nada e eu precisei garimpar
+// log de motor. Mecanismo que existe numa porta e nao na outra, de novo.
+//
+// Ironia util: o grupo tem informacao MELHOR que o 1:1 e a jogava fora. O
+// applyGroupChatTaskActions devolve `failed: [{action, why}]` com codigo legivel por maquina
+// ('not_found_in_pool', 'race_lost', 'title_missing'), enquanto no 1:1 o `fails` e prosa.
+// Mesmo SLOT, mesmo sentido (por que falhou), um dialeto so pro auditor.
+//
+// @param {Array<{action,why}>} [falhas] — quando vier, vira raw_excerpt. Nunca lanca: raw
+// que quebra a serializacao nao pode derrubar o registro que ele deveria enriquecer.
+const RAW_MAX = 500;   // paridade com o truncamento do logMarker do 1:1
+
+function marcadorDeConfirmacao({ tipo, ok, total, via, falhas }) {
   const n = Number(ok) || 0;
   const t = Number(total) || 0;
   const falhou = Math.max(0, t - n);
@@ -37,7 +53,21 @@ function marcadorDeConfirmacao({ tipo, ok, total, via }) {
     // era o que o auditor precisava pra não ler o parcial como mentira inteira.
     result: n > 0 ? 'executed' : 'rejected',
     reason: n > 0 ? `ok=${n} fail=${falhou}${sufixo}` : `all_failed:${t || 1}${sufixo}`,
+    raw_excerpt: _raw(falhas),
   };
+}
+
+// Monta o raw no dialeto do 1:1: { actions:[...], fails:[...] }. Sem falhas -> null (nao
+// inventa objeto vazio, que seria indistinguivel de "falhou e nao sei por que").
+function _raw(falhas) {
+  if (!Array.isArray(falhas) || !falhas.length) return null;
+  try {
+    const s = JSON.stringify({
+      actions: falhas.map((f) => (f && f.action) || null).filter(Boolean),
+      fails: falhas.map((f) => (f && f.why) || null).filter(Boolean),
+    });
+    return s.length > RAW_MAX ? s.slice(0, RAW_MAX) : s;
+  } catch (_) { return null; }
 }
 
 module.exports = { marcadorDeConfirmacao };
