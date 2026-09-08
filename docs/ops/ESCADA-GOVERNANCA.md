@@ -1375,6 +1375,40 @@ Proposta de virar código: o `provar(literal, guard)` pedido desde 13/08 deve **
 relógio fixado no `occurred_at` do achado, e o `gov-runner` deve recusar o fechamento quando o
 módulo sob teste referenciar `Date.now()` e a prova tiver sido produzida sem pin.
 
+### ETAPA 4 (fechar) — commit é ARTEFATO, não estado: case o CAMINHO DE CÓDIGO
+
+**Ocorrências:** 2 (08/09, as duas na mesma rodada). Custou um achado fechado errado.
+
+**O caso.** Em 07/09 o TOM mandou briefing de trabalho no feriado. O Quintela, 19:25, no
+privado dele: *"Tom, hj é feriado"*. A rodada de 08/09 fechou esse achado como **resolvido**,
+citando o commit `f7f75754` do dia anterior.
+
+Não procedia. Aquele commit tocou **apenas** `src/rituals/group-reports.js` — o digest de
+**grupo**. O Quintela recebeu ritual **pessoal**, que sai por `dispatcher.js` e não tinha portão
+de feriado nenhum. O sintoma era idêntico ("briefing no feriado"), o caminho era outro.
+
+```bash
+git show --stat f7f75754     # → group-reports.js
+```
+
+Uma linha teria pego. **Antes de fechar citando um commit, confirme que o arquivo tocado é o
+que executa AQUELE caminho** — o da fala que originou o achado. Sintoma igual não é prova:
+nesta casa a mesma família costuma ter mais de uma porta, e consertar uma é o padrão, não a
+exceção. Em 07-08/09 isso apareceu **cinco vezes** (resolvedor de título, promessa de cadência,
+raw de rejeição, portão de feriado, briefing por argv).
+
+**A segunda ocorrência, mesma raiz.** Na mesma rodada, o relatório apontou que a mensagem do
+commit `f7f75754` afirmava que o Recreio "segue recebendo" o digest por ter 3 aulas no feriado —
+e que isso não procede, porque as 3 estavam canceladas. **Está certo.** Só que a correção já
+existia: `65165348`, dois commits depois, ajustou o comentário do código e o teste.
+
+Mensagem de commit é **imutável**: ela registra o que se acreditava naquele instante e fica
+errada para sempre. O código, não. **Leu commit N, leia N+1** — ou melhor, leia o arquivo de
+hoje. `git log --oneline -5 -- <arquivo>` custa nada.
+
+🔑 **A regra que cobre as duas:** commit, log e mensagem são **artefatos datados**; o que decide
+é o **estado atual do código**. Artefato serve pra achar a pista, nunca pra encerrar o caso.
+
 ### ETAPA 2 (varredura) — `all_failed` ANTES de 07/09 é 71% PERGUNTA, não falha
 
 **Ocorrência:** 1 (07/09). Ajuste de leitura do acervo histórico — vale para todo achado
