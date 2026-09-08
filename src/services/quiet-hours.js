@@ -114,6 +114,44 @@ const DEFAULT_NIGHT_END_MIN = 7 * 60; // 00:00–06:59 BRT
  * explícito > política.
  */
 async function isQuietNow(collabOrId, now, context = 'work', opts = {}) {
+  // ── PORTÃO DE DIA FECHADO (Quintela, 07/09/2026 19:25: "Tom, hj é feriado") ──────────────
+  //
+  // Regra do dono, 08/09: **domingo e feriado, coisa de TRABALHO não dispara; pessoal continua.**
+  // Vem ANTES de tudo, e antes até do `if (!prefs)`: quem não tem preferência cadastrada é
+  // justamente quem mais recebe cobrança automática, e feriado é feriado pra todo mundo.
+  //
+  // Por que AQUI e não num portão novo no tique do dispatcher: este é o ponto que já carrega o
+  // eixo trabalho/pessoal que o dono descreveu, e ele é consultado em **52 lugares** do
+  // dispatcher. Um portão novo cobriria uma porta; este cobre as 52 — e a lição do dia é
+  // exatamente essa (consertei o digest de grupo em 07/09 e o caminho pessoal ficou aberto).
+  //
+  // SÓ trabalho. `personal` atravessa: silenciar o lembrete pessoal de alguém num feriado é
+  // apagar o que a pessoa pediu pra si mesma.
+  //
+  // DOMINGO ENTRA JUNTO, e isso não foi escolha de desenho — é consequência da fonte: domingo
+  // não tem aula no calendário, então `ehDiaFechado` devolve true. Conferido: 06/09 (domingo) e
+  // 07/09 (feriado) dão `fechado=true`; 08 e 09 dão false.
+  //
+  // Isso É a regra que o dono pediu em 08/09 ("domingo e feriado, coisa de trabalho não
+  // dispara"). O efeito real medido no domingo 06/09 é pequeno — domingo já era quase limpo
+  // (21 mensagens a 8 pessoas, contra 222 a 33 no feriado) — mas NÃO é zero: o planejamento
+  // semanal saía no domingo pra 2 pessoas e passa a não sair. Fica escrito aqui porque foi
+  // decisão consciente, e não efeito colateral que alguém descobre daqui a três meses.
+  if (context === 'work' && !(opts && opts.ignorarDiaFechado)) {
+    try {
+      const { ehDiaFechado } = require('./dia-fechado');
+      const ymd = now && now.ymd ? now.ymd : null;
+      if (ymd) {
+        const d = await ehDiaFechado({ ymd });
+        if (d.fechado) return { quiet: true, reason: 'dia_fechado:sem_aula' };
+        // Leitura que falhou vira AVISO, nunca silêncio: sem calendário o dia roda normal.
+        if (d.motivo) console.warn('[quiet-hours] dia fechado nao aferido, seguindo normal:', d.motivo);
+      }
+    } catch (e) {
+      console.warn('[quiet-hours] portao de dia fechado falhou, seguindo normal:', e.message);
+    }
+  }
+
   let prefs = null;
 
   if (collabOrId && typeof collabOrId === 'object') {
