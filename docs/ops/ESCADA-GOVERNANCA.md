@@ -1697,3 +1697,77 @@ Proposta de virar código: **um `falaReal(texto)` em `src/utils/`** que remove o
 prefixo `[áudio transcrito]`, mais um teste de contrato que falhe quando um módulo de detecção
 determinística analisar `rawText` sem passar por ele. É decisão de desenho — vai ao grupo, não
 entra por conta do agente.
+
+### ETAPA 3 — `ilike` numa coluna UUID devolve NEUTRO EM BLOCO, 3× na mesma rodada
+
+**Ocorrências:** 7 do neutro (14/08, 15/08, 17/08, 27/08, 30/08, 03/09, 08/09). A origem de hoje é
+nova e é a mais barata de repetir: **o operador errado para o tipo da coluna.**
+
+Em 08/09 usei `.ilike('id', '0c528968%')` três vezes — para achar a tarefa pelo short-id e, depois,
+para achar o achado pelo prefixo do id. Nas três o supabase-js devolveu `data:null` **sem estourar
+exceção**, e o `(data||[])` transformou isso em zero. Lido no automático: "a tarefa não existe", "o
+achado não existe". As duas leituras estavam erradas — as 3 tarefas existiam e os 2 achados também.
+
+O que desempatou foi a regra de 18/08 (zero em BLOCO = chamada malformada): três `null` seguidos num
+lugar onde eu tinha acabado de ver o dado. Refeito com `select` + filtro em JS (`matchRowsByShortId`
+para as tarefas, `startsWith` para os achados), tudo apareceu.
+
+Regra: **`ilike`/`like` só funcionam em coluna textual.** Em `uuid` o Postgres não tem o operador e
+o erro chega como `error` no retorno, não como throw — então todo `(data || [])` engole. Antes de
+concluir qualquer coisa de um filtro por id, confira o TIPO da coluna; para prefixo de uuid, o
+caminho é trazer as linhas e filtrar em JS.
+
+Proposta de virar código: o `literalDoAchado(finding)` proposto em 18/08/19/08 deveria receber o
+prefixo do id e fazer esse filtro por dentro. Enquanto cada rodada escrever o `ilike` à mão, isto
+volta — e volta silencioso, do lado que fecha achado vivo como "não existe".
+
+### ETAPA 2.6 — a fatia com "parser casou / estagiou 0" era defeito REAL, e a raiz é auto-infligida
+
+**Ocorrência:** 1 (08/09), e virou a correção da rodada.
+
+Em 07/09 a leitura ingênua das três fatias de parse-on-open ("todas quebradas") foi desmontada pela
+data de nascimento dos parsers — era falta de oportunidade. Hoje a mesma checagem apontou para o
+outro lado: o parser de reagendamento nasceu em **24/08** e a pergunta medida é de **03/09**,
+posterior. A leitura "parser casou 1, estagiou 0" se sustentou, e o furo estava exatamente onde o
+bloco de VITALIDADE prevê — **depois** do parser, na resolução título→id.
+
+O que vale registrar é a FORMA da raiz, porque ela não estava no repertório: **o sistema escreveu
+uma string que ele próprio não sabe ler.** `buildReschedulePreview` renderiza o fallback
+`tarefa <8hex>` quando o título não está no `titleById`; o parser lê isso de volta como TÍTULO; e o
+hook resolve título por `.ilike(title)`, que nunca casa um id. Nenhuma das três peças está errada
+isoladamente — é a mesma classe de 29/08 (o dano mora na costura, não no guard). Medido: `ilike
+title` 0 linhas para as 3 tarefas do preview; `matchRowsByShortId` 1 linha exata para cada.
+
+Regra: **quando uma fatia de parse-on-open mostrar "parser casou / estagiou 0", compare o que o TOM
+ESCREVEU com o que o resolvedor SABE LER.** O texto da pergunta é gerado por código nosso — se ele
+tem um ramo de fallback, esse ramo é candidato imediato, e é barato de conferir (`grep` o template).
+
+Proposta de virar código: um teste de contrato que rode todo template de pergunta gerado por código
+(`buildReschedulePreview`, `buildLaunchPreview`, os previews de coordenação) pelo parser da própria
+fatia, e falhe quando o parser não conseguir reconstruir o alvo. Hoje as duas metades têm suíte
+própria e ninguém testa o ciclo fechado.
+
+### ETAPA 2.5 — o guard existe, dispara, e mesmo assim alargá-lo é o conserto ERRADO
+
+**Ocorrência:** 1 (08/09), e é o motivo de a rodada ter fechado com 1 correção e não 2.
+
+`0d03301d` (Rose 07/09 08:54) é recusa falsa de LEITURA: ela pergunta se o resumo de agosto misturou
+pessoal com o da LA, o TOM responde certo e depois se retrata ("não tenho como ver se misturou").
+Medido: a retratação é que é falsa — `pf_*` é pessoal por construção, e os R$ 9.144,39 reproduzem
+exato somando `type=expense` sobre `cashflow_competencia` (130 tx, zero da LA).
+
+O reflexo, com o histórico de 20/08 e 22/08 na mão, é ir no `isFinanceCapabilityDenial` e tirar a
+exclusão de consulta (`_FIND_RE`, que trata "ver/achar/buscar" como limitação honesta). **Seria
+errado, e o que mostra isso é ler o que o interceptor FAZ quando dispara**: sem `detectRegisterIntent`
+e sem `detectCorrection`, o ramo cai no `_askAgain` — *"me manda o que lançar, quanto e de onde"*.
+Para uma pergunta de leitura isso é pior que a resposta que ela recebeu.
+
+Regra que isto acrescenta à ETAPA 2.5: **antes de alargar o gate de um guard, leia a AÇÃO dele no
+caminho que você vai abrir.** Guard certo com ação errada para a nova classe não é conserto — é
+trocar uma resposta ruim por uma sem sentido. É prima da regra de 04/09 (guard que apaga texto não
+entra sem falso-fire medido), agora para guard que SUBSTITUI a resposta.
+
+Consequência de protocolo, e vale para o teto de 2: **1 correção é resultado legítimo** quando o
+segundo candidato só tem conserto de desenho. Aqui o alvo certo é o TOM saber que aquela carteira é
+pessoal por construção — conhecimento, que mora em prompt/skill, não trava. Foi ao grupo como
+pergunta, com a medição anexada no `verified_note`.
