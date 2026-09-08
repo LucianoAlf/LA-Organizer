@@ -21,6 +21,9 @@ const RESCHED_RE = /reagend\w*|remarc\w*|empurr\w*|adia(?:r|ndo)?|novos?\s+prazo
 const CONFIRM_RE = /\bconfirma[r]?\b|pode\s+ser\b|posso\s+seguir\b|fica\s+assim\b|tudo\s+certo\b|\btopa\b|\bfechado\b/i;
 // Negação do verbo desqualifica a fala inteira ("Não vou reagendar nada agora").
 const NEG_RE = /\bn[ãa]o\s+(?:vou\s+|posso\s+|consegui\s+)?(?:reagend|remarc|mud|empurr|adia)/i;
+// Fallback que o PRÓPRIO preview escreve quando não sabe o título. Ancorado nas duas pontas:
+// um título real que só começa com "tarefa" ("tarefa do Arthur") não casa.
+const SELF_SHORTID_RE = /^tarefa\s+([0-9a-f]{4,12})$/i;
 const ISO_RE = /(\d{4})-(\d{2})-(\d{2})/;
 const DDMM_RE = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/;
 
@@ -79,7 +82,12 @@ function parseRescheduleConfirmQuestion(replyText, opts = {}) {
     if (!title) continue;
     const date = extractDate(rhs, todayYmd);
     if (!date) continue;
-    actions.push({ action: 'reschedule', title, new_due_date: date });
+    // buildReschedulePreview escreve "tarefa <8hex>" quando o título não está no titleById.
+    // Isso é ID, não título — resolver por `ilike title` nunca casa (Vitoria 03/09).
+    const sid = SELF_SHORTID_RE.exec(title);
+    actions.push(sid
+      ? { action: 'reschedule', short_id: sid[1].toLowerCase(), new_due_date: date }
+      : { action: 'reschedule', title, new_due_date: date });
   }
   return actions.length ? { actions } : null;
 }

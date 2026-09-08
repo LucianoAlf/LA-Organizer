@@ -14770,7 +14770,21 @@ Output AGORA, apenas o marker:`;
                 const { resolveTaskTarget } = require('./lib/task-target');
                 const _rActs = [];
                 let _allOk = true;
+                const { matchRowsByShortId } = require('./services/short-id-match');
                 for (const _a of _resched.actions) {
+                  // O preview do TOM escreve "tarefa <8hex>" quando não sabe o título; o parser
+                  // devolve isso como short_id. `ilike title` nunca casa um id — resolve por id.
+                  if (_a.short_id) {
+                    const { data: _byId } = await supabase.from('tasks')
+                      .select('id')
+                      .eq('assigned_to', collab.id)
+                      .not('status', 'in', '("done","cancelled")')
+                      .limit(1000);
+                    const _hit = matchRowsByShortId(_byId || [], _a.short_id);
+                    if (_hit.length !== 1) { _allOk = false; break; }
+                    _rActs.push({ action: 'reschedule', id: _hit[0].id, new_due_date: _a.new_due_date });
+                    continue;
+                  }
                   const { data: _cands } = await supabase.from('tasks')
                     .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at')
                     .eq('assigned_to', collab.id)

@@ -116,3 +116,23 @@ test('título vazio (só marcador) não vira ação', () => {
   const reply = 'Reagendo:\n• *  * → 02/09\nConfirma?';
   assert.strictEqual(parseRescheduleConfirmQuestion(reply, TODAY), null);
 });
+
+// RESCHED-SHORTID-NAO-LE-O-QUE-ESCREVE (Vitoria, 03/09 21:40 BRT). Quando o título não está no
+// titleById, buildReschedulePreview escreve o fallback "tarefa <8hex>" — e o parse-on-open lia
+// isso como TÍTULO. O hook resolve título por `ilike`, que nunca casa um id: parser casou 1,
+// estagiou 0. Medido no banco no dia: `ilike title` 0 linhas para os 3; matchRowsByShortId 1
+// linha exata para cada. O sistema não conseguia ler de volta o que ele mesmo tinha escrito.
+test('fallback "tarefa <short-id>" do próprio preview vira short_id, não título', () => {
+  const reply = '📋 Vou reagendar:\n• *tarefa 0c528968* → 04/09\n• *tarefa 2c45b5f3* → 04/09\n\nConfirma? (responde "isso" / "sim")';
+  const r = parseRescheduleConfirmQuestion(reply, { todayYmd: '2026-09-03' });
+  assert.deepStrictEqual(r.actions, [
+    { action: 'reschedule', short_id: '0c528968', new_due_date: '2026-09-04' },
+    { action: 'reschedule', short_id: '2c45b5f3', new_due_date: '2026-09-04' },
+  ]);
+});
+
+test('título REAL que começa com "tarefa" segue sendo título', () => {
+  const reply = 'Reagendo:\n• *tarefa do Arthur* → 04/09\nConfirma?';
+  const r = parseRescheduleConfirmQuestion(reply, { todayYmd: '2026-09-03' });
+  assert.deepStrictEqual(r.actions, [{ action: 'reschedule', title: 'tarefa do Arthur', new_due_date: '2026-09-04' }]);
+});
