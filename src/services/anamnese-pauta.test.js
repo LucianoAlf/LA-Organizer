@@ -836,3 +836,78 @@ test('fim de dia: o horário do sábado não depende do fuso do processo (LOCALY
     if (tzOriginal === undefined) delete process.env.TZ; else process.env.TZ = tzOriginal;
   }
 });
+
+const { avisaDeHoraEmHora, LEMBRETE_UNICO_POR_UNIDADE } = require('./anamnese-pauta');
+
+// ---------------------------------------------------------------------------
+// PROMESSA-DE-HORA-EM-HORA-SOBREVIVEU-A-CADENCIA (Alf, 08/09/2026).
+//
+// Em 06/09 o time pediu cadência por unidade: Recreio de hora em hora, Barra só às 09:00,
+// Campo Grande só às 13:00. O dispatcher passou a pular as outras horas — e a linha
+// "De hora em hora eu aviso aqui quem chega na hora seguinte" FICOU na mensagem da manhã.
+//
+// Em 08/09 a Barra leu essa promessa numa mensagem que seria a única do dia.
+//
+// O comentário do próprio código tinha previsto: *"Ela é uma PROMESSA: se o lembrete de hora
+// em hora for desligado um dia, esta linha vira mentira e sai junto."* Previu e não impediu,
+// porque a cadência morava só no dispatcher: quem escrevia a promessa não tinha como saber
+// o que o agendador fazia.
+//
+// A raiz não era a linha — eram as DUAS CÓPIAS. Agora é uma tabela só, e o teste de baixo
+// é o que garante que continue sendo.
+// ---------------------------------------------------------------------------
+
+test('Recreio (de hora em hora) mantém a promessa', () => {
+  const t = mensagemDoGrupo({
+    itens: [{ nome: 'Fulano', hora: '09:00' }], unidadeNome: 'Recreio', dataBr: '09/09',
+  });
+  assert.match(t, /De hora em hora eu aviso aqui/);
+});
+
+for (const u of ['Barra', 'Campo Grande']) {
+  test(`${u} (lembrete único no dia) NÃO promete de hora em hora`, () => {
+    const t = mensagemDoGrupo({
+      itens: [{ nome: 'Fulano', hora: '09:00' }], unidadeNome: u, dataBr: '09/09',
+    });
+    assert.doesNotMatch(t, /De hora em hora/,
+      `${u} recebe uma mensagem por dia — prometer hora em hora é mentir na primeira linha do dia`);
+    assert.match(t, /Anamnese/, 'o conteúdo tem que continuar inteiro; só a promessa sai');
+  });
+}
+
+test('unidade desconhecida cai no padrão ANTIGO (de hora em hora)', () => {
+  // Fail-safe de comportamento: unidade nova não deve silenciar sozinha por não estar na tabela.
+  const t = mensagemDoGrupo({
+    itens: [{ nome: 'Fulano', hora: '09:00' }], unidadeNome: 'Unidade Nova', dataBr: '09/09',
+  });
+  assert.match(t, /De hora em hora/);
+});
+
+test('avisaDeHoraEmHora tolera nome ausente/sujo sem quebrar', () => {
+  assert.strictEqual(avisaDeHoraEmHora('  Barra  '), false, 'espaço em volta não pode virar unidade nova');
+  assert.strictEqual(avisaDeHoraEmHora(null), true);
+  assert.strictEqual(avisaDeHoraEmHora(undefined), true);
+  assert.strictEqual(avisaDeHoraEmHora(''), true);
+});
+
+// ---------------------------------------------------------------------------
+// O teste que impede a REINCIDÊNCIA: uma tabela, dois leitores.
+// ---------------------------------------------------------------------------
+test('o dispatcher IMPORTA a cadência — não pode ter cópia própria', () => {
+  const _fsC = require('fs');
+  const _pathC = require('path');
+  const disp = _fsC.readFileSync(
+    _pathC.join(__dirname, '..', 'rituals', 'dispatcher.js'), 'utf8');
+
+  assert.match(disp, /require\('\.\.\/services\/anamnese-pauta'\)/,
+    'o dispatcher tem que importar a tabela, não redeclarar');
+  assert.doesNotMatch(disp, /const PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE = \{/,
+    'voltou a cópia local da cadência — foi exatamente isso que fez a Barra ler uma promessa falsa em 08/09');
+});
+
+test('a tabela conhece as três unidades como a casa combinou', () => {
+  assert.strictEqual(LEMBRETE_UNICO_POR_UNIDADE.Barra, '09:00');
+  assert.strictEqual(LEMBRETE_UNICO_POR_UNIDADE['Campo Grande'], '13:00');
+  assert.strictEqual(LEMBRETE_UNICO_POR_UNIDADE.Recreio, undefined,
+    'Recreio fora da tabela = padrão antigo, de hora em hora');
+});

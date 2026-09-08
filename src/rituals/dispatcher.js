@@ -160,7 +160,10 @@ const PAUTA_ANAMNESE_LEMBRETE_TIMES = ['09:00', '10:00', '11:00', '12:00', '13:0
 // hora). A mensagem dessas duas cobre o DIA INTEIRO, nao a hora seguinte — uma unica mensagem
 // as 09:00 falando da proxima hora deixaria a tarde toda invisivel, que foi o defeito de 04/09.
 // Por NOME e nao por uuid: a tabela e lida por gente, e o nome e o que o dono usa pra pedir.
-const PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE = { 'Barra': '09:00', 'Campo Grande': '13:00' };
+// A cadencia por unidade mora no modulo PURO (src/services/anamnese-pauta.js) — a mesma tabela
+// que decide se a mensagem da manha promete "de hora em hora". Duas copias divergiram uma vez
+// (08/09: a Barra leu a promessa numa mensagem unica do dia) e nao vao divergir de novo.
+const { LEMBRETE_UNICO_POR_UNIDADE: PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE } = require('../services/anamnese-pauta');
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
 const OPS_DIGEST_TIME = '07:30';                // Every day — achados da auditoria no grupo de ops (após triagem das 5h)

@@ -413,7 +413,10 @@ function mensagemDoGrupo({
   // duplicata contra reenvio num grupo REAL (mesma regra do bloco de contrato, acima).
   // Ela é uma PROMESSA: se o lembrete de hora em hora for desligado um dia, esta linha vira
   // mentira e sai junto.
-  return `${corpo}\n\n${LINHA_LEMBRETE_HORA}`;
+  // A promessa so entra quando ela E VERDADE nesta unidade (ver LEMBRETE_UNICO_POR_UNIDADE).
+  // Onde o lembrete e unico no dia, a mensagem termina no conteudo: dizer menos e melhor que
+  // prometer o que nao vem.
+  return avisaDeHoraEmHora(unidadeNome) ? `${corpo}\n\n${LINHA_LEMBRETE_HORA}` : corpo;
 }
 
 // ── O RELATÓRIO DE FIM DE DIA (pedido do Alf, 04/09) ─────────────────────────────────────────
@@ -498,7 +501,28 @@ function mensagemDeFimDeDia({ preencheram, faltaram, semVerificacao, dataBr, err
 //
 // A promessa que a mensagem da manhã faz mora aqui do lado, de propósito: quem desligar um dos
 // dois vê o outro na mesma tela.
-const LINHA_LEMBRETE_HORA = 'De hora em hora eu aviso aqui quem chega na hora seguinte.';
+const LINHA_LEMBRETE_HORA = "De hora em hora eu aviso aqui quem chega na hora seguinte.";
+
+// CADENCIA POR UNIDADE — FONTE UNICA (08/09/2026).
+//
+// O comentario da linha acima previu este bug com todas as letras: "Ela e uma PROMESSA: se o
+// lembrete de hora em hora for desligado um dia, esta linha vira mentira e sai junto." Foi
+// exatamente o que aconteceu — em 06/09 o time pediu cadencia por unidade (Recreio de hora em
+// hora, Barra so as 09:00, Campo Grande so as 13:00), o dispatcher passou a pular as outras
+// horas... e a promessa ficou. Em 08/09 a Barra leu "de hora em hora eu aviso aqui" numa
+// mensagem que seria a unica do dia.
+//
+// A raiz nao foi a linha: foi a cadencia morar SO no dispatcher. Quem escreve a promessa nao
+// tinha como saber o que o agendador faz. Agora e a mesma tabela pros dois — o dispatcher
+// importa daqui. Mudar a cadencia de uma unidade muda o texto no mesmo commit, por construcao.
+//
+// Unidade AUSENTE = de hora em hora (o padrao antigo, que o Recreio manteve).
+const LEMBRETE_UNICO_POR_UNIDADE = { Barra: "09:00", "Campo Grande": "13:00" };
+
+/** true quando a unidade recebe o lembrete DE HORA EM HORA (e nao uma vez por dia). */
+function avisaDeHoraEmHora(unidadeNome) {
+  return !LEMBRETE_UNICO_POR_UNIDADE[String(unidadeNome || "").trim()];
+}
 
 // Ordem FIXA do rótulo: "anamnese e contrato", nunca "contrato e anamnese". A ordem sai de uma
 // lista, não da ordem em que os recortes foram lidos — senão o mesmo aluno apareceria escrito de
@@ -660,7 +684,7 @@ module.exports = {
   horaDeFimDeDiaDaUnidade, horariosDeFimDeDiaDoDia,
   FIMDIA_DIA_UTIL, FIMDIA_SABADO,
   degrau, tituloDaFilha, tituloDaEscalada, separarPorDegrau,
-  mensagemDoGrupo, PRIMEIROS_NO_ZAP,
+  mensagemDoGrupo, PRIMEIROS_NO_ZAP, LEMBRETE_UNICO_POR_UNIDADE, avisaDeHoraEmHora,
   mensagemDeFimDeDia, FALTARAM_NO_ZAP,
   alunosDaHora, lembreteDaProximaHora, LINHA_LEMBRETE_HORA,
   lembreteDoDiaInteiro,

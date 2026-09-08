@@ -56,11 +56,14 @@ const fnTimeToSlot = recortar(LINHAS, {
 const linhaHorarios = LINHAS[acharUnica(LINHAS,
   (l) => l.startsWith('const PAUTA_ANAMNESE_LEMBRETE_TIMES ='), 'PAUTA_ANAMNESE_LEMBRETE_TIMES')];
 
-// A tabela de quem fala UMA VEZ POR DIA sai do arquivo REAL pelo mesmo motivo dos horarios: uma
-// copia aqui ficaria verde no dia em que o dono trocasse a hora da Barra la e ninguem lembrasse
-// deste arquivo.
-const linhaUnicoPorUnidade = LINHAS[acharUnica(LINHAS,
-  (l) => l.startsWith('const PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE ='), 'PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE')];
+// A tabela de quem fala UMA VEZ POR DIA vem da FONTE UNICA, nao de uma copia — mesmo motivo dos
+// horarios: uma copia aqui ficaria verde no dia em que o dono trocasse a hora da Barra la.
+//
+// 08/09: antes ela era extraida como LINHA LITERAL do dispatcher. Isso funcionou enquanto a
+// tabela morava la — e foi justamente essa duplicidade que fez a Barra ler "de hora em hora"
+// numa mensagem unica do dia (a promessa no texto nao sabia da cadencia no agendador). A tabela
+// mudou de casa pro modulo puro; o harness segue a fonte em vez de raspar o texto.
+const UNICO_REAL = require('../services/anamnese-pauta').LEMBRETE_UNICO_POR_UNIDADE;
 
 const iBloco = acharUnica(LINHAS,
   (l) => l.startsWith('  const _pautaLembreteHora = PAUTA_ANAMNESE_LEMBRETE_TIMES'), 'inicio do bloco do lembrete');
@@ -73,8 +76,8 @@ if (LINHAS[iCatch + 1] !== '  }') {
 const BLOCO = LINHAS.slice(iBloco, iCatch + 2).join('\n');
 
 // eslint-disable-next-line no-new-func
-const { timeToSlot, PAUTA_ANAMNESE_LEMBRETE_TIMES, UNICO_REAL } = new Function(
-  `${fnTimeToSlot}\n${linhaHorarios}\n${linhaUnicoPorUnidade}\nreturn { timeToSlot, PAUTA_ANAMNESE_LEMBRETE_TIMES, UNICO_REAL: PAUTA_ANAMNESE_LEMBRETE_UNICO_POR_UNIDADE };`,
+const { timeToSlot, PAUTA_ANAMNESE_LEMBRETE_TIMES } = new Function(
+  `${fnTimeToSlot}\n${linhaHorarios}\nreturn { timeToSlot, PAUTA_ANAMNESE_LEMBRETE_TIMES };`,
 )();
 
 // eslint-disable-next-line no-new-func
