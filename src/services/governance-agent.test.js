@@ -299,3 +299,88 @@ test('carregarAcervo: severity "high" conta como alto', async () => {
   assert.strictEqual(a.total, 3);
   assert.strictEqual(a.alto, 2);
 });
+
+// ---------------------------------------------------------------------------
+// CICLO-MENTIA-SOBRE-SI + AGENTE-NAO-RELATA-A-PROPRIA-AUSENCIA (08/09/2026).
+//
+// Às 08:25 o agente não subiu — `spawn E2BIG`, o briefing de 131.819 bytes estourando o teto
+// de argv do kernel (131.072) por 747 bytes, depois de duas edições minhas na documentação
+// no dia anterior. A rodada só aconteceu porque o dono mandou rodar à mão às 09:00.
+//
+// O log não dizia isso. `registrarLog` CRAVAVA `status: 'sent'`, então a linha das 08:25
+// (morta) e a das 09:23 (viva) eram idênticas — tirando o `custo`, que também falta em rodada
+// cortada por tempo. Um sensor que perguntasse "rodou hoje?" leria `sent` e diria que sim:
+// zero por FALHA indistinguível de zero por SAÚDE, dentro da máquina que existe pra caçar
+// exatamente isso na casa.
+//
+// O relatório do agente também não mencionou. E não teria como: ele não estava vivo pra contar.
+// Ausência é sensor de fora — por isso o check `gov_agent_rodou` no health-check.
+// ---------------------------------------------------------------------------
+
+test('agente que NÃO subiu grava error, com NAO_SUBIU no detalhe', async () => {
+  const m = carregar();
+  const escritas = [];
+  const sb = fakeSb();
+  const fromOriginal = sb.from.bind(sb);
+  sb.from = (tabela) => {
+    const b = fromOriginal(tabela);
+    if (tabela === 'ritual_logs') {
+      const insertOriginal = b.insert && b.insert.bind(b);
+      b.insert = (linha) => { escritas.push(linha); return insertOriginal ? insertOriginal(linha) : Promise.resolve({ error: null }); };
+    }
+    return b;
+  };
+
+  const r = await m.rodarCicloGovernanca(sb, {
+    postar: () => ({ id: 'msg1' }), ymd: '2026-09-08', force: true,
+    rodar: () => Promise.resolve({ ok: false, text: 'Não consegui subir o agente aqui (spawn E2BIG).' }),
+  });
+
+  assert.strictEqual(r.rodou, false, 'ciclo que tentou e não subiu não é rodada');
+  assert.match(String(r.motivo), /nao subiu/i);
+
+  const log = escritas.find((l) => l && l.ritual_type === 'gov_agent');
+  assert.ok(log, 'o ciclo tem que registrar mesmo quando falha — senão some do radar');
+  assert.strictEqual(log.status, 'error',
+    'status sent numa rodada morta é a mentira que fez 08/09 parecer normal');
+  assert.match(log.detail, /NAO_SUBIU/,
+    'quem lê o detalhe tem que ver na primeira palavra que não houve rodada');
+});
+
+test('agente que subiu segue gravando sent', async () => {
+  const m = carregar();
+  const escritas = [];
+  const sb = fakeSb();
+  const fromOriginal = sb.from.bind(sb);
+  sb.from = (tabela) => {
+    const b = fromOriginal(tabela);
+    if (tabela === 'ritual_logs') {
+      const insertOriginal = b.insert && b.insert.bind(b);
+      b.insert = (linha) => { escritas.push(linha); return insertOriginal ? insertOriginal(linha) : Promise.resolve({ error: null }); };
+    }
+    return b;
+  };
+
+  const r = await m.rodarCicloGovernanca(sb, {
+    postar: () => ({ id: 'msg1' }), ymd: '2026-09-08', force: true,
+    rodar: () => Promise.resolve({ ok: true, text: 'relatorio', custo: 8.49 }),
+  });
+
+  assert.strictEqual(r.rodou, true);
+  const log = escritas.find((l) => l && l.ritual_type === 'gov_agent');
+  assert.strictEqual(log.status, 'sent');
+  assert.doesNotMatch(log.detail, /NAO_SUBIU/);
+  assert.match(log.detail, /custo=/, 'rodada viva com custo tem que registrar o custo');
+});
+
+test('o health-check tem sensor da AUSÊNCIA do ciclo', () => {
+  const _fsG = require('fs');
+  const _pathG = require('path');
+  const hc = _fsG.readFileSync(_pathG.join(__dirname, '..', 'rituals', 'health-check.js'), 'utf8');
+  assert.match(hc, /async function checkGovAgentRodou\(\)/,
+    'sem sensor de fora, um dia inteiro sem governança passa em silêncio');
+  assert.match(hc, /\['gov_agent_rodou',\s*checkGovAgentRodou\]/,
+    'check que existe e não está no inventário é check que não roda');
+  assert.match(hc, /reference_date', ontem/,
+    'o health-check roda 05:00, antes do ciclo das 08:00 — tem que olhar ONTEM');
+});

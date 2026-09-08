@@ -105,6 +105,42 @@ sete delas a intent morria como `superseded`, que é a assinatura de "o TOM repe
 confirmação". Corrigido em 07/09, commit `69f2c51e`.
 
 
+## ETAPA 2.7 — Procure a FAMÍLIA antes de tratar como novo
+
+Antes de escrever "achado novo" ou de levar uma pergunta de desenho ao grupo, **procure o
+histórico**. Uma consulta:
+
+```sql
+select codigo, status, corrigido_em, titulo from tom_known_issues
+where titulo ilike '%<palavra do sintoma>%' or codigo ilike '%<PALAVRA>%'
+order by coalesce(corrigido_em, created_at) desc;
+```
+
+**Por que isto está escrito aqui.** Em 08/09 o relatório levou ao grupo, como pergunta de
+desenho inédita, o caso da Rose ("o TOM se retratou dizendo que não consegue ver, e consegue").
+A análise de mérito estava certa e a decisão de não alargar o gate também. O que faltou foi
+olhar para trás: essa família tem **12 known-issues já fechados entre 15/06 e 25/08** — e um
+deles, `RECUSA-FALSA-CAI-COM-SKILL` (corrigido em **22/08**), descreve o mesmo mecanismo com
+quase as mesmas palavras que o relatório usou ("a rede que pegaria isso está escura").
+
+Dezesseis dias depois de marcado corrigido, o sintoma voltou.
+
+**O que muda quando você acha a família:** a pergunta deixa de ser *"sigo por aí?"* e vira
+*"por que este KI voltou?"*. E aí só há duas respostas, as duas verificáveis:
+
+| hipótese | como confirmar | o que o conserto tem que ser |
+|---|---|---|
+| **reincidência** — o fix não segurou | o caminho de código do KI é o mesmo do incidente novo | atacar a RAIZ, não repetir o fix |
+| **porta nova** — mesma família, outro caminho | o incidente sai por arquivo/fluxo diferente | ligar o mecanismo que já existe no lugar que faltou |
+
+A ETAPA 1 já manda **parar de corrigir família que reincidiu 2×** — mas essa trava só dispara
+se alguém encontrar a família. Sem esta etapa, a regra de reincidência nunca é acionada e o
+mesmo defeito é redescoberto do zero a cada mês.
+
+🔑 Em 07-08/09 a mesma família teve **mais de uma porta cinco vezes**. Aqui, "já corrigimos
+isso" quase nunca significa "está resolvido" — significa "existe um mecanismo pronto, e talvez
+ele não esteja ligado nesta porta".
+
 ## ETAPA 3 — Refute antes de acreditar
 
 Nesta ordem, sem pular:

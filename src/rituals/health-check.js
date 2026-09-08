@@ -60,6 +60,53 @@ function nowBrtParts() {
 // ─────────────────────────────────────────────────────────────────
 // CHECK 1 — Dream rodou nas últimas 24h
 // ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
+// CHECK — o ciclo de GOVERNANÇA subiu?
+// ─────────────────────────────────────────────────────────────────
+// AGENTE-NAO-RELATA-A-PROPRIA-AUSENCIA (08/09/2026).
+//
+// Em 08/09 às 08:25 o agente não subiu (`spawn E2BIG`: o briefing de 131 KB estourou o teto de
+// argv do kernel por 747 bytes, depois de duas edições minhas na documentação). A rodada só
+// aconteceu porque o dono mandou rodar à mão às 09:00.
+//
+// O relatório do agente não tinha uma linha sobre isso — e não teria como ter: **ele não estava
+// vivo pra contar.** Quem tem que ver ausência é sensor de fora, nunca o próprio ausente.
+//
+// Até 08/09 esse sensor não existiria de forma útil: `registrarLog` cravava `status='sent'`
+// mesmo quando o agente não nascia. A linha das 08:25 (morta) e a das 09:23 (viva) eram
+// idênticas no log, tirando o `custo` — que também falta em rodada cortada por tempo. Zero por
+// FALHA indistinguível de zero por SAÚDE, dentro da máquina que existe pra caçar exatamente
+// isso. O ciclo passou a gravar `error` + prefixo `NAO_SUBIU:` no mesmo commit deste check.
+//
+// Roda às 05:00, antes do ciclo das 08:00 — então olha ONTEM. Um dia inteiro sem governança é
+// coisa que o dono descobre no dia seguinte de manhã, não na semana seguinte.
+async function checkGovAgentRodou() {
+  const ontem = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from('ritual_logs')
+    .select('status, detail')
+    .eq('ritual_type', 'gov_agent')
+    .eq('reference_date', ontem)
+    .limit(10);
+  if (error) throw error;
+  const linhas = data || [];
+  if (!linhas.length) {
+    return { status: 'error', detail: `Governança NÃO rodou em ${ontem} — nenhuma linha em ritual_logs` };
+  }
+  const vivas = linhas.filter((l) => l.status === 'sent');
+  if (!vivas.length) {
+    const porque = (linhas[0] && linhas[0].detail) || 'sem detalhe';
+    return { status: 'error', detail: `Governança TENTOU e não subiu em ${ontem}: ${String(porque).slice(0, 120)}` };
+  }
+  // Rodada sem custo = caiu no fallback ou foi cortada. Não é falha, mas merece ser dito:
+  // três dessas seguidas é sintoma, e sem esta linha ninguém contaria.
+  const semCusto = vivas.filter((l) => !String(l.detail || '').includes('custo='));
+  if (semCusto.length === vivas.length) {
+    return { status: 'warn', detail: `Governança rodou em ${ontem} mas sem custo registrado (fallback ou corte por tempo)` };
+  }
+  return { status: 'ok', detail: `Governança rodou em ${ontem}` };
+}
+
 async function checkDreamRecent() {
   const { count, error } = await supabase
     .from('ritual_logs')
@@ -691,6 +738,7 @@ async function checkPortasCredenciais() {
 const ALL_CHECKS = [
   ['git_paridade',           checkGitParidade],
   ['portas_credenciais',     checkPortasCredenciais],
+  ['gov_agent_rodou',        checkGovAgentRodou],
   ['dream_recent',           checkDreamRecent],
   ['weekly_summary',         checkWeeklySummary],
   ['memories_embedding',     checkMemoriesEmbedding],

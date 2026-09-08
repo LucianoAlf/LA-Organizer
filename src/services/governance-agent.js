@@ -228,7 +228,7 @@ async function rodarCicloGovernanca(sb, { postar, ymd, force = false, rodar = nu
     await entregar(postar, '⚠️ Não rodei o ciclo de governança: não achei o arquivo do protocolo '
       + `(${PROTOCOLO_PATH}). Sem ele eu rodaria sem as travas, então preferi parar. `
       + 'É problema de deploy — o .md não subiu.', 'o aviso de protocolo ausente');
-    await registrarLog(sb, ymd, 'abortado: protocolo ausente');
+    await registrarLog(sb, ymd, 'abortado: protocolo ausente', 'error');
     return { rodou: false, motivo: 'sem protocolo' };
   }
 
@@ -245,11 +245,18 @@ async function rodarCicloGovernanca(sb, { postar, ymd, force = false, rodar = nu
     : '⚠️ Rodei o ciclo de governança e voltei sem texto — isso é bug meu, não resultado. Não mexi em nada.';
 
   await entregar(postar, texto, 'o relatório do ciclo');
+  // A RODADA ACONTECEU? `ok:false` do ops-agent significa que o agente NÃO NASCEU (spawn que
+  // falhou, timeout sem texto, saída sem resultado). Nesses casos `rodou:true` era verdade
+  // apenas no sentido de "o ciclo tentou" — e foi essa ambiguidade que fez 08/09 08:25 parecer
+  // uma rodada normal no log. Quem lê de fora precisa da distinção; quem lê de dentro também.
+  const _nasceu = !(r && r.ok === false);
   await registrarLog(sb, ymd,
-    `fechados=${placar.fechados} reincidentes=${placar.reincidentes.length} parada=${placar.emParada.length}`
+    (_nasceu ? '' : 'NAO_SUBIU: ')
+    + `fechados=${placar.fechados} reincidentes=${placar.reincidentes.length} parada=${placar.emParada.length}`
     + `${acervo ? ` acervo=${acervo.total}` : ''}`
-    + sufixoDeCusto(r && r.custo));
-  return { rodou: true, motivo: 'ok', placar, acervo };
+    + sufixoDeCusto(r && r.custo),
+    _nasceu ? 'sent' : 'error');
+  return { rodou: _nasceu, motivo: _nasceu ? 'ok' : 'agente nao subiu', placar, acervo };
 }
 
 /**
@@ -268,11 +275,22 @@ function sufixoDeCusto(custo) {
  * Fecha o dia. Grava também no caso do protocolo ausente, de propósito: o cron bate a cada
  * 5min até as 12h e sem isso o grupo levaria ~48 avisos iguais de um problema que não se
  * resolve sozinho.
+ *
+ * CICLO-MENTIA-SOBRE-SI (08/09/2026). O `status` era CRAVADO em 'sent'. Em 08/09 às 08:25 o
+ * agente não subiu (`spawn E2BIG`, briefing de 131 KB estourando o teto de argv do kernel) e
+ * mesmo assim a linha entrou como `sent`, com o mesmo `detail` da rodada boa. A ÚNICA
+ * diferença observável era o `custo` ausente — e ele também falta em rodada cortada por
+ * tempo, então nem isso distinguia.
+ *
+ * Consequência: um sensor que perguntasse "o ciclo rodou hoje?" leria `sent` e diria que sim.
+ * Zero por FALHA indistinguível de zero por SAÚDE, na própria máquina que existe pra caçar
+ * isso na casa. O agente não consegue relatar a própria ausência — mas o CICLO consegue, e
+ * agora conta.
  */
-function registrarLog(sb, ymd, detail) {
+function registrarLog(sb, ymd, detail, status = 'sent') {
   return sb.from('ritual_logs').insert({
     collaborator_id: GOV_OWNER, ritual_type: 'gov_agent', reference_date: ymd,
-    status: 'sent', sent_at: new Date().toISOString(), detail,
+    status, sent_at: new Date().toISOString(), detail,
   });
 }
 
