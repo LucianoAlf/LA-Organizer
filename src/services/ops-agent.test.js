@@ -403,3 +403,75 @@ test('mereceAck: o silêncio cobre exatamente o ramo do aceno curto do ackDoPedi
   assert.strictEqual(m.mereceAck(curto), false);
   assert.strictEqual(m.mereceAck(passou), true);
 });
+
+// ---------------------------------------------------------------------------
+// BRIEFING-NO-ARGV-ESTOURA-E2BIG (08/09/2026) — o agente de governança não subiu.
+//
+// O `-p` já era truncado em 4000 chars. O briefing NÃO era — e ele carrega o protocolo mais a
+// escada inteiros. Medido no dia em que quebrou:
+//
+//     protocolo   16.507 bytes
+//     escada     115.312 bytes
+//     soma       131.819 bytes
+//     MAX_ARG_STRLEN (kernel)  131.072 bytes   → estourou por 747
+//
+// Duas edições de documentação no dia anterior bastaram. O ciclo logou `rodou:true` porque
+// TENTOU, e o grupo recebeu "Não consegui subir o agente aqui (spawn E2BIG)".
+//
+// O teto é do KERNEL: não se contorna com cuidado editorial, e aparar o documento seria adiar
+// para a próxima edição. O briefing passou a ir por ARQUIVO.
+//
+// Estes testes leem a FONTE porque _rodarClaude não é exportada e faz spawn de verdade. É o
+// mesmo padrão dos outros contratos do engine — e checa a DERIVAÇÃO, não a palavra solta.
+// ---------------------------------------------------------------------------
+const _fsE2 = require('fs');
+const _pathE2 = require('path');
+const FONTE_OPS = _fsE2.readFileSync(_pathE2.join(__dirname, 'ops-agent.js'), 'utf8');
+
+test('o briefing NÃO vai como argumento quando o arquivo foi escrito', () => {
+  const bloco = FONTE_OPS.match(/const args = \[[\s\S]*?\];/);
+  assert.ok(bloco, 'não achei a montagem dos args');
+  assert.match(bloco[0], /--append-system-prompt-file/,
+    'o briefing tem que ir por arquivo — argv tem teto de kernel');
+  assert.match(bloco[0], /_briefFile \?/,
+    'a escolha arquivo-ou-argv precisa ser condicional ao arquivo ter sido escrito');
+});
+
+test('se a escrita do arquivo falhar, ainda sobe pelo argv (degrada, não morre)', () => {
+  const bloco = FONTE_OPS.match(/const args = \[[\s\S]*?\];/);
+  assert.match(bloco[0], /'--append-system-prompt', _brief/,
+    'sem esse ramo, falha de disco derrubaria o agente inteiro — pior que o bug original');
+});
+
+test('o `-p` continua truncado (a proteção que já existia não pode sumir)', () => {
+  assert.match(FONTE_OPS, /'-p', String\(pedido \|\| ''\)\.slice\(0, 4000\)/);
+});
+
+test('o arquivo temporário é apagado nos TRÊS caminhos de saída', () => {
+  // spawn que lança, erro do processo, e fechamento normal. Se um só ficar de fora,
+  // /tmp acumula um briefing de 128 KB por rodada.
+  const n = (FONTE_OPS.match(/_limparBrief\(\);/g) || []).length;
+  assert.ok(n >= 3, `só ${n} chamada(s) de limpeza — faltou caminho de saída`);
+  assert.match(FONTE_OPS, /const _limparBrief = \(\) => \{/);
+});
+
+test('o arquivo nasce com permissão restrita', () => {
+  assert.match(FONTE_OPS, /mode: 0o600/,
+    'briefing é documento interno da casa — não fica legível pra todo mundo em /tmp');
+});
+
+test('SENSOR: o briefing real ainda caberia no argv? (informativo, não trava)', () => {
+  // Não reprova: depois do fix o tamanho não importa mais. Serve pra alguém que voltar o
+  // briefing pro argv descobrir na hora que a margem já não existe.
+  const MAX_ARG_STRLEN = 131072;
+  const raiz = _pathE2.join(__dirname, '..', '..');
+  let bytes = 0;
+  for (const rel of ['docs/ops/PROTOCOLO-GOVERNANCA.md', 'docs/ops/ESCADA-GOVERNANCA.md']) {
+    try { bytes += _fsE2.statSync(_pathE2.join(raiz, rel)).size; } catch (_) { /* doc ausente: some do calculo */ }
+  }
+  if (bytes > MAX_ARG_STRLEN) {
+    console.log(`  [sensor] briefing = ${bytes} bytes, ${bytes - MAX_ARG_STRLEN} ACIMA do teto de argv. `
+      + 'Só passa porque vai por arquivo — não volte pro argv.');
+  }
+  assert.ok(bytes > 0, 'não achei os documentos do briefing');
+});

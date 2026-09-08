@@ -293,18 +293,51 @@ function resolverTimeout(timeoutMs) {
  */
 function _rodarClaude(pedido, { quem = 'alguém do grupo', briefing = null, timeoutMs = null } = {}) {
   return new Promise((resolve) => {
+    // BRIEFING-NO-ARGV-ESTOURA-E2BIG (08/09/2026). O `-p` ja era truncado em 4000; o
+    // briefing, NAO — e ele carrega o protocolo + a escada inteiros. Medido no dia em que
+    // quebrou: protocolo 16.507 + escada 115.312 = **131.819 bytes**, contra o teto do kernel
+    // MAX_ARG_STRLEN de **131.072**. Estourou por 747 bytes, e o agente de governanca nao
+    // subiu — `spawn E2BIG`, com o ciclo logando `rodou:true` porque ele TENTOU. Duas edicoes
+    // de documentacao no dia anterior bastaram.
+    //
+    // Passar 128 KB por argumento sempre esteve a uma edicao de quebrar, e o teto e do KERNEL:
+    // nao da pra contornar com cuidado editorial. Aparar o documento seria adiar. O briefing
+    // agora vai por ARQUIVO (--append-system-prompt-file), que nao tem teto pratico — a escada
+    // pode crescer o quanto a casa precisar.
+    //
+    // O arquivo e best-effort: se a escrita falhar, cai pro argv de antes. Melhor um agente
+    // que sobe com o briefing no argv (e pode estourar) do que nenhum agente.
+    const _brief = resolverBriefing(quem, briefing);
+    let _briefFile = null;
+    try {
+      _briefFile = path.join(os.tmpdir(), `tom-brief-${process.pid}-${Date.now()}.md`);
+      fs.writeFileSync(_briefFile, _brief, { mode: 0o600 });
+    } catch (e) {
+      console.warn('[OpsAgent] nao escrevi o briefing em arquivo, indo por argv:', e.message);
+      _briefFile = null;
+    }
+
     const args = [
       '-p', String(pedido || '').slice(0, 4000),
       '--model', OPS_MODEL,
       '--allowedTools', ...OPS_TOOLS,
-      '--append-system-prompt', resolverBriefing(quem, briefing),
+      ...(_briefFile ? ['--append-system-prompt-file', _briefFile] : ['--append-system-prompt', _brief]),
       '--output-format', 'json',
     ];
+
+    // O arquivo morre com o turno, aconteca o que acontecer. Sem isto, /tmp acumula briefing
+    // a cada rodada — e briefing e documento interno, nao lixo pra deixar espalhado.
+    const _limparBrief = () => {
+      if (!_briefFile) return;
+      try { fs.unlinkSync(_briefFile); } catch (_) { /* best-effort */ }
+      _briefFile = null;
+    };
     const env = { ...process.env, HOME: OPS_HOME };
     let child;
     try {
       child = spawn(CLAUDE_BIN, args, { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
+      _limparBrief();
       return resolve({ ok: false, text: `Não consegui subir o agente aqui (${e.message}).` });
     }
 
@@ -315,10 +348,12 @@ function _rodarClaude(pedido, { quem = 'alguém do grupo', briefing = null, time
     child.stderr.on('data', (d) => { err += d; });
     child.on('error', (e) => {
       clearTimeout(timer);
+      _limparBrief();
       resolve({ ok: false, text: `Falhei ao rodar aqui: ${e.message}` });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      _limparBrief();
       let texto = '', custo = null;
       try {
         const j = JSON.parse(out);
