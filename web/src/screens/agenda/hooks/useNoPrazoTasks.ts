@@ -5,7 +5,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { useMyGroupIds } from '../../../hooks/useWorkGroups';
 import { filterNoPrazo } from '../../../lib/agendaSemPrazo';
 import type { TaskForPanel } from './useAgendaTasks';
-import { clausulasVisibilidade } from '../../../lib/visibilidadeTarefas';
+import { clausulasVisibilidade, ehDelegacaoMinha } from '../../../lib/visibilidadeTarefas';
 
 // NOPRAZO-TASK-INVISIBLE-PWA — fonte ISOLADA de tarefas SEM prazo pro desktop (DayPanel).
 // useAgendaTasks busca por RANGE de due_date e exclui due_date null; aqui buscamos só as sem-prazo,
@@ -44,7 +44,9 @@ export function useNoPrazoTasks(): TaskForPanel[] {
   return useMemo<TaskForPanel[]>(() => {
     if (!data || !collaboratorId) return [];
     const mapped: TaskForPanel[] = (data as any[]).map((t) => {
-      const isDelegated = t.created_by === collaboratorId && !!t.assigned_to && t.assigned_to !== collaboratorId;
+      // Uma definicao so pra "delegacao minha" — ver visibilidadeTarefas.ts. Eram OITO copias,
+      // e nenhuma olhava `source`: automacao virava delegacao de quem tinha a credencial.
+      const isDelegated = ehDelegacaoMinha(t, collaboratorId);
       return {
         id: t.id,
         title: t.title,

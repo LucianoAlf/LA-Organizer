@@ -73,3 +73,30 @@ export function podeVerTarefa(
   if (t.source === 'system' && t.assigned_to) return false;
   return true;
 }
+
+/**
+ * Isto é uma delegação MINHA — eu decidi passar pra outra pessoa?
+ *
+ * AUTORIA-TECNICA-NAO-E-DELEGACAO (Alf, 09/09/2026). A definição "created_by = eu E assigned_to
+ * = outro" estava copiada em OITO lugares e nenhum olhava `source`. As dezesseis tarefas
+ * "Renovação em risco" nasceram de automação (`source: system`) com o id dele como credencial:
+ * apareciam na aba Delegadas dele como se ele tivesse repassado à Fabi e à Jéssica, e ele nunca
+ * repassou nada. Ele reclamou TRÊS vezes até eu achar todas as cópias.
+ *
+ * Delegar é um ato de decisão. Automação que usou meu id não decidiu nada em meu nome.
+ *
+ * Rótulo de detalhe ("Delegada para X" em taskDetail.ts) fica fora daqui de propósito: ali a
+ * pergunta é "quem é o dono?", e a resposta é a Fabi mesmo, tenha sido quem for que criou.
+ */
+export function ehDelegacaoMinha(
+  t: { assigned_to?: string | null; created_by?: string | null; source?: string | null } | null | undefined,
+  meuId: string | null | undefined,
+): boolean {
+  if (!t || !meuId) return false;
+  if (t.created_by !== meuId) return false;
+  if (!t.assigned_to || t.assigned_to === meuId) return false;
+  return t.source !== 'system';
+}
+
+/** Condição de `.or()` que exclui automação — para as queries que filtram no servidor. */
+export const NAO_E_AUTOMACAO = 'source.is.null,source.neq.system';

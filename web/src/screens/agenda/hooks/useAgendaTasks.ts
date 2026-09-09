@@ -6,7 +6,7 @@ import { useMyGroupIds } from '../../../hooks/useWorkGroups';
 import { fetchGroupsForDay } from '../../../lib/taskGroups';
 import type { AgendaFilters } from './useAgendaFilters';
 import { localYmd } from '../../../utils/date';
-import { clausulasVisibilidade } from '../../../lib/visibilidadeTarefas';
+import { clausulasVisibilidade, ehDelegacaoMinha } from '../../../lib/visibilidadeTarefas';
 
 export interface TaskForPanel {
   id: string;
@@ -111,7 +111,9 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
       // (estrutura) E filha de tarefa NÃO-grupo (checklist pessoal/delegada — 2026-06-26).
       .filter(t => !t.parent_task_id || (groupMotherIds.has(t.parent_task_id) && !tplMotherIds.has(t.parent_task_id)))
       .map(t => {
-      const isDelegated = t.created_by === collaboratorId && !!t.assigned_to && t.assigned_to !== collaboratorId;
+      // Uma definicao so pra "delegacao minha" — ver visibilidadeTarefas.ts. Eram OITO copias,
+      // e nenhuma olhava `source`: automacao virava delegacao de quem tinha a credencial.
+      const isDelegated = ehDelegacaoMinha(t, collaboratorId);
       return {
         id: t.id,
         title: t.title,

@@ -23,6 +23,7 @@ import { useSortableSensors } from '../lib/sortableSensors';
 import { fetchEventsForDay } from '../lib/events';
 import { TaskRow } from '../components/TaskRow';
 import { filterNoPrazo } from '../lib/agendaSemPrazo';
+import { NAO_E_AUTOMACAO } from '../lib/visibilidadeTarefas';
 import { EventRow } from '../components/EventRow';
 import { StatCard } from '../components/StatCard';
 import { Tabs } from '../components/Tabs';
@@ -177,6 +178,10 @@ async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: 
     .select(baseSelect)
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
+    // AUTORIA-TECNICA-NAO-E-DELEGACAO (09/09): automacao (`source: system`) usa o id de quem
+    // tem credencial como autor. As 16 "Renovacao em risco" apareciam aqui como delegadas do
+    // Alf pra Fabi e pra Jessica, e ele nunca delegou nenhuma. Delegar e ato de DECISAO.
+    .or(NAO_E_AUTOMACAO)
     .neq('status', 'cancelled')
     // Subtarefas/checklist (2026-06-26): filhas (parent_task_id) ficam fora da lista de delegadas.
     .is('parent_task_id', null);
@@ -204,6 +209,7 @@ async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: 
     .select(baseSelect)
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
+    .or(NAO_E_AUTOMACAO)   // idem: concluidas de automacao tambem nao sao delegacao minha
     .eq('status', 'done')
     .is('parent_task_id', null)
     .gte('completed_at', startUtc)

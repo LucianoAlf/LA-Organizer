@@ -27,7 +27,7 @@ import { EditEventSheet } from '../components/EditEventSheet';
 import { Tabs } from '../components/Tabs';
 import { DateNavHeader } from '../components/DateNavHeader';
 import type { Task, CalendarEvent, Project, TaskContext } from '../types';
-import { clausulasVisibilidade } from '../lib/visibilidadeTarefas';
+import { clausulasVisibilidade, ehDelegacaoMinha } from '../lib/visibilidadeTarefas';
 
 // Sprint 22.11 — Semana refatorada: cards individuais por dia, inclui sábado,
 // tags de categoria do projeto, empty state limpo. Hoje destaca por borda olive sutil.
@@ -159,7 +159,7 @@ export function Semana() {
     // 'all' = o MEU dia (trabalho + pessoal); delegada tem casa propria e nao entra.
     if (tab === 'all') return t.assigned_to === collaborator.id;
     if (tab === 'delegated') {
-      return t.created_by === collaborator.id && t.assigned_to !== collaborator.id;
+      return ehDelegacaoMinha(t, collaborator.id);
     }
     return t.context === tab && t.assigned_to === collaborator.id;
   };

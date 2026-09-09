@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clausulasVisibilidade, podeVerTarefa } from './visibilidadeTarefas';
+import { clausulasVisibilidade, podeVerTarefa, ehDelegacaoMinha } from './visibilidadeTarefas';
 
 const EU = 'alf-id';
 const GRUPO_BARRA = 'barra-id';
@@ -101,5 +101,33 @@ describe('automação não vira delegação minha', () => {
     const rede = clausulasVisibilidade(EU)[1];
     expect(rede).toContain('assigned_group_id.is.null');
     expect(rede).toContain('source.neq.system');
+  });
+});
+
+describe('ehDelegacaoMinha', () => {
+  it('automação com meu id NÃO é delegação minha — o caso das 16 "Renovação em risco"', () => {
+    expect(ehDelegacaoMinha({ created_by: EU, assigned_to: 'fabi', source: 'system' }, EU)).toBe(false);
+  });
+
+  it('o que eu passei de verdade é — o caso da Krissya', () => {
+    expect(ehDelegacaoMinha({ created_by: EU, assigned_to: 'krissya', source: 'manual' }, EU)).toBe(true);
+  });
+
+  it('tarefa antiga sem `source` conta como minha', () => {
+    expect(ehDelegacaoMinha({ created_by: EU, assigned_to: 'fabi', source: null }, EU)).toBe(true);
+  });
+
+  it('sem dono, ou dono sendo eu, não é delegação', () => {
+    expect(ehDelegacaoMinha({ created_by: EU, assigned_to: null, source: 'manual' }, EU)).toBe(false);
+    expect(ehDelegacaoMinha({ created_by: EU, assigned_to: EU, source: 'manual' }, EU)).toBe(false);
+  });
+
+  it('tarefa que outra pessoa criou não é delegação minha', () => {
+    expect(ehDelegacaoMinha({ created_by: 'fabi', assigned_to: 'jessica', source: 'manual' }, EU)).toBe(false);
+  });
+
+  it('entrada torta nunca quebra', () => {
+    for (const e of [null, undefined, {}]) expect(ehDelegacaoMinha(e, EU)).toBe(false);
+    expect(ehDelegacaoMinha({ created_by: EU, assigned_to: 'x' }, null)).toBe(false);
   });
 });
