@@ -22,6 +22,7 @@ import { toggleChildWithCascade } from '../lib/taskGroups';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
 import { useAgendaTasks, type TaskForPanel } from './agenda/hooks/useAgendaTasks';
+import { pertenceAoContexto, doContexto } from '../lib/agendaContexto';
 import { useNoPrazoTasks } from './agenda/hooks/useNoPrazoTasks';
 import { useCollaboratorNames } from './agenda/hooks/useCollaboratorNames';
 import { TaskDetailSheet } from '../components/TaskDetailSheet';
@@ -134,26 +135,29 @@ export function AgendaDesktop() {
       const d = (t.scheduled_date ?? t.due_date ?? '').slice(0, 10);
       return !!d && inRange(d);
     };
-    const work = tasks.filter(t => t.context === 'work' && t.status !== 'done' && tInRange(t)).length
+    // DELEGADA-CONTA-COMO-MINHA (09/09): `context` sozinho traz a delegada junto — ela também
+    // é `work`. Sem `pertenceAoContexto`, o contador de quem delega soma a tarefa alheia: o Alf
+    // tinha 20 no mês (3 dele) e 11 atrasadas (10 de outra pessoa).
+    const work = tasks.filter(t => pertenceAoContexto(t, 'work') && t.status !== 'done' && tInRange(t)).length
                + events.filter(e => e.context === 'work' && inRange(e.start_at.slice(0, 10))).length;
-    const personal = tasks.filter(t => t.context === 'personal' && t.status !== 'done' && tInRange(t)).length
+    const personal = tasks.filter(t => pertenceAoContexto(t, 'personal') && t.status !== 'done' && tInRange(t)).length
                    + events.filter(e => e.context === 'personal' && inRange(e.start_at.slice(0, 10))).length;
-    const delegated = tasks.filter(t => t.delegated_to != null && t.status !== 'done' && tInRange(t)).length;
+    const delegated = tasks.filter(t => pertenceAoContexto(t, 'delegated') && t.status !== 'done' && tInRange(t)).length;
     return { work, personal, delegated };
   }, [tasks, events, view, currentDate, miniMonth]);
 
   // Listas filtradas pelo contexto ativo — passadas ao painel esquerdo e timegrid.
-  const tasksFiltered = useMemo(() => {
-    if (currentContext === 'delegated') return tasks.filter(t => t.delegated_to != null);
-    return tasks.filter(t => t.context === currentContext);
-  }, [tasks, currentContext]);
+  const tasksFiltered = useMemo(
+    () => doContexto(tasks, currentContext),
+    [tasks, currentContext],
+  );
 
   // NOPRAZO-TASK-INVISIBLE-PWA — tarefas sem prazo (fonte isolada), filtradas pelo MESMO currentContext.
   const noPrazoAll = useNoPrazoTasks();
-  const noPrazoFiltered = useMemo(() => {
-    if (currentContext === 'delegated') return noPrazoAll.filter(t => t.delegated_to != null);
-    return noPrazoAll.filter(t => t.context === currentContext);
-  }, [noPrazoAll, currentContext]);
+  const noPrazoFiltered = useMemo(
+    () => doContexto(noPrazoAll, currentContext),
+    [noPrazoAll, currentContext],
+  );
 
   const eventsFiltered = useMemo(() => {
     if (currentContext === 'delegated') return [];
@@ -364,7 +368,7 @@ export function AgendaDesktop() {
           <DayView
             date={currentDate}
             events={events}
-            tasks={tasks}
+            tasks={tasksFiltered}
             onSlotClick={(d) => setQuickCreate({ open: true, dueDate: localYmd(d) })}
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
@@ -376,7 +380,7 @@ export function AgendaDesktop() {
           <WeekView
             weekStart={startOfWeek(currentDate)}
             events={events}
-            tasks={tasks}
+            tasks={tasksFiltered}
             onSlotClick={(d) => setQuickCreate({ open: true, dueDate: localYmd(d) })}
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
@@ -388,7 +392,7 @@ export function AgendaDesktop() {
           <MonthView
             monthDate={miniMonth}
             events={events}
-            tasks={tasks}
+            tasks={tasksFiltered}
             onDayClick={(d) => { setDate(d); setView('day'); }}
             onEventClick={setEditingEvent}
             onTaskClick={(t) => setReadingTask(t)}
