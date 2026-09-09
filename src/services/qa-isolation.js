@@ -66,6 +66,23 @@ function entraEmGovernanca(alvo) {
   return !ehQA(alvo);
 }
 
+// Ritual: perfil de QA não recebe briefing, lembrete nem digest. Esta fronteira faltava, e o
+// custo era diário: medido em 09/09, os quatro `[QA] Replay` entravam no `listCollaborators`
+// como gente, e o dispatcher tentava mandar o briefing das 08:00 pros telefones da faixa
+// reservada. O WhatsApp devolve 500 ("the number ... is not on WhatsApp"), o envio tenta 3x,
+// e o dia fecha com 15 chamadas mortas e CINCO linhas `status=error` em ritual_logs.
+//
+// O dano não é a chamada perdida, é o log: erro de laboratório fica indistinguível de falha
+// real, e o próximo sensor que contar "erros de ritual" nasce com cinco falsos todo dia. É a
+// mesma doença que o `registrarLog` do ciclo de governança tinha até 08/09 — zero por FALHA
+// indistinguível de zero por SAÚDE.
+//
+// Desativar os perfis resolveria o sintoma e quebraria o Replay Lab, que precisa deles ativos.
+// O guard certo já existia aqui desde 05/08: faltava esta porta.
+function recebeRitual(alvo) {
+  return !ehQA(alvo);
+}
+
 // Turno: a trava de saída age sobre o MODO do turno, não sobre o destino — então o turno
 // precisa NASCER marcado, no webhook, antes de qualquer resposta. Sem isto a resposta
 // conversacional inteira escapa da trava (achado de 05/08 no cenário A).
@@ -97,7 +114,7 @@ async function idsDePerfisQA(supabase) {
 }
 
 module.exports = {
-  ehQA, ehTelefoneQA, ehNomeQA,
+  ehQA, ehTelefoneQA, ehNomeQA, recebeRitual,
   permiteGrupo, permiteDelegacao, contaNasMetricas, entraEmGovernanca, contextoDeTurno,
   idsDePerfisQA, FAIXA_QA, PREFIXO_NOME_QA,
 };

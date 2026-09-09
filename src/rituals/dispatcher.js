@@ -381,7 +381,7 @@ async function listCoordinators(filterPhone) {
   if (filterPhone) q = q.eq('phone', filterPhone);
   const { data, error } = await q;
   if (error) throw error;
-  return data || [];
+  return (data || []).filter(qaIsolation.recebeRitual);
 }
 
 // Sprint 21 — liderança = director + coordinator + manager (ativos com user_preferences)
@@ -395,7 +395,7 @@ async function listLeadership() {
     console.error('[listLeadership] failed:', error.message);
     return [];
   }
-  return (data || []).filter(c => c.user_preferences);
+  return (data || []).filter(c => c.user_preferences && qaIsolation.recebeRitual(c));
 }
 
 // Sprint 21 — Planejamento Mensal (primeira segunda do mês)
@@ -845,7 +845,10 @@ async function listCollaborators(filterPhone) {
   if (filterPhone) q = q.eq('phone', filterPhone);
   const { data, error } = await q;
   if (error) throw error;
-  return (data || []).filter(c => c.user_preferences);
+  // QA-RECEBE-RITUAL (09/09/2026): os quatro `[QA] Replay` entravam aqui como gente e o
+  // briefing das 08:00 ia pros telefones da faixa reservada — 15 chamadas mortas e 5 linhas
+  // `error` em ritual_logs por dia, todo dia.
+  return (data || []).filter(c => c.user_preferences && qaIsolation.recebeRitual(c));
 }
 
 // Sprint 11 F2+ — Checklists Operacionais.

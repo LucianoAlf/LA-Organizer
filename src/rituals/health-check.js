@@ -808,33 +808,42 @@ function formatarLinhaGrupo({ nome, fichas, abertas, claims, memorias = 0 }) {
 // `defaultsPorTipoDoGrupo` em group-memory.js). Se este aviso continuasse contando so `lesson`,
 // o gate subiria e o Alf nunca ficaria sabendo do que esta represado — gate com fila e SEM aviso
 // e a mesma cegueira, um andar acima. A palavra so muda quando o que espera nao e so licao.
-function resumirLicoesPendentes(licoes) {
+// LICOES-PENDENTES-REPORTA-O-TETO (09/09/2026). O check lia com `.limit(20)` e o resumo
+// contava `arr.length` — então o número relatado era o TETO DA CONSULTA, não o total da fila.
+// Em 09/09 o aviso dizia "20 memórias esperando seu ok" e o total real era 20: coincidência,
+// e foi por isso que ninguém viu. No dia em que virarem 40, o aviso continua dizendo 20 pra
+// sempre — a fila cresce e o número fica parado, que é a forma mais silenciosa de um
+// instrumento mentir: ele não erra, ele satura. Amostra e total entram separados.
+function resumirLicoesPendentes(licoes, total = null) {
   const arr = Array.isArray(licoes) ? licoes : [];
   if (!arr.length) return { status: 'ok', detail: 'Nenhuma lição esperando aprovação' };
+  // `total` do banco quando veio; senão a amostra — que é o que o chamador antigo passa.
+  const n = typeof total === 'number' && total >= arr.length ? total : arr.length;
   const mostra = arr.slice(0, 3).map((l) => {
     const [a, m, d] = String(l.dia || '').split('-');
     const data = d ? `${d}/${m}` : (l.dia || '?');
     return `“${String(l.conteudo || '').slice(0, 110)}” — ${l.grupo}, ${data}`;
   }).join(' | ');
-  const resto = arr.length > 3 ? ` (+${arr.length - 3})` : '';
+  const resto = n > 3 ? ` (+${n - 3})` : '';
   const soLicoes = arr.every((l) => !l.tipo || l.tipo === 'lesson');
   const plural = soLicoes
-    ? (arr.length === 1 ? 'lição' : 'lições')
-    : (arr.length === 1 ? 'memória' : 'memórias');
-  return { status: 'warning', detail: `⛔ ${arr.length} ${plural} esperando seu ok: ${mostra}${resto}` };
+    ? (n === 1 ? 'lição' : 'lições')
+    : (n === 1 ? 'memória' : 'memórias');
+  return { status: 'warning', detail: `⛔ ${n} ${plural} esperando seu ok: ${mostra}${resto}` };
 }
 
 async function checkLicoesPendentes() {
   // Sem `.eq('memory_type', ...)`: o aviso e "tudo que nasceu inativo e ninguem decidiu".
-  const { data, error } = await supabase.from('group_memory')
-    .select('content, occurred_on, memory_type, group:work_groups(name)')
+  // count exato + limit: a amostra segue barata (20 linhas), o TOTAL vem do banco.
+  const { data, error, count } = await supabase.from('group_memory')
+    .select('content, occurred_on, memory_type, group:work_groups(name)', { count: 'exact' })
     .eq('is_active', false).is('approved_at', null)
     .order('occurred_on', { ascending: false }).limit(20);
   if (error) return { status: 'ok', detail: `lições não consultadas (${error.message})` };
   return resumirLicoesPendentes((data || []).map((r) => ({
     grupo: (r.group && r.group.name) || 'grupo', dia: r.occurred_on, conteudo: r.content,
     tipo: r.memory_type,
-  })));
+  })), typeof count === 'number' ? count : null);
 }
 
 function resumirGrupos(linhas) {

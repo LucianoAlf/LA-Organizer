@@ -78,3 +78,30 @@ test('só lições esperando: o aviso continua falando de lição', () => {
   ]);
   assert.match(r.detail, /1 lição/);
 });
+
+// ---------------------------------------------------------------------------
+// LICOES-PENDENTES-REPORTA-O-TETO (09/09/2026). A consulta le com `.limit(20)` e o resumo
+// contava a AMOSTRA. Em 09/09 o aviso disse "20 memorias esperando seu ok" e o total real
+// era 20 — coincidencia, e foi por isso que ninguem viu. No dia em que virarem 40, o aviso
+// diria 20 pra sempre: a fila cresce e o numero fica parado. Instrumento que satura nao
+// erra alto nem baixo — ele para, que e a forma mais silenciosa de mentir.
+// ---------------------------------------------------------------------------
+test('o numero relatado e o TOTAL da fila, nao o teto da consulta', () => {
+  const amostra = Array.from({ length: 20 }, (_, i) => ({
+    grupo: 'Barra', dia: '2026-09-08', conteudo: 'memoria ' + i, tipo: 'fact',
+  }));
+  const r = resumirLicoesPendentes(amostra, 47);
+  assert.match(r.detail, /⛔ 47 /, 'a fila tem 47; a amostra so cabia 20');
+  assert.ok(r.detail.includes('(+44)'), 'o resto tambem conta do total: 47 - 3 mostrados');
+});
+
+test('sem total, cai na amostra — chamador antigo segue valendo', () => {
+  const um = [{ grupo: 'Barra', dia: '2026-09-08', conteudo: 'x', tipo: 'lesson' }];
+  assert.match(resumirLicoesPendentes(um).detail, /⛔ 1 lição /);
+  assert.match(resumirLicoesPendentes(um, null).detail, /⛔ 1 lição /);
+});
+
+test('total menor que a amostra e ignorado — nunca reporta menos do que ja viu', () => {
+  const tres = Array.from({ length: 3 }, () => ({ grupo: 'g', dia: '2026-09-08', conteudo: 'x', tipo: 'fact' }));
+  assert.match(resumirLicoesPendentes(tres, 1).detail, /⛔ 3 /);
+});

@@ -3,8 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {
   ehQA, ehTelefoneQA, ehNomeQA,
-  permiteGrupo, permiteDelegacao, contaNasMetricas, entraEmGovernanca,
-} = require('./qa-isolation');
+  permiteGrupo, permiteDelegacao, contaNasMetricas, entraEmGovernanca, recebeRitual } = require('./qa-isolation');
 
 // Isolamento é guard TESTADO, não convenção — exigência do Alfredo. Nome `[QA]` é
 // etiqueta; o que impede contaminação é cada fronteira ter decisão própria e prova.
@@ -139,4 +138,41 @@ test('sem perfil de QA a varredura fica VAZIA, não irrestrita — fail-closed',
 test('banco fora do ar devolve lista vazia — em replay, calar é o lado seguro', async () => {
   const sb = { from: () => ({ select: async () => { throw new Error('sem conexão'); } }) };
   assert.deepEqual(await idsDePerfisQA(sb), []);
+});
+
+// ---------------------------------------------------------------------------
+// QA-RECEBE-RITUAL (09/09/2026) — a sétima fronteira, que faltava.
+//
+// O módulo já isolava grupo, delegação, métricas, governança, turno e varredura. Ritual não.
+// Medido em 09/09: os quatro `[QA] Replay` passavam pelo `listCollaborators` do dispatcher
+// como gente comum, e o briefing das 08:00 saía pros telefones da faixa reservada. O WhatsApp
+// devolve 500 ("is not on WhatsApp"), o envio tenta 3x: 15 chamadas mortas e CINCO linhas
+// `status=error` em ritual_logs, todo dia.
+//
+// O dano real não é a chamada perdida — é o log. Erro de laboratório indistinguível de falha
+// de gente faz o próximo sensor de "erros de ritual" nascer com cinco falsos por dia.
+// ---------------------------------------------------------------------------
+test('perfil de QA nao recebe ritual — nem por nome, nem por telefone', () => {
+  assert.equal(recebeRitual({ full_name: '[QA] Replay 01', phone: '5500000000001' }), false);
+  assert.equal(recebeRitual({ full_name: 'Replay renomeado', phone: '5500000000002' }), false,
+    'renomeado por engano continua isolado pelo telefone');
+  assert.equal(recebeRitual({ full_name: '[QA] Replay 03', phone: '5521999998888' }), false,
+    'telefone digitado errado continua isolado pelo nome');
+});
+
+test('gente de verdade continua recebendo ritual', () => {
+  // O lado que importa: um guard que cala demais é pior que o ruído que ele foi consertar.
+  assert.equal(recebeRitual({ full_name: 'Bianca', phone: '5521999990000' }), true);
+  assert.equal(recebeRitual({ full_name: 'Rafinha', phone: '5521988887777' }), true);
+});
+
+test('o dispatcher usa o guard do modulo nas TRES listagens', () => {
+  // Guard duplicado inline é como a regra do lembrete que existia no snooze e faltava no
+  // reagendamento: a divergência aparece meses depois, num incidente.
+  const fs = require('fs');
+  const path = require('path');
+  const disp = fs.readFileSync(path.join(__dirname, '..', 'rituals', 'dispatcher.js'), 'utf8');
+  const usos = (disp.match(/qaIsolation\.recebeRitual/g) || []).length;
+  assert.strictEqual(usos, 3,
+    'listCollaborators, listCoordinators e listLeadership — as tres portas de ritual');
 });
