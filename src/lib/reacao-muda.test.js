@@ -75,3 +75,29 @@ test('engine: a nota honesta vem da fonte única, não de string duplicada', () 
   assert.ok(ENGINE.includes('reply = NO_MARKER_HONEST_NOTE;'),
     'nota literal duplicada no engine — a voz do TOM tem uma fonte só');
 });
+
+// ---------------------------------------------------------------------------
+// REACAO-SE-AUTOCERTIFICA (09/09/2026) — por que este guard passou 20 dias sem disparar.
+//
+// O guard acima exige `nothingPersisted`. Quem calcula isso no engine é `fired`, filtrado por
+// `_isDomainMarker`. O REACT do turno é gravado em marker_logs ANTES (~14180) da consulta que
+// monta `recentMarkers` (~14434) — então ele volta na própria consulta. Enquanto REACT contou
+// como marker de DOMÍNIO, `marker_emitted` vinha preenchido com "REACT" e `nothingPersisted`
+// era false: a reação desarmava o guard escrito pra julgá-la. Zero disparos de `reacao_sozinha`
+// entre 20/08 e 09/09 confirmaram.
+//
+// O teste olha a LISTA, não a posição: é o contrato ("reagir não é escrever"), e ele é o que
+// mantém a trava viva.
+// ---------------------------------------------------------------------------
+test('REACT e VOICE_SENT nao contam como acao de dominio no engine', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const eng = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  const m = eng.match(/const _NON_DOMAIN_MARKERS = \[([^\]]*)\]/);
+  assert.ok(m, 'a lista de markers nao-dominio sumiu do engine');
+  const lista = m[1];
+  assert.match(lista, /'REACT'/,
+    'reagir nao e escrever: com REACT contando como dominio, o proprio ✅ desarma este guard');
+  assert.match(lista, /'VOICE_SENT'/,
+    'mandar audio tambem nao persiste nada — mesma cegueira, mesmo eixo');
+});

@@ -14483,11 +14483,27 @@ Output AGORA, apenas o marker:`;
       .eq('collaborator_id', collab.id)
       .in('result', ['executed', 'rejected'])
       .gte('created_at', sinceIso);
+    // REACAO-SE-AUTOCERTIFICA (medido 09/09/2026). REACT e VOICE_SENT entraram aqui depois
+    // de 20 dias de trava morta. Em 20/08 nasceu o guard `reacaoSozinhaMente` justamente pra
+    // pegar "turno sai só com <<REACT>>✅<<END>> e nada foi gravado" (caso Bianca). Ele nunca
+    // disparou: ZERO ocorrências de `reacao_sozinha` em marker_logs desde que foi escrito.
+    //
+    // A razão é esta lista. O REACT é logado em ~14180, a consulta `recentMarkers` roda 254
+    // linhas DEPOIS (~14434), então a própria reação do turno volta na consulta. Como REACT
+    // não estava aqui, ele contava como ação de domínio: `fired=[REACT]` → `marker_emitted`
+    // preenchido → `nothingPersisted=false` → o guard que existe pra julgar a reação era
+    // desarmado exatamente pela reação que ele deveria julgar. O mesmo cegava o detector
+    // ACTIONABLE_NO_MARKER, que só olha `fired.length === 0`.
+    //
+    // Reagir não é escrever: um ✅ não cria tarefa, não marca hábito, não move nada no mundo
+    // da pessoa. Mandar áudio (VOICE_SENT) também não. População medida antes de embarcar:
+    // 74 REACTs em 30 dias, 21 deles (28%) sozinhos num turno sem nenhuma escrita — são
+    // exatamente os candidatos ao "✅ que confirma o que não gravou".
     // Tipos META (não são ação de domínio): fora da conta de "marker tentado".
     // CREDENCIAL_INBOUND_APAGADA e faxina de historico, nao acao de dominio: deixa-la aqui
     // fora encheria `marker_emitted` e desarmaria o chokepoint num turno em que NADA foi
     // persistido (o executor de credencial so abre a confirmacao).
-    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT','CREDENCIAL_INBOUND_APAGADA'];
+    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT','CREDENCIAL_INBOUND_APAGADA','REACT','VOICE_SENT'];
     const _isDomainMarker = (t) => t && !_NON_DOMAIN_MARKERS.includes(t);
     const fired = (recentMarkers || []).filter(r => r.result === 'executed' && _isDomainMarker(r.marker_type)).map(r => r.marker_type);
     // FATIA 2 (falso-fire composição): houve marker de DOMÍNIO tentado — executado OU rejeitado —
