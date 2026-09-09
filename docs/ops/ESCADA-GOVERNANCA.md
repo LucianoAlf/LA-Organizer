@@ -1375,6 +1375,55 @@ Proposta de virar código: o `provar(literal, guard)` pedido desde 13/08 deve **
 relógio fixado no `occurred_at` do achado, e o `gov-runner` deve recusar o fechamento quando o
 módulo sob teste referenciar `Date.now()` e a prova tiver sido produzida sem pin.
 
+### ETAPA 1 (escolher) — cinco cirurgias no mesmo arquivo: PARE e conte antes da sexta
+
+**Ocorrências:** 5 na mesma função em 24 dias. Nenhuma rodada percebeu que estava na quinta.
+
+`downgradeEmptyPromise` (`src/lib/promise-honesty.js`) foi operada em **16/08, 29/08, 31/08,
+05/09 e 09/09**. Cada rodada leu o incidente do dia, achou a raiz certa, colou mais uma
+exceção e fechou o achado. Cinco vezes. A regra da ETAPA 1 — *pare de corrigir família que
+reincidiu 2×* — nunca disparou, porque ela depende de alguém **achar a família**, e o sensor
+que acharia estava cego (ver `sensores_regressao`: 3 sensores vivos em 531 achados).
+
+**O tell é barato e ninguém rodava:**
+
+```bash
+git log --oneline --since='60 days ago' -- src/lib/<arquivo>.js | wc -l
+```
+
+Três ou mais no mesmo arquivo em dois meses: **pare de consertar e vá medir a fronteira.** O
+sexto incidente não vai ser corrigido pelo sexto remendo.
+
+#### O que fazer quando o contador estoura: MEÇA a devolução antes de propor
+
+Em 09/09 a hipótese parecia sólida. A porta de cima se chama "promessa vazia" mas seu detector
+casa verbo de CONCLUSÃO no passado (`registrei`, `anotado`) — e conclusão é o domínio da porta
+de baixo (`enforceNoMarkerHonesty`), que tem **nove vetos** contra os **dois** de cima. Como a
+de cima roda antes e reescreve o `reply`, ela ganha a decisão que a outra tomaria melhor. Os
+três falsos-positivos com KI da família são todos conclusão passada. Fechado, certo?
+
+**Errado — e o teste disse antes da produção.** Ao devolver a conclusão passada, **8 testes
+existentes reprovaram**, todos com caso real nomeado. Medi o que a devolução custaria: dos 8
+casos, a porta de baixo pegaria **3**. Os outros 5 — incluindo `"Tá anotado"`, que é
+exatamente a promessa vazia que o guard existe pra pegar — ficariam **órfãos entre as duas
+portas**.
+
+🔑 **Porta errada julgando é ruim; NINGUÉM julgando é pior.** Antes de mover responsabilidade
+de um guard pra outro, rode os casos do outro lado e conte quantos ele pega. Se não pega tudo,
+não é devolução: é buraco.
+
+**O que a medição revelou, e vale mais que o conserto que não fiz:** as duas portas não estão
+sobrepostas por acidente de escopo. Elas têm **detectores diferentes e incompletos**, e cada
+uma pega um subconjunto que a outra perde — a de cima pega `"Tá anotado"`, a de baixo pega
+`"Beleza, anotado!"`. Elas se complementam por acidente histórico, não por desenho. É por isso
+que consertar uma sozinha nunca acaba: **o defeito não está em nenhuma das duas, está na
+fronteira.** Unificar = fundir os dois detectores num só, com os nove vetos — refatoração com
+risco em produção, que precisa de desenho e de um turno inteiro, não de mais uma exceção.
+
+A fronteira medida está fixada em `src/lib/portas-honestidade-fronteira.test.js`. Quem for
+tentar de novo vê o custo (3 de 8) antes de escrever a primeira linha. Se aquele número virar
+8, a unificação ficou segura — **mude o detector, nunca o teste.**
+
 ### ETAPA 4 (fechar) — commit é ARTEFATO, não estado: case o CAMINHO DE CÓDIGO
 
 **Ocorrências:** 2 (08/09, as duas na mesma rodada). Custou um achado fechado errado.
