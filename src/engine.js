@@ -54,6 +54,7 @@ const { buildReminderRefsQuery, mapRefRows } = require('./lib/reminder-refs-quer
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply, restatesRecentWrite } = require('./lib/optimistic-confirm');
 const { fundeBlocosRepetidos } = require('./lib/funde-blocos-repetidos');
+const { buscarEscritasRecentes } = require('./lib/escritas-recentes');
 const { isActionConfirmQuestion } = require('./lib/confirm-question');
 const { buildIntegrityReply } = require('./lib/integrity-reply');
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
@@ -14717,12 +14718,11 @@ Output AGORA, apenas o marker:`;
             if (_pd.fired && !_metrics.marker_attempted) {
               let _pdRestates = false;
               try {
-                const { data: _pdRw } = await supabase.from('tasks')
-                  .select('title,remind_at')
-                  .or(`assigned_to.eq.${collab.id},created_by.eq.${collab.id}`)
-                  .gte('updated_at', new Date(_t0 - 600_000).toISOString())
-                  .order('updated_at', { ascending: false }).limit(20);
-                _pdRestates = restatesRecentWrite(reply, _pdRw || []);
+                // REAFIRMACAO-SO-OLHA-TAREFA (09/09): a lista vinha so de `tasks`, entao evento
+                // criado ha segundos era invisivel — reafirmar EVENTO nunca contava como
+                // reafirmacao. Agora tarefa e evento vem da mesma fonte.
+                const _pdRw = await buscarEscritasRecentes(supabase, collab.id, new Date(_t0 - 600_000).toISOString());
+                _pdRestates = restatesRecentWrite(reply, _pdRw);
               } catch (_) {}
               if (_pdRestates) {
                 _pd = downgradeEmptyPromise(reply, { restatesRecentWrite: true });
@@ -14983,13 +14983,12 @@ Output AGORA, apenas o marker:`;
       // quem filtra é o casamento estrito de título, não o tempo. Esticar mais não compra nada
       // e só aumenta a chance de casar por coincidência.
       const _sinceIso = new Date(_t0 - 600_000).toISOString();
-      const { data: _rw } = await supabase.from('tasks')
-        .select('title,remind_at')
-        .or(`assigned_to.eq.${collab.id},created_by.eq.${collab.id}`)
-        .gte('updated_at', _sinceIso)
-        .order('updated_at', { ascending: false }).limit(20);
+      // REAFIRMACAO-SO-OLHA-TAREFA (09/09): tarefa E evento — ver lib/escritas-recentes.js.
+      // Sem o evento aqui, o TOM reafirmando um compromisso que acabou de criar era lido como
+      // promessa vazia, e o auto-retry duplicava o compromisso como tarefa (caso Alf 19:19).
+      const _rw = await buscarEscritasRecentes(supabase, collab.id, _sinceIso);
       // remind_at junto do título (Rafinha 24/08): reafirmar lembrete cita data/hora, não o nome.
-      _restatesRecentWrite = restatesRecentWrite(reply, _rw || []);
+      _restatesRecentWrite = restatesRecentWrite(reply, _rw);
     }
   } catch (_) {}
   try {
