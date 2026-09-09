@@ -1375,6 +1375,48 @@ Proposta de virar código: o `provar(literal, guard)` pedido desde 13/08 deve **
 relógio fixado no `occurred_at` do achado, e o `gov-runner` deve recusar o fechamento quando o
 módulo sob teste referenciar `Date.now()` e a prova tiver sido produzida sem pin.
 
+### ETAPA 0 (medir) — o instrumento não pode contar a PRÓPRIA medição
+
+**Ocorrências:** 2 no mesmo dia (09/09), as duas causadas por mim.
+
+`evaluate_known_issues()` somava a janela inteira de 24h a **cada chamada**. Chamei a RPC à
+mão pra conferir o retorno e o contador do `PROMISE-DOWNGRADE-REBAIXA-ADMISSAO` foi de 7 pra
+10 — sem que nada tivesse acontecido no mundo. Aconteceu de novo horas depois, ao forçar o
+health-check pra provar um check novo. Revertido à mão nas duas.
+
+Não é contador de enfeite: é ele que alimenta o placar de reincidência, o número que decide
+*"esta família já voltou demais, pare de remendar"* (ETAPA 1, logo abaixo). **Um contador que
+sobe por quantas vezes alguém RODOU A MEDIÇÃO, e não por quantas vezes o defeito ACONTECEU,
+corrompe exatamente a decisão que ele existe pra informar.**
+
+🔑 Antes de rodar à mão qualquer coisa que o cron já roda sozinho, pergunte: **isto escreve?**
+Se escreve, ou é idempotente, ou a sua conferência vira dado.
+
+O conserto foi marca d'água (`ultima_vez`), e o desenho tem um detalhe que quase passou:
+**contagem e alarme precisam ser separados.**
+
+| | fonte | por quê |
+|---|---|---|
+| `ocorrencias` | só o que é novo desde a marca d'água | idempotente — repetir não infla |
+| o alarme (retorno) | a janela cheia de 24h | fiel — a 2ª rodada do dia não pode perder o disparo da manhã |
+
+Sem essa separação o instrumento fica idempotente **mentindo**, que é pior que somar duas vezes.
+
+#### O verde que não valia nada: CTE não é ordem de execução
+
+Montei a prova como CTEs encadeadas — `with r1 as (select ... from a_funcao()), d1 as (select o
+contador), r2 as (...)` — e deu `7, 7, 7, 7`. Verde bonito, e **sem valor nenhum**: o Postgres
+não garante ordem de execução entre CTEs, e pode até não executar uma CTE cujo resultado não é
+referenciado. Com uma função que ESCREVE, isso não mede nada.
+
+Refeita com **chamadas sequenciais**, num KI temporário com `ultima_vez` NULL: 1ª chamada
+`0 → 2` (contou), 2ª chamada `2 → 2` (não recontou), alarme presente nas duas. Antes seria
+`0 → 2 → 4`. Só a segunda prova tem os dois lados — sem o `0 → 2`, um contador quebrado que
+nunca soma passaria igualzinho.
+
+🔑 **Prova de idempotência precisa de duas metades:** que o novo CONTA e que o repetido NÃO
+conta. Uma sozinha é verde de instrumento, não de conserto.
+
 ### ETAPA 1 (escolher) — cinco cirurgias no mesmo arquivo: PARE e conte antes da sexta
 
 **Ocorrências:** 5 na mesma função em 24 dias. Nenhuma rodada percebeu que estava na quinta.
