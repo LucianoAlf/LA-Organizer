@@ -547,6 +547,47 @@ async function checkKnownIssuesRegression() {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// CHECK — quem saiu do grupo no WhatsApp continua vendo as tarefas no app?
+// ─────────────────────────────────────────────────────────────────
+// SAIR-DO-GRUPO-NAO-CHEGA-NO-APP (Alf, 09/09/2026). Ele saiu dos grupos operacionais de
+// propósito — está nas memórias de 08/09 — e a agenda dele seguiu mostrando os pacotes de
+// anamnese da Barra: 27 tarefas numa tela que devia estar vazia. Olhou e achou que o app
+// estava quebrado.
+//
+// A agenda filtra por `assigned_group_id IN (meus grupos)`, e "meus grupos" sai de
+// `work_group_members`. Nada remove a linha quando a pessoa sai no WhatsApp: a tabela nem tem
+// coluna de saída (`group_id, collaborator_id, added_by, created_at`). Sair não existe no
+// modelo — então o app nunca fica sabendo.
+//
+// O check só COMPARA e NOMEIA; remover fica com gente. Remoção automática seria perigosa: um
+// dia ruim da API do WhatsApp devolvendo lista vazia esvaziaria os grupos e as tarefas sumiriam
+// da agenda de todo mundo. Por isso `comparaMembresia` é fail-closed — lista vazia ou ilegível
+// não acusa ninguém, e o grupo entra como "não aferido" em vez de "conferido".
+async function checkMembrosFantasma() {
+  const { comparaMembresia, resumirFantasmas } = require('../lib/membros-fantasma');
+  let getGroupParticipants;
+  try { ({ getGroupParticipants } = require('../services/uazapi-groups')); } catch (_) { getGroupParticipants = null; }
+  if (!getGroupParticipants) return { status: 'ok', detail: 'membresia não aferida (uazapi indisponível)' };
+
+  const { data: grupos, error } = await supabase
+    .from('work_groups').select('id, name, wa_group_jid').not('wa_group_jid', 'is', null);
+  if (error) return { status: 'ok', detail: `membresia não aferida (${error.message})` };
+
+  const linhas = [];
+  for (const g of (grupos || [])) {
+    const { data: membros } = await supabase
+      .from('work_group_members')
+      .select('collaborator:collaborators!work_group_members_collaborator_id_fkey(full_name, phone)')
+      .eq('group_id', g.id);
+    const noApp = (membros || []).map((m) => m && m.collaborator).filter(Boolean);
+    let parts = null;
+    try { parts = await getGroupParticipants(g.wa_group_jid); } catch (_) { parts = null; }
+    linhas.push({ grupo: g.name, ...comparaMembresia({ noApp, participantesWa: parts }) });
+  }
+  return resumirFantasmas(linhas);
+}
+
+// ─────────────────────────────────────────────────────────────────
 // CHECK — a rede de regressão está ENXERGANDO?
 // ─────────────────────────────────────────────────────────────────
 // SENSOR-CEGO-NAO-SE-DENUNCIA (09/09/2026). Medição do acervo naquele dia: 531 known-issues,
@@ -781,6 +822,7 @@ const ALL_CHECKS = [
   ['recurring_errors',       checkRecurringErrors],
   ['known_issues_regression', checkKnownIssuesRegression],
   ['sensores_regressao',      checkSensoresDeRegressao],
+  ['membros_fantasma',       checkMembrosFantasma],
   ['group_package_churn',    checkGroupPackageChurn],
   ['provider_health',        checkProviderHealth],
   ['finding_triage',         checkFindingTriage],
