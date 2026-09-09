@@ -6,6 +6,7 @@ import { todaySP } from '../utils/date';
 import { dayOfMonthToYmd, childDueDateForCycle, cycleLabel, withMonthDayAnchor } from './taskGroupDates';
 import { materializeSeriesClient } from './materialize-recurrence';
 import type { Task } from '../types';
+import { clausulasVisibilidade } from './visibilidadeTarefas';
 
 export interface GroupChildInput {
   title: string;
@@ -138,8 +139,10 @@ export async function createGroup(input: CreateGroupInput): Promise<{ groupId: s
 export async function fetchGroupsForDay(collabId: string, ymd: string, workGroupIds: string[] = []): Promise<Task[]> {
   // Pool (2026-06-10): grupo atribuído a um grupo de TRABALHO tem assigned_to NULL —
   // visível pra qualquer membro (assigned_group_id) e pro criador (created_by).
-  const vis = [`assigned_to.eq.${collabId}`, `created_by.eq.${collabId}`];
-  if (workGroupIds.length > 0) vis.push(`assigned_group_id.in.(${workGroupIds.join(',')})`);
+  // AUTOR-CONTINUA-VENDO-O-POOL-DO-GRUPO-QUE-DEIXOU (09/09): a regra das tres pernas mora
+  // em visibilidadeTarefas.ts. Nao remonte a clausula aqui — eram CINCO copias, e a que
+  // divergir volta a mostrar o pool de um grupo pra quem saiu dele.
+  const vis = clausulasVisibilidade(collabId, workGroupIds);
   const { data, error } = await supabase
     .from('tasks')
     .select(GROUP_SELECT)

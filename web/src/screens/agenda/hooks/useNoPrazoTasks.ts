@@ -5,6 +5,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { useMyGroupIds } from '../../../hooks/useWorkGroups';
 import { filterNoPrazo } from '../../../lib/agendaSemPrazo';
 import type { TaskForPanel } from './useAgendaTasks';
+import { clausulasVisibilidade } from '../../../lib/visibilidadeTarefas';
 
 // NOPRAZO-TASK-INVISIBLE-PWA — fonte ISOLADA de tarefas SEM prazo pro desktop (DayPanel).
 // useAgendaTasks busca por RANGE de due_date e exclui due_date null; aqui buscamos só as sem-prazo,
@@ -20,8 +21,10 @@ export function useNoPrazoTasks(): TaskForPanel[] {
     queryKey: ['agenda-noprazo', collaboratorId, groupIds.join(',')],
     enabled: Boolean(collaboratorId && supabaseConfigured),
     queryFn: async () => {
-      const vis = [`assigned_to.eq.${collaboratorId}`, `created_by.eq.${collaboratorId}`];
-      if (groupIds.length > 0) vis.push(`assigned_group_id.in.(${groupIds.join(',')})`);
+      // AUTOR-CONTINUA-VENDO-O-POOL-DO-GRUPO-QUE-DEIXOU (09/09): a regra das tres pernas mora
+      // em visibilidadeTarefas.ts. Nao remonte a clausula aqui — eram CINCO copias, e a que
+      // divergir volta a mostrar o pool de um grupo pra quem saiu dele.
+      const vis = clausulasVisibilidade(collaboratorId!, groupIds); // `enabled` acima garante o id
       const { data, error } = await supabase
         .from('tasks')
         .select('id, title, description, context, status, scheduled_date, due_date, due_time, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id, project_id, parent_task_id, is_group, assigned_group_id, work_group:work_groups!tasks_assigned_group_id_fkey(name), creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')

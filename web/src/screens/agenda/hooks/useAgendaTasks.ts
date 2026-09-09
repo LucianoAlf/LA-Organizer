@@ -6,6 +6,7 @@ import { useMyGroupIds } from '../../../hooks/useWorkGroups';
 import { fetchGroupsForDay } from '../../../lib/taskGroups';
 import type { AgendaFilters } from './useAgendaFilters';
 import { localYmd } from '../../../utils/date';
+import { clausulasVisibilidade } from '../../../lib/visibilidadeTarefas';
 
 export interface TaskForPanel {
   id: string;
@@ -67,8 +68,10 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
     queryFn: async () => {
       // Visibilidade: minhas + criadas por mim (delegadas e tarefas de grupo que criei)
       // + pool dos MEUS grupos de trabalho.
-      const vis = [`assigned_to.eq.${collaboratorId}`, `created_by.eq.${collaboratorId}`];
-      if (groupIds.length > 0) vis.push(`assigned_group_id.in.(${groupIds.join(',')})`);
+      // AUTOR-CONTINUA-VENDO-O-POOL-DO-GRUPO-QUE-DEIXOU (09/09): a regra das tres pernas mora
+      // em visibilidadeTarefas.ts. Nao remonte a clausula aqui — eram CINCO copias, e a que
+      // divergir volta a mostrar o pool de um grupo pra quem saiu dele.
+      const vis = clausulasVisibilidade(collaboratorId!, groupIds); // `enabled` acima garante o id
       // Grupos de tarefas (2026-06-09): mães (is_group) ficam fora da lista solta (entram
       // pelo GroupRow via hook de grupos); FILHAS entram flat — Semana/Mês não tinham
       // como mostrá-las (caso Rose 10/06). Filha de mãe-TEMPLATE recorrente sai no filtro

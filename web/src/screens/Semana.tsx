@@ -27,6 +27,7 @@ import { EditEventSheet } from '../components/EditEventSheet';
 import { Tabs } from '../components/Tabs';
 import { DateNavHeader } from '../components/DateNavHeader';
 import type { Task, CalendarEvent, Project, TaskContext } from '../types';
+import { clausulasVisibilidade } from '../lib/visibilidadeTarefas';
 
 // Sprint 22.11 — Semana refatorada: cards individuais por dia, inclui sábado,
 // tags de categoria do projeto, empty state limpo. Hoje destaca por borda olive sutil.
@@ -43,8 +44,10 @@ async function fetchWeekTasks(collabId: string, start: string, end: string, grou
   // ficam fora das listas soltas (entram pelo TaskGroupCard).
   // Grupos de TRABALHO (2026-06-10): pool dos meus grupos entra (assigned_to é NULL
   // nessas — a cláusula neq antiga nunca casava) + badge 👥 via work_group embed.
-  const vis = [`assigned_to.eq.${collabId}`, `created_by.eq.${collabId}`];
-  if (groupIds.length > 0) vis.push(`assigned_group_id.in.(${groupIds.join(',')})`);
+  // AUTOR-CONTINUA-VENDO-O-POOL-DO-GRUPO-QUE-DEIXOU (09/09): a regra das tres pernas mora
+  // em visibilidadeTarefas.ts. Nao remonte a clausula aqui — eram CINCO copias, e a que
+  // divergir volta a mostrar o pool de um grupo pra quem saiu dele.
+  const vis = clausulasVisibilidade(collabId, groupIds);
   const { data, error } = await supabase
     .from('tasks')
     .select('id, title, description, status, context, priority, category, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, assigned_group_id, work_group:work_groups!tasks_assigned_group_id_fkey(name), projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), creator:collaborators!tasks_created_by_fkey(preferred_name, full_name), task_reminders(remind_at, sent_at)')
