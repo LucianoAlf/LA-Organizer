@@ -143,7 +143,11 @@ export function AgendaDesktop() {
     const personal = tasks.filter(t => pertenceAoContexto(t, 'personal') && t.status !== 'done' && tInRange(t)).length
                    + events.filter(e => e.context === 'personal' && inRange(e.start_at.slice(0, 10))).length;
     const delegated = tasks.filter(t => pertenceAoContexto(t, 'delegated') && t.status !== 'done' && tInRange(t)).length;
-    return { work, personal, delegated };
+    // Todos = trabalho + pessoal, o dia inteiro. Nao e work+personal somados na mao: itens sem
+    // `context` definido entram aqui e nao entravam em nenhuma das duas abas.
+    const all = tasks.filter(t => pertenceAoContexto(t, 'all') && t.status !== 'done' && tInRange(t)).length
+             + events.filter(e => (e.context === 'work' || e.context === 'personal' || !e.context) && inRange(e.start_at.slice(0, 10))).length;
+    return { all, work, personal, delegated };
   }, [tasks, events, view, currentDate, miniMonth]);
 
   // Listas filtradas pelo contexto ativo — passadas ao painel esquerdo e timegrid.
@@ -165,6 +169,7 @@ export function AgendaDesktop() {
   // historia; quando divergem, quem esta na frente da tela acha que o app quebrou.
   const eventsFiltered = useMemo(() => {
     if (currentContext === 'delegated') return [];
+    if (currentContext === 'all') return events;
     return events.filter(e => e.context === currentContext);
   }, [events, currentContext]);
 

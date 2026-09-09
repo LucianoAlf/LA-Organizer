@@ -19,7 +19,7 @@ export interface AgendaShellProps {
   onToday: () => void;
   onNewClick: () => void;
   currentContext: AgendaContext;
-  contextCounts: { work: number; personal: number; delegated: number };
+  contextCounts: { all: number; work: number; personal: number; delegated: number };
   onChangeContext: (ctx: AgendaContext) => void;
 }
 
@@ -59,6 +59,7 @@ export function AgendaShell(p: AgendaShellProps) {
 
         <div className="ml-auto inline-flex gap-1.5 mr-3">
           {([
+            { id: 'all',       label: 'Todos',     count: p.contextCounts.all },
             { id: 'work',      label: 'Trabalho',  count: p.contextCounts.work },
             { id: 'personal',  label: 'Pessoal',   count: p.contextCounts.personal },
             { id: 'delegated', label: 'Delegadas', count: p.contextCounts.delegated },

@@ -128,7 +128,7 @@ export default function AgendaPreviewDev() {
           onPrev={() => {}} onNext={() => {}} onToday={() => setCurrentDate(new Date())}
           onNewClick={() => {}}
           currentContext={'work'}
-          contextCounts={{ work: MOCK_TASKS.filter(t => t.context === 'work').length, personal: MOCK_TASKS.filter(t => t.context === 'personal').length, delegated: 0 }}
+          contextCounts={{ all: MOCK_TASKS.length, work: MOCK_TASKS.filter(t => t.context === 'work').length, personal: MOCK_TASKS.filter(t => t.context === 'personal').length, delegated: 0 }}
           onChangeContext={() => {}}
           leftRail={
             <AgendaDesktopLeftPanel

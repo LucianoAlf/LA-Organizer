@@ -6,7 +6,8 @@ export interface AgendaFilters {
   delegadas: boolean;
 }
 
-export type AgendaContext = 'work' | 'personal' | 'delegated';
+import type { AgendaContext } from '../../../lib/agendaContexto';
+export type { AgendaContext };
 
 const STORAGE_KEY = 'agenda.filters';
 const DEFAULTS: AgendaFilters = { trabalho: true, pessoal: true, delegadas: true };
@@ -31,9 +32,11 @@ export function useAgendaFilters() {
   const [currentContext, setCurrentContext] = useState<AgendaContext>(() => {
     try {
       const saved = localStorage.getItem('agenda.desktop.currentContext');
-      if (saved === 'work' || saved === 'personal' || saved === 'delegated') return saved;
+      if (saved === 'all' || saved === 'work' || saved === 'personal' || saved === 'delegated') return saved;
     } catch { /* ignore */ }
-    return 'work';
+    // Abre em TODOS (Alf, 09/09): a agenda mostra o dia inteiro e quem quer focar filtra.
+    // Antes abria em Trabalho, e o compromisso pessoal das 14h30 ficava escondido.
+    return 'all';
   });
 
   const changeContext = (ctx: AgendaContext) => {

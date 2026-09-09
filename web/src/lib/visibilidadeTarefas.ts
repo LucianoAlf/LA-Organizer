@@ -39,8 +39,18 @@
 export function clausulasVisibilidade(collabId: string, groupIds: string[] = []): string[] {
   const vis = [
     `assigned_to.eq.${collabId}`,
-    // A rede do autor só vale para tarefa SEM grupo dono. Com grupo, quem manda é a membresia.
-    `and(created_by.eq.${collabId},assigned_group_id.is.null)`,
+    // A rede do autor tem DUAS ressalvas, cada uma paga com um incidente:
+    //  1. `assigned_group_id.is.null` — tarefa de pool pertence ao GRUPO, não a quem criou.
+    //  2. a cláusula `or(...)` de `source` — AUTORIA-TECNICA-NAO-E-DELEGACAO (Alf, 09/09):
+    //     dezoito tarefas "Renovação em risco" nasceram de automação (`source: system`) com o
+    //     id dele como autor, e o app as mostrava como se ele tivesse delegado pra Fabi e pra
+    //     Jéssica. Ele nunca delegou nenhuma. `created_by` ali é quem a máquina usou como
+    //     credencial, não quem decidiu. Tarefa de automação com dono OUTRO é da pessoa, ponto.
+    //     Medido: saem 18, ficam as 35 delegações de verdade (todas `source: manual`).
+    //     `source.is.null` entra porque `neq` não casa NULL em SQL — sem isso, tarefa antiga
+    //     sem `source` desapareceria junto.
+    `and(created_by.eq.${collabId},assigned_group_id.is.null,`
+      + `or(assigned_to.is.null,assigned_to.eq.${collabId},source.is.null,source.neq.system))`,
   ];
   const ids = (Array.isArray(groupIds) ? groupIds : []).filter(Boolean);
   if (ids.length > 0) vis.push(`assigned_group_id.in.(${ids.join(',')})`);
@@ -49,7 +59,7 @@ export function clausulasVisibilidade(collabId: string, groupIds: string[] = [])
 
 /** A mesma regra em memória, para filtrar listas já carregadas. */
 export function podeVerTarefa(
-  t: { assigned_to?: string | null; created_by?: string | null; assigned_group_id?: string | null } | null | undefined,
+  t: { assigned_to?: string | null; created_by?: string | null; assigned_group_id?: string | null; source?: string | null } | null | undefined,
   collabId: string,
   groupIds: string[] = [],
 ): boolean {
@@ -58,5 +68,8 @@ export function podeVerTarefa(
   if (t.assigned_group_id) {
     return (Array.isArray(groupIds) ? groupIds : []).includes(t.assigned_group_id);
   }
-  return t.created_by === collabId;
+  if (t.created_by !== collabId) return false;
+  // Automação que usou meu id como credencial e entregou pra outra pessoa não é minha.
+  if (t.source === 'system' && t.assigned_to) return false;
+  return true;
 }

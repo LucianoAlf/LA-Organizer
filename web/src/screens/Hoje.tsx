@@ -235,13 +235,16 @@ async function fetchNoPrazoTasks(collabId: string): Promise<Task[]> {
   return (data ?? []) as unknown as Task[];
 }
 
-type TabKey = TaskContext | 'delegated';
+// 'all' (Alf, 09/09): o dia e UM. Quem abria em Trabalho nao via o compromisso pessoal
+// colado na reuniao. Delegadas fica FORA de "Todos" de proposito — ela tem casa propria
+// justamente pra nao entupir a agenda de quem delega.
+type TabKey = TaskContext | 'delegated' | 'all';
 
 export function Hoje() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const tt = useTaskTransform();
-  const [tab, setTab] = useState<TabKey>('work');
+  const [tab, setTab] = useState<TabKey>('all');
   // Sprint 12 Bloco D: filtro opcional por categoria de execução. null = todas.
   const [actionFilter, setActionFilter] = useState<ActionType | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -516,7 +519,9 @@ export function Hoje() {
 
   const work = tasks.filter(t => t.context === 'work');
   const personal = tasks.filter(t => t.context === 'personal');
-  const tabList: Task[] = tab === 'work' ? work : tab === 'personal' ? personal : delegated;
+  const meuDia: Task[] = tasks.filter(t => t.context === 'work' || t.context === 'personal' || !t.context);
+  const tabList: Task[] = tab === 'all' ? meuDia
+    : tab === 'work' ? work : tab === 'personal' ? personal : delegated;
   // Sprint 12 Bloco D: chips só aparecem para categorias presentes na aba atual.
   const presentActionTypes = Array.from(
     new Set(tabList.map(t => t.action_type).filter((x): x is ActionType => Boolean(x))),
@@ -525,7 +530,9 @@ export function Hoje() {
     ? tabList.filter(t => t.action_type === actionFilter)
     : tabList;
   // Eventos só nas abas work/personal (delegadas é só task).
-  const todayEvents = tab === 'delegated' ? [] : events.filter(e => e.context === tab);
+  const todayEvents = tab === 'delegated' ? []
+    : tab === 'all' ? events
+    : events.filter(e => e.context === tab);
 
   const dueToday = todayList.filter(t => t.due_date === today && t.status !== 'done' && t.status !== 'cancelled');
   const overdue = todayList.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled'));
@@ -542,7 +549,9 @@ export function Hoje() {
   const done = todayList.filter(t => t.status === 'done');
   // Seção "📝 Sem prazo" — só nas abas próprias (work/personal); delegada fica fora por ora.
   // Fonte isolada (noPrazoTasks), filtro único (filterNoPrazo) compartilhado com o desktop.
-  const noPrazo = tab === 'delegated' ? [] : filterNoPrazo(noPrazoTasks, tab);
+  const noPrazo = tab === 'delegated' ? []
+    : tab === 'all' ? filterNoPrazo(noPrazoTasks)   // sem 2o arg = os dois contextos
+    : filterNoPrazo(noPrazoTasks, tab);
   // Sprint 26 — só mostra skeleton no carregamento INICIAL (sem dados cacheados).
   // Antes: qualquer invalidate (incl. toggle de task) virava isLoading=true momentaneamente
   // e a UI piscava o skeleton, "engolindo" a lista. Agora, se já temos dados em mãos,
@@ -579,6 +588,7 @@ export function Hoje() {
       {/* Tabs */}
       <Tabs
         tabs={[
+          { id: 'all', label: 'Todos', badge: meuDia.length + events.length },
           { id: 'work', label: 'Trabalho', badge: work.length + events.filter(e => e.context === 'work').length },
           { id: 'personal', label: 'Pessoal', badge: personal.length + events.filter(e => e.context === 'personal').length },
           { id: 'delegated', label: 'Delegadas', badge: delegated.length },

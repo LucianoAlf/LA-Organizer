@@ -21,7 +21,13 @@
 // de fonte (`useAgendaTasks`) já usa, e mantê-los iguais é o que impede as duas camadas de
 // divergirem depois.
 
-export type AgendaContext = 'work' | 'personal' | 'delegated';
+// 'all' (pedido do Alf, 09/09): o dia e UM. As pilulas eram exclusivas, entao quem abria em
+// Trabalho nao via o compromisso pessoal das 14h30 colado na entrevista das 13h30 — e as duas
+// coisas se atropelam na vida real. "Todos" = trabalho + pessoal, o SEU dia inteiro.
+//
+// Delegadas ficam FORA de propósito (decisao do Alf na mesma conversa): elas ganharam casa
+// propria justamente pra nao entupir a agenda de quem delega. Na dele eram 17 de 20.
+export type AgendaContext = 'all' | 'work' | 'personal' | 'delegated';
 
 export interface TarefaParaContexto {
   context?: string | null;
@@ -33,8 +39,9 @@ export function pertenceAoContexto(t: TarefaParaContexto | null | undefined, ctx
   if (!t) return false;
   const delegada = t.delegated_to != null && t.delegated_to !== '';
   if (ctx === 'delegated') return delegada;
-  // Delegada tem casa própria: não polui a agenda de quem delegou.
+  // Delegada tem casa própria: não polui a agenda de quem delegou — nem em "Todos".
   if (delegada) return false;
+  if (ctx === 'all') return true;
   return t.context === ctx;
 }
 

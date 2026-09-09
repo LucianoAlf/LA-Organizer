@@ -128,8 +128,8 @@ export function Semana() {
   const [readingTask, setReadingTask] = useState<WeekTask | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   // Sprint 22.34m — tabs Trabalho/Pessoal/Delegadas espelhando Hoje.
-  type SemanaTab = TaskContext | 'delegated';
-  const [tab, setTab] = useState<SemanaTab>('work');
+  type SemanaTab = TaskContext | 'delegated' | 'all';
+  const [tab, setTab] = useState<SemanaTab>('all');
 
   // Grupos de trabalho (2026-06-10): pool dos meus grupos entra na semana.
   const myGroupIds = useMyGroupIds();
@@ -153,8 +153,11 @@ export function Semana() {
     // Tarefa de grupo de trabalho (assigned_to NULL) entra no contexto, nunca em
     // Delegadas — é pool: qualquer membro vê e conclui (2026-06-10).
     if (t.assigned_group_id) {
+      if (tab === 'all') return true;
       return tab !== 'delegated' && t.context === tab;
     }
+    // 'all' = o MEU dia (trabalho + pessoal); delegada tem casa propria e nao entra.
+    if (tab === 'all') return t.assigned_to === collaborator.id;
     if (tab === 'delegated') {
       return t.created_by === collaborator.id && t.assigned_to !== collaborator.id;
     }
@@ -178,7 +181,7 @@ export function Semana() {
     // Delegadas não tem events.
     if (tab === 'delegated') return map;
     for (const e of events) {
-      if (e.context !== tab) continue;
+      if (tab !== 'all' && e.context !== tab) continue;
       const ymd = eventLocalYmd(e.start_at);
       if (map.has(ymd)) map.get(ymd)!.push(e);
     }
@@ -276,6 +279,7 @@ export function Semana() {
       {/* Sprint 22.34f — Tabs Trabalho/Pessoal alinhadas com Hoje. */}
       <Tabs
         tabs={[
+          { id: 'all', label: 'Todos' },
           { id: 'work', label: 'Trabalho' },
           { id: 'personal', label: 'Pessoal' },
           { id: 'delegated', label: 'Delegadas' },

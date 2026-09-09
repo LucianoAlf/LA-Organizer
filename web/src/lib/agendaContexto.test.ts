@@ -72,3 +72,29 @@ describe('doContexto', () => {
     expect(doContexto(undefined, 'work')).toEqual([]);
   });
 });
+
+// "Todos" (Alf, 09/09) — o dia é um só: trabalho + pessoal juntos, delegadas de fora.
+describe('contexto "all"', () => {
+  it('junta trabalho e pessoal', () => {
+    expect(pertenceAoContexto(MINHA_TRABALHO, 'all')).toBe(true);
+    expect(pertenceAoContexto(MINHA_PESSOAL, 'all')).toBe(true);
+  });
+
+  it('NÃO traz delegada — foi decisão explícita, não esquecimento', () => {
+    // Na agenda do Alf, incluir delegadas em "Todos" devolveria 17 tarefas da Fabi e da
+    // Jéssica pra tela que ele acabou de limpar.
+    expect(pertenceAoContexto(DELEGADA, 'all')).toBe(false);
+  });
+
+  it('a soma de Todos + Delegadas cobre tudo, sem repetir', () => {
+    const todas = [MINHA_TRABALHO, MINHA_PESSOAL, DELEGADA];
+    expect(doContexto(todas, 'all')).toHaveLength(2);
+    expect(doContexto(todas, 'delegated')).toHaveLength(1);
+  });
+
+  it('item sem contexto definido aparece em Todos', () => {
+    // Tarefa antiga sem `context` sumia das duas abas e ninguém a via.
+    expect(pertenceAoContexto({ context: null, delegated_to: null }, 'all')).toBe(true);
+    expect(pertenceAoContexto({ context: null, delegated_to: null }, 'work')).toBe(false);
+  });
+});
