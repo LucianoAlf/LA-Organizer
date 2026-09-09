@@ -53,6 +53,7 @@ const { resolverConclusaoDeLembrete } = require('./lib/completion-from-reminder'
 const { buildReminderRefsQuery, mapRefRows } = require('./lib/reminder-refs-query');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply, restatesRecentWrite } = require('./lib/optimistic-confirm');
+const { fundeBlocosRepetidos } = require('./lib/funde-blocos-repetidos');
 const { isActionConfirmQuestion } = require('./lib/confirm-question');
 const { buildIntegrityReply } = require('./lib/integrity-reply');
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
@@ -590,6 +591,13 @@ function parseYamlIshObject(text) {
 // Parse <<TASK_UPDATE>>[...]<<END>> — filtra ações inválidas, mantém o resto.
 function parseTaskUpdateMarker(text) {
   if (!text) return null;
+  // SEGUNDO-BLOCO-DO-MESMO-MARKER-VIRA-LIXO (Alf, 09/09 19:19). O regex abaixo e NAO-GLOBAL:
+  // pega o 1o bloco e ignora o resto, e o `replace` tambem so tira o 1o — entao o 2o sobra no
+  // texto e vira UNKNOWN_MARKER_STRIPPED. A escrita some e a pessoa le a confirmacao das duas.
+  // Funde antes de parsear: o executor daqui ja aceita array, entao N blocos viram um payload
+  // so, sem tocar em mais nada. Fail-closed — JSON quebrado em qualquer bloco devolve o texto
+  // intacto e o caminho antigo vale.
+  text = fundeBlocosRepetidos(text, 'TASK_UPDATE');
   const re = /<<TASK_UPDATE>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;
@@ -2417,6 +2425,13 @@ function validateEventItem(e) {
 
 function parseEventCreateMarker(text) {
   if (!text) return null;
+  // SEGUNDO-BLOCO-DO-MESMO-MARKER-VIRA-LIXO (Alf, 09/09 19:19). O regex abaixo e NAO-GLOBAL:
+  // pega o 1o bloco e ignora o resto, e o `replace` tambem so tira o 1o — entao o 2o sobra no
+  // texto e vira UNKNOWN_MARKER_STRIPPED. A escrita some e a pessoa le a confirmacao das duas.
+  // Funde antes de parsear: o executor daqui ja aceita array, entao N blocos viram um payload
+  // so, sem tocar em mais nada. Fail-closed — JSON quebrado em qualquer bloco devolve o texto
+  // intacto e o caminho antigo vale.
+  text = fundeBlocosRepetidos(text, 'EVENT_CREATE');
   const re = /<<EVENT_CREATE>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;
@@ -2899,6 +2914,13 @@ function validateEventUpdateAction(a) {
 
 function parseEventUpdateMarker(text) {
   if (!text) return null;
+  // SEGUNDO-BLOCO-DO-MESMO-MARKER-VIRA-LIXO (Alf, 09/09 19:19). O regex abaixo e NAO-GLOBAL:
+  // pega o 1o bloco e ignora o resto, e o `replace` tambem so tira o 1o — entao o 2o sobra no
+  // texto e vira UNKNOWN_MARKER_STRIPPED. A escrita some e a pessoa le a confirmacao das duas.
+  // Funde antes de parsear: o executor daqui ja aceita array, entao N blocos viram um payload
+  // so, sem tocar em mais nada. Fail-closed — JSON quebrado em qualquer bloco devolve o texto
+  // intacto e o caminho antigo vale.
+  text = fundeBlocosRepetidos(text, 'EVENT_UPDATE');
   const re = /<<EVENT_UPDATE>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;
