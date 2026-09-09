@@ -542,15 +542,43 @@ async function checkRecurringErrors() {
 async function checkKnownIssuesRegression() {
   const { data: regs, error } = await supabase.rpc('evaluate_known_issues');
   if (error) return { status: 'error', detail: `evaluate_known_issues: ${error.message}` };
-  if (!regs || regs.length === 0) return { status: 'ok', detail: 'Nenhuma regressão de incidente conhecido' };
-  const fmt = (d) => d
-    ? new Date(d).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
-    : '?';
-  const linhas = regs.map((r) => {
-    const quem = (r.afetados && r.afetados.length) ? ` · ${r.afetados.join(', ')}` : '';
-    return `${r.codigo} ${r.titulo} (corrigido ${fmt(r.corrigido_em)}, voltou ${r.ocorrencias_novas}×${quem})`;
-  });
-  return { status: 'warning', detail: `🔁 ${regs.length} regressão(ões): ${linhas.join('; ')}` };
+  const { formatarRegressoes } = require('../lib/regressao-format');
+  return formatarRegressoes(regs);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CHECK — a rede de regressão está ENXERGANDO?
+// ─────────────────────────────────────────────────────────────────
+// SENSOR-CEGO-NAO-SE-DENUNCIA (09/09/2026). Medição do acervo naquele dia: 531 known-issues,
+// 518 corrigidos, 62 se declarando monitorados — e apenas TRÊS com sinal que casou qualquer
+// coisa em 30 dias. 33 diziam `marker_log` com `sinal_padrao` NULL (a RPC nem os lia) e 14
+// tinham "padrão" escrito em prosa portuguesa, que nunca casa nada.
+//
+// O custo disso não foi teórico: `downgradeEmptyPromise` levou CINCO consertos em 24 dias
+// (16/08, 29/08, 31/08, 05/09, 09/09) e a trava da ETAPA 1 — que manda parar de remendar
+// família reincidente — nunca disparou, porque ela depende de alguém ACHAR a família e a rede
+// que acharia estava muda.
+//
+// Um sensor cego não se denuncia: ele fica quieto, que é exatamente como um sensor saudável
+// se parece. Por isso a cobertura vira número visível todo dia. O alarme só toca no que tem
+// ação clara (KI que se declara monitorado sem padrão utilizável); o resto fica no detalhe,
+// à vista, sem virar ruído diário.
+async function checkSensoresDeRegressao() {
+  const { data, error } = await supabase.rpc('medir_cobertura_sensores');
+  if (error) return { status: 'ok', detail: `cobertura não medida (${error.message})` };
+  const m = (Array.isArray(data) ? data[0] : data) || {};
+  const decl = Number(m.declarados) || 0;
+  const semP = Number(m.sem_padrao) || 0;
+  const vivos = Number(m.vivos_90d) || 0;
+  const mudos = Number(m.mudos_90d) || 0;
+  const base = `sensores de regressão: ${vivos} vivos · ${mudos} mudos (90d) · ${decl} declarados`;
+  if (semP > 0) {
+    return {
+      status: 'warning',
+      detail: `⚠️ ${semP} known-issue(s) se dizem monitorados e não têm padrão de sinal — ou põe padrão que case de verdade, ou declara \`manual\` (que é honesto). ${base}`,
+    };
+  }
+  return { status: 'ok', detail: base };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -752,6 +780,7 @@ const ALL_CHECKS = [
   ['events_without_reminders', checkEventsWithoutReminders],
   ['recurring_errors',       checkRecurringErrors],
   ['known_issues_regression', checkKnownIssuesRegression],
+  ['sensores_regressao',      checkSensoresDeRegressao],
   ['group_package_churn',    checkGroupPackageChurn],
   ['provider_health',        checkProviderHealth],
   ['finding_triage',         checkFindingTriage],

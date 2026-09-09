@@ -221,6 +221,36 @@ o resultado medido antes da varredura não vale mais.
 Grave o known-issue em `tom_known_issues` com causa-raiz, a prova de reversão (números antes e
 depois) e `fix_resumo` começando com `[gov-agent]`. Feche o finding apontando para o KI.
 
+⚠️ **O `sinal_tipo` tem que dizer a verdade.** Se você gravar `sinal_tipo='marker_log'`, o
+campo `sinal_padrao` PRECISA casar de verdade — rode a consulta abaixo **antes** de gravar:
+
+```sql
+select count(*) from marker_logs
+where (marker_type || ' ' || coalesce(reason,'')) ilike '<seu padrao>'
+  and created_at > now() - interval '90 days';
+```
+
+Se der zero — ou se o que você ia escrever é uma frase em português, e não um padrão de
+máquina — declare **`manual`**. Isso não é desistir: é honesto, e a maioria dos defeitos de
+conversa não tem sinal em `marker_logs` mesmo. Quem os pega é o minerador, não o marker.
+
+**Por que isto está escrito aqui.** Medido em 09/09: o acervo tinha **531 known-issues, 62 se
+dizendo monitorados e apenas TRÊS com sinal vivo**. 33 declaravam `marker_log` com
+`sinal_padrao` NULL — a RPC nem os lia — e 14 tinham "padrão" escrito em prosa. Os dois KIs
+criados na própria rodada de 09/09 nasceram assim.
+
+O preço apareceu no mesmo dia: `downgradeEmptyPromise` levou **cinco consertos em 24 dias**
+(16/08, 29/08, 31/08, 05/09, 09/09) e a trava da ETAPA 1 nunca disparou — ela depende de
+alguém ACHAR a família, e a rede que acharia estava muda. O sensor cego não se denuncia:
+ele fica quieto, que é exatamente como um sensor saudável se parece.
+
+⚠️ **Sinal é o nome da PORTA, não do defeito — e porta é compartilhada.** Quatro KIs corrigidos
+usam `CONFIRM_NOEXEC`; dois usam variações de `confab:promise_nomarker`. Por isso o alarme do
+health-check fala em *"sinal disparou"* e lista os KIs como **suspeitos**, nunca como culpado.
+Em 09/09 ele dizia "PROMISE-DOWNGRADE-REBAIXA-ADMISSAO voltou 3×" — e os 3 disparos eram os
+dois incidentes que você consertou naquela manhã, de outra raiz. **Disparo é fato; regressão é
+hipótese.** Abra o turno antes de escrever a palavra "regressão" no relatório.
+
 ⚠️ A marca `[gov-agent]` no início do `fix_resumo` não é enfeite: é ela que faz a ETAPA 1
 existir. Sem a marca, o seu conserto some do placar e você nunca descobre que ele voltou.
 
