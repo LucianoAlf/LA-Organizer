@@ -11240,6 +11240,52 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[CompletionFromReminder] non-fatal:', e.message);
   }
 
+  // FATIA DE HÁBITO — HABITO-CONFIRMADO-NAO-TEM-ONDE-CAIR (Bianca, 19/07 a 09/09/2026).
+  //
+  // A Fatia 1 acima só enxerga `ref_type='task'`, gravado pelo sendAndLink dos lembretes
+  // pontuais. O BRIEFING não grava ref nenhum — então quem é lembrado de um HÁBITO pelo
+  // briefing e responde "Remédios tomados" não tem onde cair: a fatia determinística não vê,
+  // o LLM emite TASK_UPDATE, o resolvedor de tarefa não acha nada em `tasks` (all_failed:1
+  // com fails:[]) e o turno sai só com <<REACT>>✅<<END>>. Ela recebe o ✅ e nada é gravado.
+  //
+  // Medido em 09/09: o hábito "Tomar remédios" da Bianca tem 8 registros em 52 dias, e ela
+  // avisou pelo menos 6 vezes. O próprio briefing entregava a contradição três linhas acima
+  // da fala dela: *streak: 1 dia*.
+  //
+  // Mesma arquitetura da Fatia 1, de propósito: decide num módulo puro, grava pelo executor
+  // que já existe (applyHabitActions faz upsert do dia e recalcula streak), roda ANTES do LLM
+  // e injeta o hint pra ele não re-emitir marker. Só ocupa o hint se a fatia de TAREFA não
+  // achou nada — tarefa tem âncora por id exato e ganha do casamento por nome.
+  try {
+    if (!_remCompleteHint) {
+      const { resolverConclusaoDeHabito } = require('./lib/habito-confirmado');
+      const { data: _habAtivos } = await supabase
+        .from('habits').select('id, name')
+        .eq('collaborator_id', collab.id).eq('is_active', true).limit(200);
+      const _ch = resolverConclusaoDeHabito({ texto: text, habitos: _habAtivos || [] });
+      if (_ch.modo === 'exato') {
+        const _idCurtoH = String(_ch.habitId).replace(/-/g, '').slice(0, 8);
+        const _rH = await applyHabitActions(collab, [{ action: 'log', habit_id: _idCurtoH, completed: true }], text);
+        if (_rH && _rH.okCount >= 1) {
+          // Escrita REAL aconteceu: o ✅ deixa de ser mentira e o guard de honestidade pode
+          // ser suprimido pelo mesmo freio que a fatia de tarefa usa.
+          _metrics.deterministic_complete_ok = true;
+          const _stH = (_rH.logged && _rH.logged[0] && _rH.logged[0].streak) || null;
+          _remCompleteHint = `### ✅ AÇÃO JÁ REGISTRADA\nVocê acabou de registrar o hábito *${_ch.nome}* de hoje${_stH ? ` (sequência: ${_stH} dia${_stH > 1 ? 's' : ''})` : ''}. JÁ está no sistema. Confirme calorosamente na sua voz. NÃO emita marker pra esse hábito (já está feito), NÃO diga que não conseguiu, NÃO peça pra mandar de novo.`;
+          console.log(`[HabitoConfirmado] log determinístico: ${_ch.nome} streak=${_stH}`);
+        }
+        // okCount 0 → NÃO seta flag e NÃO injeta hint: o fluxo honesto de hoje vale, e a
+        // pessoa ouve que não deu, em vez de um ✅ vazio.
+      } else if (_ch.modo === 'ambiguo') {
+        const _listaH = _ch.candidatos.map((c) => `- *${c.name}*`).join('\n');
+        _remCompleteHint = `### ❓ QUAL HÁBITO?\nO usuário confirmou uma conclusão que casa com MAIS DE UM hábito dele:\n${_listaH}\nPergunte QUAL deles ele fez. NÃO registre nenhum até ele dizer.`;
+      }
+    }
+  } catch (e) {
+    // Mesmo freio da Fatia 1: qualquer erro aqui degrada pro fluxo atual, nunca quebra o turno.
+    console.warn('[HabitoConfirmado] non-fatal:', e.message);
+  }
+
   let { systemPrompt, ctx } = await buildSystemPrompt(collab, _promptOpts);
   _metrics.skill_active = _promptOpts.activeSkill || 'none'; // Fatia J: telemetria da skill ativa (era coluna morta)
   const _tt = ctx.todayTasks || {};
