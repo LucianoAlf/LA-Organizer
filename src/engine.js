@@ -443,6 +443,8 @@ function parseOnboardingMarker(text) {
 // Parse <<MEMORY_SAVE>>[...]<<END>> — filtra rows sem content válido.
 function parseMemoryMarker(text) {
   if (!text) return null;
+  // SEGUNDO-BLOCO-DO-MESMO-MARKER-VIRA-LIXO (Alf, 09/09 19:19) — ver funde-blocos-repetidos.js.
+  text = fundeBlocosRepetidos(text, 'MEMORY_SAVE');
   const re = /<<MEMORY_SAVE>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;
@@ -16183,6 +16185,8 @@ async function buildRelayLimitHint(requesterId) {
 // action='plan' (default) creates/updates the monthly plan; action='close' closes it with wins + retrospective.
 function parseMonthlyPlanMarker(text) {
   if (!text) return null;
+  // SEGUNDO-BLOCO-DO-MESMO-MARKER-VIRA-LIXO (Alf, 09/09 19:19) — ver funde-blocos-repetidos.js.
+  text = fundeBlocosRepetidos(text, 'MONTHLY_PLAN');
   const re = /<<MONTHLY_PLAN>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;

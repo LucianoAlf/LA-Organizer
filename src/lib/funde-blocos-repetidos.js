@@ -36,8 +36,22 @@
 // `FINANCE_ACTION` ficou de fora porque lê o payload direto (`json`), sem `Array.isArray` — e é
 // dinheiro. Fundir lá sem ler o executor inteiro seria adivinhar.
 
-// Markers cujo executor aceita array de itens (verificado no engine em 09/09/2026).
-const ACEITAM_ARRAY = new Set(['TASK_UPDATE', 'EVENT_CREATE', 'EVENT_UPDATE']);
+// Markers cujo executor aceita array de itens. Lista fechada por VARREDURA, não por palpite:
+// das 26 funções `parseXMarker` do engine, seis já resolviam sozinhas (TASK_UPDATE,
+// EVENT_CREATE e EVENT_UPDATE por esta fusão; HABIT_ACTION, COORDINATION_REQUEST e
+// FINANCE_ACTION por `/gi` próprio) e apenas estas duas outras passam `Array.isArray(x) ? x :
+// [x]` para o executor. As 18 restantes leem o payload direto — fundir lá entregaria um array
+// onde o executor espera um objeto, trocando escrita PERDIDA por escrita ERRADA. A perdida
+// some do banco; a errada entra e ninguém audita.
+//
+// Das 18 de fora, a maioria é singleton por natureza (ONBOARDING_DONE, DND_SET, PREFS_UPDATE,
+// WEEKLY_PLAN, PROJECT_APPROVE/REJECT, DATA_CLASSIFY…): o modelo não tem por que emitir duas.
+// As que poderiam vir em lote — CHECKLIST_ACTION, ANNOUNCEMENT_ACTION, SCHOOL_EVENT_ACTION,
+// PROJECT_CREATE, CHECKPOINT_BATCH — nunca apareceram duplicadas em 90 dias de marker_logs.
+// Se aparecerem, o caminho é fazer o EXECUTOR aceitar array e só então entrar aqui.
+const ACEITAM_ARRAY = new Set([
+  'TASK_UPDATE', 'EVENT_CREATE', 'EVENT_UPDATE', 'MEMORY_SAVE', 'MONTHLY_PLAN',
+]);
 
 function _escapaRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

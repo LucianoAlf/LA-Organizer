@@ -82,11 +82,11 @@ test('entrada torta nunca lança', () => {
 // desde um incidente igual ("com regex nao-global so o 1o era consumido") e nao tinha
 // atravessado pras outras portas. Este teste e o que impede a lição de se perder de novo.
 // ---------------------------------------------------------------------------
-test('as tres portas fundem antes de parsear', () => {
+test('as CINCO portas fundem antes de parsear', () => {
   const fs = require('fs');
   const path = require('path');
   const eng = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
-  for (const marker of ['TASK_UPDATE', 'EVENT_CREATE', 'EVENT_UPDATE']) {
+  for (const marker of ['TASK_UPDATE', 'EVENT_CREATE', 'EVENT_UPDATE', 'MEMORY_SAVE', 'MONTHLY_PLAN']) {
     assert.ok(eng.includes(`fundeBlocosRepetidos(text, '${marker}')`),
       `${marker} parou de fundir — o 2o bloco volta a virar UNKNOWN_MARKER_STRIPPED e a `
       + 'escrita some com a pessoa lendo a confirmacao');
