@@ -1805,3 +1805,91 @@ Consequência de protocolo, e vale para o teto de 2: **1 correção é resultado
 segundo candidato só tem conserto de desenho. Aqui o alvo certo é o TOM saber que aquela carteira é
 pessoal por construção — conhecimento, que mora em prompt/skill, não trava. Foi ao grupo como
 pergunta, com a medição anexada no `verified_note`.
+
+### ETAPA 3 — o veto vale por PORTA, não por módulo: guard que reescreve `reply` cega tudo abaixo
+
+**Ocorrência:** 1 (09/09), e é a 1ª correção da rodada.
+
+O `engine.js` tem DUAS portas de honestidade em sequência. A de cima, `downgradeEmptyPromise`
+(`promise-honesty.js`, chamada em `engine.js:14620`), e a de baixo, `enforceNoMarkerHonesty`
+(~14884). A de baixo tem o conjunto completo de vetos — incluindo `restatesRecentWrite`, que existe
+desde 19/08 justamente para não negar escrita recém-feita. A de cima **não tinha nenhum deles**.
+
+Isso não é redundância inofensiva: a porta de cima **reescreve o `reply`**. Quando ela dispara, a de
+baixo já não vê o original — então todo veto dela é inalcançável, e o módulo "protegido" está
+desprotegido na prática.
+
+Caso Rafinha 08/09 11:11:09 BRT: o TOM perguntou *"No áudio anterior eu registrei '*filhos* no
+Marvin'… é correção — eram os fios mesmo?"*. O verbo `registrei` casou o `REPLY_PROMISE_RE`, a frase
+verdadeira foi apagada e no lugar entrou *"essa ação NÃO foi executada"* — com as 3 tarefas no banco
+havia 4min19s (`TASK_UPDATE executed ok=3 fail=0` às 11:06:46).
+
+Regra: **conte vetos por PORTA, não por módulo.** Ao achar um guard com veto novo, pergunte se
+existe outro guard ANTES dele no mesmo pipeline que produza o mesmo tipo de saída — se produzir, o
+veto tem que estar nos dois. É prima da regra de 29/08 (o dano mora na costura), com a diferença de
+que aqui cada porta passa na própria suíte.
+
+Proposta de virar código: um teste de contrato que enumere os pontos do `engine.js` que reescrevem
+`reply` por motivo de honestidade e falhe quando dois deles não compartilharem o conjunto de vetos.
+
+### ETAPA 3 — o DENOMINADOR do casamento é raiz: razão sobre o título torna título longo inalcançável
+
+**Ocorrência:** 1 (09/09), 2ª correção da rodada — mesmo turno da anterior, **porta e raiz diferentes**.
+
+`restatesRecentWrite` (`optimistic-confirm.js:450`) media overlap como RAZÃO com o TÍTULO no
+denominador (`hits/toks.length >= 0.6`). Com isso, título longo que a pessoa e o TOM chamam pelo
+apelido curto **nunca** alcança o piso, por mais inequívoco que o casamento seja: *"Pegar casquinha
+com defeito no Recreio e levar pro Centro"* contra *"Combinado — amanhã à tarde no Recreio pra pegar
+a casquinha. Já tá registrado pra quarta."* dá 3/6 = 50%. O veto não segurou e o chokepoint trocou a
+mensagem verdadeira inteira pela nota de falha.
+
+O conserto NÃO foi baixar o piso (medido e descartado em 21/08) — foi um ramo aditivo com contagem
+**absoluta**: `if (hits >= 3) return true`. População medida antes de embarcar (regra de 04/09):
+sobre os 138 `CHOKEPOINT/redirected` do acervo, 4 já eram vetados pela regra atual e o ramo novo
+acrescenta **2 (1,5%)** — os 2 falso-fire provados no banco.
+
+Regra: **quando um casamento por overlap falha num caso óbvio, olhe o DENOMINADOR antes do limiar.**
+Razão normalizada pelo alvo penaliza alvo longo; a correção certa costuma ser um ramo de contagem
+absoluta ao lado, não afrouxar a razão para todo mundo.
+
+### ETAPA 3 — `occurred_at` errado em 5 de 5 achados varridos, e a agulha resolveu os 5
+
+**Ocorrências:** 4 rodadas (19/08, 22/08, 31/08, 09/09). Já não é exceção — é o caso comum no acervo antigo.
+
+Na varredura de 09/09 puxei 5 achados antigos e **os 5** tinham `occurred_at` apontando para um turno
+que não é o do incidente. Dois deles apontavam para um turno em que o TOM se comportou BEM (o
+reply-quote "Ok" do Alf respondido corretamente; o ritual de planejamento semanal da Bianca) — que é
+exatamente o modo de falha caro descrito em 19/08: conferir por ali mede o sucesso e fecha bug vivo
+como falso positivo.
+
+A agulha (`conversation_history` + `ilike` no literal da evidência, sem janela temporal) localizou os
+5 turnos reais em uma consulta cada. Desvios medidos: −6h53, −11h13, −10h54 e um par sem inbound na
+janela inteira.
+
+Consequência prática: **na varredura, lance a agulha ANTES de abrir a janela.** Custa o mesmo e evita
+o veredito invertido. A proposta de `literalDoAchado(finding)` (18/08, 19/08) segue de pé e continua
+sendo a única forma de isso parar de ser redescoberto.
+
+### ETAPA 2 (varredura) — o `fails: []` de 07/09 tem nome: hábito renderizado no bloco de TAREFA
+
+**Ocorrência:** 1 (09/09). Dá causa a uma das 11 linhas que 07/09 deixou como "falha sem diagnóstico".
+
+Em 07/09 ficou medido que, das 55 linhas `TASK_UPDATE rejected all_failed`, 39 eram pergunta de
+confirmação disfarçada e **11 eram falha real sem diagnóstico** (`fails: []`). Hoje uma delas ganhou
+raiz, e é barata de reconhecer.
+
+Bianca, 19/07 08:11:58 BRT. O briefing das 08:10 renderiza `*PESSOAL · hoje:* • 💪 *Tomar remédios* —
+⏰ 6h`. Ela responde *"Remédios tomados. Pode marcar como feito"*. O LLM emite
+`<<TASK_UPDATE>> {"action":"complete","title":"Tomar remédios"}` e o resolvedor não acha nada:
+`tasks ilike '%Tomar%'` e `ilike '%rem_dio%'` dão **zero linhas**. Não é tarefa — é **hábito**
+(`habits.id c91bd1bf`, `name="Tomar remédios"`, `icon 💪`, `reminder_time 06:00`). Ela repetiu 65s
+depois e levou a mesma nota.
+
+A raiz é de desenho e tem duas metades: (1) o briefing mistura hábito e tarefa no mesmo bloco, então
+o LLM não tem como saber qual marker usar; (2) `TASK_UPDATE` não tem fallback para `HABIT_ACTION`
+quando o título não resolve em `tasks`. Enquanto (2) não existir, todo "marca como feito" sobre
+hábito vira `all_failed` mudo.
+
+**Ainda vivo**: a Bianca mandou "Remédios tomados" em 19/08, 01/09, 03/09, 05/09 e 09/09 08:17.
+Deixado aberto (teto de 2 já consumido) com a raiz no `verified_note` de `07648c43` — é o alvo mais
+maduro para a próxima rodada.
