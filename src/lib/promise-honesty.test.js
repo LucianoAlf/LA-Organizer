@@ -296,3 +296,43 @@ test('linha sem fim de frase continua caindo inteira', () => {
   assert.strictEqual(r.fired, true);
   assert.strictEqual(r.reply, PROMISE_NOMARKER_DISCLAIMER);
 });
+
+// PROMISE-NOMARKER-CEGO-PRA-ESCRITA-RECENTE (Rafinha 08/09 11:11:09 BRT).
+// Literal do raw_excerpt do CHOKEPOINT. Às 11:06:45 o TASK_UPDATE gravou 3 tarefas
+// (ok=3 fail=0), entre elas "Buscar os filhos no Marvin" e "Pegar a tinta no Monteiro".
+// 4min19s depois o TOM REAFIRMA o que já escreveu ("no áudio anterior eu registrei…")
+// pra PERGUNTAR se era correção — e o `registrei` casa a REPLY_PROMISE_RE.
+// A porta A (downgradeEmptyPromise) roda ANTES do enforceNoMarkerHonesty e não tem
+// nenhum dos vetos dele: apagou a frase VERDADEIRA e colou "essa ação NÃO foi executada".
+// O mecanismo que separa reafirmação de promessa já existe desde 19/08
+// (restatesRecentWrite, CHOKEPOINT-NEGA-ESCRITA-RECENTE) — só não estava ligado aqui.
+const RAFINHA_REAFIRMA =
+  'Entendido essa parte, Rafinha.\n' +
+  '\n' +
+  'No áudio anterior eu registrei "*filhos* no Marvin" (pessoal), mas agora você falou ' +
+  '"*fios, fios, fios*" bem marcado. É correção — eram os fios mesmo, não buscar as crianças?\n' +
+  '\n' +
+  'A tinta no Monteiro tá igual: aguardando a Rose. Pode continuar.';
+
+test('reafirmação de escrita recente não é rebaixada (caso Rafinha 08/09)', () => {
+  const r = downgradeEmptyPromise(RAFINHA_REAFIRMA, { restatesRecentWrite: true });
+  assert.strictEqual(r.fired, false, 'não é promessa vazia: as tarefas foram gravadas 4min antes');
+  assert.strictEqual(r.reply, RAFINHA_REAFIRMA, 'a pergunta e a frase verdadeira ficam intactas');
+});
+
+test('sem o sinal de escrita recente o rebaixamento segue igual (controle Rafinha)', () => {
+  const r = downgradeEmptyPromise(RAFINHA_REAFIRMA);
+  assert.strictEqual(r.fired, true, 'opt ausente ⇒ comportamento antigo, zero regressão');
+  assert.doesNotMatch(r.reply, /eu registrei/i);
+});
+
+test('promessa vazia REAL não é salva pelo sinal de escrita recente', () => {
+  // Controle do lado perigoso: o veto não pode virar carimbo. Aqui não há reafirmação —
+  // é claim + lembrete futuro numa frase só (mesmo texto do controle Arthur 04/08).
+  const r = downgradeEmptyPromise(
+    '✅ Tá registrado, Arthur — te lembro amanhã às 10h de passar o Levy pra BIA na quinta.',
+    { restatesRecentWrite: false },
+  );
+  assert.strictEqual(r.fired, true);
+  assert.doesNotMatch(r.reply, /registrado/i);
+});

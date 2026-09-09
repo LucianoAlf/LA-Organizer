@@ -64,8 +64,16 @@ const NEGACAO_ANTES_RE =
 // Rebaixa promessa comprovadamente vazia: remove a(s) linha(s) de promessa e anexa o aviso
 // honesto (lição Ana 30/06: anexar SEM remover = contradição intra-mensagem). Puro; o engine
 // só chama quando JÁ PROVOU o vazio (actionable + zero markers + retry não persistiu).
-function downgradeEmptyPromise(text) {
+// PROMISE-NOMARKER-CEGO-PRA-ESCRITA-RECENTE (Rafinha 08/09 11:11 BRT): esta porta roda ANTES
+// do enforceNoMarkerHonesty (engine ~14884) e reescreve o `reply`, então a porta de baixo nunca
+// vê o original — e nenhum dos vetos DELA vale aqui. Reafirmar uma escrita que ACABOU de
+// acontecer ("no áudio anterior eu registrei X, era isso mesmo?") casa a REPLY_PROMISE_RE e
+// virava "essa ação NÃO foi executada", com as 3 tarefas já no banco havia 4 minutos.
+// O mecanismo que separa reafirmação de promessa já existe desde 19/08 (restatesRecentWrite,
+// optimistic-confirm.js) — o que faltava era estar ligado nesta porta. Opt AUSENTE ⇒ inerte.
+function downgradeEmptyPromise(text, opts = {}) {
   const s = String(text || '');
+  if (opts && opts.restatesRecentWrite) return { reply: s, fired: false };
   const ehPromessa = (t) => {
     if (OFERTA_CONDICIONAL_RE.test(t)) return false;
     const re = new RegExp(REPLY_PROMISE_RE.source, 'gi');

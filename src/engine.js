@@ -14618,7 +14618,31 @@ Output AGORA, apenas o marker:`;
           // contradição). AUTO_RETRY_DUP_EXISTS seta auto_retry_succeeded (estado desejado já
           // existe) → NÃO rebaixa (lição 27/06, confab inverso).
           if (!_metrics.auto_retry_succeeded) {
-            const _pd = downgradeEmptyPromise(reply);
+            let _pd = downgradeEmptyPromise(reply);
+            // PROMISE-NOMARKER-CEGO-PRA-ESCRITA-RECENTE (Rafinha 08/09 11:11 BRT): esta porta
+            // roda ANTES do enforceNoMarkerHonesty e reescreve o `reply` — a porta de baixo
+            // nunca vê o original, então nenhum veto dela alcança este ponto. Reafirmar escrita
+            // recente ("no áudio anterior eu registrei X — era isso mesmo?") casava a
+            // REPLY_PROMISE_RE e virava "essa ação NÃO foi executada", com as tarefas gravadas
+            // 4min antes. Mesmo mecanismo/janela/freio (`!marker_attempted`) do enforce lá
+            // embaixo. Só consulta o banco quando a porta JÁ ia disparar (29 fires em todo o
+            // acervo) — turno normal não paga query. `let` fora do try: `const` cruzando try
+            // já matou um guard por ReferenceError (CONFAB-CHOKEPOINT-SCOPE).
+            if (_pd.fired && !_metrics.marker_attempted) {
+              let _pdRestates = false;
+              try {
+                const { data: _pdRw } = await supabase.from('tasks')
+                  .select('title,remind_at')
+                  .or(`assigned_to.eq.${collab.id},created_by.eq.${collab.id}`)
+                  .gte('updated_at', new Date(_t0 - 600_000).toISOString())
+                  .order('updated_at', { ascending: false }).limit(20);
+                _pdRestates = restatesRecentWrite(reply, _pdRw || []);
+              } catch (_) {}
+              if (_pdRestates) {
+                _pd = downgradeEmptyPromise(reply, { restatesRecentWrite: true });
+                console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → VETADO (reafirma escrita recente)`);
+              }
+            }
             if (_pd.fired) {
               // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08): guarda a PROMESSA original —
               // é ela que prova o achado. O texto entregue já vive no conversation_history.
