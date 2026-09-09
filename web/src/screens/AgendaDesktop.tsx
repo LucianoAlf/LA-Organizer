@@ -159,6 +159,10 @@ export function AgendaDesktop() {
     [noPrazoAll, currentContext],
   );
 
+  // A GRADE usa este mesmo array (DayView/WeekView/MonthView). Ela recebia `events` cru ate
+  // 09/09, entao a aba Trabalho listava 1 item na quinta e desenhava DOIS no calendario — a
+  // Mentoria, que e contexto pessoal, aparecia junto. Lista e grade tem de contar a mesma
+  // historia; quando divergem, quem esta na frente da tela acha que o app quebrou.
   const eventsFiltered = useMemo(() => {
     if (currentContext === 'delegated') return [];
     return events.filter(e => e.context === currentContext);
@@ -367,7 +371,7 @@ export function AgendaDesktop() {
         {view === 'day' && (
           <DayView
             date={currentDate}
-            events={events}
+            events={eventsFiltered}
             tasks={tasksFiltered}
             onSlotClick={(d) => setQuickCreate({ open: true, dueDate: localYmd(d) })}
             onEventClick={setEditingEvent}
@@ -379,7 +383,7 @@ export function AgendaDesktop() {
         {view === 'week' && (
           <WeekView
             weekStart={startOfWeek(currentDate)}
-            events={events}
+            events={eventsFiltered}
             tasks={tasksFiltered}
             onSlotClick={(d) => setQuickCreate({ open: true, dueDate: localYmd(d) })}
             onEventClick={setEditingEvent}
@@ -391,7 +395,7 @@ export function AgendaDesktop() {
         {view === 'month' && (
           <MonthView
             monthDate={miniMonth}
-            events={events}
+            events={eventsFiltered}
             tasks={tasksFiltered}
             onDayClick={(d) => { setDate(d); setView('day'); }}
             onEventClick={setEditingEvent}
