@@ -448,6 +448,14 @@ function restatesRecentWrite(reply, itens) {
     if (toks.length < 2) return false;
     const hits = toks.filter((tk) => hay.has(tk)).length;
     if (hits >= 2 && hits / toks.length >= 0.6) return true;
+    // RESTATE-TITULO-LONGO-PARAFRASEADO (Rafinha 08/09 11:11:26): a razão tem o TÍTULO no
+    // denominador, então título longo chamado pelo apelido curto nunca alcança 60% — "Pegar
+    // casquinha com defeito no Recreio e levar pro Centro" contra "amanhã à tarde no Recreio pra
+    // pegar a casquinha" dá 3/6 = 50%, e o chokepoint trocou uma verdade pela nota de falha.
+    // NÃO baixa o piso de 2 (medido e descartado em 21/08): ramo com contagem MAIOR, absoluta.
+    // 3 tokens distintos de ≥4 chars não-stopword do MESMO título não acontecem por acaso.
+    // Medido nos 138 CHOKEPOINT/redirected do acervo: +2 vetos (1,5%), os 2 falso-fire provado.
+    if (hits >= 3) return true;
     return anterior && hits >= 1;
   });
 }

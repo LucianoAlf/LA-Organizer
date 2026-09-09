@@ -723,3 +723,35 @@ test('o veto do gerúndio não mexeu no ramo de 1ª pessoa', () => {
   assert.strictEqual(hasCompletionClaim('Ontem você pediu, eu já registrei aqui.'), false,
     'mesma coisa sem condicional nenhuma — é posição, não o veto novo');
 });
+
+// RESTATE-TITULO-LONGO-PARAFRASEADO (Rafinha 08/09 11:11:26 BRT) — o piso é uma RAZÃO sobre o
+// tamanho do TÍTULO, então título longo que a pessoa (e o TOM) chamam por um apelido curto nunca
+// alcança 60%, por mais inequívoco que o casamento seja. A tarefa "Pegar casquinha com defeito no
+// Recreio e levar pro Centro" foi gravada às 11:06:46 com due=09/09 (quarta); 40s depois o TOM
+// respondeu "Combinado — amanhã à tarde no Recreio pra pegar a casquinha. Já tá registrado pra
+// quarta. ✅" — VERDADE — e o chokepoint trocou a mensagem inteira pela nota de falha. Overlap:
+// 3 de 6 tokens = 50%, abaixo do piso.
+// O candidato NÃO baixa o piso de 2 (medido e descartado em 21/08): acrescenta um ramo com
+// contagem MAIOR — 3 tokens distintos de ≥4 chars, não-stopword, do MESMO título recém-escrito.
+// População medida sobre os 138 CHOKEPOINT/redirected do acervo: 4 já vetados pela regra atual,
+// +2 pelo ramo novo (1,5%), e os DOIS são falso-fire confirmado no banco (este, e Jereh 30/06
+// 08:52:22, onde a tarefa fechou 08:51:53 e ele teve que refazer no app).
+const TITULO_CASQUINHA = 'Pegar casquinha com defeito no Recreio e levar pro Centro';
+const REAL_CASQUINHA = 'Combinado — amanhã à tarde no Recreio pra pegar a casquinha. Já tá registrado pra quarta. ✅';
+
+test('restatesRecentWrite: título longo parafraseado curto casa por contagem (Rafinha 08/09)', () => {
+  assert.strictEqual(restatesRecentWrite(REAL_CASQUINHA, [TITULO_CASQUINHA]), true);
+});
+
+test('restatesRecentWrite: 2 tokens SEM a razão de 60% continuam NÃO casando', () => {
+  // O piso de 2 segue valendo só com razão alta — o ramo novo exige 3. Senão reabriria a
+  // família que o freio existe pra fechar (medida e descartada em 21/08).
+  assert.strictEqual(restatesRecentWrite('Já tá registrado o Recreio, pode deixar. ✅', [TITULO_CASQUINHA]), false,
+    '1 token do título não casa');
+  assert.strictEqual(restatesRecentWrite('Combinado, pegar no Recreio tá certo. ✅', [TITULO_CASQUINHA]), false,
+    '2 tokens em título de 6 = 33% e o ramo novo exige 3');
+});
+
+test('restatesRecentWrite: assunto alheio segue não casando com o ramo novo', () => {
+  assert.strictEqual(restatesRecentWrite('✅ Criei a tarefa de comprar leite no mercado da esquina.', [TITULO_CASQUINHA]), false);
+});
