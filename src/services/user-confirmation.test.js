@@ -198,3 +198,22 @@ test('defensivo: não-string / vazio / longo demais → null', () => {
   assert.strictEqual(detectUserConfirmation(''), null);
   assert.strictEqual(detectUserConfirmation('x'.repeat(201)), null);
 });
+
+// ── NEGACAO-DEPOIS-DO-AFIRMADOR (10/09/2026) ─────────────────────────────────────────
+test('recusa que começa com afirmador NÃO é sim (o caso real: "Manda agora nao")', () => {
+  for (const t of ['Manda agora nao', 'isso não', 'pode não', 'ok, não precisa', 'sim não']) {
+    assert.notStrictEqual(detectUserConfirmation(t), 'yes', t);
+  }
+});
+
+test('as afirmações de sempre continuam sim, e o "não" do começo continua não', () => {
+  for (const t of ['Isso', 'isso mesmo', 'Isso aí', 'sim', 'pode', 'manda', 'ok']) {
+    assert.strictEqual(detectUserConfirmation(t), 'yes', t);
+  }
+  assert.strictEqual(detectUserConfirmation('não'), 'no');
+  assert.strictEqual(detectUserConfirmation('nao precisa'), 'no');
+});
+
+test('palavra que só CONTÉM "nao" não é negação ("canção", "nãozinho" não travam)', () => {
+  assert.strictEqual(detectUserConfirmation('pode a canção'), 'yes');
+});

@@ -10538,6 +10538,25 @@ async function processMessage(phone, text, raw = {}) {
       // segue aberta pro fluxo natural/expiração. (Bug: "sim" pra criar meta
       // confirmava intent stale de horas atrás, ex. "cobrar o Rafinha".)
       const fresh = target ? withinConfirmWindow(target.asked_at, 20) : false;
+      let _atrasadaAceita = false;
+      // CONFIRMACAO-ATRASADA-PERDIA-O-RECADO (Krissya 20/08, Rafinha 27/08): "Isso" 27 e 36 min
+      // depois de "Aviso o X? Confirma?" caía aqui como stale, ia pro LLM, que perguntava de novo
+      // — e o recado, inteiro na intent, nunca saía. Se a ÚLTIMA fala do TOM pra pessoa foi a
+      // própria pergunta, nada aconteceu no meio e o "sim" só pode ser a resposta dela. Com outra
+      // fala no meio (ritual, outro assunto) a janela de 20 min continua valendo — é ela que
+      // impede o "sim" solto de confirmar pergunta velha de outro assunto.
+      if (target && userConfirm && !fresh) {
+        try {
+          const { data: _uo } = await supabase.from('conversation_history').select('content')
+            .eq('collaborator_id', collab.id).eq('direction', 'outbound')
+            .order('created_at', { ascending: false }).limit(1);
+          const { perguntaFoiAUltimaFala } = require('./lib/confirmacao-atrasada');
+          if (_uo && _uo[0] && perguntaFoiAUltimaFala({ pergunta: target.question_text, ultimaFala: _uo[0].content, askedAt: target.asked_at })) {
+            _atrasadaAceita = true;
+            console.log(`[PendingIntents] confirmação atrasada aceita — a última fala do TOM era a pergunta (intent=${target.id.slice(0, 8)})`);
+          }
+        } catch (e) { console.warn('[PendingIntents] checagem da última fala falhou (segue stale):', e.message); }
+      }
       if (!target) {
         // só aprovações abertas — o funil próprio (Approval-bare, acima) cuida delas
       } else if (target.kind === 'credencial_write') {
@@ -10549,7 +10568,7 @@ async function processMessage(phone, text, raw = {}) {
         // fechar a intent como 'confirmed' SEM ninguém ter gravado (perda silenciosa —
         // o executor zera essa variável justamente por isso). Não toca, não fecha.
         console.log(`[PendingIntents] skip generic — credencial_write tem executor proprio (intent=${target.id.slice(0,8)})`);
-      } else if (userConfirm && !fresh) {
+      } else if (userConfirm && !fresh && !_atrasadaAceita) {
         console.log(`[PendingIntents] skip auto-resolve (stale >20min) — intent=${target.id.slice(0,8)} kind=${target.kind} asked=${target.asked_at}`);
       } else if (userConfirm === 'yes' && target.payload && target.payload.anchor && target.payload.anchor.id) {
         // F5 (ALVO-FUTURO): intent ANCORADA (a guarda temporal abriu com o id certo) —

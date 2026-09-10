@@ -86,6 +86,12 @@ function classify(t, opts = {}) {
   // Pedido de OUTRA ação não confirma conclusão (ver PENDING-COMPLETE-EATS-OTHER-ACTION acima).
   if (_outraAcao) return null;
 
+  // NEGACAO-DEPOIS-DO-AFIRMADOR (10/09): "isso não", "manda agora não", "pode não". O NO_RE só
+  // olha o COMEÇO e o YES_RE casava o afirmador da frente — a recusa virava "sim" e o executor
+  // determinístico mandava o recado que a pessoa tinha recusado. Medido: 1 caso em 120 dias
+  // ("Manda agora nao"). Negação no meio de resposta curta não é sim: null, e o LLM lê a frase.
+  if (/(?:^|\s)(?:n[aã]o|nunca|jamais)(?=$|[\s.,!?;:])/.test(t)) return null;
+
   // Afirmativas
   // `s+\b` (CONFIRM-SHORTYES-S-UNRECOGNIZED): "s"/"ss"/"sss" = sim abreviado (caso Clayton).
   // `\b` barra "saldo"/"sexta" (após os "s" vem letra = sem boundary). Antes só "sim"/"sm".
