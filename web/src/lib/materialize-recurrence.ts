@@ -10,6 +10,7 @@
 import { rrulestr } from 'rrule';
 import { supabase } from './supabase';
 import { childDueDateForCycle } from './taskGroupDates';
+import { planejaLembretesDeInstancias, type InstanciaCriada, type LembreteDoMolde } from './instanceReminders';
 
 const HORIZON_DAYS = 30;
 const MAX_INSTANCES = 50;
@@ -96,11 +97,38 @@ export async function materializeSeriesClient(
   const { data: inserted, error } = await supabase.from(table).insert(toInsert).select(selectCols);
   if (error) return { created: 0, skipped, error: error.message };
 
+  // INSTANCIA-PWA-SEM-LEMBRETE (Duda 08/09): a instância nasce com os lembretes do molde. O
+  // backend sempre fez isso; aqui faltava, e as 28 vitaminas do Vicente nasceram sem aviso.
+  if (inserted && inserted.length > 0) {
+    await copiaLembretesDoMolde(table, template, inserted as unknown as InstanciaCriada[]);
+  }
+
   // Grupos: mãe-template com is_group materializa a árvore (espelho do backend).
   if (table === 'tasks' && (template as Record<string, unknown>).is_group && inserted && inserted.length > 0) {
     await materializeGroupChildrenClient(template, inserted as Array<{ id: string; due_date: string }>);
   }
   return { created: toInsert.length, skipped };
+}
+
+// Espelho de _cloneRemindersForInstances do backend. Best-effort: falha aqui não desfaz a série
+// (o CHECK 9 do health check acusa instância sem lembrete pendente).
+async function copiaLembretesDoMolde(
+  table: 'tasks' | 'events',
+  template: Template,
+  instancias: InstanciaCriada[],
+): Promise<void> {
+  const tabela = table === 'tasks' ? 'task_reminders' : 'event_reminders';
+  const fk = table === 'tasks' ? 'task_id' : 'event_id';
+  const { data: doMolde, error: e1 } = await supabase.from(tabela).select('remind_at, label').eq(fk, template.id);
+  if (e1) { console.warn('[materialize] lembretes do molde:', e1.message); return; }
+  if (!doMolde || doMolde.length === 0) return;
+  const { data: ja } = await supabase.from(tabela).select(`${fk}, remind_at`).in(fk, instancias.map((i) => i.id));
+  const existentes = ((ja ?? []) as unknown as Array<Record<string, string>>).map((r) => ({ id: r[fk], remind_at: r.remind_at }));
+  const ancoraDoMolde = { due_date: template.due_date, start_at: template.start_at };
+  const linhas = planejaLembretesDeInstancias(table, ancoraDoMolde, doMolde as LembreteDoMolde[], instancias, existentes);
+  if (linhas.length === 0) return;
+  const { error: e2 } = await supabase.from(tabela).insert(linhas);
+  if (e2) console.warn('[materialize] copiar lembretes:', e2.message);
 }
 
 // Grupos (2026-06-09) — espelho de _materializeGroupChildren do backend.

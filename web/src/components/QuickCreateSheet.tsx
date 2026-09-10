@@ -433,12 +433,6 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         .single();
       if (e) throw e;
       if (!inserted?.id) throw new Error('Não consegui criar o evento.');
-      // Sprint 29.4 — materializa instâncias se template recorrente
-      if (recurrenceRule) {
-        const r = await materializeSeriesClient('events', inserted as { id: string; recurrence_rule: string });
-        if (r.error) console.warn('[QuickCreate event] materialize err:', r.error);
-        else console.log(`[QuickCreate event] materialized ${r.created} event instances`);
-      }
       // Sprint 22.32 — insere participants escolhidos.
       if (participantIds.length > 0) {
         const rows = participantIds.map(pid => ({
@@ -487,6 +481,14 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
             }];
         const { error: re } = await supabase.from('event_reminders').insert(reminderRows);
         if (re) console.warn('[QuickCreate] event_reminders insert err:', re.message);
+      }
+      // Sprint 29.4 — materializa instâncias se template recorrente. INSTANCIA-PWA-SEM-LEMBRETE
+      // (10/09): roda DEPOIS dos lembretes do molde — a materialização copia os lembretes que o
+      // molde já tem. Antes rodava primeiro, achava zero e as instâncias nasciam sem aviso.
+      if (recurrenceRule) {
+        const r = await materializeSeriesClient('events', inserted as { id: string; recurrence_rule: string });
+        if (r.error) console.warn('[QuickCreate event] materialize err:', r.error);
+        else console.log(`[QuickCreate event] materialized ${r.created} event instances`);
       }
       // Checklist (pauta) do compromisso — itens em event_checklist_items após o evento existir.
       // Recorrência: NÃO cria (ficaria no template invisível; igual à tarefa).
