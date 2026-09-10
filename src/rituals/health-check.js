@@ -872,7 +872,7 @@ function resumirLicoesPendentes(licoes, total = null) {
   const plural = soLicoes
     ? (n === 1 ? 'lição' : 'lições')
     : (n === 1 ? 'memória' : 'memórias');
-  return { status: 'warning', detail: `⛔ ${n} ${plural} esperando seu ok: ${mostra}${resto}` };
+  return { status: 'warning', detail: `⛔ ${n} ${plural} esperando seu ok: ${mostra}${resto} — a lista inteira, com o que muda no TOM, vai pro grupo LA ORGANIZER - TOM às 07:30; responde lá` };
 }
 
 async function checkLicoesPendentes() {

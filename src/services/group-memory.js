@@ -146,6 +146,9 @@ REGRAS:
 - NÃO invente. Se o dia não teve nada digno, devolva [].
 - NUNCA guarde senha, token, chave ou credencial.
 - Cada item traz "evidence": o trecho LITERAL da conversa que originou. Sem trecho, não é memória.
+- Cada item traz "efeito": o que MUDA no que o TOM faz ou responde NESTE grupo por causa dessa
+  memória, numa frase concreta — "quando pedirem X, o TOM passa a Y" ou "se perguntarem X, o TOM
+  responde Y". Se não muda nada que o TOM faça ou responda, não é memória: não inclua o item.
 - Não repita o que já está guardado.
 - NÃO transforme um pedido feito A alguém em responsabilidade PERMANENTE dessa pessoa.
   "Fulana, quando você fizer X, faz Y" é instrução daquele momento — o combinado vale para o
@@ -156,7 +159,7 @@ O que já está guardado:
 ${jaSei}
 
 Saída OBRIGATÓRIA: array JSON puro, sem texto antes ou depois. Vazio se nada digno:
-[{"memory_type":"decision","content":"...","importance":"high","evidence":"...","decay_at":null}]`;
+[{"memory_type":"decision","content":"...","importance":"high","evidence":"...","efeito":"...","decay_at":null}]`;
 
   const raw = await chat(sys, [{ role: 'user', content: historyText }]);
   const texto = (raw && typeof raw === 'object') ? (raw.text != null ? raw.text : JSON.stringify(raw)) : raw;
@@ -195,6 +198,15 @@ Saída OBRIGATÓRIA: array JSON puro, sem texto antes ou depois. Vazio se nada d
 // sujeito PESSOA (`collaborator_memory`), que NÃO tem fila de aprovação. Gatear lá criaria
 // memória inaprovável no outro sujeito — o buraco negro que esta mesma fatia evitou em 04/09.
 const TIPOS_QUE_ESPERAM_APROVACAO = new Set(['lesson', 'fact', 'preference']);
+
+// FILA-DE-MEMORIAS (Alf 10/09): "isso não vai encher a memória dele? vai ajudar no quê?". A
+// régua virou "o que muda no TOM". Memória que ESPERA aprovação e chega sem dizer o que muda
+// não entra na fila: quem aprova decide olhando o efeito, e item sem efeito é item que ele
+// teria de descartar à mão. decision/context entram sozinhos e não passam por aqui.
+function semEfeitoDeclarado(c) {
+  if (!c || !TIPOS_QUE_ESPERAM_APROVACAO.has(c.memory_type)) return false;
+  return !(typeof c.efeito === 'string' && c.efeito.trim().length >= 10);
+}
 function defaultsPorTipoDoGrupo(memoryType) {
   return { is_active: !TIPOS_QUE_ESPERAM_APROVACAO.has(memoryType) };
 }
@@ -263,10 +275,16 @@ async function consolidateGroupMemoryFor({ supabase, group, chat, getEmbedding, 
     semAutoRelato.push(c);
   }
 
-  const { aceitas, descartadas } = prepararCandidatas(semAutoRelato, existentes, { teto: TETO_POR_NOITE });
+  let semEfeito = 0;
+  const comEfeito = [];
+  for (const c of semAutoRelato) {
+    if (semEfeitoDeclarado(c)) { semEfeito++; continue; }
+    comEfeito.push(c);
+  }
+  const { aceitas, descartadas } = prepararCandidatas(comEfeito, existentes, { teto: TETO_POR_NOITE });
   // Descarte CONTADO: zero por "nada digno" e zero por "o TOM só falava de si" precisam ser
   // distinguíveis na auditoria — foi a cegueira de 29/08 a 01/09 em outra fatia deste mesmo arquivo.
-  out.descartadas = { ...descartadas, autoRelato };
+  out.descartadas = { ...descartadas, autoRelato, semEfeito };
 
   const diaRodada = ymdEmSaoPaulo(agora);
   const ultima = mensagens[mensagens.length - 1];
@@ -285,6 +303,7 @@ async function consolidateGroupMemoryFor({ supabase, group, chat, getEmbedding, 
       decay_at: c.decay_at || prazoPadrao(c.memory_type, agora),
       occurred_on: diaConversa,
       evidence: c.evidence ? String(c.evidence).slice(0, EVIDENCE_MAX) : null,
+      efeito: typeof c.efeito === 'string' && c.efeito.trim() ? c.efeito.trim().slice(0, 300) : null,
       source: `dream:${diaRodada}`,
       is_active: defaultsPorTipoDoGrupo(c.memory_type).is_active,
       approved_at: null,
@@ -570,6 +589,7 @@ module.exports = {
   montarHistorico, extrairMemoriaDeGrupo, consolidateGroupMemoryFor, deveConsolidarGrupo,
   materialDeConsolidacao, origemDaEvidencia, prazoPadrao, DECAY_PADRAO_CONTEXT_DIAS,
   ordenarPendentes, listarMemoriasPendentes, decidirMemorias, renderMemoriasPendentes, renderDecisao,
+  semEfeitoDeclarado,
   defaultsPorTipoDoGrupo, TIPOS_QUE_ESPERAM_APROVACAO, ROTULO_DO_TIPO,
   JANELA_HORAS, TETO_POR_NOITE,
   TETO_BLOCO, MINIMO_PRA_TROCAR, memoriaViva, ordenarMemorias, linhaDeMemoria,

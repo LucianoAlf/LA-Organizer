@@ -4161,6 +4161,28 @@ async function run(opts = {}) {
     }
   }
 
+  // ── FILA DE MEMÓRIAS (Alf 10/09) — 07:30, grupo de ops, logo depois do digest ─────────
+  // As memórias que nascem na consolidação das 03h esperam o ok do Alf ou do Hugo. O aviso ia
+  // só pra DM, cortado e sem como responder; agora a lista inteira vai numerada pro grupo, com
+  // "o que muda no TOM", e a resposta ali mesmo decide (services/fila-memorias.js).
+  if (opts.force === 'fila_memorias' || (slotNow >= _odSlot && slotNow < _odCutoff)) {
+    try {
+      const { enviarFilaDeMemorias } = require('../services/fila-memorias');
+      const { postOpsResult } = require('../services/group-chat-engine');
+      const _fmGrupo = (process.env.TOM_OPS_GROUP_ID || '').trim();
+      if (_fmGrupo) {
+        const r = await enviarFilaDeMemorias(supabase, {
+          ymd: now.ymd, force: opts.force === 'fila_memorias',
+          // quiet-exempt: canal de engenharia do Alf e do Hugo, não é envio a colaborador.
+          postar: (txt) => postOpsResult(supabase, _fmGrupo, txt),
+        });
+        if (r.enviado) console.log(`[FilaMemorias] enviada: ${r.itens} memória(s)`);
+      }
+    } catch (err) {
+      console.error('[FilaMemorias] erro (retenta no próximo tick até 11h):', err.message);
+    }
+  }
+
   // ── PAUTA DE ANAMNESE (spec 2026-09-03) ─────────────────────────────────────────────────
   // Três blocos independentes, cada um com sua própria idempotência via marker_logs (o cron
   // bate o slot 3x — ver timeToSlot/currentSlot acima). Quem decide é anamnese-pauta.js

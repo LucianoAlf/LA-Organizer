@@ -327,6 +327,22 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   // no prompt: pedido escrito por terceiro e colado aqui não vira comando, porque quem manda
   // é o senderCollabId que o bridge resolveu. Nasce atrás de TOM_OPS_ENABLED=1.
   if (opsAgent.isOpsChannel({ groupId, senderCollabId })) {
+    // FILA-DE-MEMORIAS-NO-GRUPO-DE-OPS (Alf 10/09): "aprova 1 3", "descarta 2", "aprova todas",
+    // "memórias pendentes" são decididos por CÓDIGO, antes do agente. Aprovar memória muda o
+    // comportamento do TOM com o time; isso não pode depender de uma LLM entender o número.
+    // O gate de quem pode é o mesmo do canal (grupo de ops E remetente na allowlist).
+    const _filaMem = require('./fila-memorias');
+    const _cmdFila = _filaMem.parseComandoFila(text);
+    if (_cmdFila) {
+      try {
+        const _resp = await _filaMem.executarComandoFila(supabase, _cmdFila);
+        console.log(`[FilaMemorias] comando ${_cmdFila.tipo} de ${senderCollabId}`);
+        return await postOpsResult(supabase, groupId, _resp);
+      } catch (e) {
+        console.error('[FilaMemorias] comando falhou:', e.message);
+        return await postTomText(supabase, groupId, `Deu erro no meio (${e.message}). Manda *memórias pendentes* que eu mostro como ficou.`);
+      }
+    }
     let quem = 'alguém do grupo';
     try {
       const { data: c } = await supabase.from('collaborators')

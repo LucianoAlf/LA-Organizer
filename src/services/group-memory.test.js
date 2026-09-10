@@ -79,7 +79,7 @@ test('GATE: lesson entra inativa; decision entra ativa', async () => {
   await consolidateGroupMemoryFor({
     supabase: sb, group: GRUPO,
     chat: async () => JSON.stringify([
-      { memory_type: 'lesson', content: 'nao cobrar contrato de aluno em aviso previo', importance: 'high' },
+      { memory_type: 'lesson', content: 'nao cobrar contrato de aluno em aviso previo', importance: 'high', efeito: 'Quando pedirem pra cobrar contrato, o TOM confere antes se o aluno está em aviso prévio' },
       { memory_type: 'decision', content: 'ficam cinco contratos para assinar nesta semana', importance: 'normal' },
     ]),
     getEmbedding: semEmbedding, agora: new Date('2026-09-03T06:00:00Z'),
@@ -95,7 +95,7 @@ test('SEM SEGREDO: candidata com senha não é gravada', async () => {
   const sb = fakeSupabase({ mensagens: [{ role: 'member', content: 'x', created_at: '2026-09-02T20:00:00Z', sender: { full_name: 'Clayton' } }] });
   const r = await consolidateGroupMemoryFor({
     supabase: sb, group: GRUPO,
-    chat: async () => JSON.stringify([{ memory_type: 'fact', content: 'a senha do Zoho e 1234', importance: 'high' }]),
+    chat: async () => JSON.stringify([{ memory_type: 'fact', content: 'a senha do Zoho e 1234', importance: 'high', efeito: 'Se perguntarem do acesso ao Zoho, o TOM sabe responder' }]),
     getEmbedding: semEmbedding, agora: new Date('2026-09-03T06:00:00Z'),
   });
   assert.strictEqual(sb._inseridas.length, 0);
@@ -381,7 +381,7 @@ test('a mesma auto-explicação, se virar lesson, vai pra fila de aprovação em
   await consolidateGroupMemoryFor({
     supabase: sb, group: GRUPO,
     chat: async () => JSON.stringify([
-      { memory_type: 'lesson', content: 'TOM deve processar cada chamado na ordem em que chegou', importance: 'high', evidence: FALA_MENTIROSA },
+      { memory_type: 'lesson', content: 'TOM deve processar cada chamado na ordem em que chegou', importance: 'high', efeito: 'Quando chegarem dois chamados, o TOM responde na ordem em que chegaram', evidence: FALA_MENTIROSA },
     ]),
     getEmbedding: semEmbedding, agora: new Date('2026-09-05T06:00:00Z'),
   });
@@ -398,7 +398,7 @@ test('evidência dita por PESSOA continua virando memória', async () => {
   const r = await consolidateGroupMemoryFor({
     supabase: sb, group: GRUPO,
     chat: async () => JSON.stringify([
-      { memory_type: 'fact', content: 'No grupo o TOM e chamado pelo nome, sem arroba', importance: 'high', evidence: 'Krissya, nao marca ele com @' },
+      { memory_type: 'fact', content: 'No grupo o TOM e chamado pelo nome, sem arroba', importance: 'high', efeito: 'O TOM passa a responder quando é chamado pelo nome, sem precisar de arroba', evidence: 'Krissya, nao marca ele com @' },
     ]),
     getEmbedding: semEmbedding, agora: new Date('2026-09-05T06:00:00Z'),
   });
@@ -430,7 +430,7 @@ test('context sem decay_at ganha prazo; com prazo, respeita o que veio', async (
     chat: async () => JSON.stringify([
       { memory_type: 'context', content: 'a Duda comeca no sabado 05/09', importance: 'normal', evidence: 'a Duda comeca sabado' },
       { memory_type: 'context', content: 'cinco contratos para assinar entre 08 e 11/09', importance: 'normal', decay_at: '2026-09-12T00:00:00.000Z', evidence: 'a Duda comeca sabado' },
-      { memory_type: 'fact', content: 'o Arthur cuida da matricula na Barra', importance: 'normal', evidence: 'o Arthur cuida da matricula' },
+      { memory_type: 'fact', content: 'o Arthur cuida da matricula na Barra', importance: 'normal', efeito: 'Se perguntarem quem cuida da matrícula na Barra, o TOM responde que é o Arthur', evidence: 'o Arthur cuida da matricula' },
     ]),
     getEmbedding: semEmbedding, agora: new Date('2026-09-03T06:00:00Z'),
   });
@@ -735,7 +735,7 @@ test('o gate vale no que é GRAVADO, não só na tabela de política', async () 
   await consolidateGroupMemoryFor({
     supabase: sb, group: GRUPO,
     chat: async () => JSON.stringify([
-      { memory_type: 'fact', content: 'o Arthur cuida da matricula na Barra', importance: 'normal', evidence: 'o Arthur cuida da matricula' },
+      { memory_type: 'fact', content: 'o Arthur cuida da matricula na Barra', importance: 'normal', efeito: 'Se perguntarem quem cuida da matrícula na Barra, o TOM responde que é o Arthur', evidence: 'o Arthur cuida da matricula' },
       { memory_type: 'decision', content: 'a matricula passa a ser conferida na sexta', importance: 'normal', evidence: 'o Arthur cuida da matricula' },
     ]),
     getEmbedding: semEmbedding, agora: new Date('2026-09-03T06:00:00Z'),
@@ -760,4 +760,18 @@ test('o extrator recebe as memórias globais na lista do que já está guardado'
     getEmbedding: semEmbedding, agora: new Date('2026-09-03T06:00:00Z'),
   });
   assert.match(sysVisto, /chame a pessoa pelo nome/, 'sem isso o grupo reaprende a mesma regra toda noite');
+});
+
+// ── FILA-DE-MEMORIAS (10/09): memória que espera o ok precisa dizer o que muda no TOM ──
+const { semEfeitoDeclarado: _semEfeito } = require('./group-memory');
+test('lesson/fact/preference sem efeito não entram na fila', () => {
+  assert.strictEqual(_semEfeito({ memory_type: 'lesson', content: 'x' }), true);
+  assert.strictEqual(_semEfeito({ memory_type: 'fact', content: 'x', efeito: '   ' }), true);
+  assert.strictEqual(_semEfeito({ memory_type: 'preference', content: 'x', efeito: 'curto' }), true);
+  assert.strictEqual(_semEfeito({ memory_type: 'fact', content: 'x',
+    efeito: 'Se perguntarem dos vídeos de boas-vindas, o TOM sabe que são 2 por professor.' }), false);
+});
+test('decision e context entram sozinhos: não precisam de efeito', () => {
+  assert.strictEqual(_semEfeito({ memory_type: 'decision', content: 'x' }), false);
+  assert.strictEqual(_semEfeito({ memory_type: 'context', content: 'x' }), false);
 });
