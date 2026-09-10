@@ -61,6 +61,25 @@ const OFERTA_CONDICIONAL_RE =
 const NEGACAO_ANTES_RE =
   /\b(?:n[ãa]o|nunca|nem)\s+(?:(?:vou|vai|vamos|v[ãa]o)\s+)?(?:consigo|consegui|consegue|conseguimos|conseguir|posso|pude|podia|poder|d[áa]|deu|dava|dar\s+conta\s+de|rola|rolou|rolar|tem\s+como|tenho\s+como|tinha\s+como)\s+(?:pra|para|de|que|a)?\s*$|\b(?:n[ãa]o|nunca|nem)\s+$/i;
 
+// LISTAR NAO E PROMETER — LISTAGEM-REBAIXADA-COMO-PROMESSA (medido 09/09/2026).
+//
+// Quando o TOM APRESENTA o que existe — "Yuri, o que tenho no contexto aqui pra setembro:"
+// seguido dos itens, ou "Bora! Aqui o que tá na mesa pra essa semana:" — ele não está
+// prometendo nada. Está mostrando. Mas os ITENS carregam o vocabulário da RE: um pendente
+// chamado "Perguntar orçamento", outro com "registrar" no título, e a linha do bullet casa
+// `REPLY_PROMISE_RE` como se fosse compromisso do turno.
+//
+// Medido no corpus limpo (32 disparos com o texto original, de 19/08 — antes disso o
+// `raw_excerpt` guardava o texto JÁ REBAIXADO e não serve de prova): dos 10 disparos desta
+// porta, QUATRO são listagem com bullets e ícone de lista. Dois deles são o caso do Yuri em
+// 08/09, que apareceu no relatório de governança da manhã seguinte.
+//
+// O veto é por LINHA, não pelo texto: a linha do item sai do julgamento e o resto da resposta
+// continua sendo avaliado. Assim "Aqui está: • item • item — e vou criar a tarefa" ainda tem
+// a promessa da última frase rebaixada, que é o certo. Vetar o texto inteiro por causa de um
+// bullet abriria a porta pra mentira embalada em lista.
+const LINHA_DE_LISTA_RE = /^\s*(?:[•▪◦‣·]|[-*+]\s|\d+[.)]\s|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\s*\*)/u;
+
 // Rebaixa promessa comprovadamente vazia: remove a(s) linha(s) de promessa e anexa o aviso
 // honesto (lição Ana 30/06: anexar SEM remover = contradição intra-mensagem). Puro; o engine
 // só chama quando JÁ PROVOU o vazio (actionable + zero markers + retry não persistiu).
@@ -75,6 +94,8 @@ function downgradeEmptyPromise(text, opts = {}) {
   const s = String(text || '');
   if (opts && opts.restatesRecentWrite) return { reply: s, fired: false };
   const ehPromessa = (t) => {
+    // Item de lista: o TOM está mostrando o que existe, não prometendo agir.
+    if (LINHA_DE_LISTA_RE.test(t)) return false;
     if (OFERTA_CONDICIONAL_RE.test(t)) return false;
     const re = new RegExp(REPLY_PROMISE_RE.source, 'gi');
     let m;
@@ -109,4 +130,4 @@ function downgradeEmptyPromise(text, opts = {}) {
   };
 }
 
-module.exports = { downgradeEmptyPromise, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER, OFERTA_CONDICIONAL_RE };
+module.exports = { downgradeEmptyPromise, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER, OFERTA_CONDICIONAL_RE, LINHA_DE_LISTA_RE };

@@ -336,3 +336,60 @@ test('promessa vazia REAL não é salva pelo sinal de escrita recente', () => {
   assert.strictEqual(r.fired, true);
   assert.doesNotMatch(r.reply, /registrado/i);
 });
+
+// ---------------------------------------------------------------------------
+// LISTAGEM-REBAIXADA-COMO-PROMESSA (medido 09/09/2026, corpus limpo de 32 disparos).
+//
+// Quando o TOM APRESENTA o que existe, ele nao promete nada — mas os ITENS carregam o
+// vocabulario da RE (um pendente chamado "Perguntar orcamento", outro com "registrar" no
+// titulo) e a linha do bullet casava como compromisso do turno.
+//
+// Dos 10 disparos desta porta no corpus limpo, QUATRO sao listagem. Dois deles sao o caso do
+// Yuri em 08/09, que apareceu no relatorio de governanca da manha seguinte.
+// ---------------------------------------------------------------------------
+test('listar nao e prometer — o caso do Yuri (08/09)', () => {
+  const listagem = [
+    'Yuri, o que tenho no contexto aqui pra setembro:',
+    '',
+    '📋 *Com prazo em setembro:*',
+    '• 🔴 *Perguntar orçamento da fonte* — era 03/09 (5d de atraso)',
+    '• *Postar feed do Evolução* — 12/09',
+  ].join('\n');
+  const out = downgradeEmptyPromise(listagem);
+  assert.strictEqual(out.fired, false, 'apresentar o que existe nao e prometer agir');
+  assert.strictEqual(out.reply, listagem, 'a lista tem que sair intacta');
+});
+
+test('o outro caso real: pauta da semana com bullets', () => {
+  const pauta = [
+    'Bora! Aqui o que tá na mesa pra essa semana:',
+    '',
+    '📋 *Pendências arrastadas:*',
+    '• 🔴 *Registrar contrato do Théo* — 04/09',
+  ].join('\n');
+  assert.strictEqual(downgradeEmptyPromise(pauta).fired, false);
+});
+
+test('promessa FORA da lista continua caindo — o veto e por LINHA', () => {
+  // Vetar o texto inteiro por causa de um bullet abriria a porta pra mentira embalada em lista.
+  const misto = [
+    'Aqui o que tem hoje:',
+    '• *Comprar cabo* — 10/09',
+    'Vou criar na agenda e disparar pros 8 confirmarem.',
+  ].join('\n');
+  const out = downgradeEmptyPromise(misto);
+  assert.strictEqual(out.fired, true, 'a promessa da ultima linha tem que ser rebaixada');
+  assert.match(out.reply, /Aqui o que tem hoje/, 'o cabecalho da lista fica');
+  assert.match(out.reply, /Comprar cabo/, 'o item da lista fica');
+  assert.doesNotMatch(out.reply, /disparar pros 8/, 'a promessa sai');
+});
+
+test('varias formas de bullet — a fala do TOM nao usa uma so', () => {
+  const { LINHA_DE_LISTA_RE } = require('./promise-honesty');
+  for (const l of ['• item', '- item', '* item', '1. item', '2) item', '  • recuado', '▪ item']) {
+    assert.ok(LINHA_DE_LISTA_RE.test(l), `deveria reconhecer: ${JSON.stringify(l)}`);
+  }
+  for (const l of ['Vou criar a tarefa', 'Registrei o pedido', '']) {
+    assert.ok(!LINHA_DE_LISTA_RE.test(l), `NAO e lista: ${JSON.stringify(l)}`);
+  }
+});

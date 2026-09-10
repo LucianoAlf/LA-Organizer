@@ -14732,7 +14732,9 @@ Output AGORA, apenas o marker:`;
             if (_pd.fired) {
               // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08): guarda a PROMESSA original —
               // é ela que prova o achado. O texto entregue já vive no conversation_history.
-              const _origPd = String(reply).slice(0, 200);
+              // 800, nao 200: os casos de listagem tinham o verbo DEPOIS do corte, e o corpus
+              // nao conseguia provar nem refutar conserto nenhum. Ver PROVA-CURTA-DEMAIS.
+              const _origPd = String(reply).slice(0, 800);
               reply = _pd.reply;
               console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → rebaixado (promessa sem persistência)`);
               try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:promise_nomarker', _origPd); } catch (_) {}
@@ -15020,7 +15022,8 @@ Output AGORA, apenas o marker:`;
     // afirmação original é o que torna os 23 achados de "não consegui registrar" auditáveis —
     // dá pra separar guard certo (o TOM ia mentir) de guard errado (falso-positivo do próprio
     // guard, como foi o CHOKEPOINT-NEGA-ESCRITA-RECENTE do Dudu).
-    const _origHon = String(reply).slice(0, 300);
+    // 800, nao 300 — mesmo motivo da porta de cima: prova cortada no trecho que importa.
+    const _origHon = String(reply).slice(0, 800);
     reply = _hon.reply;
     if (_hon.fired) {
       try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', `confab:${_domainOf(_metrics)}`, _origHon); } catch (_) {}
