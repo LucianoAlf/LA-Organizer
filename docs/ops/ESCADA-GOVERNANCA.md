@@ -1984,3 +1984,102 @@ hábito vira `all_failed` mudo.
 **Ainda vivo**: a Bianca mandou "Remédios tomados" em 19/08, 01/09, 03/09, 05/09 e 09/09 08:17.
 Deixado aberto (teto de 2 já consumido) com a raiz no `verified_note` de `07648c43` — é o alvo mais
 maduro para a próxima rodada.
+
+### ETAPA 2 — a varredura que se declara EXAUSTIVA conta porta por FUNÇÃO NOMEADA e deixa buraco
+
+**Ocorrência:** 1 (10/09), medida contra uma varredura feita pela rodada anterior (09/09).
+
+Em 09/09 a fusão de blocos repetidos (`funde-blocos-repetidos.js`) nasceu com uma varredura no
+cabeçalho que se declarava fechada: *"das 26 funções `parseXMarker` do engine, seis já resolviam
+sozinhas… e apenas estas duas outras passam `Array.isArray`"*. O enunciado é honesto sobre o
+método — e o método é que erra: **`grep 'function parse.*Marker'` não enumera portas, enumera
+funções.**
+
+`PERSONAL_LIST_ACTION` é parseado **inline** no `engine.js` (~12594), sobre `reply`, sem função
+própria. Ficou fora da conta mesmo já tendo `Array.isArray(parsed) ? parsed : [parsed]` no
+executor — ou seja, era a porta de menor custo de todas e foi a única que sobrou.
+
+E a segunda metade da nota também era falsa. Ela dizia que os markers de fora "nunca apareceram
+duplicados em 90 dias". Medido hoje sobre `UNKNOWN_MARKER_STRIPPED`, no mesmo período:
+**`PERSONAL_LIST_ACTION` duplicou TRÊS vezes** (14/06; 17/07 Rafinha ×10; 09/09 Juliana ×9) e
+`SCHOOL_EVENT_ACTION` uma (13/06). O caso da Rafinha é o que dói: ela mandou 10 itens do
+checklist, o TOM confirmou os 10 e **um** entrou; os outros nove viraram lixo e ela leu o rodapé
+pedindo pra repetir "o que faltou".
+
+Regra: **quando uma varredura fundamenta um allowlist, o enunciado tem que dizer COMO contou — e
+a rodada seguinte tem que recontar por um caminho diferente do original.** Aqui bastou trocar
+"procurar a função" por "procurar a chamada do parse", e a porta faltante apareceu em uma busca.
+É prima da regra de 08/09 (commit é artefato datado, o que decide é o estado atual do código):
+**varredura também é artefato datado**, e a que se declara exaustiva é a mais perigosa, porque
+desencoraja a recontagem.
+
+Nota de método que ficou embarcada: o comentário mentiroso foi **substituído**, não complementado.
+Comentário errado no cabeçalho de um mecanismo de segurança é pior que comentário nenhum — ele é
+lido como varredura já feita.
+
+### ETAPA 2 (varredura) — lever novo e barato: `UNKNOWN_MARKER_STRIPPED` com nome REPETIDO em `names:`
+
+**Ocorrência:** 1 (10/09). Produziu os dois alvos da varredura numa consulta só.
+
+Como: puxar `marker_logs` com `marker_type='UNKNOWN_MARKER_STRIPPED'`, quebrar o campo `names:` e
+guardar os turnos em que **um nome se repete**. Cada linha dessas é, por construção, um turno em
+que o modelo emitiu N blocos do mesmo marker e o parser consumiu um — escrita perdida com a
+pessoa lendo a confirmação. O `raw_excerpt` preserva o bloco arrancado, então a ETAPA 4 fica
+trivial: é rodar o regex do próprio parser contra o texto real.
+
+Diferente dos levers de proximidade (regex casa, data bate, comentário cita o nome, que pagam
+~50% de falso), este gera candidato por **dano registrado**, não por semelhança. O log cobre
+05/05→09/09 e o cruzamento com o acervo aberto devolveu 2 achados — os dois procedentes:
+
+- `70bb667b` (Alf 09/09 19:18:48) — **fechado com prova.** `names:EVENT_CREATE,EVENT_CREATE,END
+  delta:225`. Ele pediu dois compromissos, o TOM anunciou os dois e criou um; a Entrevista do
+  Serjão só entrou às 19:23:46, refeita à mão. Rodado com o regex não-global do parser:
+  **ANTES 1 evento → HOJE 2**, controle de bloco único 1/1 nos dois lados. Fix `ddc9dea9`
+  (09/09 19:28:14 BRT) — **nove minutos depois** do incidente.
+- `000c8ce9` (Juliana 09/09 19:48:00) — **anotado e mantido aberto**, e é de outra família (ver
+  abaixo).
+
+Proposta de virar código: o `gov-runner` entrega no início da rodada os turnos de
+`UNKNOWN_MARKER_STRIPPED` com nome repetido, com `raw_excerpt` anexado. É uma query só e o
+candidato já vem com a entrada preservada.
+
+### ETAPA 3 — anomalia MEDIDA e NÃO explicada: `HABIT_ACTION` vaza mesmo com `/gi` nos dois lados
+
+**Ocorrência:** 1 (10/09). Fica registrada como alvo, não como conclusão.
+
+O mesmo lever acima devolveu **7 turnos** com `names:HABIT_ACTION,HABIT_ACTION` (28/05, 10/06,
+09/07, 11/07, 15/07 ×3, 25/08). Isso não deveria existir: `engine.js:6502-6548` já usa `/gi` no
+`match` **e** no `replace` — foi o primeiro parser a ganhar o `g`, justamente depois de um
+incidente igual, com o comentário *"com regex não-global só o 1º era consumido"*.
+
+Ou seja: o mecanismo está ligado nessa porta e mesmo assim sobra bloco. Não reproduzi — e sem
+reprodução isso não vira correção. Duas hipóteses baratas para quem pegar: (a) o `<<END>>` de um
+dos blocos está ausente/torto e o `[\s\S]*?` engole até o próximo, deixando resto; (b) o strip de
+markers desconhecidos roda sobre um texto **anterior** ao `replace` do parser. A segunda é
+verificável por leitura, sem banco.
+
+Não virou a 2ª correção da rodada por regra de protocolo, não por falta de tempo: é a **mesma
+raiz** do fix de hoje (segundo bloco do mesmo marker virando lixo), e duas portas da mesma raiz
+contam como uma.
+
+### ETAPA 2 (varredura) — `ok=1 fail=2` sem diagnóstico impede o teste vermelho: o achado fica aberto
+
+**Ocorrência:** 1 (10/09). É a família `fails: []` medida em 07/09, agora com caso nomeado.
+
+`000c8ce9` (Juliana, 09/09 19:48:00→19:48:26 BRT). Ela respondeu o balanço de aderência
+*"1. Feito / 2. Feito / 3. Pedi pra adiar…"*. O marker log das 19:48:19 diz
+`TASK_UPDATE · executed · ok=1 fail=2` — e **não diz o que falhou**. Estado real medido:
+`5eda0848 "Jornada do curso de teatro"` reagendada com sucesso (due 30/09, updated 19:48:18) — é
+o único `ok`; `7e170a86` e `f6c2fc9e` seguem **pending**. O TOM listou as duas sob `*Feitos:*`.
+
+O rodapé honesto ("Registrei 1 de 3") disparou, então não é confabulação silenciosa — mas a prosa
+afirma conclusão que não houve.
+
+A hipótese óbvia (título ambíguo, porque o TOM abreviou os títulos) foi **medida e descartada**:
+entre as tarefas abertas, `%Kryssia%` devolve 1 linha (a dela) e `%Peterson%` devolve 2, das quais
+só 1 é dela. Os dois resolvem sozinhos.
+
+Por que ficou aberto: sem saber **o que** o executor recusou, não há teste vermelho possível — a
+ETAPA 4 é intransponível. O alvo real não é este achado, é o instrumento: enquanto o ramo
+`complete` do `applyTaskActions` não gravar a razão em `fails`, toda linha dessa família nasce
+irrefutável. Anotado no `verified_note`.
