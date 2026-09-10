@@ -185,7 +185,7 @@ const SHORT_ID_RE = /^([a-f0-9]{4,12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const VALID_TASK_ACTIONS = new Set([
   'complete', 'cancel', 'reschedule', 'create', 'delegate',
   'extension_request', 'extension_decision', 'governance_reassign',
-  'snooze_reminders', 'return',
+  'snooze_reminders', 'return', 'update',
   'mark-item', 'mark_item', // Checklist ativo (2026-06-28): marca sub-item (filha via parent_task_id)
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
@@ -3856,6 +3856,12 @@ function validateTaskAction(a) {
     const hasNewDate = typeof a.new_due_date === 'string' && ISO_DATE_RE.test(a.new_due_date);
     const hasNewRemind = typeof a.new_remind_at === 'string' && a.new_remind_at.length > 0;
     if (!hasNewDate && !hasNewRemind) return 'bad_reschedule_needs_date_or_remind';
+  } else if (a.action === 'update') {
+    // TASK-UPDATE-NAO-EXISTIA (Alf 10/09, opção A) — formatos e regras em lib/edicao-tarefa.js.
+    const { lerEdicao } = require('./lib/edicao-tarefa');
+    const ed = lerEdicao(a);
+    if (ed.erro) return ed.erro;
+    if (ed.id && !SHORT_ID_RE.test(ed.id)) return 'bad_id';
   } else if (a.action === 'create') {
     if (typeof a.title !== 'string' || !a.title.trim()) return 'title_missing';
     // remind_at e due_date são opcionais — applyTaskActions trata defaults.
@@ -5116,6 +5122,83 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           } catch (e) { /* não-fatal */ }
           okCount++;
         }
+      } else if (a.action === 'update') {
+        // TASK-UPDATE-NAO-EXISTIA (Alf decidiu em 10/09: "A"). Em 90 dias quatro pessoas pediram
+        // pra editar tarefa já criada — renomear (Yuri 28/07), acrescentar detalhe (Dudu 27/08 e
+        // 09/09), mover pro grupo Financeiro (Rose 26/07) — e o TOM até oferecia "atualizo a
+        // existente?", mas `update` não existia: schema_invalid e "não consegui". Edita o título,
+        // ACRESCENTA detalhe (nunca apaga) e move pra grupo. Data e lembrete seguem no reschedule.
+        // Quem pode: responsável, membro do grupo dono (resolveTaskByShortId) ou quem criou.
+        const { lerEdicao, montarPatch } = require('./lib/edicao-tarefa');
+        const ed = lerEdicao(a);
+        const _COLS_ED = 'id, title, description, assigned_to, created_by, assigned_group_id, status';
+        let t = null;
+        if (ed.id) {
+          t = await resolveTaskByShortId(collaborator.id, ed.id);
+          if (!t) {
+            // Quem DELEGOU também edita (mesma regra do reschedule, E2).
+            const { data: _cr } = await supabase.from('tasks').select(_COLS_ED)
+              .eq('created_by', collaborator.id).not('status', 'in', '("done","cancelled")')
+              .order('created_at', { ascending: false }).limit(300);
+            t = (_cr || []).find((x) => String(x.id).replace(/-/g, '').startsWith(String(ed.id).toLowerCase())) || null;
+          }
+        } else {
+          const { data: _c } = await supabase.from('tasks').select(_COLS_ED)
+            .or(`assigned_to.eq.${collaborator.id},created_by.eq.${collaborator.id}`)
+            .ilike('title', `%${ed.busca.slice(0, 60)}%`)
+            .not('status', 'in', '("done","cancelled")')
+            .order('created_at', { ascending: false }).limit(5);
+          if (_c && _c.length > 1) {
+            failMessages.push(`Achei mais de uma tarefa com _"${ed.busca.slice(0, 60)}"_ — qual delas?\n${_c.slice(0, 4).map((x, i) => `${i + 1}. ${x.title}`).join('\n')}`);
+            failCount++;
+            continue;
+          }
+          t = (_c && _c[0]) || null;
+        }
+        if (!t) {
+          failMessages.push(`Não achei a tarefa _"${String(ed.busca || ed.id).slice(0, 60)}"_ pra atualizar. Me diz o nome certinho?`);
+          failCount++;
+          continue;
+        }
+        const { data: _full } = await supabase.from('tasks').select(_COLS_ED).eq('id', t.id).maybeSingle();
+        let _grupo = null;
+        if (ed.grupo) {
+          try {
+            const allGroups = await workGroups.loadActiveGroups(supabase);
+            const rg = workGroups.resolveGroupByName(allGroups, ed.grupo);
+            if (!rg.group) {
+              const nomes = (rg.candidates.length ? rg.candidates : allGroups).map((g) => g.name).join(', ');
+              failMessages.push(rg.candidates.length
+                ? `⚠️ Mais de um grupo combina com "${ed.grupo}": ${nomes}. Me diz qual.`
+                : `⚠️ Não achei o grupo "${ed.grupo}". Grupos ativos: ${nomes || 'nenhum cadastrado ainda'}.`);
+              failCount++;
+              continue;
+            }
+            _grupo = rg.group;
+          } catch (eWG) {
+            console.error('[Task][update] grupo err:', eWG.message);
+            failMessages.push('⚠️ Não consegui verificar o grupo agora — tenta de novo?');
+            failCount++;
+            continue;
+          }
+        }
+        const { patch: _patch, mudancas } = montarPatch(ed, _full || t, _grupo);
+        if (!mudancas.length) {
+          okCount++;
+          console.log(`[Task] update ${String(t.id).slice(0, 8)} sem mudança (já estava assim) by ${last4}`);
+          continue;
+        }
+        _patch.updated_by = collaborator.id;
+        const { error: _eUp } = await supabase.from('tasks').update(_patch).eq('id', t.id);
+        if (_eUp) {
+          console.error('[Task] update err:', _eUp.message);
+          failMessages.push(`Não consegui atualizar *${t.title}* agora — tenta de novo?`);
+          failCount++;
+          continue;
+        }
+        okCount++;
+        console.log(`[Task] update ${String(t.id).slice(0, 8)} (${mudancas.join(', ')}) by ${last4}`);
+        await logAgentNote(t.id, `Editada por ${nameForCollab(collaborator)}: ${mudancas.join(', ')}`, collaborator.id);
       } else if (a.action === 'reschedule') {
         // Sprint 28 — resolução title→id quando TOM não emitiu id numérico.
         // Sprint 31.6 (E2) — busca tarefa onde o user é ASSIGNEE *ou* CRIADOR
