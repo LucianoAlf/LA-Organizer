@@ -31,7 +31,13 @@ function _dia(ts) {
  * }} args
  * @returns {Array<{id:string, table:string, title:string, faltam:number}>}
  */
-function seriesFamintas({ moldes, diasPorMolde, agoraMs, janelaDias = 7, idadeMinimaMs = DIA, proximas }) {
+// JANELA = HORIZONTE DO GERADOR (30 dias) menos 2 de folga. O gerador mantém 30 dias criados à
+// frente; se UMA noite falhar, a data do fim da janela já falta na manhã seguinte. A 1ª versão
+// usava 7 dias e, medida em 10/09 contra o banco real, respondeu "tudo ok" com 4 séries paradas
+// havia 23 dias — o estoque de 30 dias escondia a parada até quase acabar.
+const JANELA_PADRAO_DIAS = 28;
+
+function seriesFamintas({ moldes, diasPorMolde, agoraMs, janelaDias = JANELA_PADRAO_DIAS, idadeMinimaMs = DIA, proximas }) {
   const out = [];
   const de = new Date(agoraMs);
   const ate = new Date(agoraMs + janelaDias * DIA);
@@ -55,4 +61,4 @@ function seriesFamintas({ moldes, diasPorMolde, agoraMs, janelaDias = 7, idadeMi
   return out;
 }
 
-module.exports = { seriesFamintas };
+module.exports = { seriesFamintas, JANELA_PADRAO_DIAS };

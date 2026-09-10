@@ -95,7 +95,7 @@ async function materializeSeries(table, template) {
   const tsCol = table === 'tasks' ? 'due_date' : 'start_at';
   const { data: existing } = await supabase
     .from(table)
-    .select(`id, ${tsCol}, status`)
+    .select(`id, ${tsCol}`)
     .eq('recurrence_parent_id', template.id);
 
   const existingDays = new Set();
@@ -115,18 +115,11 @@ async function materializeSeries(table, template) {
     }
   }
 
-  // INSTANCIA-SEM-LEMBRETE (Duda 08/09): instância criada por OUTRA porta (o PWA materializa
-  // na hora e não copiava lembrete) nunca ganhava lembrete — a cópia lá embaixo só roda pro
-  // que ESTE ciclo insere. A cópia é idempotente, então passa também pelas futuras que já
-  // existem: quem nasceu sem lembrete é completado aqui, venha de onde vier.
-  {
-    const futuras = (existing || []).filter((r) => r && r.status !== 'cancelled' && r.status !== 'done'
-      && Date.parse(table === 'tasks' ? `${r[tsCol]}T23:59:59-03:00` : r[tsCol]) >= now.getTime());
-    if (futuras.length) {
-      await _cloneRemindersForInstances(table, template, futuras).catch((e) =>
-        console.error('[recurrence] cura de lembretes falhou:', e.message));
-    }
-  }
+  // INSTANCIA-SEM-LEMBRETE (Duda 08/09): toda porta que materializa copia o lembrete do molde
+  // NA HORA em que cria a instância (este gerador, lá embaixo; o PWA, desde 10/09). NÃO cure
+  // instância que já existe: tirar o lembrete de uma ocorrência (reminders_minutes_before: [])
+  // apaga as linhas pendentes dela, e uma cura noturna ressuscitaria o que a pessoa tirou.
+  // Instância muda aparece no CHECK 9 do health check ("eventos sem lembrete pendente").
 
   const toInsert = [];
   let skipped = 0;

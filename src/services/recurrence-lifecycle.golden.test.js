@@ -324,7 +324,9 @@ _t('EVENTO: tabela desconhecida é recusada em vez de escrever no lugar errado',
   await _assert.rejects(() => endSeries1on1({ supabase: fakeSupabase, templateId: 'x', ownerId: 'y', table: 'habits' }));
 });
 
-_t('EVENTO: instância que nasceu SEM lembrete (outra porta) é completada pelo gerador', async () => {
+_t('EVENTO: o gerador NÃO mexe no lembrete de instância que já existe — remoção deliberada fica removida', async () => {
+  // Tirar o lembrete de uma ocorrência apaga as linhas pendentes dela. Se o gerador completasse
+  // instância existente sem lembrete, devolveria toda noite o que a pessoa tirou.
   fakeSupabase.__reset();
   const store = fakeSupabase.__store();
   const tpl = { id: 'vit', collaborator_id: 'duda', title: 'Vitaminas e ferro do Vicente', recurrence_rule: 'FREQ=DAILY',
@@ -334,21 +336,9 @@ _t('EVENTO: instância que nasceu SEM lembrete (outra porta) é completada pelo 
     start_at: isoPlus(1, '12:00'), status: 'scheduled' });
   store.event_reminders.push({ id: 'r0', event_id: 'vit', remind_at: isoPlus(-1, '11:00'), label: null });
   await materializeSeries('events', tpl);
-  const doAmanha = store.event_reminders.filter((r) => r.event_id === 'vit-amanha');
-  _assert.strictEqual(doAmanha.length, 1, 'a instância que já existia devia ganhar o lembrete');
-  _assert.strictEqual(doAmanha[0].remind_at, new Date(isoPlus(1, '11:00')).toISOString());
-});
-
-_t('EVENTO: instância cancelada ou passada não ganha lembrete na cura', async () => {
-  fakeSupabase.__reset();
-  const store = fakeSupabase.__store();
-  const tpl = { id: 'vit', collaborator_id: 'duda', recurrence_rule: 'FREQ=DAILY', recurrence_parent_id: null,
-    start_at: isoPlus(-3, '12:00'), status: 'done', series_ended_at: null, data_classification: 'real' };
-  store.events.push(tpl,
-    { id: 'vit-cancelada', collaborator_id: 'duda', recurrence_parent_id: 'vit', start_at: isoPlus(2, '12:00'), status: 'cancelled' },
-    { id: 'vit-ontem', collaborator_id: 'duda', recurrence_parent_id: 'vit', start_at: isoPlus(-1, '12:00'), status: 'scheduled' });
-  store.event_reminders.push({ id: 'r0', event_id: 'vit', remind_at: isoPlus(-3, '11:00'), label: null });
-  await materializeSeries('events', tpl);
-  _assert.strictEqual(store.event_reminders.filter((r) => r.event_id === 'vit-cancelada').length, 0);
-  _assert.strictEqual(store.event_reminders.filter((r) => r.event_id === 'vit-ontem').length, 0);
+  _assert.strictEqual(store.event_reminders.filter((r) => r.event_id === 'vit-amanha').length, 0);
+  const novas = store.events.filter((e) => e.recurrence_parent_id === 'vit' && e.id !== 'vit-amanha');
+  _assert.ok(novas.length > 0, 'o gerador devia criar as próximas');
+  _assert.ok(novas.every((n) => store.event_reminders.some((r) => r.event_id === n.id)),
+    'o que ELE cria nasce com o lembrete do molde');
 });

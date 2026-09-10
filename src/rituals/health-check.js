@@ -978,11 +978,11 @@ if (require.main === module) {
 // CHECK — Séries recorrentes famintas (SERIE-FAMINTA, 10/09/2026)
 // De 18/08 a 10/09 o gerador falhou toda noite para evento e este check não existia: a agenda
 // secou devagar e ninguém soube. Mede o EFEITO — as datas que a regra manda existir nos
-// próximos 7 dias estão no banco? — e não a causa, então pega qualquer jeito de o gerador parar.
+// próximos 28 dias estão no banco? — e não a causa, então pega qualquer jeito de o gerador parar.
 // ─────────────────────────────────────────────────────────────────
 async function checkSeriesFamintas() {
   const { nextOccurrences } = require('../services/recurrence-engine');
-  const { seriesFamintas } = require('../lib/series-famintas');
+  const { seriesFamintas, JANELA_PADRAO_DIAS } = require('../lib/series-famintas');
   const agoraMs = Date.now();
   const moldes = [];
   const dias = new Map();
@@ -996,7 +996,8 @@ async function checkSeriesFamintas() {
     const ids = (tpls || []).map((t) => t.id);
     for (const t of tpls || []) moldes.push({ ...t, table });
     const de = table === 'tasks' ? new Date(agoraMs).toISOString().slice(0, 10) : new Date(agoraMs - 86400000).toISOString();
-    const ate = table === 'tasks' ? new Date(agoraMs + 8 * 86400000).toISOString().slice(0, 10) : new Date(agoraMs + 8 * 86400000).toISOString();
+    const ateMs = agoraMs + (JANELA_PADRAO_DIAS + 1) * 86400000;
+    const ate = table === 'tasks' ? new Date(ateMs).toISOString().slice(0, 10) : new Date(ateMs).toISOString();
     for (let i = 0; i < ids.length; i += 100) {
       const { data: inst, error: e2 } = await supabase.from(table)
         .select(`recurrence_parent_id, ${col}`).in('recurrence_parent_id', ids.slice(i, i + 100))
