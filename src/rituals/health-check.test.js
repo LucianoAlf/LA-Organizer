@@ -105,3 +105,30 @@ test('total menor que a amostra e ignorado — nunca reporta menos do que ja viu
   const tres = Array.from({ length: 3 }, () => ({ grupo: 'g', dia: '2026-09-08', conteudo: 'x', tipo: 'fact' }));
   assert.match(resumirLicoesPendentes(tres, 1).detail, /⛔ 3 /);
 });
+
+// ── PERFIL-PARADO-CONTAVA-QUEM-NAO-FALOU (10/09/2026) ─────────────────────────────────
+const { classificarPerfisParados } = require('./health-check');
+test('perfil parado de quem quase não falou é a regra, não falha (os casos reais de 10/09)', () => {
+  const r = classificarPerfisParados([
+    { nome: 'Jordan', charsSemana: 18, diasParado: 61 },
+    { nome: 'Daiana', charsSemana: 3, diasParado: 30 },
+    { nome: 'Gabi', inativo: true, charsSemana: 0, diasParado: 26 },
+    { nome: '[QA] Replay 01', qa: true, charsSemana: 0, diasParado: 14 },
+  ]);
+  assert.deepStrictEqual(r.devidos, []);
+  assert.strictEqual(r.esperados, 2, 'inativo e QA nem entram na conta');
+});
+
+test('conversou 50+ caracteres na semana e o perfil não mexeu → é falha, com o nome', () => {
+  assert.deepStrictEqual(classificarPerfisParados([{ nome: 'Rose', charsSemana: 400, diasParado: 9 }]).devidos, ['Rose']);
+});
+
+test('exatamente no piso de 50 conta como conversa suficiente', () => {
+  assert.deepStrictEqual(classificarPerfisParados([{ nome: 'Ana', charsSemana: 50, diasParado: 8 }]).devidos, ['Ana']);
+  assert.deepStrictEqual(classificarPerfisParados([{ nome: 'Ana', charsSemana: 49, diasParado: 8 }]).devidos, []);
+});
+
+test('entrada torta não quebra', () => {
+  assert.deepStrictEqual(classificarPerfisParados(null), { devidos: [], esperados: 0 });
+  assert.deepStrictEqual(classificarPerfisParados([null, {}]), { devidos: [], esperados: 1 });
+});

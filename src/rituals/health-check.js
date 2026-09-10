@@ -426,18 +426,53 @@ async function checkSilentCollaborators() {
 // ─────────────────────────────────────────────────────────────────
 // CHECK 8 — Profiles sem update 7+ dias
 // ─────────────────────────────────────────────────────────────────
+// PERFIL-PARADO-CONTAVA-QUEM-NAO-FALOU (10/09/2026). O aviso "11 profiles sem refresh 7+ dias"
+// existia havia meses e ninguém atacava — com razão. Medido em 10/09: os 11 eram gente que quase
+// não falou desde o último refresh (3 a 18 caracteres: "Sim", "Vou", "Hope"), um perfil de QA e
+// uma colaboradora inativa. O refresh roda na consolidação diária, que PULA quem mandou menos de
+// 50 caracteres na semana (consolidateMemoryFor, `too_thin`). Perfil parado de quem não conversou
+// é a regra funcionando; o check contava isso como falha e o aviso virou ruído que ninguém lê.
+// Agora acusa só a falha: conversou 50+ caracteres nos últimos 7 dias e o perfil segue parado há
+// mais de 2 dias (a consolidação roda toda madrugada).
+const MIN_CHARS_CONSOLIDACAO = 50; // mesmo piso de consolidateMemoryFor (engine.js)
+function classificarPerfisParados(linhas) {
+  const devidos = [];
+  let esperados = 0;
+  for (const l of (Array.isArray(linhas) ? linhas : [])) {
+    if (!l || l.inativo || l.qa) continue;
+    if ((l.charsSemana || 0) >= MIN_CHARS_CONSOLIDACAO && (l.diasParado || 0) > 2) devidos.push(l.nome);
+    else esperados++;
+  }
+  return { devidos, esperados };
+}
+
 async function checkStaleProfiles() {
-  // `updated_at` é tocado por qualquer write na linha (incluindo bump de
-  // total_interactions), então não mede atualização semântica do perfil.
-  // `last_profile_update` é o timestamp do refresh do perfil pelo LLM.
-  const cutoff = isoHoursAgo(7 * 24);
-  const { count, error } = await supabase
-    .from('collaborator_profiles')
-    .select('collaborator_id', { count: 'exact', head: true })
-    .lt('last_profile_update', cutoff);
+  // `last_profile_update` é o timestamp do refresh do perfil pelo LLM (updated_at é tocado por
+  // qualquer bump de total_interactions e não serve).
+  const semana = isoHoursAgo(7 * 24);
+  const { data, error } = await supabase.from('collaborator_profiles')
+    .select('collaborator_id, last_profile_update, collab:collaborators(full_name, is_active)')
+    .lt('last_profile_update', semana).limit(200);
   if (error) throw error;
-  if (count === 0) return { status: 'ok', detail: 'Profiles atualizados' };
-  return { status: 'warning', detail: `${count} profiles sem refresh 7+ dias` };
+  const linhas = [];
+  for (const p of data || []) {
+    const nome = (p.collab && p.collab.full_name) || '?';
+    const inativo = !(p.collab && p.collab.is_active);
+    const qa = /^\s*\[QA\]/i.test(nome);
+    let charsSemana = 0;
+    if (!inativo && !qa) {
+      const { data: msgs } = await supabase.from('conversation_history').select('content')
+        .eq('collaborator_id', p.collaborator_id).eq('direction', 'inbound').gte('created_at', semana).limit(100);
+      charsSemana = (msgs || []).reduce((soma, m) => soma + String(m.content || '').length, 0);
+    }
+    linhas.push({ nome, inativo, qa, charsSemana, diasParado: (Date.now() - Date.parse(p.last_profile_update)) / 86400000 });
+  }
+  const { devidos, esperados } = classificarPerfisParados(linhas);
+  if (devidos.length) {
+    return { status: 'warning', detail: `${devidos.length} perfil(is) deviam ter sido atualizados e não foram (conversaram na semana): ${devidos.slice(0, 5).join(', ')}` };
+  }
+  if (!linhas.length) return { status: 'ok', detail: 'Profiles atualizados' };
+  return { status: 'ok', detail: `Perfis em dia — ${esperados} parado(s) de quem quase não conversou (o refresh só roda com ${MIN_CHARS_CONSOLIDACAO}+ caracteres na semana)` };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1015,4 +1050,4 @@ async function checkSeriesFamintas() {
   return { status: 'warning', detail: `${famintas.length} série(s) recorrente(s) sem as próximas datas — o gerador não está criando: ${nomes}` };
 }
 
-module.exports = { runHealthCheck, checkPortasCredenciais, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes };
+module.exports = { runHealthCheck, checkPortasCredenciais, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes, checkStaleProfiles, classificarPerfisParados };
