@@ -823,6 +823,7 @@ const ALL_CHECKS = [
   ['known_issues_regression', checkKnownIssuesRegression],
   ['sensores_regressao',      checkSensoresDeRegressao],
   ['membros_fantasma',       checkMembrosFantasma],
+  ['series_famintas',        checkSeriesFamintas],
   ['group_package_churn',    checkGroupPackageChurn],
   ['provider_health',        checkProviderHealth],
   ['finding_triage',         checkFindingTriage],
@@ -971,6 +972,46 @@ if (require.main === module) {
     console.log(JSON.stringify(r, null, 2));
     process.exit(0);
   }).catch(e => { console.error(e); process.exit(1); });
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CHECK — Séries recorrentes famintas (SERIE-FAMINTA, 10/09/2026)
+// De 18/08 a 10/09 o gerador falhou toda noite para evento e este check não existia: a agenda
+// secou devagar e ninguém soube. Mede o EFEITO — as datas que a regra manda existir nos
+// próximos 7 dias estão no banco? — e não a causa, então pega qualquer jeito de o gerador parar.
+// ─────────────────────────────────────────────────────────────────
+async function checkSeriesFamintas() {
+  const { nextOccurrences } = require('../services/recurrence-engine');
+  const { seriesFamintas } = require('../lib/series-famintas');
+  const agoraMs = Date.now();
+  const moldes = [];
+  const dias = new Map();
+  for (const table of ['tasks', 'events']) {
+    const col = table === 'tasks' ? 'due_date' : 'start_at';
+    const { data: tpls, error } = await supabase.from(table)
+      .select(`id, title, recurrence_rule, created_at, ${col}`)
+      .not('recurrence_rule', 'is', null).is('recurrence_parent_id', null)
+      .eq('data_classification', 'real').is('series_ended_at', null).limit(500);
+    if (error) throw error;
+    const ids = (tpls || []).map((t) => t.id);
+    for (const t of tpls || []) moldes.push({ ...t, table });
+    const de = table === 'tasks' ? new Date(agoraMs).toISOString().slice(0, 10) : new Date(agoraMs - 86400000).toISOString();
+    const ate = table === 'tasks' ? new Date(agoraMs + 8 * 86400000).toISOString().slice(0, 10) : new Date(agoraMs + 8 * 86400000).toISOString();
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data: inst, error: e2 } = await supabase.from(table)
+        .select(`recurrence_parent_id, ${col}`).in('recurrence_parent_id', ids.slice(i, i + 100))
+        .gte(col, de).lte(col, ate).limit(5000);
+      if (e2) throw e2;
+      for (const r of inst || []) {
+        if (!dias.has(r.recurrence_parent_id)) dias.set(r.recurrence_parent_id, []);
+        dias.get(r.recurrence_parent_id).push(String(r[col]).slice(0, 10));
+      }
+    }
+  }
+  const famintas = seriesFamintas({ moldes, diasPorMolde: dias, agoraMs, proximas: nextOccurrences });
+  if (!famintas.length) return { status: 'ok', detail: `${moldes.length} séries recorrentes, todas com as próximas datas criadas` };
+  const nomes = famintas.slice(0, 3).map((f) => f.title).join(', ');
+  return { status: 'warning', detail: `${famintas.length} série(s) recorrente(s) sem as próximas datas — o gerador não está criando: ${nomes}` };
 }
 
 module.exports = { runHealthCheck, checkPortasCredenciais, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes };

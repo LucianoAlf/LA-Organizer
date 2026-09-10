@@ -221,6 +221,8 @@ async function main() {
   try {
     const r = await rodarCicloGovernanca(supabase, { ymd, force, postar });
     console.log(`[GovRunner] ${ymd} ${JSON.stringify(r)}`);
+    // GOVRUNNER-NAO-EMPURRA: antes do restart, o que o ciclo commitou vai pro GitHub.
+    if (r && r.rodou) await sincronizarComOrigin(postar);
     if (r && r.rodou) await aplicarRestart(headAntes, sujosAntes, postar);
 
     // ── SHADOW (sonda-viva): verifica AO VIVO o que o ciclo acabou de marcar corrigido ──
@@ -306,6 +308,59 @@ async function main() {
   }
 }
 
+// ── GOVRUNNER-NAO-EMPURRA (10/09/2026) ─────────────────────────────────────────────
+// A rodada de 10/09 empurrou o fix (c2cdaf6e) mas o commit de docs da ETAPA 8 (41b26c79)
+// ficou só na VPS: o push dependia de o agente lembrar. Commit que só existe na VPS morre
+// no primeiro deploy de fora que dá `reset --hard origin/main` — inclusive um fix. Agora é
+// o runner, determinístico, que garante: ao fim do ciclo, HEAD da VPS == origin/main.
+function decidirSincronizacao({ adiante, atras, sujosRastreados } = {}) {
+  if (!Number.isFinite(adiante) || !Number.isFinite(atras)) return { acao: 'desconhecido', motivo: 'não consegui contar os commits contra o origin' };
+  if (adiante <= 0) return { acao: 'nada' };
+  if (atras <= 0) return { acao: 'push' };
+  if (sujosRastreados > 0) return { acao: 'bloqueado', motivo: 'o origin andou e há arquivo rastreado modificado na VPS — o rebase recusaria' };
+  return { acao: 'rebase_e_push' };
+}
+
+function gitOk(args) {
+  try { return { ok: true, out: execFileSync(GIT, args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() }; }
+  catch (e) { return { ok: false, out: String(e.stderr || e.message || '').trim().split('\n').slice(-1)[0] }; }
+}
+
+async function sincronizarComOrigin(postar) {
+  gitOk(['fetch', '-q', 'origin', 'main']);
+  const cnt = gitOk(['rev-list', '--left-right', '--count', 'origin/main...HEAD']);
+  const [atras, adiante] = cnt.ok ? cnt.out.split(/\s+/).map(Number) : [NaN, NaN];
+  const sujos = gitOk(['status', '--porcelain', '--untracked-files=no']);
+  const sujosRastreados = sujos.ok ? sujos.out.split('\n').filter(Boolean).length : 0;
+  const d = decidirSincronizacao({ adiante, atras, sujosRastreados });
+  if (d.acao === 'nada') return d;
+  let falha = (d.acao === 'bloqueado' || d.acao === 'desconhecido') ? d.motivo : null;
+  if (!falha && d.acao === 'rebase_e_push') {
+    const rb = gitOk(['pull', '--rebase', '-q', 'origin', 'main']);
+    if (!rb.ok) { gitOk(['rebase', '--abort']); falha = `o rebase falhou (${rb.out})`; }
+  }
+  if (!falha) {
+    const p = gitOk(['push', '-q', 'origin', 'HEAD:main']);
+    if (!p.ok) falha = `o push falhou (${p.out})`;
+  }
+  if (!falha) {
+    gitOk(['fetch', '-q', 'origin', 'main']);
+    const resto = gitOk(['rev-list', '--count', 'origin/main..HEAD']);
+    if (!resto.ok || Number(resto.out) !== 0) falha = 'depois do push o GitHub ainda não tem o commit';
+  }
+  if (falha) {
+    const curto = gitOk(['rev-parse', '--short', 'HEAD']).out || '?';
+    console.error(`[GovRunner] SINCRONIA FALHOU: ${falha} — HEAD ${curto}`);
+    try {
+      await postar(`⚠️ O que esta rodada commitou ficou *só na VPS* (HEAD \`${curto}\`): ${falha}. `
+        + 'Enquanto não subir pro GitHub, um deploy de fora com reset apaga isso.');
+    } catch (_) {}
+    return { ...d, ok: false, falha };
+  }
+  console.log(`[GovRunner] ${adiante} commit(s) no origin (${d.acao})`);
+  return { ...d, ok: true };
+}
+
 /** Roda DEPOIS do relatório já postado. Só fala com o grupo quando houve mudança de código. */
 async function aplicarRestart(headAntes, sujosAntes, postar) {
   const mudados = arquivosAlterados(headAntes, sujosAntes);
@@ -342,6 +397,7 @@ async function aplicarRestart(headAntes, sujosAntes, postar) {
 
 module.exports = {
   decidirRestart, arquivosAlterados, novosEmRelacaoA, pathsSujos, sintaxeOkDe,
+  decidirSincronizacao, sincronizarComOrigin,
   instalarAvisoDeInterrupcao,
 };
 

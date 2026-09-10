@@ -100,3 +100,37 @@ test('o runner instala handler de sinal — sem ele o drain hook nasce órfão',
   solto();
   assert.strictEqual(process.listenerCount('SIGTERM'), antes, 'deixou listener pendurado');
 });
+
+// ── GOVRUNNER-NAO-EMPURRA (10/09/2026) ─────────────────────────────────────
+// A rodada de 10/09 empurrou o fix (c2cdaf6e) mas o commit de docs da ETAPA 8 (41b26c79) ficou
+// só na VPS: nada no runner garantia que o que o agente commita chega no GitHub. Commit que
+// só existe na VPS morre no primeiro deploy de fora que dá `reset --hard origin/main`.
+const { test: _t } = require('node:test');
+const _assert = require('node:assert');
+const { decidirSincronizacao } = require('./gov-runner');
+
+_t('sincronia: nada adiante do origin → não faz nada', () => {
+  _assert.deepStrictEqual(decidirSincronizacao({ adiante: 0, atras: 3, sujosRastreados: 2 }), { acao: 'nada' });
+});
+
+_t('sincronia: commit do ciclo com origin parado → push direto (o 41b26c79 de 10/09)', () => {
+  _assert.strictEqual(decidirSincronizacao({ adiante: 1, atras: 0, sujosRastreados: 0 }).acao, 'push');
+  _assert.strictEqual(decidirSincronizacao({ adiante: 1, atras: 0, sujosRastreados: 5 }).acao, 'push',
+    'arquivo sujo não impede push fast-forward');
+});
+
+_t('sincronia: origin andou → rebase antes do push', () => {
+  _assert.strictEqual(decidirSincronizacao({ adiante: 2, atras: 1, sujosRastreados: 0 }).acao, 'rebase_e_push');
+});
+
+_t('sincronia: origin andou E há arquivo rastreado sujo → bloqueado, com motivo pro aviso no grupo', () => {
+  const d = decidirSincronizacao({ adiante: 1, atras: 1, sujosRastreados: 1 });
+  _assert.strictEqual(d.acao, 'bloqueado');
+  _assert.ok(d.motivo);
+});
+
+_t('sincronia: contagem ilegível não finge que está tudo certo', () => {
+  const d = decidirSincronizacao({ adiante: NaN, atras: NaN, sujosRastreados: 0 });
+  _assert.strictEqual(d.acao, 'desconhecido');
+  _assert.ok(d.motivo);
+});

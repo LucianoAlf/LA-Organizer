@@ -755,3 +755,37 @@ test('restatesRecentWrite: 2 tokens SEM a razão de 60% continuam NÃO casando',
 test('restatesRecentWrite: assunto alheio segue não casando com o ramo novo', () => {
   assert.strictEqual(restatesRecentWrite('✅ Criei a tarefa de comprar leite no mercado da esquina.', [TITULO_CASQUINHA]), false);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// CHOKEPOINT-NEGA-TITULO-CURTO (Duda 09/09 18:54 BRT). O EVENT_UPDATE fechou "Terapia" às
+// 18:54:16; ela mandou "A terapia"; o TOM respondeu a verdade — "Já fechei sim, Duda —
+// *Terapia* tá concluída. ✅" — e o guard trocou por "não consegui registrar": título de UMA
+// palavra nunca passava do piso de 2 tokens. Medido nos 140 CHOKEPOINT/redirected do acervo:
+// 5 falas com "já fechei/já marquei…", o ramo novo vira veto em 1 — a própria Duda.
+// ─────────────────────────────────────────────────────────────────────────
+const { test: _t } = require('node:test');
+const _assert = require('node:assert');
+const REAL_DUDA = 'Já fechei sim, Duda — *Terapia* tá concluída. ✅';
+
+_t('restatesRecentWrite: título de UMA palavra reafirmado com "já fechei" casa (Duda 09/09)', () => {
+  _assert.strictEqual(restatesRecentWrite(REAL_DUDA, [{ title: 'Terapia', remind_at: '2026-09-09T22:00:00+00:00' }]), true);
+});
+
+_t('restatesRecentWrite: título curto SEM "já …" continua não casando — pode ser claim novo', () => {
+  _assert.strictEqual(restatesRecentWrite('✅ Fechei a *Terapia*.', [{ title: 'Terapia', remind_at: null }]), false);
+});
+
+_t('restatesRecentWrite: "já fechei" sobre OUTRO item de uma palavra não casa', () => {
+  _assert.strictEqual(restatesRecentWrite(REAL_DUDA, [{ title: 'Academia', remind_at: null }]), false);
+});
+
+_t('restatesRecentWrite: palavra curta demais não vira título (piso de 4 letras)', () => {
+  _assert.strictEqual(restatesRecentWrite('Já fechei o Gym.', [{ title: 'Gym', remind_at: null }]), false);
+});
+
+_t('restatesRecentWrite: título de 2+ palavras segue a regra antiga (sem mudança)', () => {
+  _assert.strictEqual(restatesRecentWrite('Já fechei a terapia de casal.', [{ title: 'Terapia de casal', remind_at: null }]), true);
+  _assert.strictEqual(restatesRecentWrite('Já fechei a terapia.', [{ title: 'Terapia de casal', remind_at: null }]), false,
+    'título de 2 palavras citado por 1 continua não casando — o ramo novo é só pra título de 1');
+  _assert.strictEqual(restatesRecentWrite('✅ Criei a tarefa de comprar leite.', [{ title: 'Terapia de casal', remind_at: null }]), false);
+});

@@ -539,3 +539,59 @@ test('parseClosingReply: a trava não mexe nas afirmativas curtas', () => {
     assert.strictEqual(parseClosingReply(f, 1).matched, true, `"${f}" deveria seguir fechando`);
   }
 });
+
+// ── A2-NUMERO-DA-LISTA-DO-TOM (Juliana 09/09 19:48 BRT) ─────────────────────
+// O fechamento do dia (19:13) numerou as 3 tarefas e pediu "Pode ser: 1 e 2". O balanço
+// (19:22) repetiu as mesmas 3, sem número. Ela respondeu "1. Feito 2. Feito 3. Pedi pra
+// adiar…". A trava A2 só procurava PALAVRA do título na resposta, não achou, segurou as duas
+// pra confirmar — e a pergunta sumiu no lote parcial. Número de item da lista que o próprio
+// TOM numerou é citação.
+const { test: _t } = require('node:test');
+const _assert = require('node:assert');
+const { batchCompleteNeedsConfirm: _a2 } = require('./closing-reply');
+const FECHAMENTO_JULIANA = 'Fechamento do dia, Juliana 👽\n\nDas suas 3 coisas:\n'
+  + '1. 🔴 *Reunião com o Léo e a Kryssia pra falar sobre os estagiários* — fez?\n'
+  + '2. 🔴 *Conversar com o Peterson sobre o processo do estágio* — fez?\n'
+  + '3. 🔴 *Jornada do curso de teatro* — fez?\n\n'
+  + 'Me diz quais fez. Pode ser: "1 e 2", "fiz tudo" ou "só a 3".';
+const BALANCO_JULIANA = 'Juliana, balanço de aderência... 🌒\n\n⏰ *Atrasadas:*\n'
+  + '• *Reunião com o Léo e a Kryssia pra falar sobre os estagiários* (vencia há 22d)\n'
+  + '• *Conversar com o Peterson sobre o processo do estágio* (vencia há 18d)\n'
+  + '• *Jornada do curso de teatro* (vencia há 9d)\n\nReagenda? Cancela? Me diz o que rolou.';
+const RESPOSTA_JULIANA = '1. Feito\n2. Feito\n3. Pedi pra adiar, se eu não me engano para o final de setembro';
+const FECHADAS_JULIANA = ['Reunião com o Léo e a Kryssia pra falar sobre os estagiários',
+  'Conversar com o Peterson sobre o processo do estágio'];
+
+_t('A2: resposta por NÚMERO à lista que o próprio TOM numerou é citação (Juliana 09/09)', () => {
+  _assert.strictEqual(_a2({ completedTitles: FECHADAS_JULIANA, inboundText: RESPOSTA_JULIANA,
+    recentOutbound: [BALANCO_JULIANA, FECHAMENTO_JULIANA] }), false);
+});
+
+_t('A2: sem as falas recentes do TOM, o mesmo texto segue pedindo confirmação', () => {
+  _assert.strictEqual(_a2({ completedTitles: FECHADAS_JULIANA, inboundText: RESPOSTA_JULIANA }), true);
+});
+
+_t('A2: lista recente SEM número (só o balanço) não serve de âncora', () => {
+  _assert.strictEqual(_a2({ completedTitles: FECHADAS_JULIANA, inboundText: RESPOSTA_JULIANA,
+    recentOutbound: [BALANCO_JULIANA] }), true);
+});
+
+_t('A2: o número citado aponta OUTRA tarefa da lista → segue perguntando', () => {
+  _assert.strictEqual(_a2({ completedTitles: FECHADAS_JULIANA, inboundText: '3. feito',
+    recentOutbound: [FECHAMENTO_JULIANA] }), true);
+});
+
+_t('A2: só parte do lote citada por número → pergunta (todas precisam estar citadas)', () => {
+  _assert.strictEqual(_a2({ completedTitles: FECHADAS_JULIANA, inboundText: '1. feito',
+    recentOutbound: [FECHAMENTO_JULIANA] }), true);
+});
+
+_t('A2: data e hora na mensagem não viram número de item', () => {
+  _assert.strictEqual(_a2({ completedTitles: FECHADAS_JULIANA, inboundText: 'remarca pra 1/10 às 2h',
+    recentOutbound: [FECHAMENTO_JULIANA] }), true);
+});
+
+_t('A2: o caso Leo continua pegando — sequestro por briefing sem citação nenhuma', () => {
+  _assert.strictEqual(_a2({ completedTitles: FECHADAS_JULIANA, inboundText: 'bom dia tom, tudo certo?',
+    recentOutbound: [FECHAMENTO_JULIANA] }), true);
+});

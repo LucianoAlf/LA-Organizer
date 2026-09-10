@@ -435,6 +435,8 @@ function _citaLembrete(reply, remindAt) {
 // a RE casa com uma unica fala do acervo inteiro.
 const REAFIRMA_ANTERIOR_RE =
   /\b(?:j[áa]\s+(?:existe|existia|tinha|estava|havia|era)|(?:que\s+)?(?:criamos|fizemos|voc[êe]\s+criou|eu\s+criei|marcamos)\s+(?:antes|ontem|outro\s+dia)|de\s+antes|sem\s+duplicata|n[ãa]o\s+(?:vai\s+)?duplica)/i;
+// CHOKEPOINT-NEGA-TITULO-CURTO (Duda 09/09 18:54 BRT): reafirmação EXPLÍCITA de algo já feito.
+const JA_FEITO_RE = /\bj[áa]\s+(?:fechei|conclu[íi]|marquei|registrei|anotei|cancelei|reagendei|salvei|dei\s+baixa|t[áa]\s+(?:fechad|conclu[íi]d|registrad|marcad|salv|feit))/i;
 function restatesRecentWrite(reply, itens) {
   const lista = Array.isArray(itens) ? itens : [];
   if (!reply || !lista.length) return false;
@@ -445,6 +447,13 @@ function restatesRecentWrite(reply, itens) {
     if (_citaLembrete(reply, item.remind_at)) return true;
     if (!hay.size) return false;
     const toks = _restateTokens(item.title);
+    // CHOKEPOINT-NEGA-TITULO-CURTO (Duda 09/09 18:54): título de UMA palavra ("Terapia") nunca
+    // passava do piso de 2 tokens, e o guard trocou o verdadeiro "Já fechei sim — *Terapia* tá
+    // concluída" (fechada 27s antes) por "não consegui registrar". O piso segue valendo pro
+    // overlap solto; aqui entra só a reafirmação explícita de algo JÁ feito, com a palavra do
+    // título na fala. Medido nos 140 CHOKEPOINT/redirected: 5 falas com "já fechei/marquei…",
+    // 1 vira veto — a própria Duda.
+    if (toks.length === 1) return JA_FEITO_RE.test(String(reply)) && hay.has(toks[0]);
     if (toks.length < 2) return false;
     const hits = toks.filter((tk) => hay.has(tk)).length;
     if (hits >= 2 && hits / toks.length >= 0.6) return true;

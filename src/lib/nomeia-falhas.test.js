@@ -56,6 +56,12 @@ test('engine: applyTaskActions captura _falharam por try/finally e devolve no re
   assert.match(ENG, /createdReminderTimes, falharam: _falharam[,}]/);
 });
 test('engine: o ramo parcial nomeia só quando cobre TODAS as falhas (gate de completude)', () => {
-  assert.match(ENG, /const _falhasNomeaveis = \(Array\.isArray\(falharam\) && falharam\.length === failCount\)/);
-  assert.match(ENG, /falaParcial\(okCount, okCount \+ failCount, _falhasNomeaveis\)/);
+  // A2-PERGUNTA-SOME-NO-LOTE-PARCIAL (10/09): tarefa SEGURADA pra confirmar (A2 de lote, data
+  // futura, alvo refutado) deixou de contar como falha — ela espera resposta, e a pergunta vai
+  // junto. O gate de completude segue o mesmo: nomeia só quando `falharam` cobre TODAS as falhas
+  // de verdade (`_semPergunta`), e não nomeia quando já há mensagem própria pra elas.
+  assert.match(ENG, /const _semPergunta = Math\.max\(0, failCount - _retidos\.length\);/);
+  assert.match(ENG, /const _falhasNomeaveis = \(!\(failMessages && failMessages\.length\) && Array\.isArray\(falharam\)\s*&& falharam\.length === _semPergunta\)/);
+  assert.match(ENG, /falaParcial\(okCount, okCount \+ _semPergunta, _falhasNomeaveis\)/);
+  assert.match(ENG, /if \(failMessages && failMessages\.length\) base = \(base \? base \+ '\\n\\n' : ''\) \+ failMessages\.join\('\\n'\);/);
 });

@@ -263,3 +263,92 @@ function makeFakeSupabase() {
     __store() { return store; },
   };
 }
+
+// ============================================================================
+// EVENTS-MATERIALIZE-IS-RECURRENCE-TEMPLATE + EVENTS-END-SERIES-NOT-WIRED +
+// INSTANCIA-SEM-LEMBRETE (10/09/2026) — paridade de EVENTO no ciclo de vida da série.
+// De 18/08 a 10/09 nenhuma instância de evento nasceu (coluna só de tasks); a Ana pediu duas
+// vezes pra encerrar a Reunião ADM e o cancel de evento só sabia tocar a ocorrência; e as
+// vitaminas do Vicente (criadas pelo PWA) nasceram sem lembrete e o gerador nunca completou.
+// ============================================================================
+const { test: _t } = require('node:test');
+const _assert = require('node:assert');
+const { _cloneTemplate } = require('./recurrence-engine');
+const isoPlus = (d, hhmm = '16:00') => `${ymdPlus(d)}T${hhmm}:00.000Z`;
+
+_t('EVENTO: a instância NÃO leva is_recurrence_template — a coluna só existe em tasks', () => {
+  const tplEv = { id: 'ev-tpl', title: 'Marcar presencas do horário', recurrence_rule: 'FREQ=DAILY', recurrence_parent_id: null,
+    start_at: isoPlus(-1), end_at: isoPlus(-1, '17:00'), status: 'scheduled', collaborator_id: 'ana' };
+  const row = _cloneTemplate('events', tplEv, new Date(isoPlus(2)));
+  _assert.strictEqual('is_recurrence_template' in row, false);
+});
+
+_t('TAREFA: a instância segue zerando o marcador herdado do molde (verdade única de 17/08)', () => {
+  const row = _cloneTemplate('tasks', { id: 't', recurrence_rule: 'FREQ=DAILY', due_date: ymdPlus(-1),
+    is_recurrence_template: true, status: 'pending' }, new Date(`${ymdPlus(2)}T15:00:00Z`));
+  _assert.strictEqual(row.is_recurrence_template, false);
+});
+
+_t('EVENTO: endSeries1on1 com table=events encerra a série do dono, preserva done e não toca tasks', async () => {
+  fakeSupabase.__reset();
+  const store = fakeSupabase.__store();
+  store.events.push(
+    { id: 'adm', collaborator_id: 'ana', recurrence_rule: 'FREQ=WEEKLY;BYDAY=WE', recurrence_parent_id: null,
+      start_at: isoPlus(-70), status: 'done', series_ended_at: null, data_classification: 'real' },
+    { id: 'adm-futura', collaborator_id: 'ana', recurrence_parent_id: 'adm', start_at: isoPlus(6), status: 'scheduled' },
+    { id: 'adm-feita', collaborator_id: 'ana', recurrence_parent_id: 'adm', start_at: isoPlus(-7), status: 'done' },
+  );
+  // mesma id em OUTRA tabela: o encerramento de evento não pode escrever em tasks
+  store.tasks.push({ id: 'adm', assigned_to: 'ana', status: 'pending', series_ended_at: null });
+  const out = await endSeries1on1({ supabase: fakeSupabase, templateId: 'adm', ownerId: 'ana', table: 'events' });
+  const ev = Object.fromEntries(store.events.map((e) => [e.id, e]));
+  _assert.ok(ev.adm.series_ended_at, 'molde do evento devia ganhar series_ended_at');
+  _assert.strictEqual(ev['adm-futura'].status, 'cancelled');
+  _assert.strictEqual(ev['adm-feita'].status, 'done', 'done é histórico');
+  _assert.strictEqual(store.tasks[0].series_ended_at, null, 'tasks não pode ser tocada');
+  _assert.strictEqual(out.cancelled, 1);
+  const r = await materializeSeries('events', ev.adm);
+  _assert.strictEqual(r.created, 0, 'série encerrada não gera mais');
+});
+
+_t('EVENTO: endSeries1on1 com dono errado não encerra a série de outra pessoa', async () => {
+  fakeSupabase.__reset();
+  const store = fakeSupabase.__store();
+  store.events.push({ id: 'adm', collaborator_id: 'ana', recurrence_rule: 'FREQ=WEEKLY', recurrence_parent_id: null,
+    start_at: isoPlus(-7), status: 'scheduled', series_ended_at: null });
+  await endSeries1on1({ supabase: fakeSupabase, templateId: 'adm', ownerId: 'outra', table: 'events' });
+  _assert.strictEqual(store.events[0].series_ended_at, null);
+});
+
+_t('EVENTO: tabela desconhecida é recusada em vez de escrever no lugar errado', async () => {
+  await _assert.rejects(() => endSeries1on1({ supabase: fakeSupabase, templateId: 'x', ownerId: 'y', table: 'habits' }));
+});
+
+_t('EVENTO: instância que nasceu SEM lembrete (outra porta) é completada pelo gerador', async () => {
+  fakeSupabase.__reset();
+  const store = fakeSupabase.__store();
+  const tpl = { id: 'vit', collaborator_id: 'duda', title: 'Vitaminas e ferro do Vicente', recurrence_rule: 'FREQ=DAILY',
+    recurrence_parent_id: null, start_at: isoPlus(-1, '12:00'), end_at: isoPlus(-1, '13:00'), status: 'done',
+    series_ended_at: null, data_classification: 'real' };
+  store.events.push(tpl, { id: 'vit-amanha', collaborator_id: 'duda', recurrence_parent_id: 'vit',
+    start_at: isoPlus(1, '12:00'), status: 'scheduled' });
+  store.event_reminders.push({ id: 'r0', event_id: 'vit', remind_at: isoPlus(-1, '11:00'), label: null });
+  await materializeSeries('events', tpl);
+  const doAmanha = store.event_reminders.filter((r) => r.event_id === 'vit-amanha');
+  _assert.strictEqual(doAmanha.length, 1, 'a instância que já existia devia ganhar o lembrete');
+  _assert.strictEqual(doAmanha[0].remind_at, new Date(isoPlus(1, '11:00')).toISOString());
+});
+
+_t('EVENTO: instância cancelada ou passada não ganha lembrete na cura', async () => {
+  fakeSupabase.__reset();
+  const store = fakeSupabase.__store();
+  const tpl = { id: 'vit', collaborator_id: 'duda', recurrence_rule: 'FREQ=DAILY', recurrence_parent_id: null,
+    start_at: isoPlus(-3, '12:00'), status: 'done', series_ended_at: null, data_classification: 'real' };
+  store.events.push(tpl,
+    { id: 'vit-cancelada', collaborator_id: 'duda', recurrence_parent_id: 'vit', start_at: isoPlus(2, '12:00'), status: 'cancelled' },
+    { id: 'vit-ontem', collaborator_id: 'duda', recurrence_parent_id: 'vit', start_at: isoPlus(-1, '12:00'), status: 'scheduled' });
+  store.event_reminders.push({ id: 'r0', event_id: 'vit', remind_at: isoPlus(-3, '11:00'), label: null });
+  await materializeSeries('events', tpl);
+  _assert.strictEqual(store.event_reminders.filter((r) => r.event_id === 'vit-cancelada').length, 0);
+  _assert.strictEqual(store.event_reminders.filter((r) => r.event_id === 'vit-ontem').length, 0);
+});

@@ -292,7 +292,7 @@ function shouldClosingInterceptorFire(args = {}) {
  * (o LLM "fecha" tarefas atrasadas salientes em vez de tratar o pedido real). Retorna true
  * → o engine deve CONFIRMAR antes de fechar (princípio (b): não fechar tarefa no escuro).
  * Lote de 1 nunca confirma; se o usuário citou ao menos uma tarefa, é legítimo.
- * @param {{completedTitles?:string[], inboundText?:string}} args
+ * @param {{completedTitles?:string[], inboundText?:string, recentOutbound?:string[]}} args
  * @returns {boolean}
  */
 function batchCompleteNeedsConfirm(args = {}) {
@@ -302,7 +302,54 @@ function batchCompleteNeedsConfirm(args = {}) {
   if (!txt.trim()) return true; // sem inbound → não dá pra confirmar referência → pede confirmação
   const referenced = titles.some((title) =>
     String(title).toLowerCase().split(/\s+/).filter((w) => w.length >= 4).some((w) => txt.includes(w)));
-  return !referenced;
+  if (referenced) return false;
+  // A2-NUMERO-DA-LISTA-DO-TOM (Juliana 09/09 19:48 BRT): "1. Feito 2. Feito" em resposta ao
+  // fechamento que o próprio TOM numerou ("Pode ser: 1 e 2") é citação. Só vale se TODAS as
+  // tarefas do lote estiverem nos números citados de UMA mesma lista recente do TOM.
+  return !citouPorNumero(titles, txt, args.recentOutbound);
+}
+
+const _A2_STOP = new Set(['para', 'pelo', 'pela', 'esse', 'essa', 'isso', 'este', 'esta', 'como', 'sobre', 'ontem', 'hoje', 'amanha', 'tarefa', 'lembrete']);
+function _a2Tokens(s) {
+  return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .split(/[^a-z0-9]+/).filter((t) => t.length >= 4 && !_A2_STOP.has(t));
+}
+// Números de item citados: "1. feito", "1 e 2", "só a 3". Data (1/10) e hora (2h, 14:30) não contam.
+function _numerosCitados(txt) {
+  const out = new Set();
+  const re = /(?:^|[^\d\/:])(\d{1,2})(?![\d\/:h])/g;
+  let m;
+  while ((m = re.exec(String(txt || '')))) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= 20) out.add(n);
+  }
+  return out;
+}
+// Itens numerados de uma fala do TOM: linhas "1. …" / "2) …".
+function _itensNumerados(texto) {
+  const map = new Map();
+  for (const l of String(texto || '').split('\n')) {
+    const m = l.match(/^\s*(\d{1,2})[.)]\s+(.+)$/);
+    if (m) map.set(Number(m[1]), m[2]);
+  }
+  return map;
+}
+function citouPorNumero(titles, inboundText, recentOutbound) {
+  const falas = Array.isArray(recentOutbound) ? recentOutbound : [];
+  if (!falas.length) return false;
+  const nums = _numerosCitados(inboundText);
+  if (!nums.size) return false;
+  return falas.some((fala) => {
+    const itens = _itensNumerados(fala);
+    if (!itens.size) return false;
+    const citados = [...nums].filter((n) => itens.has(n)).map((n) => new Set(_a2Tokens(itens.get(n))));
+    if (!citados.length) return false;
+    return titles.every((t) => {
+      const tt = _a2Tokens(t);
+      if (!tt.length) return false;
+      return citados.some((hay) => tt.filter((w) => hay.has(w)).length >= Math.min(2, tt.length));
+    });
+  });
 }
 
 /**

@@ -95,7 +95,7 @@ async function materializeSeries(table, template) {
   const tsCol = table === 'tasks' ? 'due_date' : 'start_at';
   const { data: existing } = await supabase
     .from(table)
-    .select(`id, ${tsCol}`)
+    .select(`id, ${tsCol}, status`)
     .eq('recurrence_parent_id', template.id);
 
   const existingDays = new Set();
@@ -112,6 +112,19 @@ async function materializeSeries(table, template) {
     if (tplTs) {
       const tplKey = typeof tplTs === 'string' ? tplTs.slice(0, 10) : new Date(tplTs).toISOString().slice(0, 10);
       existingDays.add(tplKey);
+    }
+  }
+
+  // INSTANCIA-SEM-LEMBRETE (Duda 08/09): instância criada por OUTRA porta (o PWA materializa
+  // na hora e não copiava lembrete) nunca ganhava lembrete — a cópia lá embaixo só roda pro
+  // que ESTE ciclo insere. A cópia é idempotente, então passa também pelas futuras que já
+  // existem: quem nasceu sem lembrete é completado aqui, venha de onde vier.
+  {
+    const futuras = (existing || []).filter((r) => r && r.status !== 'cancelled' && r.status !== 'done'
+      && Date.parse(table === 'tasks' ? `${r[tsCol]}T23:59:59-03:00` : r[tsCol]) >= now.getTime());
+    if (futuras.length) {
+      await _cloneRemindersForInstances(table, template, futuras).catch((e) =>
+        console.error('[recurrence] cura de lembretes falhou:', e.message));
     }
   }
 
@@ -329,7 +342,10 @@ function _cloneTemplate(table, template, occurrenceDate) {
   // VERDADE ÚNICA (refat 2026-08-17): o template agora nasce com is_recurrence_template=true;
   // o clone parte de {...template}, então a instância herdaria `true` e ficaria INVISÍVEL ao
   // predicado de "vivo". Zerar explícito aqui é o que mantém a instância como trabalho real.
-  row.is_recurrence_template = false;
+  // EVENTS-MATERIALIZE-IS-RECURRENCE-TEMPLATE (10/09): a coluna só existe em `tasks`. Zerar
+  // incondicional quebrou TODO insert de instância de EVENTO de 18/08 a 10/09 — 4 séries
+  // paradas, erro só no rituals.log. Mesmo idioma das linhas abaixo: só zera o que o molde tem.
+  if ('is_recurrence_template' in template) row.is_recurrence_template = false;
 
   // Reseta estado operacional pra cada instância nova
   row.status = table === 'tasks' ? 'pending' : 'scheduled';
@@ -408,6 +424,10 @@ async function materializeAll() {
   return totals;
 }
 
+// EVENTS-END-SERIES-NOT-WIRED (Ana 08/08 e 09/09): o encerramento de série só existia pra
+// tarefa. Coluna do dono por tabela — errar a coluna é encerrar a série de outra pessoa.
+const DONO_DA_SERIE = { tasks: 'assigned_to', events: 'collaborator_id' };
+
 /**
  * FATIA 2 — Encerrar a SÉRIE 1:1 (a pedido: "para de me lembrar / encerra isso").
  * Extraído do bloco inline do engine (engine.js scope:'series') p/ ser testável e
@@ -427,21 +447,25 @@ async function materializeAll() {
  * @param {{supabase:Object, templateId:string, ownerId:string}} args
  * @returns {Promise<{ended:boolean, templateId:string, cancelled:number}>}
  */
-async function endSeries1on1({ supabase, templateId, ownerId }) {
+async function endSeries1on1({ supabase, templateId, ownerId, table = 'tasks' }) {
+  const donoCol = DONO_DA_SERIE[table];
+  if (!donoCol) throw new Error(`endSeries1on1: tabela inválida "${table}"`);
   const nowIso = new Date().toISOString();
   // 1) lifecycle: encerra a série (idempotente; qualquer status da ocorrência)
-  await supabase.from('tasks')
+  // Erro do PostgREST não lança (devolve {error}): sem ler, "encerrei" podia ser mentira.
+  const r1 = await supabase.from(table)
     .update({ series_ended_at: nowIso })
-    .eq('id', templateId).eq('assigned_to', ownerId).is('series_ended_at', null);
+    .eq('id', templateId).eq(donoCol, ownerId).is('series_ended_at', null);
+  if (r1 && r1.error) throw new Error(`endSeries1on1 series_ended_at: ${r1.error.message}`);
   // 2) cancela a ocorrência-molde se ainda aberta (não mexe em done)
-  const rTpl = await supabase.from('tasks')
+  const rTpl = await supabase.from(table)
     .update({ status: 'cancelled' })
-    .eq('id', templateId).eq('assigned_to', ownerId)
+    .eq('id', templateId).eq(donoCol, ownerId)
     .not('status', 'in', '("done","cancelled")').select('id');
   // 3) cancela TODAS as instâncias não-done (passado + futuro)
-  const rKids = await supabase.from('tasks')
+  const rKids = await supabase.from(table)
     .update({ status: 'cancelled' })
-    .eq('recurrence_parent_id', templateId).eq('assigned_to', ownerId)
+    .eq('recurrence_parent_id', templateId).eq(donoCol, ownerId)
     .not('status', 'in', '("done","cancelled")').select('id');
   const cancelled = (rTpl.data ? rTpl.data.length : 0) + (rKids.data ? rKids.data.length : 0);
   return { ended: true, templateId, cancelled };

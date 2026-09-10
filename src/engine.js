@@ -3546,6 +3546,26 @@ async function applyEventUpdates(collaborator, actions) {
         if (ev.status === 'cancelled') patch.status = 'scheduled';
       } else if (a.action === 'cancel') {
         patch = { status: 'cancelled' };
+        // EVENTS-END-SERIES-NOT-WIRED / EVENT-CANCEL-SERIE-SO-INSTANCIA (Ana 08/08 e 09/09, "a 1
+        // pode cancelar de uma vez. Já tinha pedido isso"): o cancel de evento só tocava a
+        // ocorrência e a série seguia gerando — a Reunião ADM voltava toda quarta. Espelho do
+        // ramo de tarefa: scope:"series" encerra a série inteira (molde + futuras não-feitas).
+        // Evento que não é de série cai no cancel normal, sem risco.
+        if (a.scope === 'series') {
+          try {
+            const { data: evSer } = await supabase.from('events')
+              .select('id, recurrence_rule, recurrence_parent_id').eq('id', ev.id).maybeSingle();
+            const templateId = evSer ? (evSer.recurrence_rule != null ? evSer.id : evSer.recurrence_parent_id) : null;
+            if (templateId) {
+              const { endSeries1on1 } = require('./services/recurrence-engine');
+              const rSer = await endSeries1on1({ supabase, templateId, ownerId: collaborator.id, table: 'events' });
+              console.log(`[Event] cancel SERIES template=${String(templateId).slice(0, 8)} → ${rSer.cancelled} linha(s) + series_ended_at by ${last4}`);
+            }
+          } catch (eSer) {
+            console.warn('[Event] cancel SERIES err:', eSer.message);
+            failMessages.push(`Cancelei *${ev.title}* desta data, mas não consegui encerrar a série — as próximas ainda vão aparecer. Me avisa que eu tento de novo.`);
+          }
+        }
       } else if (a.action === 'complete') {
         // F5 (ALVO-FUTURO-RESPOSTA-CURTA): concluir evento de data FUTURA exige confirmação.
         // GUARD-CONFIRM-LOOP (Matheus 10/06): pergunta UMA vez por item por janela —
@@ -4538,6 +4558,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   // Espelha `awaitingConfirm` do applyEventUpdates (ja existe neste arquivo desde 02/07) em
   // vez de inventar nome novo. O caller so REBAIXA rejected->skipped; nunca toca em executed.
   let _perguntouConfirmacao = false;
+  // A2-PERGUNTA-SOME-NO-LOTE-PARCIAL: títulos SEGURADOS pra confirmar neste turno (A2 de lote,
+  // alvo refutado, data futura). Não falharam — esperam resposta. O caller tira da fala do LLM
+  // o que afirmava essas tarefas e mostra a pergunta.
+  const _retidos = [];
   const _falharam = [];
   // Sprint 31.6 (E2) — mensagens claras de falha pro user (ex: tarefa de outro dono).
   // Quando preenchido, o caller usa no lugar do genérico "não consegui registrar".
@@ -4583,7 +4607,25 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           const tt = await resolveTaskByShortId(collaborator.id, c.id).catch(() => null);
           if (tt && tt.title) titles.push(tt.title);
         }
-        if (batchCompleteNeedsConfirm({ completedTitles: titles, inboundText: opts.inboundText })) {
+        let _precisaConfirmar = batchCompleteNeedsConfirm({ completedTitles: titles, inboundText: opts.inboundText });
+        if (_precisaConfirmar) {
+          // A2-NUMERO-DA-LISTA-DO-TOM (Juliana 09/09 19:48): o fechamento do dia pede "Pode ser:
+          // 1 e 2"; ela respondeu "1. Feito 2. Feito" e a trava não viu citação — só procurava
+          // palavra do título. Número de item de lista que o PRÓPRIO TOM numerou há pouco é
+          // citação. A busca só roda quando a trava ia perguntar: nada muda no caminho comum.
+          try {
+            const { data: _outs } = await supabase.from('conversation_history')
+              .select('content').eq('collaborator_id', collaborator.id).eq('direction', 'outbound')
+              .gte('created_at', new Date(Date.now() - 90 * 60 * 1000).toISOString())
+              .order('created_at', { ascending: false }).limit(4);
+            const _recentes = (_outs || []).map((o) => o && o.content).filter(Boolean);
+            if (_recentes.length) {
+              _precisaConfirmar = batchCompleteNeedsConfirm({ completedTitles: titles, inboundText: opts.inboundText, recentOutbound: _recentes });
+              if (!_precisaConfirmar) console.log(`[Task] A2 ancorado por NUMERO da lista do TOM (${titles.length})`);
+            }
+          } catch (e) { console.warn('[Task] A2 lista-numerada lookup err (segue perguntando):', e.message); }
+        }
+        if (_precisaConfirmar) {
           // ALVO-REFUTADO-VOLTA-IGUAL (Rafinha 19/08 12:49) — a A2 segurou a escrita errada,
           // mas a PERGUNTA voltava idêntica pra quem tinha acabado de dizer "Não, o Carlinhos
           // está em Campo Grande". Se a pessoa abre negando e a proposta nova mira o MESMO
@@ -4615,6 +4657,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
               actions = actions.filter((a) => !(a && a.action === 'complete'));
               failCount += completes.length;
               console.warn(`[Task] A2 ALVO_REFUTADO (${_idsNovos.length}) -> nao repete a pergunta, devolve a escolha`);
+              _retidos.push(...titles);
             }
           } catch (e) { console.warn('[Task] alvo-refutado err:', e.message); }
           if (!_refutado) {   // refutado nao reabre a MESMA pergunta
@@ -4643,6 +4686,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           // e o REGISTRO DO TURNO sai certo — uma linha, com o veredito verdadeiro.
           _perguntouConfirmacao = true;
           console.warn(`[Task] A2 batch-complete nao-ancorado (${titles.length}) -> pediu confirmacao, removido do lote`);
+          _retidos.push(...titles);
           }
         }
       }
@@ -4776,6 +4820,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
                 `⚠️ ${fullTask.title} está marcado pra ${diaT} — confirma que já foi feito?`);
             } catch (_) { /* intent é best-effort */ }
             console.warn(`[Task] complete BLOQUEADO (due futura ${fullTask.due_date}) — pedindo confirmação id=${String(fullTask.id).slice(0, 8)}`);
+            _retidos.push(fullTask.title);
             failCount++;
             continue;
           }
@@ -6352,7 +6397,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       if (okCount === _okB && failCount > _failB) _falharam.push(a);
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, awaitingConfirm: _perguntouConfirmacao };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -12265,7 +12310,7 @@ Output AGORA, apenas o marker:`;
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm, retidos } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -12334,6 +12379,17 @@ Output AGORA, apenas o marker:`;
           // Sprint 21.5 — confirmação parcial honesta. Engine não pode deixar TOM dizer
           // "tudo certo" quando parte falhou. Princípio: fala = persistência.
           // AUDIT-OPTIMISTIC-CONFIRM (caso Anne): rebaixa "fechei todas" → "a maioria".
+          // A2-PERGUNTA-SOME-NO-LOTE-PARCIAL (Juliana 09/09 19:48): tarefa SEGURADA pra confirmar
+          // não falhou — espera resposta. Este ramo contava ela como "não entrou", deixava de pé a
+          // fala do LLM que a dava por feita ("*Feitos:* • Reunião…") e jogava a pergunta fora. A
+          // Juliana leu "Feitos", nunca foi perguntada e as duas seguiram pendentes. Agora: some da
+          // fala o que não foi feito, a contagem fica só com o que falhou e a pergunta vai junto.
+          const _retidos = Array.isArray(retidos) ? retidos : [];
+          if (_retidos.length) {
+            const { tiraLinhasDosRetidos } = require('./lib/lote-parcial-retidos');
+            base = tiraLinhasDosRetidos(base, _retidos);
+          }
+          const _semPergunta = Math.max(0, failCount - _retidos.length);
           base = sanitizeOptimisticConfirm(base, 'partial');
           // #2D2-b (Fabi 30/06): "As 3 fechadas" + ok=2 escapava do sanitize (dígito não
           // é totalizador, particípio fora do início). Rebaixa INLINE pra razão honesta
@@ -12349,9 +12405,13 @@ Output AGORA, apenas o marker:`;
             // virou confirmação) têm mensagem própria e não são "não entraram"; nesse caso cai na
             // contagem genérica (falharam vazio → falaParcial), sem count enganoso.
             const { falaParcial } = require('./lib/nomeia-falhas');
-            const _falhasNomeaveis = (Array.isArray(falharam) && falharam.length === failCount) ? falharam : [];
-            base = (base ? base + '\n\n' : '') + falaParcial(okCount, okCount + failCount, _falhasNomeaveis);
+            const _falhasNomeaveis = (!(failMessages && failMessages.length) && Array.isArray(falharam)
+              && falharam.length === _semPergunta) ? falharam : [];
+            if (_semPergunta > 0) base = (base ? base + '\n\n' : '') + falaParcial(okCount, okCount + _semPergunta, _falhasNomeaveis);
           }
+          // As mensagens próprias (pergunta do A2, data futura, alvo não achado…) só apareciam no
+          // ramo all-failed; aqui eram descartadas. É nelas que está o QUE a pessoa precisa fazer.
+          if (failMessages && failMessages.length) base = (base ? base + '\n\n' : '') + failMessages.join('\n');
         }
         // CONFAB-WRITE-DATE-NO-RELLABEL (Anne 05/08, alta): o prompt pré-computa o
         // dia-relativo do lado da LEITURA, mas na ESCRITA a data nasce no marker no
