@@ -46,11 +46,18 @@
 //
 // Das 18 de fora, a maioria é singleton por natureza (ONBOARDING_DONE, DND_SET, PREFS_UPDATE,
 // WEEKLY_PLAN, PROJECT_APPROVE/REJECT, DATA_CLASSIFY…): o modelo não tem por que emitir duas.
-// As que poderiam vir em lote — CHECKLIST_ACTION, ANNOUNCEMENT_ACTION, SCHOOL_EVENT_ACTION,
-// PROJECT_CREATE, CHECKPOINT_BATCH — nunca apareceram duplicadas em 90 dias de marker_logs.
-// Se aparecerem, o caminho é fazer o EXECUTOR aceitar array e só então entrar aqui.
+// Se alguma aparecer duplicada, o caminho é fazer o EXECUTOR aceitar array e só então entrar aqui.
+//
+// ⚠️ A varredura original (09/09) enumerou 26 `parseXMarker` e concluiu que só cinco portas
+// precisavam da fusão. Ela ERROU por olhar só as funções nomeadas: `PERSONAL_LIST_ACTION` é
+// parseado INLINE no engine (~12594), sem função própria, e por isso ficou fora da conta —
+// mesmo já tendo `Array.isArray(parsed) ? parsed : [parsed]` no executor. E a nota que dizia
+// "nunca apareceram duplicadas em 90 dias" era falsa: em 90 dias de `UNKNOWN_MARKER_STRIPPED`,
+// PERSONAL_LIST_ACTION duplicou TRÊS vezes (14/06, 17/07 Rafinha ×10, 09/09 Juliana ×9) e
+// SCHOOL_EVENT_ACTION uma (13/06). Contar porta por função nomeada deixa buraco.
 const ACEITAM_ARRAY = new Set([
   'TASK_UPDATE', 'EVENT_CREATE', 'EVENT_UPDATE', 'MEMORY_SAVE', 'MONTHLY_PLAN',
+  'PERSONAL_LIST_ACTION',
 ]);
 
 function _escapaRegex(s) {

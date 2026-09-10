@@ -67,6 +67,33 @@ test('tres blocos ou mais também fundem', () => {
   assert.strictEqual(itens.length, 3);
 });
 
+// O turno da Rafinha, 17/07/2026 09:59:31 BRT. Ela mandou 10 itens do checklist, o TOM
+// confirmou os 10 — e o parser consumiu UM. Os outros nove viraram
+// `UNKNOWN_MARKER_STRIPPED` e ela leu o rodapé honesto pedindo pra repetir "o que faltou".
+// Mesma raiz reincidiu em 09/09 11:21 com a Juliana (9 itens).
+const TURNO_DA_RAFINHA = [
+  '✅ Marcando os 10 da *L.A Drums Games Peterson*!',
+  '',
+  ...[
+    'fad2a627-b903-427c-9037-c803e60d2de5', '31f48117-c90d-45e2-931d-ffc52e2a97ff',
+    'c8e06586-70e9-4c43-8adb-2af17f9b95ed', '7f872ba2-ff7e-401a-a05b-68d89d4e1c37',
+    '5b1c0f2a-2d44-4a51-9a1e-6f0b7c8d9e10', 'a1b2c3d4-e5f6-4708-8910-111213141516',
+    'b2c3d4e5-f607-4819-9021-222324252627', 'c3d4e5f6-0718-492a-a132-333435363738',
+    'd4e5f607-1829-4a3b-b243-444546474849', 'e5f60718-293a-4b4c-c354-555657585960',
+  ].map((id) => `<<PERSONAL_LIST_ACTION>>{"action":"toggle_item","item_id":"${id}","is_done":true}<<END>>`),
+].join('\n');
+
+test('o turno da Rafinha: dez blocos viram um, com os DEZ toggles', () => {
+  const out = fundeBlocosRepetidos(TURNO_DA_RAFINHA, 'PERSONAL_LIST_ACTION');
+  const blocos = out.match(/<<PERSONAL_LIST_ACTION>>/g) || [];
+  assert.strictEqual(blocos.length, 1, 'tem que sobrar um bloco só');
+
+  const itens = JSON.parse(out.match(/<<PERSONAL_LIST_ACTION>>([\s\S]*?)<<END>>/)[1]);
+  assert.strictEqual(itens.length, 10, 'nove itens ficavam pra trás e ela tinha que repetir');
+  assert.ok(itens.every((i) => i.action === 'toggle_item' && i.is_done === true));
+  assert.match(out, /Marcando os 10/, 'a fala que a pessoa lê sobrevive');
+});
+
 test('entrada torta nunca lança', () => {
   // Roda no caminho de todo turno: se lançar aqui, o turno inteiro morre.
   for (const e of [null, undefined, '', 123, {}]) {
@@ -82,7 +109,7 @@ test('entrada torta nunca lança', () => {
 // desde um incidente igual ("com regex nao-global so o 1o era consumido") e nao tinha
 // atravessado pras outras portas. Este teste e o que impede a lição de se perder de novo.
 // ---------------------------------------------------------------------------
-test('as CINCO portas fundem antes de parsear', () => {
+test('as SEIS portas fundem antes de parsear', () => {
   const fs = require('fs');
   const path = require('path');
   const eng = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
@@ -91,5 +118,8 @@ test('as CINCO portas fundem antes de parsear', () => {
       `${marker} parou de fundir — o 2o bloco volta a virar UNKNOWN_MARKER_STRIPPED e a `
       + 'escrita some com a pessoa lendo a confirmacao');
   }
+  // PERSONAL_LIST_ACTION é parseado inline, sobre `reply` — não tem função `parseXMarker`.
+  assert.ok(eng.includes("fundeBlocosRepetidos(reply, 'PERSONAL_LIST_ACTION')"),
+    'PERSONAL_LIST_ACTION parou de fundir — foi o caso da Rafinha (17/07) e da Juliana (09/09)');
   assert.ok(eng.includes("require('./lib/funde-blocos-repetidos')"), 'import sumiu do engine');
 });

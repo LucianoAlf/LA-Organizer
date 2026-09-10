@@ -12591,6 +12591,7 @@ Output AGORA, apenas o marker:`;
   // 2.62) Sprint 22.38 — <<PERSONAL_LIST_ACTION>> — listas pessoais do user.
   // Actions: create | add_item | toggle_item | rename | archive
   {
+    reply = fundeBlocosRepetidos(reply, 'PERSONAL_LIST_ACTION');
     const re = /<<PERSONAL_LIST_ACTION>>\s*([\s\S]*?)\s*<<END>>/i;
     const m = reply.match(re);
     if (m) {
