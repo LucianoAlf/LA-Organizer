@@ -80,3 +80,23 @@ test('verbatim ausente = false (sem regressão; caminho LLM body de hoje)', () =
   assert.equal(r.malformed, false);
   assert.equal(r.action.verbatim, false);
 });
+
+// ── NOTE-UPDATE-NAO-EXISTIA (triagem 11/09 — 4b815042) ───────────────────────────────────
+// 06/07: o TOM re-renderizou a lista de status dos professores e emitiu
+// {"action":"update","id":"1e5d941d",...} — a allowlist só tinha create/append/share.
+const _nm = require('./note-marker');
+const _nmT = require('node:test').test;
+const _nmA = require('node:assert');
+_nmT('update: id da nota + corpo novo (content também vale) + título opcional', () => {
+  const r = _nm.parseNoteActionMarker('Atualizado!\n<<NOTE_ACTION>>{"action":"update","id":"1e5d941d","title":"Status dos Professores","content":"✅ Respondeu (7)"}<<END>>');
+  _nmA.strictEqual(r.malformed, false);
+  _nmA.deepStrictEqual(r.action, { action: 'update', note: '1e5d941d', body: '✅ Respondeu (7)', title: 'Status dos Professores' });
+});
+_nmT('update sem corpo ou sem nota é malformado', () => {
+  _nmA.strictEqual(_nm.parseNoteActionMarker('<<NOTE_ACTION>>{"action":"update","id":"1e5d941d"}<<END>>').malformed, true);
+  _nmA.strictEqual(_nm.parseNoteActionMarker('<<NOTE_ACTION>>{"action":"update","body":"x"}<<END>>').malformed, true);
+});
+_nmT('append aceita id como referência da nota', () => {
+  const r = _nm.parseNoteActionMarker('<<NOTE_ACTION>>{"action":"append","id":"1e5d941d","body":"linha nova"}<<END>>');
+  _nmA.deepStrictEqual(r.action, { action: 'append', note: '1e5d941d', body: 'linha nova' });
+});

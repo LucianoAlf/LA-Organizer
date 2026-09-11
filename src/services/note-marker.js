@@ -15,7 +15,7 @@ function parseNoteActionMarker(text) {
   try { p = JSON.parse(m[1].trim()); } catch { return { malformed: true, cleanText }; }
   if (!p || typeof p !== 'object' || Array.isArray(p)) return { malformed: true, cleanText };
   const action = String(p.action || '');
-  if (!['create', 'append', 'share'].includes(action)) return { malformed: true, cleanText };
+  if (!['create', 'append', 'share', 'update'].includes(action)) return { malformed: true, cleanText };
   if (p.share_with !== undefined && (!Array.isArray(p.share_with) || !p.share_with.every((s) => typeof s === 'string'))) {
     return { malformed: true, cleanText };
   }
@@ -35,8 +35,20 @@ function parseNoteActionMarker(text) {
     // NOTE-MARKER-CONTENT-BODY-ALIAS: mesmo alias content→body do create (mesma exposição ao drift).
     const appendBody = (typeof p.body === 'string' ? p.body
                       : typeof p.content === 'string' ? p.content : '').trim();
-    if (!appendBody || !p.note) return { malformed: true, cleanText };
-    return { malformed: false, cleanText, action: { action, note: String(p.note), body: appendBody } };
+    const appendRef = p.note || p.id;
+    if (!appendBody || !appendRef) return { malformed: true, cleanText };
+    return { malformed: false, cleanText, action: { action, note: String(appendRef), body: appendBody } };
+  }
+  if (action === 'update') {
+    // NOTE-UPDATE-NAO-EXISTIA (triagem 11/09 — 4b815042): 06/07 o TOM re-renderizou a lista de
+    // status dos professores e emitiu {"action":"update","id":"1e5d941d",...}; a allowlist só
+    // tinha create/append/share e a atualização caía como schema_invalid. Referência = note OU id.
+    const updBody = (typeof p.body === 'string' ? p.body
+                   : typeof p.content === 'string' ? p.content : '').trim();
+    const updRef = p.note || p.id;
+    if (!updBody || !updRef) return { malformed: true, cleanText };
+    const updTitle = (typeof p.title === 'string' && p.title.trim()) || null;
+    return { malformed: false, cleanText, action: { action, note: String(updRef), body: updBody, title: updTitle } };
   }
   // share
   if (!p.note || !Array.isArray(p.share_with) || p.share_with.length === 0) return { malformed: true, cleanText };

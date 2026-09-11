@@ -138,3 +138,22 @@ test('`habit_name` oficial nunca é tratado como alias de si mesmo', () => {
   normalizeHabitAliases(a);
   assert.strictEqual(a.habit_name, '   ', 'não deve reescrever o campo oficial');
 });
+
+// HABIT-SKIP-VIRA-LOG-NAO-FEITO (triagem 11/09 — 4507f25e): {"action":"skip"} caía em
+// unknown_action e o "pulei hoje" nunca era registrado.
+test('skip/pular vira log de NÃO feito (não é conclusão)', () => {
+  for (const act of ['skip', 'Skipped', 'pular', 'pulei', 'missed']) {
+    const a = { action: act, habit_name: 'Academia' };
+    normalizeHabitAliases(a);
+    assert.strictEqual(a.action, 'log', act);
+    assert.strictEqual(a.completed, false, act);
+  }
+  const b = { action: 'skip', habit_title: 'Usar bombinha' };
+  normalizeHabitAliases(b);
+  assert.strictEqual(b.habit_name, 'Usar bombinha', 'o alias de nome continua valendo depois do skip');
+});
+test('log comum não ganha completed=false', () => {
+  const a = { action: 'log', habit_name: 'Academia' };
+  normalizeHabitAliases(a);
+  assert.strictEqual(a.completed, undefined);
+});

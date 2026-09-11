@@ -62,6 +62,21 @@ async function appendToNote(supabase, collaboratorId, ref, body) {
   return error ? { ok: false, error: error.message } : { ok: true, note };
 }
 
+// NOTE-UPDATE-NAO-EXISTIA (triagem 11/09 — 4b815042): substitui o corpo (e o título, se veio).
+// Trava: o LLM trunca texto longo ao "copiar" (NOTE-SAVE-VERBATIM, 26/06). Versão nova com menos
+// da metade do corpo atual não substitui — devolve 'update_encolheu' e o engine oferece anexar.
+async function updateNote(supabase, collaboratorId, ref, { title = null, body } = {}) {
+  const note = await findNoteRef(supabase, collaboratorId, ref);
+  if (!note) return { ok: false, error: 'note_not_found' };
+  const antes = String(note.body || '');
+  const novo = String(body || '');
+  if (antes.length >= 80 && novo.length < antes.length * 0.5) return { ok: false, error: 'update_encolheu' };
+  const patch = { body: novo, updated_at: new Date().toISOString() };
+  if (title) patch.title = title;
+  const { error } = await supabase.from('notes').update(patch).eq('id', note.id);
+  return error ? { ok: false, error: error.message } : { ok: true, note };
+}
+
 async function shareNote(supabase, collaboratorId, ref, addIds) {
   const note = await findNoteRef(supabase, collaboratorId, ref);
   if (!note) return { ok: false, error: 'note_not_found' };
@@ -124,4 +139,4 @@ async function credentialLookupContext({ supabase, collaboratorId, text }) {
   return buildCredentialBlock(matches);
 }
 
-module.exports = { resolveShareNames, createNote, appendToNote, shareNote, listRecentNotes, findNoteRef, looksLikeCredentialRequest, scoreNoteMatch, buildCredentialBlock, credentialLookupContext };
+module.exports = { resolveShareNames, createNote, appendToNote, updateNote, shareNote, listRecentNotes, findNoteRef, looksLikeCredentialRequest, scoreNoteMatch, buildCredentialBlock, credentialLookupContext };

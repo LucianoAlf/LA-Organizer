@@ -2888,7 +2888,12 @@ function validateEventUpdateAction(a) {
     return 'action:invalid';
   }
   // Sprint 28 — aceitar "latest" como id especial (handler já resolve via DB lookup).
-  if (typeof a.id !== 'string' || (a.id !== 'latest' && !SHORT_ID_RE.test(a.id))) return 'id:invalid';
+  // EVENT-UPDATE-POR-TITULO (triagem 11/09 — caf078f2): complete/cancel/reschedule sem id mas
+  // com o título do evento é resolvido pelo título no applyEventUpdates (só se UM evento bater).
+  // Em action=update o title é o NOME NOVO, então ali continua exigindo id.
+  const _porTitulo = (a.id === undefined || a.id === null || a.id === '') && ['complete', 'cancel', 'reschedule'].includes(a.action)
+    && typeof a.title === 'string' && a.title.trim().length >= 4;
+  if (!_porTitulo && (typeof a.id !== 'string' || (a.id !== 'latest' && !SHORT_ID_RE.test(a.id)))) return 'id:invalid';
   if (a.action === 'reschedule') {
     if (typeof a.new_start_at !== 'string' || !ISO_DATETIME_RE.test(a.new_start_at)) return 'new_start_at:invalid';
     if (typeof a.new_end_at !== 'string' || !ISO_DATETIME_RE.test(a.new_end_at)) return 'new_end_at:invalid';
@@ -3172,6 +3177,21 @@ async function applyProjectReject(collab, body) {
 // BUG-1 (11/06): fallback via event_participants — convidados (Jereh, Leo, Daiana, Clayton,
 // Krissya) tentavam completar eventos onde não eram dono → all_failed:1 silencioso.
 // O retorno { ...ev, fromParticipant: true } sinaliza ao caller que só 'complete' é permitido.
+// EVENT-UPDATE-POR-TITULO (triagem 11/09 — caf078f2). Só eventos do DONO (a mesma regra de
+// cancel/reschedule); a escolha é do helper puro lib/evento-por-titulo.js.
+async function resolveEventByTitle(collaboratorId, titulo, acao) {
+  const { escolherEventoPorTitulo } = require('./lib/evento-por-titulo');
+  const agora = Date.now();
+  const { data, error } = await supabase.from('events')
+    .select('id, title, status, start_at, end_at, collaborator_id, recurrence_rule, recurrence_parent_id')
+    .eq('collaborator_id', collaboratorId)
+    .gte('start_at', new Date(agora - 30 * 86400000).toISOString())
+    .lte('start_at', new Date(agora + 60 * 86400000).toISOString())
+    .limit(500);
+  if (error) { console.error('[Event] resolveEventByTitle err:', error.message); return { evento: null }; }
+  return escolherEventoPorTitulo(titulo, data || [], agora, acao);
+}
+
 async function resolveEventByShortId(collaboratorId, shortId) {
   if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
   // Janela ampla — eventos cancelados ou já feitos podem precisar ser referenciados.
@@ -3451,7 +3471,23 @@ async function applyEventUpdates(collaborator, actions) {
         if (r.ok) okCount++; else failCount++;
         continue;
       }
-      const ev = await resolveEventByShortId(collaborator.id, a.id);
+      let ev = null;
+      if (a.id) {
+        ev = await resolveEventByShortId(collaborator.id, a.id);
+      } else if (typeof a.title === 'string' && a.title.trim()) {
+        // EVENT-UPDATE-POR-TITULO (triagem 11/09 — caf078f2)
+        const _rt = await resolveEventByTitle(collaborator.id, a.title, a.action);
+        if (_rt.ambiguo) {
+          const _d = (iso) => new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' });
+          failMessages.push('Tenho mais de um evento com _"' + a.title.slice(0, 60) + '"_ — qual deles?\n'
+            + _rt.ambiguo.slice(0, 4).map((e, i) => (i + 1) + '. ' + e.title + ' (' + _d(e.start_at) + ')').join('\n'));
+          awaitingConfirm = true;
+          failCount++;
+          continue;
+        }
+        ev = _rt.evento;
+        if (!ev) failMessages.push('Não achei o evento _"' + a.title.slice(0, 60) + '"_ na sua agenda — me diz o nome certinho?');
+      }
       if (!ev) {
         console.warn(`[Event] ${a.action} REJECTED id=${a.id} (not owned by ${last4} or not found)`);
         failCount++;
@@ -6208,6 +6244,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         const t = await resolveTaskByShortId(collaborator.id, a.id);
         if (!t) {
           console.warn(`[Task] delegate REJECTED id=${a.id} (not owned by ${last4} or not found)`);
+          // DELEGATE-RECUSA-MUDA (triagem 11/09 — 824d11c7): Rafinha 28/07 "delega a tarefa pro
+          // Alf" — a tarefa não estava no nome dele, a recusa saía sem motivo e ele leu um "não
+          // consegui" genérico. Só quem é o responsável delega; aqui isso é dito com todas as letras.
+          failMessages.push('Essa tarefa não está no seu nome (ou já foi fechada), então não consigo passar ela pra frente por aqui. Quem é o responsável hoje? Se quiser, eu aviso essa pessoa.');
           failCount++;
           continue;
         }
@@ -6234,6 +6274,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         }
         if (!recipient || !recipient.is_active) {
           console.warn(`[Task] delegate REJECTED — recipient not found: ${a.to_phone || a.to_name}`);
+          failMessages.push(`Não achei *${String(a.to_name || 'essa pessoa').slice(0, 40)}* entre as pessoas ativas pra delegar — confere o nome?`);
           failCount++;
           continue;
         }
@@ -13071,7 +13112,9 @@ Output AGORA, apenas o marker:`;
               res = await notesService.shareNote(supabase, collab.id, a.note, ids);
             }
           } else {
-            res = await notesService.appendToNote(supabase, collab.id, a.note, a.body);
+            res = a.action === 'update'
+              ? await notesService.updateNote(supabase, collab.id, a.note, { title: a.title, body: a.body })
+              : await notesService.appendToNote(supabase, collab.id, a.note, a.body);
           }
         } catch (eNote) {
           res = { ok: false, error: eNote.message };
@@ -13080,7 +13123,9 @@ Output AGORA, apenas o marker:`;
         let baseN = parsedNote.cleanText || '';
         if (!res.ok) {
           baseN = sanitizeOptimisticConfirm(baseN, 'failed'); // NOTE-ACTION-CONFAB-NOPROSE (ramo 3 — res.ok=false)
-          baseN = (baseN ? baseN + '\n\n' : '') + (res.error === 'note_not_found'
+          baseN = (baseN ? baseN + '\n\n' : '') + (res.error === 'update_encolheu'
+            ? '_A versão nova ficou bem menor que a anotação que já existe — pra não perder nada, não substituí. Quer que eu acrescente o que mudou no fim dela?_'
+            : res.error === 'note_not_found'
             ? '_não achei essa anotação. Me diz o título que eu procuro._'
             : '_⚠️ não consegui salvar a anotação agora — tenta de novo?_');
         }

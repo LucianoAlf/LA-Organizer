@@ -53,6 +53,13 @@ function primeiroValor(a, lista) {
 //     (só quando NÃO há habit_id nem habit_name — sem clobber)
 function normalizeHabitAliases(a) {
   if (!a || typeof a !== 'object') return a;
+  // HABIT-SKIP-VIRA-LOG-NAO-FEITO (triagem 11/09 — 4507f25e): o LLM emite {"action":"skip"}
+  // pra "pulei a academia hoje"; a ação não existe e o bloco caía em unknown_action — o dia
+  // nunca era registrado. Pular É registrar que não fez: vira log com completed=false.
+  if (typeof a.action === 'string' && /^(skip|skipped|pular|pulei|pulou|miss|missed|nao_feito|not_done)$/i.test(a.action.trim())) {
+    a.action = 'log';
+    a.completed = false;
+  }
   if (a.action === 'create' && !a.name) {
     const v = primeiroValor(a, PARA_NAME);
     if (v) a.name = v;

@@ -74,3 +74,31 @@ test('credentialLookupContext: sem intenção → vazio', async () => {
 test('credentialLookupContext: sem collaboratorId → vazio (nunca do LLM)', async () => {
   assert.strictEqual(await credentialLookupContext({ supabase: fakeCredSupabase([], null), collaboratorId: '', text: 'qual a senha?' }), '');
 });
+
+// ── NOTE-UPDATE-NAO-EXISTIA (triagem 11/09) — substituir o corpo, com trava de encolhimento ─
+const _ns = require('./notes');
+const _nsT = require('node:test').test;
+const _nsA = require('node:assert');
+function _fakeNotas(nota) {
+  const escritas = [];
+  const q = {
+    select() { return q; }, eq() { return q; }, order() { return q; },
+    limit() { return Promise.resolve({ data: [nota], error: null }); },
+    update(v) { escritas.push(v); return { eq: () => Promise.resolve({ error: null }) }; },
+  };
+  return { from() { return q; }, escritas };
+}
+_nsT('updateNote substitui o corpo (e o título, se veio) da nota achada pelo id', async () => {
+  const sb = _fakeNotas({ id: '1e5d941d-aaaa', title: 'Status', body: 'Respondeu (6): A B C D E F', shared_with: [] });
+  const r = await _ns.updateNote(sb, 'C1', '1e5d941d', { title: 'Status (06/07)', body: 'Respondeu (7): A B C D E F G' });
+  _nsA.strictEqual(r.ok, true);
+  _nsA.strictEqual(sb.escritas[0].body, 'Respondeu (7): A B C D E F G');
+  _nsA.strictEqual(sb.escritas[0].title, 'Status (06/07)');
+});
+_nsT('updateNote NÃO substitui quando a versão nova encolhe pra menos da metade (LLM truncou)', async () => {
+  const velho = 'linha de conteúdo importante\n'.repeat(20);
+  const sb = _fakeNotas({ id: '1e5d941d-aaaa', title: 'Status', body: velho, shared_with: [] });
+  const r = await _ns.updateNote(sb, 'C1', '1e5d941d', { body: 'só um pedaço' });
+  _nsA.deepStrictEqual(r, { ok: false, error: 'update_encolheu' });
+  _nsA.strictEqual(sb.escritas.length, 0);
+});
