@@ -185,7 +185,7 @@ const SHORT_ID_RE = /^([a-f0-9]{4,12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const VALID_TASK_ACTIONS = new Set([
   'complete', 'cancel', 'reschedule', 'create', 'delegate',
   'extension_request', 'extension_decision', 'governance_reassign',
-  'snooze_reminders', 'return', 'update',
+  'snooze_reminders', 'return', 'update', 'remove_watchers',
   'mark-item', 'mark_item', // Checklist ativo (2026-06-28): marca sub-item (filha via parent_task_id)
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
@@ -3898,6 +3898,12 @@ function validateTaskAction(a) {
     const hasNewDate = typeof a.new_due_date === 'string' && ISO_DATE_RE.test(a.new_due_date);
     const hasNewRemind = typeof a.new_remind_at === 'string' && a.new_remind_at.length > 0;
     if (!hasNewDate && !hasNewRemind) return 'bad_reschedule_needs_date_or_remind';
+  } else if (a.action === 'remove_watchers') {
+    // COPIA-REMOVER (decisão do Alf, 11/09 — a4efeaa4) — formatos em lib/remocao-copia.js.
+    const { lerRemocaoCopia } = require('./lib/remocao-copia');
+    const rc = lerRemocaoCopia(a);
+    if (rc.erro) return rc.erro;
+    if (rc.id && !SHORT_ID_RE.test(rc.id)) return 'bad_id';
   } else if (a.action === 'update') {
     // TASK-UPDATE-NAO-EXISTIA (Alf 10/09, opção A) — formatos e regras em lib/edicao-tarefa.js.
     const { lerEdicao } = require('./lib/edicao-tarefa');
@@ -6432,6 +6438,77 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           } catch (e) { console.error('[Task] add_watchers WA err:', e.message); }
         }
         console.log(`[Task] add_watchers ${a.id} → ${ids.length} em cópia`);
+        okCount++;
+      } else if (a.action === 'remove_watchers') {
+        // COPIA-REMOVER (decisão do Alf, 11/09 — a4efeaa4). John 10/07 pediu pra sair da cópia de
+        // "Trancamento Pedro"; a ação não existia e o TOM tinha dito "Feito!". Quem pode: o dono ou
+        // quem criou a tarefa tira qualquer um; quem está só em CÓPIA tira a si mesmo.
+        const { lerRemocaoCopia } = require('./lib/remocao-copia');
+        const rc = lerRemocaoCopia(a);
+        const _COLS_RC = 'id, title, assigned_to, created_by, status';
+        let t = null;
+        let _soEmCopia = false;
+        if (rc.id) t = await resolveTaskByShortId(collaborator.id, rc.id);
+        if (!t && rc.busca) {
+          const { data: _c } = await supabase.from('tasks').select(_COLS_RC)
+            .or(`assigned_to.eq.${collaborator.id},created_by.eq.${collaborator.id}`)
+            .ilike('title', `%${rc.busca.slice(0, 60)}%`)
+            .not('status', 'in', '("done","cancelled")')
+            .order('created_at', { ascending: false }).limit(5);
+          if (_c && _c.length > 1) {
+            failMessages.push(`Achei mais de uma tarefa com _"${rc.busca.slice(0, 60)}"_ — qual delas?\n${_c.slice(0, 4).map((x, i) => `${i + 1}. ${x.title}`).join('\n')}`);
+            failCount++;
+            continue;
+          }
+          t = (_c && _c[0]) || null;
+        }
+        if (!t) {
+          // Não é dono nem criador: pode ser alguém em cópia querendo sair.
+          const { data: _minhas } = await supabase.from('task_watchers').select('task_id').eq('collaborator_id', collaborator.id).limit(200);
+          const _ids = (_minhas || []).map((x) => x.task_id);
+          if (_ids.length) {
+            let _q = supabase.from('tasks').select(_COLS_RC).in('id', _ids).not('status', 'in', '("done","cancelled")').limit(5);
+            if (rc.busca) _q = _q.ilike('title', `%${rc.busca.slice(0, 60)}%`);
+            const { data: _w } = await _q;
+            const _cand = (_w || []).filter((x) => !rc.id || String(x.id).replace(/-/g, '').startsWith(String(rc.id).toLowerCase()));
+            if (_cand.length === 1) { t = _cand[0]; _soEmCopia = true; }
+          }
+        }
+        if (!t) {
+          failMessages.push(`Não achei a tarefa _"${String(rc.busca || rc.id).slice(0, 60)}"_ pra tirar alguém da cópia. Me diz o nome certinho?`);
+          failCount++;
+          continue;
+        }
+        const _idsCopia = [];
+        const _naoAchei = [];
+        for (const nome of rc.nomes) {
+          const _r = await resolveCollaboratorByName(String(nome), { requester: collaborator });
+          if (_r.status === 'resolved' && _r.collaborator) _idsCopia.push(_r.collaborator.id); else _naoAchei.push(nome);
+        }
+        if (!_idsCopia.length) {
+          failMessages.push(`Não achei ${_naoAchei.join(', ')} pra tirar da cópia — confere o nome?`);
+          failCount++;
+          continue;
+        }
+        if (_soEmCopia && _idsCopia.some((x) => x !== collaborator.id)) {
+          failMessages.push(`Em *${t.title}* você está em cópia: dá pra você sair, mas tirar outra pessoa é com quem é dono da tarefa.`);
+          failCount++;
+          continue;
+        }
+        const { data: _saiu, error: _eRc } = await supabase.from('task_watchers').delete().eq('task_id', t.id).in('collaborator_id', _idsCopia).select('collaborator_id');
+        if (_eRc) {
+          console.error('[Task] remove_watchers err:', _eRc.message);
+          failMessages.push('Não consegui tirar da cópia agora — tenta de novo?');
+          failCount++;
+          continue;
+        }
+        if (!(_saiu || []).length) {
+          failMessages.push(`Ninguém com esse nome estava em cópia de *${t.title}*.`);
+          failCount++;
+          continue;
+        }
+        console.log(`[Task] remove_watchers ${String(t.id).slice(0, 8)} → ${_saiu.length} saiu(ram) da cópia by ${last4}`);
+        await logAgentNote(t.id, `${nameForCollab(collaborator)} tirou ${_saiu.length} pessoa(s) da cópia`, collaborator.id);
         okCount++;
       } else if (a.action === 'governance_reassign') {
         // Sub-fase 2 — Re-delegação de cobrança por voz.
