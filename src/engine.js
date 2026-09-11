@@ -15840,15 +15840,21 @@ Output AGORA, apenas o marker:`;
   // confirm-question de ação. Só paga o fetch quando há claim FRACO sem persistência (evita I/O).
   // NÃO gated por actionable_intent (falso no turno "Isso"→"Fechou" + circular — anti-padrão Task 4).
   let _pendingActionRecent = false;
+  let _pendingWrite = false; // AFIRMACAO-DE-ESTADO-SOB-CONFIRMACAO: a última fala pediu confirmação de ESCRITA
   try {
     const _np = !_metrics.marker_emitted && !_metrics.auto_retry_succeeded;
-    if (_np && hasWeakCompletionClaim(reply) && !hasCompletionClaim(reply)) {
+    // AFIRMACAO-DE-ESTADO-SOB-CONFIRMACAO (frente 7): busca também quando a fala afirma ESTADO
+    // ("lista confirmada", "• X ✓" ×2) — sob pergunta de ESCRITA pendente isso é confab.
+    const { hasStateAssertionClaim } = require('./lib/optimistic-confirm');
+    const { isWriteConfirmQuestion } = require('./lib/confirm-question');
+    if (_np && ((hasWeakCompletionClaim(reply) && !hasCompletionClaim(reply)) || hasStateAssertionClaim(reply))) {
       const _turnStartIso = new Date(_t0 - 1000).toISOString();
       const { data: _lt } = await supabase.from('conversation_history')
         .select('content').eq('collaborator_id', collab.id).eq('direction', 'outbound')
         .lt('created_at', _turnStartIso)
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
       _pendingActionRecent = isActionConfirmQuestion(_lt && _lt.content);
+      _pendingWrite = isWriteConfirmQuestion(_lt && _lt.content);
     }
   } catch (_) {}
   // CHOKEPOINT-NEGA-ESCRITA-RECENTE (Dudu 18/08 21:07) — o chokepoint só enxerga a janela do
@@ -15887,6 +15893,7 @@ Output AGORA, apenas o marker:`;
       // real). Só é setado no SUCESSO — falha não seta, e aí o caminho honesto continua valendo (freio #4).
       nothingPersisted: !_metrics.marker_emitted && !_metrics.auto_retry_succeeded && !_metrics.deterministic_complete_ok,
       pendingActionRecent: _pendingActionRecent,
+      pendingWrite: _pendingWrite,
       // CONFAB-CHOKEPOINT-SCOPE (24/06): recomputa local (não ler _replyIsInfoGathering — `const`
       // de outro try, fora de escopo → ReferenceError). Mesmas funções de módulo (reply-classify).
       infoGathering: hasTrailingQuestion(reply) || isInfoGatheringReply(reply),

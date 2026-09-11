@@ -252,13 +252,15 @@ function sanitizeOptimisticConfirm(text, outcome, opts) {
   const includeWeak = (opts && Object.prototype.hasOwnProperty.call(opts, 'includeWeak'))
     ? !!opts.includeWeak
     : true;
+  // includeState: só a camada AFIRMACAO-DE-ESTADO-SOB-CONFIRMACAO liga (as outras 11 chamadas não mudam).
+  const includeState = !!(opts && opts.includeState);
 
   const out = [];
   const lines = String(text).split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) { out.push(line); continue; }
-    if (!_isOptimisticLine(line, includeWeak)) { out.push(line); continue; }
+    if (!_isOptimisticLine(line, includeWeak) && !(includeState && _isStateLine(line))) { out.push(line); continue; }
 
     if (outcome === 'failed') {
       // Nada persistiu → a confirmação é falsa: remove a linha inteira.
@@ -542,8 +544,16 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   if (strong && o.reportedState && !o.markerAttempted) strong = false;
   const weak = !strong && !o.infoGathering && !!o.pendingActionRecent
     && !o.userProgressStatus && !o.restatesRecentWrite && !declaraNoopExplicito(reply) && hasWeakCompletionClaim(reply);
-  if (!strong && !weak) return wrap(reply, false);
-  const cleaned = sanitizeOptimisticConfirm(reply, 'failed', { includeWeak: weak });
+  // AFIRMACAO-DE-ESTADO-SOB-CONFIRMACAO (frente 7 — 2252e7bd 30/06, e84dd423 Dai 26/06): o TOM PEDIU
+  // pra escrever ("Confirma que eu registro tudo da *Sing*?", "Confirma o fechamento destas 5…?"), a
+  // pessoa confirmou, nada persistiu, e a fala afirma ESTADO — "lista da *Sing* confirmada", "• Reunião ✓"
+  // ×5 + "Junho encerrado". Nenhuma camada via: a forte é verbo em 1ª pessoa, e a fraca é vetada pelo
+  // "Pode mandar a próxima sala" (coleta). Sob pergunta de ESCRITA pendente não há recap a proteger — o
+  // ✓ é sobre a escrita que ele mesmo propôs. Sem ela (CONFAB-CHECKLIST), nada muda.
+  const estado = !strong && !weak && !!o.pendingWrite && !o.userProgressStatus && !o.restatesRecentWrite
+    && !declaraNoopExplicito(reply) && hasStateAssertionClaim(reply);
+  if (!strong && !weak && !estado) return wrap(reply, false);
+  const cleaned = sanitizeOptimisticConfirm(reply, 'failed', { includeWeak: weak || estado, includeState: estado });
   const out = cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;
   return wrap(out, true);
 }
@@ -552,3 +562,20 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
 // precisa da MESMA frase. Duplicar a string criaria um segundo espelho da voz do TOM pra
 // apodrecer — a voz tem uma fonte só.
 module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply, restatesRecentWrite, isReportedStateClaim, NO_MARKER_HONEST_NOTE };
+
+// AFIRMACAO-DE-ESTADO-SOB-CONFIRMACAO — afirmação de ESTADO: particípio de escrita sem negação ("lista
+// confirmada", "Junho encerrado") ou ≥ 2 linhas terminando em ✓. Só vale como claim sob pergunta de
+// ESCRITA pendente (enforceNoMarkerHonesty, opt pendingWrite) — sozinha não dispara nada.
+const STATE_PART_RE = /(?<![\p{L}])(?:confirmad|registrad|salv|anotad|gravad|lan[çc]ad|fechad|conclu[íi]d|encerrad|finalizad|atualizad)[oa]s?(?![\p{L}])/iu;
+const CHECK_LINE_RE = /[✓✔☑✅]\uFE0F?\s*$/u;
+function _isStateLine(line) {
+  const t = String(line).trim();
+  if (!t || t.endsWith('?')) return false;
+  return _claimSemNegacao(t, STATE_PART_RE);
+}
+function hasStateAssertionClaim(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const checks = lines.filter((l) => CHECK_LINE_RE.test(l.trim())).length;
+  return checks >= 2 || lines.some(_isStateLine);
+}
+module.exports.hasStateAssertionClaim = hasStateAssertionClaim;

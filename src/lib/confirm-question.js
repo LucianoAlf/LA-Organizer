@@ -27,4 +27,12 @@ function isActionConfirmQuestion(text) {
   return CONFIRM_INTENT_RE.test(t);          // ...com intenção de confirmação de ação
 }
 
-module.exports = { isActionConfirmQuestion };
+// AFIRMACAO-DE-ESTADO-SOB-CONFIRMACAO (frente 7): confirmação de ESCRITA — a pergunta propõe gravar
+// algo ("Confirma que eu registro…?", "Confirma o fechamento destas 5…?"). "Pode ser às 9h?" e
+// "Fechou assim?" são confirmação, mas não de escrita.
+const WRITE_VERB_RE = /\b(?:registr\w*|salv(?:o|ar|amos)|grav(?:o|ar|amos)|lan[çc](?:o|ar|amos|amento)|anot(?:o|ar|amos)|fechamento|fecho|fechar|conclu(?:o|ir|são)|finaliz(?:o|ar)|crio|criar|cria|marco|marcar|d(?:ar|ou)\s+baixa)\b/i;
+function isWriteConfirmQuestion(text) {
+  return isActionConfirmQuestion(text) && WRITE_VERB_RE.test(String(text == null ? '' : text));
+}
+
+module.exports = { isActionConfirmQuestion, isWriteConfirmQuestion };
