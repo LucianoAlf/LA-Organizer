@@ -10294,6 +10294,44 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) { console.warn('[ParticipantEdit] consumer err:', e.message); }
 
+  // COMPLEMENTO-DE-TAREFA-RECEM-CRIADA (Krissya 10/07 — 6a563996): "Na planilha de presença" logo
+  // depois de o TOM criar "Lançar falta do Jeyson" e "...do Gabriel" é o ONDE dessas tarefas. O LLM
+  // prometia sem marker e a pessoa lia "problema técnico". Complemento curto (preposição, sem verbo de
+  // ação, sem pergunta) + tarefas dela de até 5 min citadas na última fala do TOM → vira detalhe
+  // (acrescenta, nunca apaga — montarPatch da edição). Fora disso segue o fluxo normal.
+  try {
+    const { complementoDeTarefa, alvosDoComplemento, textoComplemento } = require('./lib/complemento-tarefa');
+    const _fragC = complementoDeTarefa(stripReplyScaffold(String(text || '')).userText);
+    if (_fragC) {
+      const _desdeC = new Date(Date.now() - 5 * 60000).toISOString();
+      const [{ data: _novasC }, { data: _ultC }] = await Promise.all([
+        supabase.from('tasks').select('id, title, description, assigned_group_id')
+          .eq('created_by', collab.id).eq('assigned_to', collab.id).eq('status', 'pending')
+          .gte('created_at', _desdeC).order('created_at', { ascending: true }).limit(5),
+        supabase.from('conversation_history').select('content').eq('collaborator_id', collab.id)
+          .eq('direction', 'outbound').order('created_at', { ascending: false }).limit(1),
+      ]);
+      const _alvosC = alvosDoComplemento(_novasC || [], _ultC && _ultC[0] && _ultC[0].content);
+      if (_alvosC.length) {
+        const { montarPatch } = require('./lib/edicao-tarefa');
+        const _okC = [];
+        for (const t of _alvosC) {
+          const { patch } = montarPatch({ novoTitulo: '', detalhe: _fragC, grupo: '', lembreteDiario: null }, t);
+          if (!patch.description) { _okC.push(t); continue; } // já estava lá
+          const { error: _eC } = await supabase.from('tasks').update({ description: patch.description, updated_by: collab.id }).eq('id', t.id);
+          if (!_eC) _okC.push(t);
+        }
+        if (_okC.length) {
+          const _outC = textoComplemento(_okC, _fragC);
+          try { await whatsapp.sendMessage(phone, _outC); await logConversation(collab.id, 'outbound', _outC); } catch (e) { console.warn('[Complemento] post err:', e.message); }
+          await logMarker(collab.id, 'TASK_UPDATE', 'executed', `complemento:${_okC.length}`, null);
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (complemento_tarefa_${_okC.length})`);
+          return;
+        }
+      }
+    }
+  } catch (e) { console.warn('[Complemento] err (segue fluxo normal):', e.message); }
+
   // KRISSYA-PROJECT-CLOSE-NO-HANDLER (auditoria 30/06). Confirm-first + executor determinístico
   // (família FIN-CONFIRM-CONFAB-NOOP): o "sim" dispara applyProjectStatusChange, o LLM NÃO
   // re-emite marker. (a) resolve confirmação de projeto JÁ aberta; (b) detecta nova intenção.
