@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const SRC = fs.readFileSync(path.join(__dirname, 'dispatcher.js'), 'utf8');
-const TETO_SENDMESSAGE_CRU = 12;
+const TETO_SENDMESSAGE_CRU = 11;
 
 test('dispatcher: envio cru não cresce — proativo novo usa sendAndLink', () => {
   const n = (SRC.match(/whatsapp\.sendMessage\(/g) || []).length;
@@ -47,4 +47,16 @@ test('dispatcher: checkOverdueAlerts linka a cobrança à tarefa (refType task) 
   // o insert manual antigo (sem ref) tem que ter saído — senão duplica o histórico
   assert.ok(!/direction: 'outbound',\s*message_type: 'text',\s*content: text,\s*\}\);\s*await logRitualEvent\(collab\.id, 'alerta_atraso'/.test(SRC),
     'o insert manual da cobrança ainda existe — vai duplicar o histórico');
+});
+
+// ALERTA-PRAZO-SEM-VINCULO (Arthur 26/06 — f84c6ce0): o "📌 amanhã está marcado: *X*" saía cru, sem
+// whatsapp_message_id nem ref_id → a resposta CITADA ("Isso foi feito") não achava a tarefa e o
+// TASKDONE determinístico nunca disparou (0 vezes em produção desde 27/06). Tem que ir por sendAndLink.
+test('dispatcher: checkDeadlineAlerts linka o alerta à tarefa (refType task) e não insere histórico à mão', () => {
+  const ini = SRC.indexOf('async function checkDeadlineAlerts(');
+  const corpo = SRC.slice(ini, SRC.indexOf('\nasync function ', ini + 10));
+  assert.match(corpo, /sendAndLink\(supabase, \{ phone: collab\.phone, content: text, collaboratorId: collab\.id, refType: 'task', refId: t\.id \}\)/,
+    'o alerta de véspera precisa ir por sendAndLink com refType task');
+  assert.ok(!/whatsapp\.sendMessage\(collab\.phone, text\)/.test(corpo), 'envio cru do alerta de prazo ainda existe');
+  assert.ok(!/from\('conversation_history'\)\.insert/.test(corpo), 'insert manual do histórico ainda existe — duplica');
 });

@@ -6324,13 +6324,9 @@ async function checkDeadlineAlerts(ymdToday) {
       continue;
     }
     try {
-      await whatsapp.sendMessage(collab.phone, text);
-      await supabase.from('conversation_history').insert({
-        collaborator_id: collab.id,
-        direction: 'outbound',
-        message_type: 'text',
-        content: text,
-      });
+      // ALERTA-PRAZO-SEM-VINCULO (Arthur 26/06 — f84c6ce0): envia + grava com whatsapp_message_id e ref da
+      // tarefa — sem isso a resposta citada ("Isso foi feito") não acha o alvo e cai no LLM.
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
       // Sprint 31.1 — rastro pra TASK_UPDATE via id exato
       try {
         await pendingFollowups.createOrRefresh({
