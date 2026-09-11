@@ -5782,9 +5782,17 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         // reminders_at = MULTIPLE alertas pra uma tarefa real (reunião). Cada um
         //                vira uma linha em task_reminders, dispara WA mas NÃO mexe
         //                no status da tarefa. Tarefa permanece pendente.
-        const reminders = Array.isArray(a.reminders_at)
-          ? a.reminders_at.filter(r => typeof r === 'string' && isValidRemindAt(r))
-          : [];
+        // TETO-DE-LEMBRETES (decisão do Alf, 11/09 — 4b19337f, d1163c32): o array vinha cru do LLM
+        // (um pedido virou 8 lembretes de hora em hora). No máximo 3, com ≥ 30 min entre eles.
+        // Inválido vira null (não some) pra os índices seguirem os de `reminders_labels`.
+        const _remBrutos = (Array.isArray(a.reminders_at) ? a.reminders_at : [])
+          .map((r) => (typeof r === 'string' && isValidRemindAt(r) ? r : null));
+        const { limitarLembretes } = require('./lib/teto-lembretes');
+        const _teto = limitarLembretes(_remBrutos);
+        const reminders = _teto.mantidos;
+        if (_teto.cortados > 0) {
+          groupNotices.push(`🔔 Deixei ${reminders.length} lembrete${reminders.length === 1 ? '' : 's'} em *${String(a.title || 'tarefa').slice(0, 60)}* — o máximo é 3, com pelo menos 30 min entre eles.`);
+        }
         if (reminders.length === 0 && a.remind_at && isValidRemindAt(a.remind_at)) {
           insertRow.remind_at = a.remind_at;
           // Sprint 23.17 — derivar due_date do DIA do remind_at em BRT (não
@@ -5975,7 +5983,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           const rows = reminders.map((iso, i) => ({
             task_id: taskId,
             remind_at: iso,
-            label: typeof labels[i] === 'string' ? labels[i].slice(0, 40) : null,
+            label: typeof labels[_teto.indices[i]] === 'string' ? labels[_teto.indices[i]].slice(0, 40) : null,
           }));
           const { error: rErr } = await supabase.from('task_reminders').insert(rows);
           if (rErr) console.error('[Task] reminders insert err:', rErr.message);
