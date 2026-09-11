@@ -71,14 +71,36 @@ test('sem reply-quote nada muda: tópico pedagógico direto continua pedagogico'
 // O strip só REBAIXA o roteador de tópico, não o desliga: quando a fala real não casa em nada,
 // skill errada ainda é melhor que skill nenhuma (sem template de marker o LLM improvisa).
 //
-// LACUNA CONHECIDA, declarada de propósito: este é o turno de 12/08 do MESMO caso, e ele NÃO é
+// LACUNA FECHADA em 11/09 (ROTEADOR-CITACAO-CONCLUSAO, triagem — bf91c779, 772b4e85): era o turno
+// de 12/08 do MESMO caso, deixado aberto de propósito ("ampliar o vocabulário é outra mudança, com
+// outro teste vermelho"). A outra mudança veio: resposta com verbo de conclusão a uma mensagem do
+// TOM roteia pra checklist-tarefas ANTES do último recurso. A garantia de nunca voltar sem skill
+// continua. Texto original abaixo, pro histórico:
 // consertado aqui. "concluida" não está no vocabulário de intenção da priority 5 ("fiz|terminei|
 // feito|completei|fechei"), então a fala real não casa em nada e o fallback devolve pedagogico —
 // mesma rota de antes. O fix desta rodada conserta o turno de 13/08 ("...como feito"), não este.
 // Ampliar o vocabulário é outra mudança, com outro teste vermelho.
-test('12/08 (lacuna aberta): fala real sem sinal cai no tópico cru, NUNCA em skill nenhuma', async () => {
+test('12/08 (lacuna fechada 11/09): conclusão citando a cobrança vai pro checklist-tarefas, NUNCA em skill nenhuma', async () => {
   const raw = comQuote(COBRANCA_CHECKLIST, 'Etapa emusys, dress code concluida');
   const skill = await pickSkill(COLLAB, raw, []);
   assert.ok(skill, 'nunca pode voltar sem skill: sem template de marker o LLM improvisa');
-  assert.strictEqual(skill.name, 'pedagogico');
+  assert.strictEqual(skill.name, 'checklist-tarefas');
+});
+
+// ── ROTEADOR-CITACAO-CONCLUSAO (triagem 11/09 — bf91c779, 772b4e85) ──────────────────────
+// A fala REAL de 12/08 13:17 ("Etapa emusys, dress code concluida", citando a cobrança do
+// checklist) não casava nada na fala real e caía no último recurso, que lê a CITAÇÃO: o
+// "professora" do título citado ligava o pedagógico. Resposta de conclusão a uma mensagem do
+// TOM é atualização de tarefa.
+test('Quintela 12/08: "Etapa emusys, dress code concluida" citando a cobrança → checklist-tarefas', async () => {
+  const skill = await pickSkill(COLLAB, comQuote(COBRANCA_CHECKLIST, 'Etapa emusys, dress code concluida'), []);
+  assert.strictEqual(skill && skill.name, 'checklist-tarefas');
+});
+test('conclusão com acento, "como feito" e ✅ também roteiam; conversa sem conclusão não', async () => {
+  for (const fala of ['Cultura concluída', 'pode marcar como feito', 'Dress code ✅', 'Emusys pronto']) {
+    const s = await pickSkill(COLLAB, comQuote(COBRANCA_CHECKLIST, fala), []);
+    assert.strictEqual(s && s.name, 'checklist-tarefas', fala);
+  }
+  const outra = await pickSkill(COLLAB, comQuote('Reunião pedagógica com as professoras amanhã', 'e o horário?'), []);
+  assert.notStrictEqual(outra && outra.name, 'checklist-tarefas', 'sem verbo de conclusão a regra nova não dispara');
 });

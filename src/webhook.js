@@ -509,8 +509,25 @@ async function processWebhookBody(body) {
         text = `[O usuário está RESPONDENDO a esta mensagem anterior${enriched ? ' (conteúdo completo do banco)' : ''}: "${snippet}"]\n${text}`;
         console.log(`[Webhook] reply detectado — quoted="${snippet.slice(0, 60)}" enriched=${enriched} len=${snippet.length}`);
       } else if (quoted && quoted.type !== 'text') {
-        text = `[O usuário está RESPONDENDO a uma mídia anterior do tipo ${quoted.type}]\n${text}`;
-        console.log(`[Webhook] reply a mídia detectado — type=${quoted.type}`);
+        // CITACAO-MIDIA-SEM-CONTEUDO (triagem 11/09 — cee727e5): citação de áudio/imagem chega sem
+        // texto. O conteúdo já está no banco (transcrição, texto extraído, legenda): acha pelo id
+        // da mensagem citada (gravado como "<owner>:<id>" ou só "<id>") e cita como texto.
+        let citacao = null;
+        if (quoted.id) {
+          try {
+            const { montarCitacaoDeMidia } = require('./lib/citacao-midia');
+            const _sel = 'content, media_extracted_text, media_caption';
+            let { data: _lin } = await supabase.from('conversation_history').select(_sel)
+              .eq('whatsapp_message_id', quoted.id).limit(1).maybeSingle();
+            if (!_lin) {
+              ({ data: _lin } = await supabase.from('conversation_history').select(_sel)
+                .like('whatsapp_message_id', '%:' + quoted.id).limit(1).maybeSingle());
+            }
+            citacao = montarCitacaoDeMidia(quoted.type, _lin);
+          } catch (eMid) { console.warn('[Webhook] citação de mídia lookup err:', eMid.message); }
+        }
+        text = `${citacao || `[O usuário está RESPONDENDO a uma mídia anterior do tipo ${quoted.type}]`}\n${text}`;
+        console.log(`[Webhook] reply a mídia detectado — type=${quoted.type} conteudo=${citacao ? 'banco' : 'nenhum'}`);
       }
     } catch (e) {
       console.warn('[Webhook] extractQuotedMessage err (silent):', e.message);

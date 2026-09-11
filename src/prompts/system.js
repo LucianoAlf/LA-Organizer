@@ -1510,6 +1510,19 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'la-educa', body: loadSkill('la-educa') };
   }
 
+  // ROTEADOR-CITACAO-CONCLUSAO (triagem 11/09 — bf91c779, 772b4e85). Quintela 12/08 13:17: "Etapa
+  // emusys, dress code concluida" citando a cobrança do checklist de "Onboard *professora* nova".
+  // A fala real não casava nada acima e caía no último recurso abaixo, que lê a CITAÇÃO — e o
+  // "professora" do título citado ligava o pedagógico. Quem responde a uma mensagem do TOM com
+  // verbo de conclusão está atualizando tarefa/checklist: é aqui, antes da citação decidir.
+  {
+    const { quotedText: _citado } = stripReplyScaffold(String(lastUserMessage || ''));
+    const _CONCLUSAO_RE = /(?:^|[\s,.;!?])(conclu[íi]\w*|feit[oa]s?|pront[oa]s?|finaliz\w*|fechad[oa]s?|entregue)(?=$|[\s,.;!?])|como feito|✅/i;
+    if (_citado && _CONCLUSAO_RE.test(String(realUserMessage || ''))) {
+      return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
+    }
+  }
+
   // Último recurso: os roteadores de tópico lendo o texto CRU (com a citação). Acima eles leem só
   // a fala real, pra não sequestrar a rota de quem só respondeu "feito" a uma cobrança — mas se
   // NADA mais casou, skill errada ainda é melhor que skill nenhuma: sem skill o LLM não tem
