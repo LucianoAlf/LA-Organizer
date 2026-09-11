@@ -34,6 +34,23 @@ function _nomeRefFalhou(t, cands) {
   return false;
 }
 
+// LOTE-DESFAZ-PLURAL (Rose — 4bf44931): "desfaz esses lançamentos q vc fez agr" referia o PACOTE
+// recém-criado e caía no fallback de item único mais recente — apagou o Canva e deixou o resto.
+// Plural (demonstrativo/quantificador ou o substantivo no plural) sem nome/valor = o lote: os
+// lançamentos da MESMA rajada de criação do mais recente (≤ 5 min entre um e o próximo).
+const PLURAL_LOTE_RE = /\b(?:ess[ea]s|est[ea]s|aquel[ea]s|tod[ao]s|tudo)\b|\b(?:lan[çc]amentos|transa[çc][õo]es|compras|gastos|despesas)\b/;
+const RAJADA_MS = 5 * 60 * 1000;
+function _rajadaMaisRecente(cands) {
+  const lote = [cands[0]];
+  for (let i = 1; i < cands.length; i++) {
+    const a = Date.parse(cands[i - 1].created_at || '');
+    const b = Date.parse(cands[i].created_at || '');
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a - b > RAJADA_MS) break;
+    lote.push(cands[i]);
+  }
+  return lote;
+}
+
 function resolveTxnTarget(rawText, candidates) {
   const cands = Array.isArray(candidates) ? candidates : [];
   if (!cands.length) return { kind: 'none' };
@@ -69,6 +86,12 @@ function resolveTxnTarget(rawText, candidates) {
   // bateu nenhum candidato, NÃO chuta o mais recente numa operação destrutiva — devolve none
   // (o handler pergunta). Caso Rose "apaga a fatura Itaú de R$950,21" → apagava o mais recente.
   if (valorEspecificado || _nomeRefFalhou(t, cands)) return { kind: 'none' };
+
+  // 3b) LOTE-DESFAZ-PLURAL: plural sem nome/valor → o lote da última rajada (≥ 2 = pede confirmação).
+  if (PLURAL_LOTE_RE.test(t)) {
+    const lote = _rajadaMaisRecente(cands);
+    if (lote.length >= 2) return { kind: 'batch', candidates: lote };
+  }
 
   // 4) pronome OU nenhuma referência ("apaga isso", "desfaz o último") → assume o mais recente.
   return { kind: 'one', txn: cands[0] };

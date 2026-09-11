@@ -45,8 +45,13 @@ const STOP = new Set([
   'sim', 'nao', 'recebi', 'ja', 'tudo', 'algo', 'todo', 'todos',
 ]);
 
+// RELAY-PARA-O (Dai 16/07 — f9ffefc0): "avisa PARA O Leo que…" tem DUAS palavras entre o verbo e
+// o nome; a regex aceitava uma só, capturava o artigo "o" (curto demais) e devolvia null — o
+// RELAY_OVERRIDE nunca entrava e o TOM respondeu "manda já" em vez de propor o recado. Até 2
+// preposições/artigos ("para o", "com a", "pra a"). "sobre" também abre o conteúdo ("fala com o
+// Rafinha sobre a troca da caixa" — Leo 05/08).
 const RELAY_RE = new RegExp(
-  `\\b(?:${RELAY_VERB})\\b(?:\\s+(?:${PREP})\\b)?\\s+([a-z][a-z.'-]+)\\b[\\s\\S]{0,80}?\\bque\\b`,
+  `\\b(?:${RELAY_VERB})\\b(?:\\s+(?:${PREP})\\b){0,2}\\s+([a-z][a-z.'-]+)\\b[\\s\\S]{0,80}?\\b(?:que|sobre)\\b`,
   'i'
 );
 

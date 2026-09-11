@@ -39,6 +39,18 @@ function brtDay(value, tz = TZ) {
  * @param {{today?: string, now?: Date, max?: number}} opts
  * @returns {Array<{index:number,type:'task',id:string,title:string}>}
  */
+// FECHAMENTO-EVENTO-SEM-ANCORA (24/08 — 9cc4df98): eventos de HOJE que já começaram e seguem
+// abertos. O chamador passa só os eventos do próprio dono (participação não se fecha por aqui).
+function eventosDoFechamento(events, { today, now, max = 3 } = {}) {
+  const agora = (now instanceof Date ? now : new Date()).getTime();
+  return (Array.isArray(events) ? events : [])
+    .filter((e) => e && e.id && e.title && e.start_at)
+    .filter((e) => !['done', 'cancelled'].includes(e.status))
+    .filter((e) => brtDay(e.start_at) === today && Date.parse(e.start_at) <= agora)
+    .sort((a, b) => Date.parse(a.start_at) - Date.parse(b.start_at))
+    .slice(0, max);
+}
+
 function buildClosingItems(workTasks = [], opts = {}) {
   const today = opts.today || brtDay(opts.now || new Date());
   const max = Number.isInteger(opts.max) ? opts.max : 3;
@@ -57,12 +69,23 @@ function buildClosingItems(workTasks = [], opts = {}) {
     .map(({ t }) => t)
     .slice(0, Math.max(1, max));
 
-  return ordered.map((t, idx) => ({
+  const itens = ordered.map((t, idx) => ({
     index: idx + 1,
     type: 'task',
     id: t.id,
     title: String(t.title),
   }));
+  // FECHAMENTO-EVENTO-SEM-ANCORA (24/08 — 9cc4df98): os eventos que já rolaram hoje entram na
+  // numeração, depois das tarefas. Fora dela, num dia só com evento a lista vinha VAZIA, nenhuma
+  // intent ancorada abria e o "fecha" ia pro LLM escolher entre 30 gêmeos da série — chutou o de
+  // amanhã. O executor já fecha item type 'event' (engine, resposta do fechamento).
+  const evs = eventosDoFechamento(opts.events, { today, now: opts.now || new Date() });
+  return itens.concat(evs.map((e, i) => ({
+    index: itens.length + i + 1,
+    type: 'event',
+    id: e.id,
+    title: `🗓️ ${String(e.title)}`,
+  })));
 }
 
 // Sinais de "não concluído" num segmento (em andamento / negação / parcial). Se o

@@ -8842,6 +8842,15 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       if (!recent.length) return 'Não achei lançamento recente pra apagar — pra coisas mais antigas, edita lá no app 🙂';
       const r = resolveTxnTarget(String(params.which || params.ref || ''), recent);
       if (r.kind === 'none') return 'Não achei qual lançamento. Diz o valor ou o nome (ex: "a do mercado").';
+      if (r.kind === 'batch') {
+        // LOTE-DESFAZ-PLURAL (Rose — 4bf44931): "desfaz esses lançamentos" = o pacote recém-criado.
+        // Apagar em lote é destrutivo → lista e confirma antes (form txn_batch; o "sim" apaga todos).
+        await pendingIntents.openIntent(cid, 'finance_source', {
+          form: 'txn_batch', op: 'delete',
+          candidates: r.candidates.map((c) => ({ id: c.id, name: c.description || c.category, card_id: c.card_id || null, purchase_group: c.purchase_group || null })),
+        }, `Apago esses ${r.candidates.length} lançamentos?`);
+        return `${financeFmt.txnList(`Apago esses ${r.candidates.length} lançamentos?`, r.candidates)}\n\nConfirma?`;
+      }
       if (r.kind === 'many') {
         await pendingIntents.openIntent(cid, 'finance_source', {
           form: 'txn_pick', op: 'delete',
@@ -9753,6 +9762,43 @@ async function processMessage(phone, text, raw = {}) {
           return;
         }
         // _launchDecision === null → não é sim/não claro (correção/conteúdo) → cai no LLM (re-propõe).
+      }
+      // LOTE-DESFAZ-PLURAL (4bf44931): resposta à confirmação do "desfaz esses lançamentos".
+      // Sim → apaga todos (parcelado vai pelo grupo, uma vez só); não → nada. Outra fala → LLM.
+      if (finOpen.payload && finOpen.payload.form === 'txn_batch' && finOpen.payload.op === 'delete') {
+        const { detectUserConfirmation: _dcBatch } = require('./services/user-confirmation');
+        const _decB = _dcBatch(String(stripReplyScaffold(String(text || '')).userText || ''));
+        if (_decB === 'yes' || _decB === 'no') {
+          const _cands = Array.isArray(finOpen.payload.candidates) ? finOpen.payload.candidates : [];
+          let reply;
+          if (_decB === 'no') {
+            reply = 'Beleza — não apaguei nada.';
+          } else {
+            const _grupos = new Set();
+            let _nOk = 0;
+            for (const c of _cands) {
+              try {
+                if (c.card_id && c.purchase_group) {
+                  if (!_grupos.has(c.purchase_group)) {
+                    _grupos.add(c.purchase_group);
+                    await financeService.deleteTransactionGroup(collab.id, c.purchase_group);
+                  }
+                } else {
+                  await financeService.deleteTransaction(collab.id, c.id);
+                }
+                _nOk++;
+              } catch (e) { console.warn('[TxnBatch] delete err:', e.message); }
+            }
+            reply = _nOk === _cands.length
+              ? `🗑️ Apaguei os ${_nOk} lançamentos. Saldo reajustado.`
+              : `🗑️ Apaguei ${_nOk} de ${_cands.length} — os outros não consegui, confere no app.`;
+            // Recusa/parcial grava o que se tentou apagar (catraca "rejeição não pode ser cega").
+            try { await logMarker(collab.id, 'FINANCE_ACTION', _nOk ? 'executed' : 'rejected', `txn_batch_delete:${_nOk}/${_cands.length}`, _nOk === _cands.length ? null : { ids: _cands.map((c) => c.id), apagados: _nOk }); } catch (_) { /* best-effort */ }
+          }
+          try { await pendingIntents.resolveIntent(finOpen.id, _decB === 'yes' ? 'confirmed' : 'rejected', 'txn_batch'); await whatsapp.sendMessage(phone, reply); await logConversation(collab.id, 'outbound', reply); } catch (e) { console.warn('[TxnBatch] post err:', e.message); }
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (txn_batch_${_decB})`);
+          return;
+        }
       }
       if (finOpen.payload && finOpen.payload.form === 'txn_pick') {
         const pick = matchSourceReply(String(text || ''), { form: 'list', candidates: finOpen.payload.candidates });
@@ -15847,11 +15893,14 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
       const _escopoFech = tasksForRitual('fechamento', ctx || {});
       const _closingPool = [..._escopoFech.work, ..._escopoFech.personal]
         .filter((t) => isVisibleForDay(t, _todayYmd)); // BRIEFING-FUTURE-TASK-AS-TODAY: predicado único (cutoff=hoje no fechamento)
-      _closingItems = buildClosingItems(_closingPool, { today: _todayYmd });
+      // FECHAMENTO-EVENTO-SEM-ANCORA (9cc4df98): eventos do PRÓPRIO dono que já rolaram hoje
+      // também ganham número (participação é evento de outra pessoa — não se fecha por aqui).
+      const _eventosFech = ((ctx && ctx.todayEvents) || []).filter((e) => e && e.collaborator_id === collab.id);
+      _closingItems = buildClosingItems(_closingPool, { today: _todayYmd, events: _eventosFech });
     } catch (e) { console.warn('[Closing] buildClosingItems err:', e.message); }
     if (_closingItems.length) {
       const lista = _closingItems.map((it) => `${it.index}. ${it.title}`).join('\n');
-      systemPrompt += `\n\n---\n\n### 🔢 ITENS DO FECHAMENTO (USE EXATAMENTE esta numeração e títulos)\n${lista}\n\nAo perguntar "fez?", liste estas ${_closingItems.length} tarefa(s) com EXATAMENTE estes números e títulos. Não reordene, não renumere, não invente outras. Eventos (🗓️) seguem as regras de ✅/rolou à parte, FORA desta numeração.`;
+      systemPrompt += `\n\n---\n\n### 🔢 ITENS DO FECHAMENTO (USE EXATAMENTE esta numeração e títulos)\n${lista}\n\nAo perguntar "fez?", liste estes ${_closingItems.length} item(ns) com EXATAMENTE estes números e títulos — os marcados 🗓️ são eventos que já aconteceram hoje (pergunte se rolou). Não reordene, não renumere, não invente outros.`;
     }
   }
 
