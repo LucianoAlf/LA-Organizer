@@ -2122,7 +2122,13 @@ async function applyCoordinationRequestAction(collab, parsed) {
       // mesma demanda parafraseada. Title strip do suffix não se aplica aqui
       // (não há separador de unidade típico em message_body de relay).
       const candNorm = normalizeForSim(parsed.message_body || '');
-      for (const prev of recent) {
+      // RECADO-CORRECAO-BARRADA-COMO-DUPLICATA (triagem 11/09 — 8f939d97): Fefê 10/08, a correção
+      // "desconsidere a mensagem anterior…" pra Anne foi barrada como duplicata do recado de 1 min
+      // antes (dois textos longos sobre o mesmo cheque passam o 0,75 fácil) — e a Anne nunca soube.
+      // Recado que corrige/cancela o anterior nunca é duplicata dele.
+      const { ehRetratacao } = require('./coordination/retratacao');
+      const _retrata = ehRetratacao(parsed.message_body || '');
+      for (const prev of (_retrata ? [] : recent)) {
         const score = jaroWinkler(candNorm, normalizeForSim(prev.message_body || ''));
         if (score >= 0.75) {
           console.warn(`[CoordinationRequest] DEDUP_BLOCK score=${score.toFixed(2)} prev=${prev.id.slice(0,8)} (${prev.status}) — skipping duplicate from ${String(collab.phone).slice(-4)}→${String(recipient.phone).slice(-4)}`);
@@ -10808,17 +10814,22 @@ async function processMessage(phone, text, raw = {}) {
         // (applyCoordinationRequestAction), sem depender do LLM re-emitir. Espelha o executor
         // ancorado/batch. Retorna cedo → o LLM NÃO é chamado no 2º turno (sem re-estágio/loop).
         const _items = target.payload.coordination.items;
-        let _okC = 0; const _fail = [];
+        let _okC = 0; const _fail = []; const _jaIa = [];
         for (const _it of _items) {
           try {
             const _r = await applyCoordinationRequestAction(collab, _it);
             await logMarker(collab.id, 'COORDINATION_REQUEST', _r.ok ? 'executed' : 'rejected', `${_it.recipient_name}:${_r.reason}`, null);
-            if (_r.ok) _okC++; else _fail.push(_r.replyText || `${_it.recipient_name} (${_r.reason})`);
+            // RECADO-CORRECAO-BARRADA-COMO-DUPLICATA: o dedup devolve ok:true (não é falha de quem
+            // pediu), mas NADA foi enviado — contar como "enviado" fazia o TOM afirmar "📨 Recado
+            // enviado!" sobre recado que não saiu (Fefê/Anne 10/08).
+            if (_r.ok && _r.reason === 'dedup_recent_relay') _jaIa.push(_it.recipient_name);
+            else if (_r.ok) _okC++; else _fail.push(_r.replyText || `${_it.recipient_name} (${_r.reason})`);
           } catch (e) { console.warn('[CoordConfirm] exec err:', e.message); _fail.push(`${_it.recipient_name} (erro)`); }
         }
         await pendingIntents.resolveIntent(target.id, 'confirmed', `coord confirm (engine) ${_okC}/${_items.length}`);
         let _outC;
-        if (_okC === _items.length) _outC = _okC === 1 ? '📨 Recado enviado!' : `📨 ${_okC} recados enviados!`;
+        if (_jaIa.length && !_okC && !_fail.length) _outC = `📨 Esse recado já tinha ido pra *${_jaIa.join(', ')}* agora há pouco — não mandei de novo pra não duplicar.`;
+        else if (_okC + _jaIa.length === _items.length) _outC = (_okC === 1 ? '📨 Recado enviado!' : `📨 ${_okC} recados enviados!`) + (_jaIa.length ? ` (Pra ${_jaIa.join(', ')} já tinha ido há pouco.)` : '');
         else if (_okC > 0) _outC = `📨 Enviei ${_okC} de ${_items.length}. Não consegui: ${_fail.join('; ')}.`;
         else _outC = _fail.length === 1 ? _fail[0] : `Não consegui enviar: ${_fail.join('; ')}.`;
         try { await whatsapp.sendMessage(phone, _outC); await logConversation(collab.id, 'outbound', _outC); } catch (_) { /* já persistiu */ }
