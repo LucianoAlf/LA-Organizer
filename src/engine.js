@@ -5018,8 +5018,26 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         }
         // Buscar created_by ANTES do UPDATE pra saber se é task delegada
         const { data: fullTask } = await supabase
-          .from('tasks').select('id, title, created_by, assigned_to, due_date')
+          .from('tasks').select('id, title, created_by, assigned_to, due_date, recurrence_parent_id')
           .eq('id', t.id).maybeSingle();
+        // SERIE-JA-FEITA-NAO-E-FUTURO (Jhonatan 03/08 — 964232a9): "Falei também" logo depois de a
+        // ocorrência ATRASADA da rotina ser concluída — a busca por título só vê a aberta (a do mês que
+        // vem) e a guarda de futuro dizia "ainda não chegou". Irmã da série vencida até hoje e concluída
+        // há ≤ 3h = é o que a pessoa fez: avisa e segue, sem perguntar e sem fechar a futura.
+        if (fullTask && fullTask.recurrence_parent_id && isFutureCompletion({ dueDate: fullTask.due_date })) {
+          const { data: _irmasFeitas } = await supabase.from('tasks').select('id, due_date, status, completed_at')
+            .eq('recurrence_parent_id', fullTask.recurrence_parent_id).eq('status', 'done')
+            .gte('completed_at', new Date(Date.now() - 180 * 60000).toISOString())
+            .limit(10);
+          const { irmaJaFeita, avisoJaFeitaNaSerie } = require('./lib/serie-ja-feita');
+          const _irmaFeita = irmaJaFeita(_irmasFeitas || [], todayYmdSP());
+          if (_irmaFeita) {
+            groupNotices.push(avisoJaFeitaNaSerie(_irmaFeita, fullTask));
+            console.log(`[Task] complete: série já feita (${String(_irmaFeita.id).slice(0, 8)} due=${_irmaFeita.due_date}) — não fecha a futura ${String(fullTask.id).slice(0, 8)}`);
+            okCount++;
+            continue;
+          }
+        }
         // F5 (ALVO-FUTURO-RESPOSTA-CURTA): completar tarefa datada NO FUTURO exige
         // confirmação — Incidente C (Ana): "Reunião ok tbm" fechou a Reunião ADM de AMANHÃ.
         // Abre intent ANCORADA: o "sim" seguinte completa direto o id certo (sem LLM).
