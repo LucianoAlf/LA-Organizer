@@ -108,6 +108,15 @@ const CONNECTOR_TOKENS = new Set(['e', 'a', 'o', 'as', 'os', 'da', 'de', 'do', '
  * @param {number} count  — quantidade de itens ancorados (1..count)
  * @returns {{matched:boolean, statuses:Array<'done'|'progress'|'none'>}}
  */
+// CLOSING-PARAGRAFO-COM-PEDIDO (triagem 11/09 — ace205d1). Quintela 03/08 19:14: "3. Feito \n\n
+// Porem crie uma tarefa para quarta...". O corte no \n\n (CLOSING-SEGMENT-ORPHAN-BLEED) existe
+// pra linha solta de OUTRO assunto não contaminar o item — mas quando o parágrafo solto é um
+// PEDIDO NOVO, o interceptor fechava o item e o pedido sumia. Pedido novo depois do \n\n →
+// matched:false: a mensagem inteira vai pro LLM, que tem as âncoras do fechamento no prompt.
+// Só forma de PEDIDO (imperativo/infinitivo): "reagendei tb" é RELATO do que a pessoa já fez
+// (Yuri 10/07, "rec Kaio não foi possivel reagendei tb") e não pode mandar o turno pro LLM.
+const PEDIDO_NOVO_RE = /(?:^|[^\p{L}])(?:cri[ae]r?|agend[ae]r?|lembr[ae]r?|anot[ae]r?|coloc[ae]r?|reagend[ae]r?|remarc(?:a|ar)|remarque|avis[ae]r?|mand[ae]r?)(?![\p{L}])/iu;
+
 function parseClosingReply(userText, count) {
   const n = Number.isInteger(count) ? count : 0;
   const statuses = new Array(Math.max(0, n)).fill('none');
@@ -159,6 +168,10 @@ function parseClosingReply(userText, count) {
     if (val >= 1 && val <= n) nums.push({ val, idx: m.index, len: m[0].length });
   }
   if (nums.length) {
+    // CLOSING-PARAGRAFO-COM-PEDIDO: pedido novo depois do 1º \n\n (após o 1º número) → LLM.
+    const _quebra = t.indexOf('\n\n', nums[0].idx);
+    const _orfa = _quebra > 0 ? t.slice(_quebra).trim() : '';
+    if (_orfa && PEDIDO_NOVO_RE.test(_orfa)) return { matched: false, statuses };
     for (let i = 0; i < nums.length; i++) {
       const start = nums[i].idx;
       const end = i + 1 < nums.length ? nums[i + 1].idx : t.length;

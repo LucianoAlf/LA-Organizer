@@ -595,3 +595,16 @@ _t('A2: o caso Leo continua pegando — sequestro por briefing sem citação nen
   _assert.strictEqual(_a2({ completedTitles: FECHADAS_JULIANA, inboundText: 'bom dia tom, tudo certo?',
     recentOutbound: [FECHAMENTO_JULIANA] }), true);
 });
+
+// ── CLOSING-PARAGRAFO-COM-PEDIDO (triagem 11/09 — ace205d1) ──────────────────────────────
+// Quintela 03/08 19:14 BRT: fechou o item 3 e, depois de uma linha em branco, pediu uma tarefa
+// nova. O corte no \n\n fechava o item e o pedido sumia (matched:true interceptava o turno).
+test('pedido novo no parágrafo depois de \\n\\n manda a mensagem inteira pro LLM', () => {
+  const r = parseClosingReply('3. Feito \n\n Porem crie uma tarefa para quarta que sera confirmar a mudanca do aluno para outro horario', 3);
+  assert.strictEqual(r.matched, false);
+});
+test('parágrafo solto SEM pedido segue o corte antigo (o item fecha)', () => {
+  const r = parseClosingReply('1 e 2\n\nvaleu, tom', 3);
+  assert.strictEqual(r.matched, true);
+  assert.deepStrictEqual(r.statuses, ['done', 'done', 'none']);
+});

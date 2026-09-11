@@ -34,6 +34,16 @@ function packagePrefix(packageTitle, title) {
 // fmtDate(dueYmd, today) injetado (formatRelativeDate) p/ manter puro.
 // parentTitleById (opcional): Map id→título dos containers de pacote, pra prefixar o nome do
 // pacote na filha ("Depósito de Cheques: Venc 05..."). Ausente → sem prefixo (regressão preservada).
+// "lembrete dd/mm às HH:MM" em America/Sao_Paulo; '' se a data não for válida.
+function _horaLembrete(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const tz = { timeZone: 'America/Sao_Paulo' };
+  const dia = d.toLocaleDateString('pt-BR', { ...tz, day: '2-digit', month: '2-digit' });
+  const hora = d.toLocaleTimeString('pt-BR', { ...tz, hour: '2-digit', minute: '2-digit' });
+  return `lembrete ${dia} às ${hora}`;
+}
+
 function buildGroupPoolLines(tasks, groups, today, fmtDate, parentTitleById) {
   const out = [];
   const list = Array.isArray(tasks) ? tasks : [];
@@ -46,7 +56,11 @@ function buildGroupPoolLines(tasks, groups, today, fmtDate, parentTitleById) {
     const cn = firstNameOf(t.creator);
     const by = cn ? ` · criada por ${cn}` : '';
     const pkg = packagePrefix(parentTitleById && t.parent_task_id && parentTitleById.get(t.parent_task_id), t.title);
-    out.push(`• [id=${sid}] 👥[${g ? g.name : 'grupo'}] ${pkg}${t.title}${due}${by}`);
+    // POOL-SEM-HORA-DO-LEMBRETE (triagem 11/09 — bffe4be4): Yuri 18/06, o TOM mandou o lembrete
+    // "hoje 15:00" e 2 min depois negou que a tarefa tivesse horário — a linha só tinha o prazo.
+    const _hl = t.remind_at ? _horaLembrete(t.remind_at) : '';
+    const rem = _hl ? ` · ⏰ ${_hl}` : '';
+    out.push(`• [id=${sid}] 👥[${g ? g.name : 'grupo'}] ${pkg}${t.title}${due}${rem}${by}`);
     const desc = truncDesc(t.description, 240);
     if (desc) out.push(`   ↳ ${desc}`);
   }

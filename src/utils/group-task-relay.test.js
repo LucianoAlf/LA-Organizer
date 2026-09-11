@@ -87,3 +87,23 @@ test('pool: SEM parentTitleById → sem prefixo (regressão — chamadores antig
   assert.match(lines[0], /👥\[Financeiro\] Venc 05 \(prazo dia 06\)/);
   assert.doesNotMatch(lines[0], /:/);
 });
+
+// ── POOL-SEM-HORA-DO-LEMBRETE (triagem 11/09 — bffe4be4) ─────────────────────────────────
+// Yuri 18/06 14:02 BRT: o TOM mandou o lembrete "hoje 15:00" e 2 min depois disse que a tarefa
+// do grupo não tinha horário — a linha do pool só trazia o due_date.
+test('pool do grupo mostra o horário do lembrete quando existe', () => {
+  const linhas = buildGroupPoolLines(
+    [{ id: 'abcdef1234567890', title: 'Ligar pro fornecedor', due_date: '2026-06-18', remind_at: '2026-06-18T18:00:00Z', assigned_group_id: 'g1' }],
+    [{ id: 'g1', name: 'ADM' }], '2026-06-18', null, null);
+  assert.match(linhas[0], /⏰ lembrete 18\/06 às 15:00/);
+});
+test('sem remind_at a linha do pool não ganha ⏰', () => {
+  const linhas = buildGroupPoolLines(
+    [{ id: 'abcdef1234567890', title: 'Ligar pro fornecedor', due_date: '2026-06-18', assigned_group_id: 'g1' }],
+    [{ id: 'g1', name: 'ADM' }], '2026-06-18', null, null);
+  assert.doesNotMatch(linhas[0], /⏰/);
+});
+const _SYS7 = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'prompts', 'system.js'), 'utf8');
+test('a query do pool do grupo traz remind_at (sem ela a linha nunca teria a hora)', () => {
+  assert.match(_SYS7, /\.select\('id, title, description, due_date, remind_at, status, assigned_group_id/);
+});

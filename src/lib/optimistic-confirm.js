@@ -77,6 +77,10 @@ const COMPLETION_ANYWHERE = new RegExp('\\b' + COMPLETION_CORE + COMPLETION_END,
 
 // Totalizador absoluto.
 const TOTALIZER_RE = /\b(todas|todos|tudo)\b/i;
+// CONFAB-PARTIAL-LEAK (triagem 11/09 — b16bc955): totalizador NUMÉRICO ("as 3", "os dois").
+// Só é usado no ramo 'partial' do sanitize, junto de verbo de conclusão — o gate do chokepoint
+// (hasCompletionClaim) segue com o TOTALIZER_RE de sempre, tuning de meses intocado.
+const TOTALIZER_NUM_RE = /(?:^|[^\p{L}])(?:as|os)\s+(?:\d+|duas|dois|tr[êe]s|quatro|cinco|seis|sete|oito|nove|dez)(?![\p{L}\d])/iu;
 
 // Confirmações de recorrência ("você recebe o lembrete", "todo dia 5").
 const RECUR_RE = /(voc[êe]\s+recebe\s+o\s+lembrete|^todo\s+dia\s+\d+)/i;
@@ -274,6 +278,10 @@ function sanitizeOptimisticConfirm(text, outcome, opts) {
     const noEmoji = line.replace(SUCCESS_EMOJI_GLOBAL, '').replace(/^\s+/, '');
     if (TOTALIZER_RE.test(noEmoji)) {
       out.push(_downgradeTotalizers(noEmoji).replace(/\s+$/, ''));
+    } else if (TOTALIZER_NUM_RE.test(noEmoji) && COMPLETION_ANYWHERE.test(noEmoji)) {
+      // CONFAB-PARTIAL-LEAK (b16bc955): "Fechando as 3 — pronto." com resultado parcial é a
+      // mesma mentira do "todas": sai, e o rodapé do engine ("Registrei N de M") fala a verdade.
+      continue;
     } else if (COMPLETION_ANCHORED.test(_stripLeadingEmoji(noEmoji))) {
       // Confirmação pura ("✅ Criado!") sem quantificador → o rodapé do engine
       // ("Registrei N de M") carrega a verdade; remove a linha.

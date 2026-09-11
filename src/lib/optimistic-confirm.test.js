@@ -809,3 +809,16 @@ test('lembrete relativo: nome do dia até 6 dias à frente, com a hora', () => {
   assert.strictEqual(restatesRecentWrite('Anotado, te lembro quinta às 9h', [quinta], _REL_AGORA), true);
   assert.strictEqual(restatesRecentWrite('Anotado, te lembro sexta às 9h', [quinta], _REL_AGORA), false);
 });
+
+// ── CONFAB-PARTIAL-LEAK (triagem 11/09 — b16bc955) ────────────────────────────────────────
+// Dudu: "Fechando as 3 — pronto." sobrevivia no ramo parcial ao lado do aviso de que só parte
+// entrou — o totalizador só conhecia "todas/todos/tudo", não "as 3".
+test('parcial: "as N" + conclusão sai (o rodapé "Registrei N de M" carrega a verdade)', () => {
+  const out = sanitizeOptimisticConfirm('Fechando as 3 — pronto.\nAgora foca na campanha.', 'partial');
+  assert.doesNotMatch(out, /as 3/);
+  assert.match(out, /Agora foca na campanha\./);
+});
+test('parcial: número sem verbo de conclusão fica ("faltam as 3 da tarde")', () => {
+  const out = sanitizeOptimisticConfirm('A reunião é às 3 da tarde, faltam os 2 relatórios.', 'partial');
+  assert.match(out, /faltam os 2 relatórios/);
+});
