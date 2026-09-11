@@ -36,6 +36,14 @@ const RE_DATA_AFIRMADA = new RegExp(
   + String.raw`(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?:[ \t]*(\)))?`,
   'giu');
 
+// DATA-AFIRMADA-DIA-NN (triagem 11/09 — c9d0100d): "hoje é sexta, dia 26" — o TOM afirma o
+// dia do mês sem a barra, e o detector só casava DD/MM. Mesma âncora (hoje/ontem/amanhã),
+// dia-da-semana opcional, e a palavra "dia" + número que NÃO é seguido de "/" (esse é o DD/MM,
+// que a regex de cima já cobre).
+const RE_DATA_DIA = new RegExp(
+  String.raw`(?<![\p{L}])(hoje|ontem|amanhã|amanha)(?![\p{L}])[ \t]*(?:é|eh)?[ \t]*(?:(?:seg|ter|qua|qui|sex|s[áa]b|dom)[\p{L}-]*\.?[ \t]*)?[,:–—-]?[ \t]*dia[ \t]+(\d{1,2})(?![\d\/])`,
+  'giu');
+
 const DELTA = { hoje: 0, ontem: -1, amanhã: 1, amanha: 1 };
 
 // Aritmética de calendário em UTC a partir de uma string YMD já resolvida em BRT: não há
@@ -54,7 +62,7 @@ function neutralizaDataAfirmada(texto) {
   if (!texto) return '';
   return String(texto).replace(RE_DATA_AFIRMADA, (_m, rotulo, abre, _dd, _mm, fecha) => (
     fecha && !abre ? `${rotulo}${fecha}` : rotulo
-  ));
+  )).replace(RE_DATA_DIA, (_m, rotulo) => rotulo); // DATA-AFIRMADA-DIA-NN
 }
 
 // Velocímetro: lista as afirmações de data que discordam do calendário real.
@@ -69,6 +77,15 @@ function detectaDataAfirmadaErrada(texto, hojeYmd) {
     if (!esperado) continue;
     const disse = `${m[3].padStart(2, '0')}/${m[4].padStart(2, '0')}`;
     if (disse !== esperado) achados.push({ rotulo, disse, esperado });
+  }
+  // DATA-AFIRMADA-DIA-NN: "hoje é sexta, dia 26" — compara só o dia do mês.
+  const reDia = new RegExp(RE_DATA_DIA.source, RE_DATA_DIA.flags);
+  while ((m = reDia.exec(String(texto)))) {
+    const rotulo = m[1].toLowerCase();
+    const esperado = _desloca(hojeYmd, DELTA[rotulo]);
+    if (!esperado) continue;
+    const dia = m[2].padStart(2, '0');
+    if (dia !== esperado.slice(0, 2)) achados.push({ rotulo, disse: `dia ${dia}`, esperado: `dia ${esperado.slice(0, 2)}` });
   }
   return achados;
 }

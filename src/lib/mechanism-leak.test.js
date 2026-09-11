@@ -51,3 +51,24 @@ test('vazio/nulo seguro', () => {
   assert.deepStrictEqual(stripMechanismLeak(''), { reply: '', fired: false });
   assert.deepStrictEqual(stripMechanismLeak(null), { reply: '', fired: false });
 });
+
+// ── MECHANISM-LEAK-CORTA-OPCAO (triagem 11/09 — fdc6f327) ────────────────────────────────
+const _ml = require('./mechanism-leak');
+const _mlT = require('node:test').test;
+const _mlA = require('node:assert');
+const _ROSE_1407 = 'Rose, recebi — Latam PASS, fatura julho, 62 itens · R$ 6.008,04. ✅\n\nO sistema já mostra R$ 4.638,21 lançados nesse cartão, mas sem ver os itens individuais não dá pra cruzar item a item. Duas opções:\n\n**(a)** Puxo o extrato do Latam PASS agora pra ver o que já está lá e te mostro só o que falta — sem risco de duplicar.\n\n**(b)** Lançamos tudo e o engine verifica duplicidades na hora.\n\nQual prefere?';
+_mlT('Rose 14/07: a opção (b) não some — o termo interno vira palavra comum', () => {
+  const r = _ml.stripMechanismLeak(_ROSE_1407);
+  _mlA.strictEqual(r.fired, true);
+  _mlA.match(r.reply, /\*\*\(b\)\*\* Lançamos tudo e o sistema verifica duplicidades na hora\./);
+  _mlA.match(r.reply, /\*\*\(a\)\*\* Puxo o extrato/);
+  _mlA.doesNotMatch(r.reply, /engine/i);
+});
+_mlT('linha comum com vocabulário interno continua saindo inteira', () => {
+  const r = _ml.stripMechanismLeak('Fechado, criei o evento.\nDessa vez o marker vai de verdade com bypass_integrity.');
+  _mlA.strictEqual(r.reply, 'Fechado, criei o evento.');
+});
+_mlT('opção que ainda carrega vocabulário interno depois da troca sai (to_name não tem tradução)', () => {
+  const r = _ml.stripMechanismLeak('Duas opções:\n(a) Mando pro Yuri.\n(b) Crio com to_name da Fefê.');
+  _mlA.strictEqual(r.reply, 'Duas opções:\n(a) Mando pro Yuri.');
+});

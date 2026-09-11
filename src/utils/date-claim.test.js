@@ -153,3 +153,18 @@ test('neutraliza a forma weekday-vírgula sem quebrar a frase', () => {
 test('CONTROLE: "amanhã (confirmar 07/08)" segue NÃO casando (palavra livre não é weekday)', () => {
   assert.strictEqual(detectaDataAfirmadaErrada('amanhã (confirmar 07/08) a gente vê', '2026-08-06').length, 0);
 });
+
+// ── DATA-AFIRMADA-DIA-NN (triagem 11/09 — c9d0100d) ──────────────────────────────────────
+// Rose: "hoje é sexta, dia 26" — sem a barra, o detector ficava cego (medido: caso → []).
+test('"hoje é sexta, dia 26" com hoje = 25 é afirmação errada', () => {
+  assert.deepStrictEqual(detectaDataAfirmadaErrada('Hoje é sexta, dia 26 — bora fechar a semana.', '2026-06-25'),
+    [{ rotulo: 'hoje', disse: 'dia 26', esperado: 'dia 25' }]);
+});
+test('"hoje é quinta, dia 25" com hoje = 25 está certo; "amanhã, dia 26" também', () => {
+  assert.deepStrictEqual(detectaDataAfirmadaErrada('Hoje é quinta, dia 25.', '2026-06-25'), []);
+  assert.deepStrictEqual(detectaDataAfirmadaErrada('Amanhã, dia 26, tem reunião.', '2026-06-25'), []);
+});
+test('neutraliza tira o "é sexta, dia 26" e deixa a âncora; DD/MM segue com a regra antiga', () => {
+  assert.strictEqual(neutralizaDataAfirmada('Hoje é sexta, dia 26 — bora fechar a semana.'), 'Hoje — bora fechar a semana.');
+  assert.deepStrictEqual(detectaDataAfirmadaErrada('hoje 26/06', '2026-06-25'), [{ rotulo: 'hoje', disse: '26/06', esperado: '25/06' }]);
+});
