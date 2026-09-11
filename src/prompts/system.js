@@ -2524,7 +2524,7 @@ async function fetchPeriodStats(collabId, fromYmd, toYmd) {
   const [tasksRes, eventsRes] = await Promise.all([
     supabase
       .from('tasks')
-      .select('id, status')
+      .select('id, status, title')
       .eq('assigned_to', collabId)
       .eq('context', 'work')
       .gte('due_date', fromYmd)
@@ -2544,7 +2544,10 @@ async function fetchPeriodStats(collabId, fromYmd, toYmd) {
   const pending = tasks.filter(t => !['done', 'cancelled'].includes(t.status)).length;
   const cancelled = tasks.filter(t => t.status === 'cancelled').length;
   const pct = total ? Math.round((done / total) * 100) : null;
-  return { total, done, pending, cancelled, pct, events: events.length };
+  // SEMANA-CONTA-SEM-LISTA (Quintela 19/06 — 1c3472e4): além do número, QUAIS faltam — sem isso o TOM
+  // dizia "11/12" e, perguntado o que faltou, admitia não saber e chutava "contei duplicados".
+  const { pendentesDaSemana } = require('../lib/semana-pendentes');
+  return { total, done, pending, cancelled, pct, events: events.length, pendentes: pendentesDaSemana(tasks) };
 }
 
 // Busca stats completos (todas contexts) para bloco de contexto mensal.
@@ -2777,7 +2780,10 @@ async function buildHistoricalContext(collabId, ritualType) {
       if (s.total === 0 && s.events === 0) {
         lines.push('  Sem tarefas ou compromissos na semana.');
       } else {
-        if (s.total > 0) lines.push(`  Tarefas: ${s.done}/${s.total} concluídas${s.pct !== null ? ` (${s.pct}%)` : ''} · ${s.pending} pendentes`);
+        // SEMANA-CONTA-SEM-LISTA (1c3472e4): a linha leva o que falta pelo nome.
+        const { linhaSemana } = require('../lib/semana-pendentes');
+        if (s.total > 0) lines.push(`  ${linhaSemana(s)}`);
+        if (s.total > 0 && s.pending > 0) lines.push('  (Ao citar a semana, cite pelo NOME o que falta — é a lista acima. Não invente outra conta.)');
         if (s.events > 0) lines.push(`  Compromissos: ${s.events}`);
       }
     }
