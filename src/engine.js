@@ -11146,7 +11146,43 @@ async function processMessage(phone, text, raw = {}) {
           // Arthur ficou pending). Owner-scoped (assigned_to=collab.id) + status vivo → idempotente;
           // não-dono / já mudou → rowcount 0 → segue o fluxo normal (ctx-hint + LLM). Loga
           // TASK_UPDATE executed (seta marker_emitted → chokepoint não rebaixa).
-          const _td = decideTaskDoneFromQuote({ rawText: text, target: _target });
+          // CHECKLIST-POR-CITACAO (Quintela 06/07 — 50443ed4): tarefa citada com checklist aberto → a citação
+          // vira mark-item nos itens que a fala aponta (o handler existente cuida de posse e do cascade da
+          // mãe). "o resto feito" NUNCA fecha a mãe inteira; fala ilegível → LLM recebe a lista com ids.
+          let _ckPista = '';
+          let _ckPend = false;
+          if (_target.refType === 'task') {
+            const { data: _ckKids } = await supabase.from('tasks')
+              .select('id, title, status, sort_position')
+              .eq('parent_task_id', _target.refId).neq('status', 'cancelled');
+            const _ckFilhas = _ckKids || [];
+            _ckPend = _ckFilhas.some((c) => c.status !== 'done');
+            if (_ckPend) {
+              const { planoDaCitacao, textoChecklistMarcado, pistaChecklist } = require('./lib/checklist-citado');
+              const _ckPlano = planoDaCitacao({
+                userText: stripReplyScaffold(String(text || '')).userText,
+                filhas: _ckFilhas,
+                confirmou: !!decideTaskDoneFromQuote({ rawText: text, target: _target }),
+              });
+              if (_ckPlano) {
+                const _ckAcoes = _ckPlano.marcar.map((c) => ({ action: 'mark-item', parent_id: _target.refId, item_id: c.id, done: true }));
+                const _ckRes = await applyTaskActions(collab, _ckAcoes, { inboundText: text });
+                if (_ckRes && _ckRes.okCount > 0) {
+                  const { renderChecklistBlock } = require('./services/checklist-render');
+                  const { data: _ckDepois } = await supabase.from('tasks')
+                    .select('id, title, status, sort_position').eq('parent_task_id', _target.refId);
+                  const _ckReply = textoChecklistMarcado({ titulo: _target.title, marcados: _ckRes.okCount, bloco: renderChecklistBlock(_ckDepois || []), avisos: _ckRes.groupNotices });
+                  try { await logMarker(collab.id, 'TASK_UPDATE', 'executed', `checklist_quote:${String(_target.refId).slice(0, 8)} ok=${_ckRes.okCount}`, null); } catch (_) {}
+                  await whatsapp.sendMessage(phone, _ckReply);
+                  await logConversation(collab.id, 'outbound', _ckReply);
+                  console.log(`[ReplyRef] CHECKLIST deterministico ${String(_target.refId).slice(0, 8)} ok=${_ckRes.okCount} phone=${_phoneTail}`);
+                  return;
+                }
+              }
+              _ckPista = pistaChecklist(_target.refId, _ckFilhas);
+            }
+          }
+          const _td = !_ckPend && decideTaskDoneFromQuote({ rawText: text, target: _target });
           if (_td) {
             const { data: _doneRow } = await supabase.from('tasks')
               .update({ status: 'done', completed_at: new Date().toISOString(), completed_by: collab.id })
@@ -11161,7 +11197,7 @@ async function processMessage(phone, text, raw = {}) {
               return;
             }
           }
-          text = String(text || '') + buildReplyRefCtxHint(_target);
+          text = String(text || '') + buildReplyRefCtxHint(_target) + _ckPista;
           console.log(`[ReplyRef] alvo ancorado ${_target.refType}=${String(_target.refId).slice(0, 8)} phone=${_phoneTail}`);
         } else {
           console.log(`[ReplyRef] quote casou linha mas alvo nao-ancoravel (morto/sumiu) phone=${_phoneTail}`);
