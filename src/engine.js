@@ -11136,6 +11136,23 @@ async function processMessage(phone, text, raw = {}) {
       // (sem isso só "Sim" pelado disparava o executeBatchComplete; a Rose loopou e o 2088 dropou).
       const _batchComplete = !!(target && Array.isArray(target.payload?.batch_complete) && target.payload.batch_complete.length);
       const userConfirm = pendingIntents.detectUserConfirmation(_confirmText, { allowDone: _anchoredComplete || _batchComplete });
+      // CONFIRM-REASK-SUPERSEDE (Peterson 13/07 — 525d947c): "Isso, avisa a eles que estão no Grupo
+      // Produção…" CONFIRMA o recado estagiado e ainda ACRESCENTA conteúdo. O detector só aceita "sim"
+      // curto → null → o LLM re-emitia o recado e ele era estagiado de novo ("Aviso 6 pessoas…? Confirma?").
+      // Afirmação + acréscimo sobre recado estagiado = já confirmado: o recado novo (com o acréscimo) sai
+      // direto; a intent antiga só fecha DEPOIS do envio (se o LLM não emitir, nada se perde).
+      if (userConfirm !== 'yes' && target && Array.isArray(target.payload?.coordination?.items)
+          && target.payload.coordination.items.length && withinConfirmWindow(target.asked_at, 120)) {
+        const { afirmacaoComAcrescimo } = require('./coordination/afirmacao-com-acrescimo');
+        const _amend = afirmacaoComAcrescimo(_confirmText);
+        if (_amend) {
+          _metrics.recado_preconfirmed = true;
+          _metrics.recado_amend_intent = target.id;
+          const _destA = target.payload.coordination.items.map((i) => i.recipient_name).filter(Boolean).join(', ');
+          text = String(text || '') + `\n\n[CONFIRMACAO_COM_ACRESCIMO] O usuário CONFIRMOU o recado que você propôs pra ${_destA} e ACRESCENTOU o conteúdo acima. Emita <<COORDINATION_REQUEST>> pros MESMOS destinatários (${_destA}) com a mensagem incorporando o acréscimo. NÃO pergunte de novo — já está confirmado.`;
+          console.log(`[CoordAmend] confirmação com acréscimo intent=${String(target.id).slice(0, 8)} → preConfirmed`);
+        }
+      }
       // Janela de confirmação: um "sim/não" cru só resolve a intent se ela foi
       // perguntada há pouco (~20min). Fora disso NÃO resolve e NÃO apaga — a intent
       // segue aberta pro fluxo natural/expiração. (Bug: "sim" pra criar meta
@@ -14504,6 +14521,11 @@ Output AGORA, apenas o marker:`;
         if (okCount > 0) coordRequestHandledThisTurn = true;
         reply = parsedCoord.cleanText || reply;
         if (_extrasD.length && _extrasD.length === parsedCoord.items.length) reply = _extrasD.join('\n');
+        // CONFIRM-REASK-SUPERSEDE: o recado confirmado com acréscimo saiu → fecha a intent antiga (um "sim"
+        // atrasado a ela não re-envia nem re-pergunta).
+        if (okCount > 0 && _metrics.recado_amend_intent) {
+          try { await pendingIntents.resolveIntent(_metrics.recado_amend_intent, 'confirmed', 'recado confirmado com acréscimo'); } catch (_) { /* best-effort */ }
+        }
         if (failCount > 0) {
           if (parsedCoord.items.length === 1 && okCount === 0 && failedResults[0]?.replyText) reply = failedResults[0].replyText;
           else reply = (reply || '') + `\n\n⚠️ Não consegui enviar pra: ${failedRecipients.join(', ')}.`;
