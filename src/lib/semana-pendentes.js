@@ -23,7 +23,11 @@ function pendentesDaSemana(tasks) {
 
 /** "Tarefas: 11/12 concluídas (92%) · 1 pendente — falta: *X*" */
 function linhaSemana(s) {
-  const base = `Tarefas: ${s.done}/${s.total} concluídas${s.pct !== null && s.pct !== undefined ? ` (${s.pct}%)` : ''} · ${s.pending} ${s.pending === 1 ? 'pendente' : 'pendentes'}`;
+  // Cancelada não é "a fazer": fora do denominador (senão "11/12" pode ter como "o que falta" uma tarefa
+  // que foi cancelada — e o E2E de 11/09 mostrou "2/19" com 16 canceladas).
+  const conta = Math.max(0, (Number(s.total) || 0) - (Number(s.cancelled) || 0));
+  const pct = conta ? Math.round(((Number(s.done) || 0) / conta) * 100) : null;
+  const base = `Tarefas: ${s.done}/${conta} concluídas${pct !== null ? ` (${pct}%)` : ''} · ${s.pending} ${s.pending === 1 ? 'pendente' : 'pendentes'}${s.cancelled ? ` · ${s.cancelled} ${s.cancelled === 1 ? 'cancelada' : 'canceladas'}` : ''}`;
   const lista = Array.isArray(s.pendentes) ? s.pendentes : [];
   if (!s.pending || !lista.length) return base;
   const nomes = lista.slice(0, MAX_NOMES).map((p) => `*${p.titulo}*${p.n > 1 ? ` (${p.n}x)` : ''}`).join(', ');
