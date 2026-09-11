@@ -2083,3 +2083,50 @@ Por que ficou aberto: sem saber **o que** o executor recusou, não há teste ver
 ETAPA 4 é intransponível. O alvo real não é este achado, é o instrumento: enquanto o ramo
 `complete` do `applyTaskActions` não gravar a razão em `fails`, toda linha dessa família nasce
 irrefutável. Anotado no `verified_note`.
+
+### ETAPA 2.6 — o alarme de VITALIDADE lê uma STRING que o parser nunca recebe em produção
+
+**Ocorrências:** 2 (07/09, 11/09). Reincidiu, e desta vez com DOIS confundidores empilhados.
+
+Em 07/09 a leitura ingênua das três fatias ("estão as três quebradas") caiu pela data de nascimento
+dos parsers. Em 11/09 o briefing trouxe `batch_complete: tema 324 · parser casou 0 · estagiou 13` e
+o veredito da tabela do protocolo é explícito: *"a âncora literal envelheceu — é achado, investigue
+a âncora"*. Investiguei. **A âncora está intacta; o instrumento é que mede errado**, por dois
+motivos independentes, e qualquer um dos dois sozinho já produz "parser 0".
+
+**Confundidor 1 — o `tema` engole outro fluxo.** `vitalidade-parse-on-open.js:47` usa
+`tema: /\bfechamento\b|\bfechar\b|\bconclu\w+\b/i`, que casa `"Fechamento do dia, Gabi 👽"` — o
+ritual noturno, que não é pergunta de confirmação e nunca foi alvo deste parser. Medido sobre as
+379 intents desde 16/08 (nascimento do parser): **283 casam o tema e 263 delas (93%) são o ritual.**
+A população real da fatia é ~20.
+
+**Confundidor 2, e é o que mata a leitura — a string medida não é a string parseada.** O ramo A2
+escreve DUAS frases diferentes no mesmo bloco (`engine.js:4712` e `4716`):
+
+| string | onde vive | quem lê |
+|---|---|---|
+| `Confirma o fechamento destas N tarefas: *X*, *Y*?` | `failMessages` → vai pro **usuário**, entra no `reply` | o hook de parse-on-open (`engine.js:15025`), que chama `parseCompleteConfirmQuestion(reply)` |
+| `Confirmar fechamento em lote: *X*, *Y*?` | `question_text` do `openIntent` | **o helper de vitalidade** (`vitalidade-parse-on-open.js:90` lê `r.question_text`) |
+
+A âncora do parser é `fechamento\s+(?:desta\s+tarefa|destas?\s+\d+\s+tarefas?)\s*:`. Ela casa a
+primeira e **não casa a segunda** — e a segunda é a única que o medidor vê. Daí `parser casou 0`
+com 100% de fidelidade e zero significado.
+
+Prova de que o caminho está vivo: esse mesmo ramo estagia a alça **direto no payload**
+(`{ batch_complete: completes.map(c => c.id) }`, linha 4714) — não depende do parser. Medido:
+**12 intents com `batch_complete` no payload desde 16/08.** O número `estagiou 13` do briefing É a
+saúde da fatia; o `parser 0` ao lado dele é ruído.
+
+🔑 A regra que isto acrescenta ao bloco de VITALIDADE do protocolo: **antes de investigar a âncora,
+confira que o medidor alimenta o parser com a MESMA string que o call site de produção alimenta.**
+Aqui o call site passa `reply` e o medidor passa `question_text`, e as duas divergem por desenho —
+a pergunta que vai pro usuário e o rótulo da intent são escritos separadamente. Um medidor que lê a
+string errada não falha: ele devolve zero, que é indistinguível de defeito e vem com uma instrução
+do protocolo mandando consertar. É a mesma classe do neutro-em-bloco (18/08), agora num instrumento
+de observabilidade — e mais cara, porque o neutro pelo menos exige que alguém o interprete.
+
+Proposta de virar código, em ordem de retorno: (1) o helper de vitalidade passa a ler o mesmo campo
+que o call site (guardar o `reply` da pergunta no payload, ou medir sobre `conversation_history`);
+(2) o `tema` de cada fatia ganha um veto para os rituais determinísticos, senão a razão sinal/ruído
+fica em 7%; (3) quando a fatia estagia por caminho direto (sem parser), o medidor deveria dizer
+isso — `parser N/A` em vez de `parser 0`.
