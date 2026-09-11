@@ -4079,6 +4079,43 @@ function normalizeGroupKey(name) {
 
 // Resolve o prefixo de 8 chars (ou similar) pra UUID completo, RESTRITO ao colaborador.
 // Defesa-em-profundidade: marker injetado nunca consegue tocar tarefa de outro user.
+// LIDER-FECHA-TAREFA-DE-OUTRO (decisão do Alf, 11/09 — 60fbb2e3). Fallback do resolveTaskByShortId
+// pra quem lidera: busca a tarefa ABERTA no alcance do cargo e só devolve se a regra pura deixar.
+// Marca `_comoLider` pro caminho de conclusão gravar com o dono real e avisar quem executa.
+async function resolveTaskParaLider(collaborator, shortId) {
+  const { alcanceDoLider, filtroOrDoLider, podeFecharComoLider } = require('./lib/lider-fecha-tarefa');
+  if (!collaborator || !alcanceDoLider(collaborator)) return null;
+  if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
+  let q = supabase.from('tasks')
+    .select('id, title, status, due_date, assigned_to, assigned_group_id, created_by, governance_owner_id, recurrence_rule, recurrence_parent_id')
+    .not('status', 'in', '("done","cancelled")');
+  const f = filtroOrDoLider(collaborator);
+  if (f) q = q.or(f);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(3000);
+  if (error) { console.error('[Task] resolveTaskParaLider err:', error.message); return null; }
+  const matches = matchRowsByShortId(data || [], shortId).filter((t) => podeFecharComoLider(collaborator, t));
+  if (matches.length !== 1) return null;
+  return { ...matches[0], _comoLider: true };
+}
+
+// LIDER-FECHA-TAREFA-DE-OUTRO: quem executa fica sabendo que a tarefa foi fechada pelo líder.
+// Só avisa se a tarefa está MESMO done (o update pode ter falhado) e se o dono tem telefone.
+async function avisarDonoFechadaPeloLider(task, lider) {
+  try {
+    if (!task || !task.id || !task.assigned_to || !lider || task.assigned_to === lider.id) return;
+    const { data: cur } = await supabase.from('tasks').select('status, title').eq('id', task.id).maybeSingle();
+    if (!cur || cur.status !== 'done') return;
+    const { data: dono } = await supabase.from('collaborators')
+      .select('id, full_name, preferred_name, phone, is_active').eq('id', task.assigned_to).maybeSingle();
+    if (!dono || !dono.is_active || !dono.phone) return;
+    const nomeDono = dono.preferred_name || String(dono.full_name || '').split(' ')[0];
+    const nomeLider = lider.preferred_name || String(lider.full_name || '').split(' ')[0];
+    const msg = `✅ ${nomeDono}, ${nomeLider} marcou como concluída a tarefa:\n_"${String(cur.title || task.title || '').slice(0, 80)}"_`;
+    await whatsapp.sendMessage(dono.phone, msg);
+    await supabase.from('conversation_history').insert({ collaborator_id: dono.id, direction: 'outbound', message_type: 'text', content: msg });
+  } catch (e) { console.warn('[Task] aviso ao dono (fechada pelo líder) err:', e.message); }
+}
+
 async function resolveTaskByShortId(collaboratorId, shortId) {
   if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
   // uuid não suporta LIKE — fetch todas as tarefas do colab (last 60 dias) e filtra em JS.
@@ -4823,6 +4860,28 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             } catch (_e) { console.warn('[Task] complete fuzzy fallback err:', _e.message); }
           }
           if (!a.id) {
+            // LIDER-FECHA-TAREFA-DE-OUTRO (decisão Alf 11/09 — 60fbb2e3): "fecha as tarefas do Yuri"
+            // pedido por quem lidera. Só casa UMA tarefa (resolveTaskTarget exato) no alcance do cargo.
+            try {
+              const { alcanceDoLider, filtroOrDoLider } = require('./lib/lider-fecha-tarefa');
+              if (alcanceDoLider(collaborator)) {
+                let _qL = supabase.from('tasks')
+                  .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at, assigned_to')
+                  .neq('assigned_to', collaborator.id)
+                  .ilike('title', `%${String(a.title).slice(0, 60)}%`)
+                  .not('status', 'in', '("done","cancelled")');
+                const _fL = filtroOrDoLider(collaborator);
+                if (_fL) _qL = _qL.or(_fL);
+                const { data: _cL } = await _qL.limit(50);
+                const _rL = resolveTaskTarget({ candidatos: _cL || [] });
+                if (_rL.modo === 'exato' && _rL.tarefa) {
+                  a.id = _rL.tarefa.id.replace(/-/g, '').slice(0, 8);
+                  console.log(`[Task] complete LÍDER title-lookup: "${a.title}" → id=${a.id}`);
+                }
+              }
+            } catch (eL) { console.warn('[Task] complete líder lookup err:', eL.message); }
+          }
+          if (!a.id) {
             // TASK-COMPLETE-ALVO-NAO-ACHADO (Clayton 11/08, Mayra 11/08): sair daqui sem
             // failMessage joga o caller no genérico "me manda de novo" (engine.js:11054) — que
             // é beco quando a tarefa é de outra pessoa, porque este handler casa só por
@@ -4847,7 +4906,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             continue;
           }
         }
-        const t = await resolveTaskByShortId(collaborator.id, a.id);
+        // LIDER-FECHA-TAREFA-DE-OUTRO (decisão Alf 11/09): tarefa que não é de quem fala pode ser
+        // fechada por quem lidera, dentro do alcance do cargo (resolveTaskParaLider).
+        let t = await resolveTaskByShortId(collaborator.id, a.id);
+        if (!t) t = await resolveTaskParaLider(collaborator, a.id);
         if (!t) {
           console.warn(`[Task] complete REJECTED id=${a.id} (not owned by ${last4} or not found)`);
           failCount++;
@@ -4918,9 +4980,13 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
               completed_by: collaborator.id,
             })
             .eq('id', t.id)
-            .eq('assigned_to', collaborator.id)
+            .eq('assigned_to', t._comoLider ? t.assigned_to : collaborator.id)
             .select('id');
           error = rP.error;
+          if (!error && t._comoLider) {
+            console.log(`[Task] complete COMO LÍDER id=${String(t.id).slice(0, 8)} (dono ${String(t.assigned_to).slice(0, 8)}) by ${last4}`);
+            await avisarDonoFechadaPeloLider(t, collaborator);
+          }
           // Balde A (audit 19/06): anti-"concluí mentiroso". 0 linhas afetadas (id não bate,
           // assigned_to divergente, drift de collaborator.id) NÃO é sucesso — antes o engine
           // dizia "concluí!" com a tarefa ainda pending (caso Fabi). Reporta honesto.
@@ -10882,10 +10948,20 @@ async function processMessage(phone, text, raw = {}) {
         // DIRETO, sem LLM (robusto sob fallback). Retorna cedo → NÃO toca hasConcrete
         // → RECUR-TEMPLATE-DUP intacto. resolveTaskByShortId escopa por colaborador.
         const { executeBatchComplete } = require('./utils/batch-complete');
+        // LIDER-FECHA-TAREFA-DE-OUTRO (decisão Alf 11/09): o lote aceita tarefa no alcance do líder.
+        const _fechadasComoLider = [];
+        const _resolverLider = async (cid, sid) => {
+          const propria = await resolveTaskByShortId(cid, sid);
+          if (propria) return propria;
+          const doTime = await resolveTaskParaLider(collab, sid);
+          if (doTime) _fechadasComoLider.push(doTime);
+          return doTime;
+        };
         const { okCount, okTitles, total } = await executeBatchComplete({
-          supabase, resolveTaskByShortId, collaboratorId: collab.id,
+          supabase, resolveTaskByShortId: _resolverLider, collaboratorId: collab.id,
           ids: target.payload.batch_complete, now: new Date().toISOString(),
         });
+        for (const _tl of _fechadasComoLider) await avisarDonoFechadaPeloLider(_tl, collab);
         // CONFIRM-EXEC-SEM-LOG (Jhonatan 02/09): as 6 fecharam as 19:42:59 e marker_logs nao
         // registrou NADA — a ultima palavra sobre TASK_UPDATE ficou sendo o 'rejected all_failed:6'
         // das tentativas do LLM, e o auditor classificou acao boa como confabulacao. 2 achados
@@ -15190,9 +15266,18 @@ Output AGORA, apenas o marker:`;
                 const { resolveTitlesToBatchComplete } = require('./utils/complete-titles-resolve');
                 const { resolveTaskTarget } = require('./lib/task-target');
                 const _qCand = async (title) => {
-                  const { data } = await supabase.from('tasks')
-                    .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at')
-                    .eq('assigned_to', collab.id)
+                  // LIDER-FECHA-TAREFA-DE-OUTRO (decisão Alf 11/09 — 60fbb2e3): líder enxerga as
+                  // tarefas do alcance dele (direção: todas; coordenação/gerência: delegou/cobra).
+                  const { alcanceDoLider, filtroOrDoLider } = require('./lib/lider-fecha-tarefa');
+                  let _qc = supabase.from('tasks')
+                    .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at');
+                  if (alcanceDoLider(collab)) {
+                    const _fl = filtroOrDoLider(collab, { incluiProprias: true });
+                    if (_fl) _qc = _qc.or(_fl);
+                  } else {
+                    _qc = _qc.eq('assigned_to', collab.id);
+                  }
+                  const { data } = await _qc
                     .ilike('title', `%${String(title).slice(0, 60)}%`)
                     .not('status', 'in', '("done","cancelled")')
                     .order('due_date', { ascending: true, nullsFirst: false })
@@ -17238,3 +17323,6 @@ module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamS
   parseEventCreateMarker, applyEventActions, parseCheckpointBatchMarker, applyCheckpointBatch,
   parseChecklistActionMarker, applyChecklistAction,
   tryDupBypass, tryShopBypass, extractUnidadeFromText };
+
+// LIDER-FECHA-TAREFA-DE-OUTRO: exposto pro teste de ponta a ponta do resolvedor.
+module.exports.resolveTaskParaLider = resolveTaskParaLider;
