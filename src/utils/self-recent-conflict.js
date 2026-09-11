@@ -16,18 +16,29 @@
 // (iii) rebaixa de sufixo distinto ("— Renan" vs "— Kinho") já feita no detector.
 // A parte 2 (re-emit→reschedule determinístico) fica pra design com TDD depois.
 //
-// @param {{created_by?:string, created_at?:string}} conflict — a tarefa candidata a dup
+// Audit 11/09 (Ana, achado ada0545e): o TRADEOFF acima materializou numa SÉRIE
+// multi-dia. Ela pediu "Semana de provas" de 26/09 a 30/09; o LLM emitiu 5 TASK_CREATE
+// com sufixo de data em "·" (que a rebaixa de sufixo não quebra, ela só split em —/–),
+// score 1.00 nos cinco, e os 4 dias restantes foram comidos em silêncio contra a tarefa
+// de 30/09. Re-emit é o MESMO item emitido duas vezes; prazo diferente = item diferente.
+//
+// @param {{created_by?:string, created_at?:string, due_date?:string}} conflict — a tarefa candidata a dup
 // @param {string} requesterId — id do remetente atual (collaborator.id)
 // @param {number} nowMs — Date.now()
 // @param {number} windowMs — janela de "recente"
-function isSelfRecentConflict(conflict, requesterId, nowMs, windowMs) {
+// @param {string} [candidateDueDate] — due_date do item sendo criado agora
+function isSelfRecentConflict(conflict, requesterId, nowMs, windowMs, candidateDueDate) {
   if (!conflict || !requesterId) return false;
   if (conflict.created_by !== requesterId) return false;   // só re-emit do PRÓPRIO remetente
   if (!conflict.created_at) return false;
   const createdMs = new Date(conflict.created_at).getTime();
   if (!Number.isFinite(createdMs)) return false;
   const age = nowMs - createdMs;
-  return age >= 0 && age <= windowMs;                       // dentro da janela (não futuro)
+  if (age < 0 || age > windowMs) return false;              // dentro da janela (não futuro)
+  if (conflict.due_date && candidateDueDate && conflict.due_date !== candidateDueDate) {
+    return false;                                           // dia diferente → não é re-emit
+  }
+  return true;
 }
 
 // buildSelfRecentSkipReason — monta a string `reason` do marker_logs quando o skip
