@@ -113,3 +113,23 @@ test('silencio intencional (janela fechada, ninguem chamou) segue mudo, mas MARC
   const done = sb._escritas.filter((e) => e.op === 'update' && e.valor && e.valor.tom_done_at);
   assert.ok(done.length >= 1, 'mas o silencio precisa ficar registrado');
 });
+
+// ── FILA-MUDA-NO-GRUPO-DE-OPS (Alf 11/09) ─────────────────────────────────────────────────
+// 07:40 o Alf respondeu a fila no grupo de ops SEM chamar o TOM; o vigia descartou como
+// "silencio intencional" antes de o canal de ops ver a mensagem. A fila prometia "responde aqui".
+const MSG_FILA = { id: 'M1', group_id: 'G1', sender_id: 'C1', kind: 'text', content: '1. aprovo\n2. aprovo\n3. aprovo' };
+test('REGRESSAO: comando da fila no grupo de ops chega no engine com a janela fechada', async () => {
+  const chamadas = [];
+  await processOne(fakeSupabase(), MSG_FILA, { processMessage: async (a) => { chamadas.push(a); }, isOpsChannel: () => true, sendTyping: async () => {} });
+  assert.strictEqual(chamadas.length, 1);
+});
+test('fora do grupo de ops (ou remetente fora da allowlist) o mesmo texto segue o silêncio da janela', async () => {
+  const chamadas = [];
+  await processOne(fakeSupabase(), MSG_FILA, { processMessage: async (a) => { chamadas.push(a); }, isOpsChannel: () => false, sendTyping: async () => {} });
+  assert.strictEqual(chamadas.length, 0);
+});
+test('no grupo de ops, conversa que não é comando continua exigindo o TOM chamado', async () => {
+  const chamadas = [];
+  await processOne(fakeSupabase(), { ...MSG_FILA, content: 'bom dia, pessoal' }, { processMessage: async (a) => { chamadas.push(a); }, isOpsChannel: () => true, sendTyping: async () => {} });
+  assert.strictEqual(chamadas.length, 0);
+});

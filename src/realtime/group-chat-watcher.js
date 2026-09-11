@@ -104,8 +104,16 @@ async function processOne(supabase, msg, deps = {}) {
   // determinístico (sem IA): janela fechada + sem chamado → silêncio real.
   const vocative = isVocativeTom(text);
   const isFarewell = detectDisengageTrigger(text);
-  const tomAwaiting = (engaged || vocative) ? false : await computeTomAwaiting(supabase, msg.group_id);
-  const { shouldRun, clearAfter, opensWindow } = decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting, reacaoSemTexto: isReacaoSemTexto(msg.content) });
+  // FILA-MUDA-NO-GRUPO-DE-OPS (Alf 11/09). 07:40 o Alf respondeu a fila de memórias com
+  // "1. aprovo / 2. aprovo / 3. aprovo", sem chamar o TOM: este gate descartou como silêncio
+  // intencional ANTES de o canal de ops ver a mensagem, e a fila tinha dito "responde aqui".
+  // Comando da fila (lido pelo mesmo parser do engine) no grupo de ops, de quem está na
+  // allowlist, entra sempre. Conversa comum no grupo de ops continua precisando do "TOM".
+  const _isOps = deps.isOpsChannel || require('../services/ops-agent').isOpsChannel;
+  const comandoDeOps = !!(_isOps({ groupId: msg.group_id, senderCollabId })
+    && require('../services/fila-memorias').parseComandoFila(text));
+  const tomAwaiting = (engaged || vocative || comandoDeOps) ? false : await computeTomAwaiting(supabase, msg.group_id);
+  const { shouldRun, clearAfter, opensWindow } = decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting, reacaoSemTexto: isReacaoSemTexto(msg.content), comandoDeOps });
 
   if (!shouldRun) {
     // Marca como TRATADA (silêncio intencional) pra recuperação de órfã NÃO re-disparar.

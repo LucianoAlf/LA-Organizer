@@ -74,6 +74,29 @@ const _VERBO = /^(aprova|aprovar|aprovo|aprovada|aprovadas|descarta|descartar|de
 const _LISTAR = /^(?:(?:lista|mostra|manda|ver|quais)(?: as| a)? )?(?:memorias?|licoes?)(?: pendentes?| na fila| esperando(?: aprovacao| o (?:meu|seu) ok)?)?$|^fila(?: de memorias)?$/;
 const _TODOS_OS_GRUPOS = /\b(?:pra|para|em) todos os grupos\b|\btodos os grupos\b|\btodos grupos\b|\btodo grupo\b|\bqualquer grupo\b|\bem todo lugar\b/g;
 
+// FILA-MUDA-NO-GRUPO-DE-OPS (Alf 11/09). A primeira resposta real à fila foi
+// "1. aprovo / 2. aprovo / 3. aprovo" — número na frente, um por linha — e caiu fora: só
+// "aprova 1 3" era lido. Aqui cada linha tem que ser EXATAMENTE número + verbo; uma linha
+// fora disso devolve null e a mensagem vai pro agente, como qualquer texto ambíguo.
+const _LINHA = /^(\d{1,3})\s*[.):\-–]?\s*(aprova|aprovar|aprovo|aprovada|aprovado|descarta|descartar|descarto|descartada|descartado|rejeita|rejeitar|rejeito)$/;
+function _porLinha(texto) {
+  const linhas = String(texto == null ? '' : texto).split(/\n+/)
+    .map((l) => _norm(l).replace(/[.!?]+$/, '')).filter(Boolean);
+  if (!linhas.length) return null;
+  const aprovar = [];
+  const descartar = [];
+  for (const l of linhas) {
+    const m = l.match(_LINHA);
+    if (!m || Number(m[1]) < 1) return null;
+    (/^aprov/.test(m[2]) ? aprovar : descartar).push(Number(m[1]));
+  }
+  if (aprovar.some((n) => descartar.includes(n))) return null;
+  const ops = [];
+  if (aprovar.length) ops.push({ acao: 'aprovar', numeros: [...new Set(aprovar)], todas: false });
+  if (descartar.length) ops.push({ acao: 'descartar', numeros: [...new Set(descartar)], todas: false });
+  return { tipo: 'decidir', ops, paraTodosOsGrupos: false };
+}
+
 /**
  * Lê o comando do grupo de ops. Devolve null para tudo que não for comando claro — aí a mensagem
  * segue pro agente. Ambíguo também é null: "aprova todas menos a 2" não é adivinhado.
@@ -83,6 +106,8 @@ function parseComandoFila(texto) {
   const t = _norm(texto).replace(/[.!?]+$/, '');
   if (!t) return null;
   if (_LISTAR.test(t)) return { tipo: 'listar' };
+  const _linhas = _porLinha(texto);
+  if (_linhas) return _linhas;
   if (!_VERBO.test(t)) return null;
   if (/\b(menos|exceto|fora a|fora o|tirando)\b/.test(t)) return null;
   const paraTodosOsGrupos = pediuPraTodosOsGrupos(texto);

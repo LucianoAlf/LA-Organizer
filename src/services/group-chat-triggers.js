@@ -66,7 +66,11 @@ function isReacaoSemTexto(text) {
   return !SEM_CONTEUDO_RE.test(String(text || ''));
 }
 
-function decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting, reacaoSemTexto } = {}) {
+function decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting, reacaoSemTexto, comandoDeOps } = {}) {
+  // FILA-MUDA-NO-GRUPO-DE-OPS (Alf 11/09): comando da fila de memórias no grupo de ops é
+  // resposta a uma pergunta do TOM que não termina em "?" nem chama "TOM". Quem decide que é
+  // comando (e de quem pode) é o watcher, em código; aqui ele só não pode morrer na janela.
+  if (comandoDeOps) return { shouldRun: true, clearAfter: false, opensWindow: false };
   if (reacaoSemTexto && !vocative) return { shouldRun: false, clearAfter: false, opensWindow: false };
   if (engaged) return { shouldRun: true, clearAfter: !!isFarewell, opensWindow: false };
   if (vocative) return { shouldRun: true, clearAfter: !!isFarewell, opensWindow: !isFarewell };

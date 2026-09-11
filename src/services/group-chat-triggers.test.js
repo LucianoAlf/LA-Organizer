@@ -165,3 +165,10 @@ test('rajada de três: responde a última e silencia as duas primeiras', () => {
   assert.deepStrictEqual(r.processar.map((m) => m.id), ['c']);
   assert.deepStrictEqual(r.silenciar.map((m) => m.id), ['a', 'b']);
 });
+
+// FILA-MUDA-NO-GRUPO-DE-OPS (Alf 11/09): comando da fila no grupo de ops entra com a janela fechada.
+test('decideGroupReply: comando da fila de memórias no grupo de ops roda sem vocativo e sem janela', () => {
+  assert.deepEqual(decideGroupReply({ engaged: false, vocative: false, isFarewell: false, tomAwaiting: false, comandoDeOps: true }),
+    { shouldRun: true, clearAfter: false, opensWindow: false });
+  assert.strictEqual(decideGroupReply({ engaged: false, vocative: false, isFarewell: false, tomAwaiting: false }).shouldRun, false);
+});

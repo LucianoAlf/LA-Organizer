@@ -209,3 +209,20 @@ test('entrega que falhou não grava log (o próximo tick tenta de novo)', async 
   await assert.rejects(() => enviarFilaDeMemorias(sb, { ymd: '2026-09-11', ownerId: 'alf', postar: async () => null }));
   assert.strictEqual(sb.logs.length, 0);
 });
+
+// ── FILA-MUDA-NO-GRUPO-DE-OPS (Alf 11/09) ─────────────────────────────────────────────────
+// A resposta real do Alf à fila de 11/09, 07:40. Número na frente, um por linha: caiu fora.
+test('Alf 11/09: "1. aprovo / 2. aprovo / 3. aprovo" (número na frente, um por linha)', () => {
+  assert.deepStrictEqual(parseComandoFila('1. aprovo\n2. aprovo\n3. aprovo'),
+    { tipo: 'decidir', ops: [{ acao: 'aprovar', numeros: [1, 2, 3], todas: false }], paraTodosOsGrupos: false });
+});
+test('uma por linha misturando aprovar e descartar, com - ou )', () => {
+  const c = parseComandoFila('1 - Aprovo\n2) descarto\n3 aprovada');
+  assert.deepStrictEqual(c.ops.map((o) => [o.acao, o.numeros]), [['aprovar', [1, 3]], ['descartar', [2]]]);
+});
+test('por linha: qualquer linha fora do formato manda tudo pro agente (null)', () => {
+  assert.strictEqual(parseComandoFila('1. aprovo\nmas a 2 eu queria mudar'), null);
+  assert.strictEqual(parseComandoFila('1. aprovo\n1. descarto'), null, 'mesmo número nas duas ações');
+  assert.strictEqual(parseComandoFila('0. aprovo'), null);
+  assert.strictEqual(parseComandoFila('1. aprovo a do Clayton'), null);
+});
