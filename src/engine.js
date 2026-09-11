@@ -4760,6 +4760,8 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   const failMessages = [];
   // Avisos de sucesso de grupos (cascata) — anexados à resposta no caminho de SUCESSO.
   const groupNotices = [];
+  // FALA-OMITE-CONCLUIDA (Rafinha 03/08 — 1e546ccb): o que o banco FECHOU neste lote, pra fala não esquecer.
+  const _concluidasTit = [];
   // FATIA 6 (#1): horários de lembrete das tarefas CRIADAS neste lote (remind_at one-shot +
   // reminders_at). O caller anexa "🔔 Lembro às HHh" quando a fala do TOM omite a hora.
   const createdReminderTimes = [];
@@ -5121,6 +5123,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           failCount++;
         } else {
           console.log(`[Task] complete ${a.id} by ${last4}`);
+          _concluidasTit.push((fullTask && fullTask.title) || t.title);
           // SERIE-ANTIGAS-UMA-PERGUNTA (decisão do Alf, 11/09 — 8071e4f3, 4ce2d1ec): fechou uma
           // ocorrência de série e há ocorrências ANTIGAS (vencidas antes de hoje) ainda abertas do
           // mesmo dono → pergunta UMA vez "fecho as N antigas?". O "sim" cai no executor
@@ -6871,7 +6874,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       if (okCount === _okB && failCount > _failB) _falharam.push(a);
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -13034,7 +13037,7 @@ Output AGORA, apenas o marker:`;
       // replyText (CANCELA-SERIE-PROMETE-TODOS): a fala do TOM que acompanha o marker — o executor usa
       // pra não cancelar UMA ocorrência quando ela promete "todos"/"fora do sistema".
       const _falaTomTask = (parsedTask && parsedTask.cleanText) || '';
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm, retidos } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm, retidos, concluidas } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -13136,6 +13139,19 @@ Output AGORA, apenas o marker:`;
           // As mensagens próprias (pergunta do A2, data futura, alvo não achado…) só apareciam no
           // ramo all-failed; aqui eram descartadas. É nelas que está o QUE a pessoa precisa fazer.
           if (failMessages && failMessages.length) base = (base ? base + '\n\n' : '') + failMessages.join('\n');
+        }
+        // FALA-OMITE-CONCLUIDA (Rafinha 03/08 — 1e546ccb): "✅ Baixa em 5" listando QUATRO — a Caixa Staner
+        // tinha sido fechada no banco e sumiu da fala. Quem sabe o que fechou é o banco: o que a fala não
+        // nomeia entra como "✅ Também fechei: *X*". Só com 2+ concluídas e sem falha (fala coerente).
+        if (okCount > 0 && failCount === 0 && base && Array.isArray(concluidas) && concluidas.length >= 2) {
+          try {
+            const { faltamNaFala, textoTambemFechei } = require('./lib/fala-nomeia-concluidas');
+            const _faltamFala = faltamNaFala(base, concluidas);
+            if (_faltamFala.length) {
+              base = `${base}\n${textoTambemFechei(_faltamFala)}`;
+              console.log(`[Task] fala omitia ${_faltamFala.length} concluída(s) — completada`);
+            }
+          } catch (e) { console.warn('[Task] fala-nomeia err (non-fatal):', e.message); }
         }
         // CONFAB-WRITE-DATE-NO-RELLABEL (Anne 05/08, alta): o prompt pré-computa o
         // dia-relativo do lado da LEITURA, mas na ESCRITA a data nasce no marker no
