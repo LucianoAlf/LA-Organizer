@@ -24,6 +24,13 @@ function _mentions(text, cardNorm) {
   return toks.length > 0 && toks.every((t) => new RegExp(`\\b${t}\\b`).test(text));
 }
 
+// CARTAO-FATURA-TROCA-E-CITACAO (triagem 11/09 — 1df6f0af). Entre os cartões citados, fica o
+// mais específico: "mercado pago matheus" contém "mercado pago" — os dois casam a fala "Cartão
+// Mercado Pago Matheus", e só um é o que a Rose escolheu (ela escolheu 3x e foi pro outro).
+function _maisEspecificos(named) {
+  return named.filter((c) => !named.some((o) => o !== c && o._n !== c._n && o._n.includes(c._n)));
+}
+
 function pickInvoiceCard({ emissor, userText, cards, cardIdHint } = {}) {
   const list = (cards || []).map((c) => ({ ...c, _n: _norm(c.name) }));
   if (!list.length) return { status: 'notfound', candidates: [] };
@@ -35,9 +42,19 @@ function pickInvoiceCard({ emissor, userText, cards, cardIdHint } = {}) {
   // gravava findCard(emissor)[0] na intent sem desambiguar). Ela corrigiu "é o cartão LATAM
   // PASS", o hint chutado (Itaú Matheus) ganhou e 58 itens foram pro cartão errado. A fala é
   // a intenção real e é a mais recente: manda nela.
-  const ut = _norm(userText);
+  // CARTAO-FATURA-TROCA-E-CITACAO (1df6f0af): a resposta vinha citando a LISTA de cartões do
+  // próprio TOM ("[O usuário está RESPONDENDO…: '• Cartão Inter… • Cartão Mercado Pago…']") e
+  // todos os nomes da citação casavam → "ambíguo". Lê só a fala real. E "MP" é "Mercado Pago"
+  // quando nenhum cartão casa pelo nome como veio (a fixture tem um "Cartão MP Matheus" literal,
+  // que continua casando primeiro).
+  const { stripReplyScaffold } = require('../events/detect-approval-reply');
+  const ut = _norm(stripReplyScaffold(String(userText || '')).userText);
   if (ut) {
-    const named = list.filter((c) => _mentions(ut, c._n));
+    let named = _maisEspecificos(list.filter((c) => _mentions(ut, c._n)));
+    if (!named.length) {
+      const utAlias = ut.replace(/\bmp\b/g, 'mercado pago');
+      if (utAlias !== ut) named = _maisEspecificos(list.filter((c) => _mentions(utAlias, c._n)));
+    }
     if (named.length === 1) return { status: 'resolved', card: named[0], via: 'user' };
     if (named.length > 1) {
       // Fala ambígua ("cartão Itaú" casa 2): o hint desempata SÓ se for um dos citados.
@@ -74,7 +91,7 @@ function pickInvoiceCard({ emissor, userText, cards, cardIdHint } = {}) {
 //
 // cancel e commit_anotacoes MANDAM (nunca viram re-estágio, mesmo nomeando cartão).
 function shouldRestageCard({ decision, pick, currentCardId } = {}) {
-  if (decision && decision !== 'commit_financeiro') return false;
+  if (decision && decision !== 'commit_financeiro' && decision !== 'trocar_cartao') return false;
   if (!pick || pick.status !== 'resolved' || pick.via !== 'user') return false;
   return pick.card.id !== (currentCardId || null);
 }

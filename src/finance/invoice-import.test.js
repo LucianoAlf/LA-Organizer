@@ -240,3 +240,16 @@ test('parseInvoiceBlock com refYear corrige vencimento E datas dos itens (caso R
   assert.equal(est.data, '2026-05-24');
   assert.equal(est.valor, -83.90);                                  // estorno segue crédito negativo
 });
+
+// ── CARTAO-FATURA-TROCA-NAO-E-CANCELA (triagem 11/09 — 1df6f0af) ─────────────────────────
+// As falas REAIS da Rose em 16/07 21:20–21:26 BRT, com a importação aberta no cartão errado.
+test('trocar de cartão não cancela a importação (as falas reais da Rose)', () => {
+  assert.strictEqual(detectInvoiceReply('Tom, é em outro cartao, não é esse, quais vc tem ai salvo?'), 'trocar_cartao');
+  assert.strictEqual(detectInvoiceReply('Tom, já falei várias vezes, não é esse cartão'), 'trocar_cartao');
+  assert.strictEqual(detectInvoiceReply('cartão errado'), 'trocar_cartao');
+});
+test('cancelar explícito e o "não" seco continuam cancelando', () => {
+  assert.strictEqual(detectInvoiceReply('cancela, era do Cartão Nubank'), 'cancel');
+  assert.strictEqual(detectInvoiceReply('não'), 'cancel');
+  assert.strictEqual(detectInvoiceReply('esquece, não é esse'), 'cancel');
+});

@@ -165,12 +165,20 @@ const RE_CORRECTION = /\b(muda|troca|corrig|errad|tira\b|remove|n[ãa]o\s+(é|e|
 // lançar e ver, NÃO lança (espelha o "na dúvida não fecha"). Cai no LLM, que mostra/pergunta.
 const RE_VIEW_REQUEST = /\bo\s+que\s+(falta|faltam|j[áa])\b|\bquais?\s+(falta|faltam)\b|\bme\s+(passa|mostra|manda|envia|diz)\b|\bquero\s+ver\b|\bdeixa\s+ver\b/i;
 
+// CARTAO-FATURA-TROCA-NAO-E-CANCELA (triagem 11/09 — 1df6f0af): "Tom, é em outro cartão, não é
+// esse, quais vc tem aí salvo?" caía no RE_CANCEL (o "não" solto) e a importação MORRIA — a
+// escolha do cartão no turno seguinte não tinha onde se prender ("perdi o fio das 5 compras").
+// Trocar de cartão não é desistir. Cancelar EXPLÍCITO ("cancela, era do Nubank") continua mandando.
+const RE_TROCA_CARTAO = /\boutro\s+cart[aã]o\b|\bcart[aã]o\s+errad[oa]\b|\bn[ãa]o\s+(?:é|e|era|foi)\s+(?:ess[ea]|est[ea]|nesse|neste|n[oa]\s+cart[aã]o|o\s+cart[aã]o)\b/i;
+const RE_CANCEL_EXPLICITO = /\b(cancela|cancelar|esquece)\b|deixa pra l[áa]/i;
+
 function detectInvoiceReply(text) {
   const t = String(text || '').toLowerCase().trim();
   if (!t) return null;
   // Pedido de ver (mostrar o que falta/já-tem) NUNCA commita nem cancela — mesmo começando com
   // "Sim" ou contendo "não" ("o que falta pra NÃO duplicar" não é cancelamento). Cai no LLM.
   if (RE_VIEW_REQUEST.test(t)) return null;
+  if (RE_TROCA_CARTAO.test(t) && !RE_CANCEL_EXPLICITO.test(t)) return 'trocar_cartao'; // 1df6f0af
   if (RE_CANCEL.test(t) && !RE_COMMIT_FIN.test(t)) return 'cancel';
   if (RE_ANOTAR.test(t)) return 'commit_anotacoes';
   // Só commita afirmação curta, no início, sem "?" e sem palavra de correção.

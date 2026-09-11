@@ -160,3 +160,40 @@ test('fala sem cartão e sem decisão → nada a re-estagiar', () => {
   const pick = pickInvoiceCard({ userText: 'blz', cards: ROSE_MP });
   assert.strictEqual(shouldRestageCard({ decision: null, pick, currentCardId: null }), false);
 });
+
+// ── CARTAO-FATURA-TROCA-E-CITACAO (triagem 11/09 — 1df6f0af) ─────────────────────────────
+// Os cartões da Rose como o TOM listou em 16/07 21:20 BRT (produção: "Mercado Pago Matheus",
+// não "MP Matheus" como na fixture de cima).
+const _ROSE_PROD = [
+  { id: 'inter', name: 'Cartão Inter Matheus' },
+  { id: 'itaum', name: 'Cartão Itaú Matheus' },
+  { id: 'itaur', name: 'Cartão Itaú Rose' },
+  { id: 'mp', name: 'Cartão Mercado Pago' },
+  { id: 'mpm', name: 'Cartão Mercado Pago Matheus' },
+  { id: 'nubank', name: 'Cartão Nubank' },
+  { id: 'latam', name: 'Latam PASS' },
+];
+const _CITA_LISTA = '[O usuário está RESPONDENDO a esta mensagem anterior: "Os cartões que tenho cadastrados:\n\n💳 *Cartões:*\n• Cartão Inter Matheus\n• Cartão Itaú Matheus\n• Cartão Itaú Rose\n• Cartão Mercado Pago\n• Cartão Mercado Pago Matheus\n• Cartão Nubank\n• Latam PASS\n\nQual desses é o certo pra essas 5 compras?"]\n* Cartão Mercado Pago Matheus';
+test('1df6f0af: resposta citando a lista resolve o cartão FALADO, não a lista citada', () => {
+  const r = pickInvoiceCard({ userText: _CITA_LISTA, cards: _ROSE_PROD });
+  assert.deepStrictEqual([r.status, r.card && r.card.id], ['resolved', 'mpm']);
+});
+test('1df6f0af: "Cartão Mercado Pago Matheus" vence "Cartão Mercado Pago"; o curto sozinho segue valendo', () => {
+  assert.strictEqual(pickInvoiceCard({ userText: 'é o Cartão Mercado Pago Matheus', cards: _ROSE_PROD }).card.id, 'mpm');
+  assert.strictEqual(pickInvoiceCard({ userText: 'no cartão mercado pago', cards: _ROSE_PROD }).card.id, 'mp');
+});
+test('1df6f0af: "lança no Cartão MP Matheus" com os nomes reais → Mercado Pago Matheus, re-estagia', () => {
+  const pick = pickInvoiceCard({ userText: 'lança no Cartão MP Matheus', cards: _ROSE_PROD, cardIdHint: 'mp' });
+  assert.deepStrictEqual([pick.status, pick.card && pick.card.id, pick.via], ['resolved', 'mpm', 'user']);
+  assert.strictEqual(shouldRestageCard({ decision: 'commit_financeiro', pick, currentCardId: 'mp' }), true);
+});
+test('trocar_cartao nomeando o certo re-estagia; sem nomear, não', () => {
+  const certo = pickInvoiceCard({ userText: 'não é esse, é o Cartão Mercado Pago Matheus', cards: _ROSE_PROD, cardIdHint: 'mp' });
+  assert.strictEqual(shouldRestageCard({ decision: 'trocar_cartao', pick: certo, currentCardId: 'mp' }), true);
+  const semNome = pickInvoiceCard({ userText: 'não é esse cartão', cards: _ROSE_PROD, cardIdHint: 'mp' });
+  assert.strictEqual(shouldRestageCard({ decision: 'trocar_cartao', pick: semNome, currentCardId: 'mp' }), false);
+});
+const _ENG10 = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'engine.js'), 'utf8');
+test('engine: trocar_cartao sem nome mantém a importação aberta e pergunta o cartão certo', () => {
+  assert.match(_ENG10, /if \(_decision === 'trocar_cartao'\) \{[\s\S]{0,900}return; \/\/ intent segue aberta/);
+});

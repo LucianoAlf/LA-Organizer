@@ -10537,6 +10537,16 @@ async function processMessage(phone, text, raw = {}) {
       }
       if (_decision) {
         const _pay = _invIntent.payload;
+        if (_decision === 'trocar_cartao') {
+          // CARTAO-FATURA-TROCA-NAO-E-CANCELA (triagem 11/09 — 1df6f0af): a pessoa disse que o
+          // cartão está errado sem nomear o certo. A importação FICA aberta (nada lançado) e o
+          // TOM pergunta — a resposta com o nome cai no re-estágio acima e manda a prévia nele.
+          const _cardsT = (await financeService.listCards(collab.id)).map((c) => c.name);
+          const _outBT = `Beleza, não lanço no *${_pay.card_name || 'cartão atual'}*. Qual é o cartão certo? Tenho: *${_cardsT.join('*, *')}*. Responde com o nome que eu te mando a prévia nele.`;
+          await whatsapp.sendMessage(phone, _outBT);
+          await logConversation(collab.id, 'outbound', _outBT);
+          return; // intent segue aberta
+        }
         if (_decision === 'cancel') {
           await pendingIntents.resolveIntent(_invIntent.id, 'denied', 'user cancelou');
           const _outB2 = 'Beleza, cancelei — não lancei nada. 👍';
