@@ -5099,6 +5099,35 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             a.id = byTitleCan.id.replace(/-/g, '').slice(0, 8);
             console.log(`[Task] cancel title-lookup: "${a.title}" → id=${a.id}`);
           } else {
+            // CANCELAR-O-QUE-ACABOU-DE-FECHAR (triagem 11/09 — 8500f1dd, e74b37dd): a busca acima só
+            // vê tarefa ABERTA. Pedido de cancelar o que fechou há minutos (mensagem cruzada, ou
+            // "exclui" depois de um "sim" lido como conclusão) caía em "não achei"/"não consegui".
+            const { decidirCancelamentoDeFechada } = require('./lib/cancelamento-repetido');
+            const { data: _recX } = await supabase.from('tasks')
+              .select('id, title, status, updated_at')
+              .eq('assigned_to', collaborator.id)
+              .ilike('title', `%${String(a.title).slice(0, 60)}%`)
+              .in('status', ['done', 'cancelled'])
+              .gte('updated_at', new Date(Date.now() - 15 * 60000).toISOString())
+              .order('updated_at', { ascending: false }).limit(1);
+            const _recT = (_recX && _recX[0]) || null;
+            const _dec = decidirCancelamentoDeFechada(_recT, Date.now());
+            if (_dec === 'ja_cancelada') {
+              console.log(`[Task] cancel idempotente: "${a.title}" já estava cancelada (${String(_recT.id).slice(0, 8)}) by ${last4}`);
+              okCount++;
+              continue;
+            }
+            if (_dec === 'cancelar_concluida') {
+              const { error: _eRc } = await supabase.from('tasks').update({ status: 'cancelled' })
+                .eq('id', _recT.id).eq('assigned_to', collaborator.id);
+              if (!_eRc) {
+                console.log(`[Task] cancel de concluída-agora ${String(_recT.id).slice(0, 8)} by ${last4}`);
+                await logAgentNote(_recT.id, `Cancelada por ${nameForCollab(collaborator)} (tinha sido marcada como concluída minutos antes)`, collaborator.id);
+                okCount++;
+                continue;
+              }
+              console.error('[Task] cancel de concluída-agora err:', _eRc.message);
+            }
             console.warn(`[Task] cancel title-lookup failed: "${a.title}" not found for ${last4}`);
             failCount++;
             continue;
@@ -5108,6 +5137,13 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         if (!tCan) {
           console.warn(`[Task] cancel REJECTED id=${a.id} (not owned by ${last4} or not found)`);
           failCount++;
+          continue;
+        }
+        // CANCELAR-O-QUE-ACABOU-DE-FECHAR (triagem 11/09): cancelar o que já está cancelado é o
+        // estado pedido — ok, sem gravar de novo e sem re-notificar quem criou a tarefa.
+        if (tCan.status === 'cancelled') {
+          console.log(`[Task] cancel idempotente id=${a.id} (já cancelada) by ${last4}`);
+          okCount++;
           continue;
         }
         const { data: fullTaskCan } = await supabase

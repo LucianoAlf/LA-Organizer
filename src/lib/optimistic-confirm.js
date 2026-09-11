@@ -405,7 +405,24 @@ function _restateTokens(s) {
 // o título ("já tá salvo! 16/09 às 12h eu te chamo"), então o overlap dava 0 e o guard negava
 // uma verdade gravada 45s antes. A âncora aqui é o `remind_at` — tão concreta quanto o título,
 // e por isso NÃO reabre o freio: exige dia/mês E hora do lembrete que acabou de ser escrito.
-function _citaLembrete(reply, remindAt) {
+// CHOKEPOINT-NEGA-LEMBRETE-RELATIVO (triagem 11/09 — bf25d692): o TOM fala o lembrete no jeito
+// natural ("amanhã às 10h", "quinta às 9h") e a âncora abaixo só aceitava DD/MM — reafirmação
+// verdadeira de um lembrete gravado segundos antes virava "não consegui registrar". O dia
+// relativo só vale se for O DIA do lembrete (hoje / amanhã / nome do dia até 6 dias à frente),
+// e a HORA continua obrigatória: o freio não abre.
+const _DIAS_SEMANA_RE = ['domingo', 'segunda', 'ter[çc]a', 'quarta', 'quinta', 'sexta', 's[áa]bado'];
+function _citaDiaRelativo(reply, brtLembrete, agoraMs) {
+  const agoraBrt = new Date((Number.isFinite(agoraMs) ? agoraMs : Date.now()) - 3 * 3600 * 1000);
+  const dia = (d) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const delta = Math.round((dia(brtLembrete) - dia(agoraBrt)) / 86400000);
+  const palavra = delta === 0 ? 'hoje'
+    : delta === 1 ? 'amanh[ãa]'
+    : (delta >= 2 && delta <= 6) ? _DIAS_SEMANA_RE[brtLembrete.getUTCDay()]
+    : null;
+  if (!palavra) return false;
+  return new RegExp('(?:^|[^a-zà-ú])' + palavra + '(?![a-zà-ú])', 'i').test(String(reply));
+}
+function _citaLembrete(reply, remindAt, agoraMs) {
   if (!remindAt) return false;
   const d = new Date(remindAt);
   if (Number.isNaN(d.getTime())) return false;
@@ -414,7 +431,7 @@ function _citaLembrete(reply, remindAt) {
   const mes = brt.getUTCMonth() + 1;
   const hora = brt.getUTCHours();
   const min = brt.getUTCMinutes();
-  if (!new RegExp(`\\b0?${dia}\\s*/\\s*0?${mes}\\b`).test(reply)) return false;
+  if (!new RegExp(`\\b0?${dia}\\s*/\\s*0?${mes}\\b`).test(reply) && !_citaDiaRelativo(reply, brt, agoraMs)) return false;
   const hh = `0?${hora}`;
   const re = min === 0
     ? new RegExp(`\\b${hh}\\s*(?:h\\b|hs\\b|horas\\b|:00\\b|h00\\b)`, 'i')
@@ -437,14 +454,14 @@ const REAFIRMA_ANTERIOR_RE =
   /\b(?:j[áa]\s+(?:existe|existia|tinha|estava|havia|era)|(?:que\s+)?(?:criamos|fizemos|voc[êe]\s+criou|eu\s+criei|marcamos)\s+(?:antes|ontem|outro\s+dia)|de\s+antes|sem\s+duplicata|n[ãa]o\s+(?:vai\s+)?duplica)/i;
 // CHOKEPOINT-NEGA-TITULO-CURTO (Duda 09/09 18:54 BRT): reafirmação EXPLÍCITA de algo já feito.
 const JA_FEITO_RE = /\bj[áa]\s+(?:fechei|conclu[íi]|marquei|registrei|anotei|cancelei|reagendei|salvei|dei\s+baixa|t[áa]\s+(?:fechad|conclu[íi]d|registrad|marcad|salv|feit))/i;
-function restatesRecentWrite(reply, itens) {
+function restatesRecentWrite(reply, itens, agoraMs) {
   const lista = Array.isArray(itens) ? itens : [];
   if (!reply || !lista.length) return false;
   const hay = new Set(_restateTokens(reply));
   const anterior = REAFIRMA_ANTERIOR_RE.test(String(reply));
   return lista.some((it) => {
     const item = it && typeof it === 'object' ? it : { title: it, remind_at: null };
-    if (_citaLembrete(reply, item.remind_at)) return true;
+    if (_citaLembrete(reply, item.remind_at, agoraMs)) return true;
     if (!hay.size) return false;
     const toks = _restateTokens(item.title);
     // CHOKEPOINT-NEGA-TITULO-CURTO (Duda 09/09 18:54): título de UMA palavra ("Terapia") nunca

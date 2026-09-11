@@ -789,3 +789,23 @@ _t('restatesRecentWrite: título de 2+ palavras segue a regra antiga (sem mudan�
     'título de 2 palavras citado por 1 continua não casando — o ramo novo é só pra título de 1');
   _assert.strictEqual(restatesRecentWrite('✅ Criei a tarefa de comprar leite.', [{ title: 'Terapia de casal', remind_at: null }]), false);
 });
+
+// ── CHOKEPOINT-NEGA-LEMBRETE-RELATIVO (triagem 11/09 — bf25d692) ─────────────────────────
+// Alf 06/07: lembrete gravado e o TOM reafirmou no jeito natural ("amanhã às 10h") — a âncora
+// só aceitava DD/MM e a verdade virou "não consegui registrar".
+const _REL_AGORA = Date.parse('2026-07-06T22:37:00Z');           // seg 06/07 19:37 BRT
+const _REL_ITEM = { title: 'Iluminação Sonoramente', remind_at: '2026-07-07T13:00:00Z' }; // ter 07/07 10:00 BRT
+test('lembrete relativo: "amanhã às 10h" reafirma o lembrete de amanhã 10h', () => {
+  assert.strictEqual(restatesRecentWrite('Fechado — lembrete pra amanhã às 10h ✅', [_REL_ITEM], _REL_AGORA), true);
+  assert.strictEqual(restatesRecentWrite('Fechado — lembrete pra amanha 10h', [_REL_ITEM], _REL_AGORA), true);
+});
+test('lembrete relativo: dia errado ou hora errada NÃO reafirma (o freio não abre)', () => {
+  assert.strictEqual(restatesRecentWrite('Fechado — lembrete pra hoje às 10h', [_REL_ITEM], _REL_AGORA), false);
+  assert.strictEqual(restatesRecentWrite('Fechado — lembrete pra amanhã às 11h', [_REL_ITEM], _REL_AGORA), false);
+  assert.strictEqual(restatesRecentWrite('Fechado — lembrete pra terça às 10h', [_REL_ITEM], _REL_AGORA), false, 'terça é amanhã: nome do dia só a partir de 2 dias');
+});
+test('lembrete relativo: nome do dia até 6 dias à frente, com a hora', () => {
+  const quinta = { title: 'x', remind_at: '2026-07-09T12:00:00Z' }; // qui 09/07 09:00 BRT
+  assert.strictEqual(restatesRecentWrite('Anotado, te lembro quinta às 9h', [quinta], _REL_AGORA), true);
+  assert.strictEqual(restatesRecentWrite('Anotado, te lembro sexta às 9h', [quinta], _REL_AGORA), false);
+});
