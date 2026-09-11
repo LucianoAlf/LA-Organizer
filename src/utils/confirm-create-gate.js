@@ -41,6 +41,9 @@ const PROPOE_CRIACAO = new RegExp([
   '\\bevento\\w*', '\\bagend(?:a|o|ar)\\b', '\\breuni[ãa]o\\w*', '\\bviagem\\b',
   'plano\\s+da\\s+semana', '\\btarefa\\w*', '\\bcri(?:o|ar|ando)\\b',
   '\\banot(?:o|ar)\\b', '\\bregistr(?:o|ar)\\b',
+  // CONFIRM-CREATE-DAQUI-X-MIN (triagem 11/09 — Rafinha 24/08 14:56): "Entendi: *Buscar
+  // calendários na Borges* — daqui 30 min (15h23). Certo?" é lembrete sem a palavra lembrete.
+  '\\bdaqui\\s+(?:a\\s+)?\\d+\\s*(?:min\\w*|h\\b|horas?\\b)',
 ].join('|'), 'iu');
 
 /**

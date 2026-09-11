@@ -89,3 +89,13 @@ test('CONTROLE: negacao desqualifica', () => {
 test('CONTROLE: nome em minuscula nao vira destinatario', () => {
   assert.strictEqual(parseCoordinationConfirmQuestion('Mando pro alf: "texto". Confirma?'), null);
 });
+
+// COORD-PARSE-MANDE-DE-VOLTA (triagem 11/09 — CONFIRM_NOEXEC Rafinha 04/09 17:09 BRT): o TOM
+// perguntou "quer que eu mande de volta pro Dudu: *"…"*" e o "Isso aí tom" não despachou.
+const _cpA = require('node:assert');
+require('node:test').test('"mande de volta pro Dudu" com texto entre aspas vira recado estruturado', () => {
+  const q = 'Entendi — quer que eu mande de volta pro Dudu: *"Dudu, instala a corda de guitarra aí."*\n\nMando a devolutiva pra ele? Confirma?';
+  _cpA.deepStrictEqual(parseCoordinationConfirmQuestion(q), { recipient_name: 'Dudu', message_body: 'Dudu, instala a corda de guitarra aí.' });
+  _cpA.deepStrictEqual(parseCoordinationConfirmQuestion('Envie pra Fefê: "reunião mudou pra 15h". Confirma?'), { recipient_name: 'Fefê', message_body: 'reunião mudou pra 15h' });
+  _cpA.strictEqual(parseCoordinationConfirmQuestion('quer que eu mande de volta pro Dudu? Confirma?'), null, 'sem texto entre aspas continua fail-closed');
+});

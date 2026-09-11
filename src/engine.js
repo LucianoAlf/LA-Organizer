@@ -10987,8 +10987,11 @@ async function processMessage(phone, text, raw = {}) {
             // O que o gate libera vai num tipo próprio — os dois somados reproduzem a série
             // antiga, então dá pra ver a migração de um balde pro outro em vez de um sumiço.
             await logMarker(collab.id,
-              _liberaCredencial ? 'CONFIRM_CREDENCIAL_ALLOWED' : (_liberaCriacao ? 'CONFIRM_CREATE_ALLOWED' : 'CONFIRM_NOEXEC'),
-              (_liberaCredencial || _liberaCriacao) ? 'redirected' : 'skipped',
+              // RECADO no velocímetro (triagem 11/09): o recado liberado pelo gate era gravado como
+              // CONFIRM_NOEXEC — o contador de "confirmação sem executor" inflava com turnos que
+              // despachavam. Tipo próprio; a soma dos quatro reproduz a série antiga.
+              _liberaCredencial ? 'CONFIRM_CREDENCIAL_ALLOWED' : (_liberaCriacao ? 'CONFIRM_CREATE_ALLOWED' : (_liberaRecado ? 'CONFIRM_RECADO_ALLOWED' : 'CONFIRM_NOEXEC')),
+              (_liberaCredencial || _liberaCriacao || _liberaRecado) ? 'redirected' : 'skipped',
               `kind=${target.kind}`,
               // A pergunta do TOM vai pro raw_excerpt de marker_logs, que o relatorio das 7h
               // transmite por WhatsApp aos diretores. Numa proposta de credencial ela carrega

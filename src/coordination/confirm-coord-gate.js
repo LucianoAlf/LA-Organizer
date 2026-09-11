@@ -66,6 +66,10 @@ function podeLiberarRecado(perguntaDoTom) {
   if (!t) return false;
   const alvo = ultimaPergunta(t);
   if (ACAO_SOBRE_EXISTENTE.test(alvo)) return false;  // veta primeiro (fail-closed)
+  // RECADO-GATE-NAO-E-FECHAMENTO (triagem 11/09 — Kailane 12/08 19:21): o fechamento do dia
+  // lista TAREFAS ("*Mandar mensagem para Vanessa Cunha — …* — fez?") e o gate lia o título da
+  // tarefa como proposta de recado pra uma mãe de aluno. Pergunta "fez?" é sobre item existente.
+  if (/\bfez\s*\?|\bquais\s+fez\b|fechamento\s+do\s+dia/iu.test(t)) return false;
   return PROPOE_RECADO.test(alvo);
 }
 

@@ -67,3 +67,11 @@ test('defensivo: não-string → false', () => {
     assert.strictEqual(podeLiberarCriacao(v), false);
   }
 });
+
+// CONFIRM-CREATE-DAQUI-X-MIN (triagem 11/09 — CONFIRM_NOEXEC Rafinha 24/08 14:56 BRT): o TOM
+// propôs o lembrete em tempo relativo, sem a palavra "lembrete", e o "Isso" não executou.
+test('lembrete em tempo relativo ("daqui 30 min") é proposta de criação', () => {
+  assert.strictEqual(podeLiberarCriacao('Entendi: *Buscar calendários na Borges* — daqui 30 min (15h23). Certo?'), true);
+  assert.strictEqual(podeLiberarCriacao('Fechado: ligar pro fornecedor daqui a 2 horas. Pode ser?'), true);
+  assert.strictEqual(podeLiberarCriacao('Reagendo *Buscar calendários* pra daqui 30 min? Certo?'), false, 'o veto de item existente continua');
+});

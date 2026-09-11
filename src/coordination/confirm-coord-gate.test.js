@@ -85,3 +85,17 @@ test('FAIL-CLOSED: só a tag, sem proposta anterior, não libera', () => {
   assert.strictEqual(podeLiberarRecado('Certo?'), false);
   assert.strictEqual(podeLiberarRecado('Tudo certo por aí? Confirma?'), false);
 });
+
+// RECADO-GATE-NAO-E-FECHAMENTO (triagem 11/09 — CONFIRM_NOEXEC Kailane 12/08 19:21 BRT): o
+// fechamento do dia lista TAREFAS ("Mandar mensagem para Vanessa Cunha — fez?"); o gate lia o
+// título da tarefa como proposta de recado pra uma mãe de aluno.
+const _rgA = require('node:assert');
+require('node:test').test('lista do fechamento do dia nunca libera recado', () => {
+  const q = 'Fechamento do dia, Kailane 👽\n\nDas suas tarefas de hoje:\n1. 🔴 *Mandar mensagem para Vanessa Cunha — matricular a filha Julia* — fez?\n\nMe diz quais fez. Pode ser: "1", "fiz tudo" ou "não fiz".';
+  _rgA.strictEqual(podeLiberarRecado(q), false);
+  _rgA.strictEqual(podeLiberarRecado('Mando um agradecimento pro Rafinha? Confirma?'), true, 'proposta de recado de verdade segue liberando');
+});
+const _ENG5 = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'engine.js'), 'utf8');
+require('node:test').test('velocímetro: recado liberado tem contagem própria (não infla o CONFIRM_NOEXEC)', () => {
+  _rgA.match(_ENG5, /_liberaRecado \? 'CONFIRM_RECADO_ALLOWED' : 'CONFIRM_NOEXEC'/);
+});

@@ -19,7 +19,7 @@
 // LLM -- e ele respondeu 'Nao consegui processar aqui, me manda de novo' UM SEGUNDO depois de
 // a intent ser resolvida como confirmed. O fail-closed do texto entre aspas NAO muda: recado
 // errado pra pessoa real segue sendo pior que o drop.
-const AVISO_RE = /(?:^|[^\p{L}])(?:[Aa]viso\s+(?:os?|as?)|(?:[Mm]ando|[Ee]ncaminho|[Ee]nvio)\s+(?:pro|pra|para)(?:\s+(?:o|a))?)\s+([A-ZÀ-Ú][\p{L}._'-]*(?:\s+[A-ZÀ-Ú][\p{L}._'-]*)?)/u;
+const AVISO_RE = /(?:^|[^\p{L}])(?:[Aa]viso\s+(?:os?|as?)|(?:[Mm]ando|[Mm]ande|[Ee]ncaminho|[Ee]nvio|[Ee]nvie)(?:\s+de\s+volta)?\s+(?:pro|pra|para)(?:\s+(?:o|a))?)\s+([A-ZÀ-Ú][\p{L}._'-]*(?:\s+[A-ZÀ-Ú][\p{L}._'-]*)?)/u;
 // Negação: "não aviso" / "nem aviso" desqualifica a fala inteira.
 const NEG_RE = /\bn[\u00e3a]o\s+(?:aviso|mando|encaminho|envio)\b|\bnem\s+(?:aviso|mando)\b/i;
 // Bloco de mensagem: entre aspas retas ou tipográficas, ao menos 1 caractere.
