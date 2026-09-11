@@ -14517,6 +14517,10 @@ Output AGORA, apenas o marker:`;
           if (result.ok) okCount++;
           else { failCount++; failedRecipients.push(`${item.recipient_name} (${result.reason})`); failedResults.push(result); }
           if (result.ok && result.kind) _extrasD.push(result.replyText);
+          // RECADO-DIRETO-DEDUP-DIZIA-MANDANDO (E2E 11/09): no despacho pré-confirmado o dedup volta ok:true
+          // e a fala do LLM ("📨 Mandando.") ia pro usuário sobre recado que NÃO saiu. Mesma honestidade do
+          // caminho do "sim" (_jaIa): diz que já tinha ido e não mandou de novo.
+          else if (result.ok && result.reason === 'dedup_recent_relay') _extrasD.push(`📨 Esse recado já tinha ido pra *${item.recipient_name}* agora há pouco — não mandei de novo pra não duplicar.`);
         }
         if (okCount > 0) coordRequestHandledThisTurn = true;
         reply = parsedCoord.cleanText || reply;

@@ -41,10 +41,18 @@ const PROPOE_RECADO = new RegExp([
 // não afrouxa. Tag sozinha (sem proposta antes) continua sem liberar.
 const TAG_CONFIRMACAO = /^(?:confirma\w*|certo|t[áa]\s+certo|correto|pode\s+ser)\b[^?]*\?$/iu;
 
+// RASCUNHO-ENTRE-ASPAS (Rafinha 29/08 — KI CONFIRM-REASK-SUPERSEDE). A proposta vinha como
+//   "Mando pro Alf assim?\n\n_"Rafinha precisa de aprovação pra comprar 3 abafadores… Pode?"_\n\nConfirma?"
+// e a "última pergunta" virava o "Pode?" de DENTRO do rascunho — que é conteúdo do recado, não a
+// pergunta do TOM. O gate não liberava, o "Confirma" caía em "não consegui processar" e o recado era
+// re-estagiado duas vezes ("Aviso o Luciano? Confirma?" em 60 s). Rascunho entre aspas (≥ 12 chars)
+// sai antes de achar a pergunta — e sai do veto também: é texto do recado, não ação do TOM.
+const RASCUNHO_RE = /_?["“][^"”]{12,}["”]_?/g;
+
 function ultimaPergunta(texto) {
   // Corta em fim de FRASE (. ! ?), não só em "?": o preâmbulo do gate termina em ponto, e sem
   // isso o texto inteiro contaria como "a pergunta" — que era justamente o bug.
-  const frases = String(texto).split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const frases = String(texto).replace(RASCUNHO_RE, ' ').split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
   const limpa = (s) => s.replace(/[*_"“”]/g, '').replace(/\s+/g, ' ').trim();
   for (let i = frases.length - 1; i >= 0; i--) {
     if (frases[i].endsWith('?') && !TAG_CONFIRMACAO.test(limpa(frases[i]))) return frases[i];
