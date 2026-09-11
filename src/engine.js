@@ -5346,12 +5346,21 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           continue;
         }
         const { data: fullTaskCan } = await supabase
-          .from('tasks').select('id, title, created_by, assigned_to, recurrence_rule, recurrence_parent_id')
+          .from('tasks').select('id, title, created_by, assigned_to, recurrence_rule, recurrence_parent_id, due_date')
           .eq('id', tCan.id).maybeSingle();
         // Balde A (audit 19/06): encerrar a SÉRIE quando o user diz "para de me lembrar /
         // encerra isso / não preciso mais" (a skill emite scope:"series"). Fecha o molde +
         // cancela instâncias FUTURAS pendentes — comportamento normal a pedido do usuário
         // (NÃO é limpeza de backlog/Balde B). Sem scope = cancela só esta tarefa (default).
+        // CANCELA-SERIE-PROMETE-TODOS (Anne 24/07 — d59121d6): o alcance sai do que FOI DITO (pedido
+        // ou a própria fala do TOM), não só do scope que o LLM lembrou de mandar. "Tiro todos" →
+        // rotina inteira; "só hoje" → a ocorrência; sem sinal → a ocorrência + aviso de que continua.
+        const _ehSerieCan = !!(fullTaskCan && (fullTaskCan.recurrence_rule != null || fullTaskCan.recurrence_parent_id));
+        const { decidirEscopoCancelamento, avisoSoOcorrencia } = require('./lib/escopo-cancelamento');
+        const _escCan = decidirEscopoCancelamento({ pedido: opts && opts.inboundText, resposta: opts && opts.replyText, ehSerie: _ehSerieCan, scopeLLM: a.scope });
+        if (_escCan.escopo === 'series') a.scope = 'series';
+        if (_escCan.motivo === 'padrao') groupNotices.push(avisoSoOcorrencia(fullTaskCan && fullTaskCan.title, fullTaskCan && fullTaskCan.due_date));
+        if (_ehSerieCan) console.log(`[Task] cancel escopo=${_escCan.escopo} motivo=${_escCan.motivo} id=${a.id}`);
         if (a.scope === 'series' && fullTaskCan) {
           const templateId = fullTaskCan.recurrence_rule != null
             ? fullTaskCan.id
@@ -12788,7 +12797,8 @@ Output AGORA, apenas o marker:`;
         // o bug que este staging conserta (foi o que o kind fora do VALID_KINDS quase causou,
         // 16/07). Degradar = comportamento ANTIGO (executa na hora), não sumiço.
         console.error('[StagedReschedule] err — executando direto (fail-safe):', e.message);
-        const { okCount, failCount } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
+        const _falaTomTaskFs = (parsedTask && parsedTask.cleanText) || '';
+        const { okCount, failCount } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTaskFs });
         await logMarker(collab.id, 'TASK_UPDATE', okCount > 0 ? 'executed' : 'rejected',
           `stage_failed_fallback ok=${okCount} fail=${failCount}`, null);
         reply = parsedTask.cleanText || reply;
@@ -12856,7 +12866,10 @@ Output AGORA, apenas o marker:`;
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm, retidos } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
+      // replyText (CANCELA-SERIE-PROMETE-TODOS): a fala do TOM que acompanha o marker — o executor usa
+      // pra não cancelar UMA ocorrência quando ela promete "todos"/"fora do sistema".
+      const _falaTomTask = (parsedTask && parsedTask.cleanText) || '';
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm, retidos } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
