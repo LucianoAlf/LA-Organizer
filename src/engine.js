@@ -14338,6 +14338,22 @@ Output AGORA, apenas o marker:`;
           ? '⚠️ Registrei o que deu, mas um item veio embolado e não entrou. Me manda de novo só esse?'
           : `⚠️ Registrei o que deu, mas ${finParsed.malformed} itens vieram embolados e não entraram. Me manda de novo só esses?`);
       }
+      // CONSULTA-REPETE-PAINEL (triagem 11/09 — 07591221, 724688d2, 72f7e752): Rose 11/08 recebeu o
+      // MESMO painel da fatura 3x seguidas respondendo a perguntas diferentes. Turno só de CONSULTA:
+      // painel idêntico a um enviado nos últimos 10 min não sai de novo (lib em finance/).
+      const _FIN_READ = new Set(['query_invoice', 'query_summary', 'query_budget', 'query_goal', 'query_accounts',
+        'query_fixed_bills', 'query_bills_to_pay', 'query_checkup', 'query_month_analysis', 'pluggy_query', 'simulate_interest']);
+      if (finReplies.length && finParsed.actions.every((a) => _FIN_READ.has(a.action))) {
+        try {
+          const { montarRespostaDeConsulta } = require('./finance/resposta-consulta');
+          const { data: _recentes } = await supabase.from('conversation_history')
+            .select('content').eq('collaborator_id', collab.id).eq('direction', 'outbound')
+            .gte('created_at', new Date(Date.now() - 10 * 60000).toISOString()).limit(20);
+          const _rc = montarRespostaDeConsulta({ textoDoTom: finParsed.cleanText, paineis: finReplies, recentes: (_recentes || []).map((x) => x.content) });
+          if (_rc.repetidos) console.log(`[Finance] consulta repetida (${_rc.repetidos}) — painel não reenviado`);
+          finReplies.splice(0, finReplies.length, _rc.texto);
+        } catch (eRc) { console.warn('[Finance] resposta de consulta err:', eRc.message); }
+      }
       reply = finReplies.length ? finReplies.join('\n\n') : (finParsed.cleanText || reply);
       }
       }
