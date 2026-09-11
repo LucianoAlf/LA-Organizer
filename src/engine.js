@@ -10980,6 +10980,45 @@ async function processMessage(phone, text, raw = {}) {
           return;
         }
       }
+      // FALTA-LANCAR-DA-FATURA (Rose 14/07 — 9151a290): "discrimina pra mim o que falta lançar" / "ver o
+      // que já tem pra não duplicar" com a fatura AGUARDANDO. O LLM respondia com o resumo do cartão; a
+      // comparação só existia dentro do commit. Mostra o que já veio de fatura (o lançar pula), o que
+      // parece lançado à mão (o lançar NÃO pula — avisa) e o que falta. A fatura segue aberta.
+      const { pedeOQueFalta, faltaLancar, textoFaltaLancar } = require('./finance/falta-lancar');
+      if (!_decision && pedeOQueFalta(text)) {
+        const _payF = _invIntent.payload;
+        let _outF;
+        if (!_payF.card_id) {
+          _outF = 'Pra conferir o que já está lançado eu preciso saber o cartão — é qual? (ex.: "é o Latam Pass")';
+        } else {
+          const _compF = (_payF.vencimento && /^\d{4}-\d{2}/.test(_payF.vencimento)) ? _payF.vencimento.slice(0, 7) + '-01' : '';
+          const _keysF = statementParse.buildImportKeys(_payF.itens, { cardId: _payF.card_id, competencia: _compF });
+          const _existF = new Set();
+          let _manualF = [];
+          try {
+            const _ksF = _keysF.filter(Boolean);
+            if (_ksF.length) {
+              const { data: _exF } = await supabase.from('pf_transactions').select('import_key').eq('collaborator_id', collab.id).in('import_key', _ksF);
+              (_exF || []).forEach((r) => _existF.add(r.import_key));
+            }
+            const _datasF = (_payF.itens || []).map((it) => String(it.data || '').slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+            if (_datasF.length) {
+              const _ini = new Date(Date.parse(`${_datasF[0]}T12:00:00Z`) - 3 * 86400e3).toISOString().slice(0, 10);
+              const _fim = new Date(Date.parse(`${_datasF[_datasF.length - 1]}T12:00:00Z`) + 3 * 86400e3).toISOString().slice(0, 10);
+              const { data: _mF } = await supabase.from('pf_transactions').select('amount, transaction_date, import_key')
+                .eq('collaborator_id', collab.id).eq('card_id', _payF.card_id).gte('transaction_date', _ini).lte('transaction_date', _fim).limit(1000);
+              _manualF = _mF || [];
+            }
+          } catch (e) { console.warn('[Fatura] falta-lançar lookup err:', e.message); }
+          const _rF = faltaLancar(_payF.itens, _keysF, _existF, _manualF);
+          _outF = textoFaltaLancar(_rF, _payF.card_name || _payF.emissor);
+          console.log(`[Fatura] falta-lançar: total=${_rF.total} fatura=${_rF.pelaFatura} mao=${_rF.porValor.length} faltam=${_rF.faltam.length}`);
+        }
+        await whatsapp.sendMessage(phone, _outF);
+        await logConversation(collab.id, 'outbound', _outF);
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (invoice_falta_lancar)`);
+        return; // intent segue aberta
+      }
       if (_decision) {
         const _pay = _invIntent.payload;
         if (_decision === 'trocar_cartao') {
