@@ -123,10 +123,18 @@ async function materializeSeries(table, template) {
 
   const toInsert = [];
   let skipped = 0;
+  // FIM-DE-SEMANA-EMPURRA-SEGUNDA (decisão do Alf, 11/09 — aaf37e2b): tarefa de regra MENSAL cuja
+  // ocorrência cai em sábado/domingo nasce na segunda. O dedup aceita a data ORIGINAL ou a
+  // EMPURRADA — senão a ocorrência que já estava gravada no domingo ganharia uma gêmea na segunda.
+  const { empurraFimDeSemana, ehRegraMensal } = require('../lib/fim-de-semana');
+  const _empurra = table === 'tasks' && ehRegraMensal(template.recurrence_rule);
   for (const occ of occurrences) {
     const dayKey = occ.toISOString().slice(0, 10);
-    if (existingDays.has(dayKey)) { skipped++; continue; }
-    toInsert.push(_cloneTemplate(table, template, occ));
+    const diaFinal = _empurra ? empurraFimDeSemana(dayKey) : dayKey;
+    if (existingDays.has(dayKey) || existingDays.has(diaFinal)) { skipped++; continue; }
+    existingDays.add(diaFinal);
+    const occFinal = diaFinal === dayKey ? occ : new Date(diaFinal + 'T12:00:00-03:00');
+    toInsert.push(_cloneTemplate(table, template, occFinal));
   }
 
   if (toInsert.length === 0) return { created: 0, skipped };
@@ -264,6 +272,7 @@ async function _materializeGroupChildren(motherTemplate, motherInstances) {
     (existingKids || []).map((k) => [`${k.recurrence_parent_id}:${k.parent_task_id}`, k])
   );
 
+  const _pacoteMensal = require('../lib/fim-de-semana').ehRegraMensal(motherTemplate.recurrence_rule);
   for (const mother of motherInstances) {
     for (const childTpl of childTemplates) {
       const existingKid = existingByKey.get(`${childTpl.id}:${mother.id}`);
@@ -274,7 +283,7 @@ async function _materializeGroupChildren(motherTemplate, motherInstances) {
         );
         continue;
       }
-      const row = buildGroupChildRow(childTpl, mother);
+      const row = buildGroupChildRow(childTpl, mother, { empurrarFimDeSemana: _pacoteMensal });
       const { data: insertedKid, error: insErr } = await supabase
         .from('tasks')
         .insert(row)
@@ -297,8 +306,11 @@ async function _materializeGroupChildren(motherTemplate, motherInstances) {
  * Row da filha-instância (PURA — testável). Usa _cloneTemplate com a data do ciclo
  * e corrige os ponteiros: parent → mãe-instância (não a mãe-template).
  */
-function buildGroupChildRow(childTemplate, motherInstance) {
-  const childDueYmd = childDueDateForCycle(String(childTemplate.due_date), String(motherInstance.due_date));
+function buildGroupChildRow(childTemplate, motherInstance, opts = {}) {
+  const _diaCiclo = childDueDateForCycle(String(childTemplate.due_date), String(motherInstance.due_date));
+  // FIM-DE-SEMANA-EMPURRA-SEGUNDA (decisão do Alf, 11/09 — aaf37e2b): filha de pacote MENSAL
+  // cujo dia cai em sábado/domingo vai pra segunda (idempotência das filhas é por molde:mãe).
+  const childDueYmd = opts.empurrarFimDeSemana ? require('../lib/fim-de-semana').empurraFimDeSemana(_diaCiclo) : _diaCiclo;
   const occ = new Date(childDueYmd + 'T12:00:00-03:00');
   const row = _cloneTemplate('tasks', childTemplate, occ);
   row.parent_task_id = motherInstance.id;        // filha pendura na mãe-INSTÂNCIA
