@@ -8972,6 +8972,22 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       // delete_bill, action_invalida → o engine rejeitava e o LLM narrava "removendo agora" SEM remover).
       const cands = await financeService.findBills(cid, params.bill_name || params.name || '');
       if (cands.length === 0) return 'Não achei conta fixa com esse nome pra excluir. 🤔';
+      // CONTA-DUPLICADA-DEIXA-UMA (Matheus 08/09 — 8c38ae2f): "é um só, deixa um só" depois do aviso de
+      // duplicidade. Entre CÓPIAS (mesmo nome/valor/dia) fica a mais antiga; "qual delas?" entre duas
+      // iguais não tem resposta. Com uma só achada NUNCA apaga — "deixa um só" repetido não pode
+      // levar a original junto.
+      const _dupPedida = params.duplicate === true || params.duplicata === true || params.keep_one === true;
+      if (_dupPedida && cands.length === 1) return `Só tem uma *${cands[0].name}* cadastrada — não tem duplicada pra tirar. 👍`;
+      if (_dupPedida && cands.length > 1) {
+        const { escolherDuplicatas } = require('./finance/bill-duplicata');
+        const _dup = escolherDuplicatas(cands);
+        if (_dup) {
+          for (const b of _dup.remover) await financeService.deactivateBill(cid, b.id);
+          outcome.persisted = true;
+          const _qtd = _dup.remover.length === 1 ? 'a duplicada' : `as ${_dup.remover.length} cópias`;
+          return `🗑️ Tirei ${_qtd} — ficou uma só: *${_dup.manter.name}* (${financeFmt.money(Number(_dup.manter.amount))}${_dup.manter.due_day ? `, dia ${_dup.manter.due_day}` : ''}).`;
+        }
+      }
       if (cands.length > 1) return 'Achei mais de uma: ' + cands.map((c, i) => `${i + 1}) ${c.name}`).join(', ') + '. Qual delas?';
       const bill = cands[0];
       await financeService.deactivateBill(cid, bill.id);

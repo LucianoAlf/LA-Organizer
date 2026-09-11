@@ -320,7 +320,7 @@ function isUniqueViolation(error) {
 }
 async function findBills(collaboratorId, billName) {
   const { data, error } = await supabase.from('pf_bills')
-    .select('id, name, amount, category, type, recurrence')
+    .select('id, name, amount, category, type, recurrence, due_day, created_at')
     .eq('collaborator_id', collaboratorId).eq('is_active', true)
     .ilike('name', `%${billName}%`);
   if (error) throw error;
