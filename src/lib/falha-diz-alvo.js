@@ -53,6 +53,13 @@ function falaDoQueTentou(actions) {
   const mostra = titulos.slice(0, MAX_TITULOS).map((t) => `*${t}*`).join(', ');
   const resto = titulos.length > MAX_TITULOS ? ` +${titulos.length - MAX_TITULOS}` : '';
 
+  // CANCELAR-O-QUE-NAO-EXISTE (Leo 08/07 — c8dbae5b): "Pode cancelar todos os pedidos para falar com
+  // qualquer pessoa" — o LLM mandou cancelar "pendências de retorno" que NÃO existiam (nenhuma tarefa
+  // aberta dele). "Confere o nome" empurrava a pessoa a repetir o pedido (e ela repetiu). No
+  // cancelamento, não achar ABERTA é a resposta: não tem nada pendente com esse nome.
+  if (comAlvo[0].action === 'cancel') {
+    return `_Não achei aberta na sua lista: ${mostra}${resto} — então não tem nada pendente com esse nome pra cancelar. Se era outra, me diz o nome._`;
+  }
   return `_Não achei ${titulos.length > 1 ? 'essas tarefas' : 'essa tarefa'} pra ${verbo}: ${mostra}${resto}. `
     + 'Confere o nome, ou me diz de outro jeito que eu procuro._';
 }
