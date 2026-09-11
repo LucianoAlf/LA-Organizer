@@ -35,7 +35,18 @@ function hasTrailingQuestion(reply) {
 // futuro "leio/registro" disparava promise_nomarker → o chokepoint destruiu a resposta boa
 // com "problema técnico, nada entrou na agenda". "(pode) mandar/enviar/passar" = pedido de
 // insumo, não promessa concluída.
-const _INFO_GATHERING_RE = /\b(?:me\s+(?:manda|mande|envia|envie|diz|diga|passa|passe)|vai\s+(?:mandando|listando)|(?:pode|podes|pode\s+me)\s+(?:mandar|manda|enviar|envia|passar|passa))\b/i;
+//
+// CHOKEPOINT-FALSEFIRE-DITADO-EM-PARTES (11/09, Dudu 10/09 19:28 e 04/09 17:04): quem dita
+// um relatório em partes ("Tem mais coisas.") faz o TOM responder com o convite a CONTINUAR,
+// não com "me manda" — "Pode continuar, Dudu — manda as próximas coisas!" / "E manda o resto
+// que você ia falar". A âncora acima é uma lista literal de verbos e não cobria essa forma:
+// o chokepoint APAGOU o bullet "🎸 Instrumentos — tudo organizado" e colou "não consegui
+// registrar isso agora" num turno que não pedia escrita nenhuma. Pedir a continuação é a
+// mesma semântica de pedir o insumo — TOM está compondo, não afirmando ação feita.
+// Margem medida antes de embarcar: sobre os 32 disparos do chokepoint com original
+// preservado (desde 21/08) o alargamento veta 2, e os 2 são estes falso-fires; sobre 5.046
+// outbound de 30 dias casa 0,079%, nenhum deles confab real.
+const _INFO_GATHERING_RE = /\b(?:me\s+(?:manda|mande|envia|envie|diz|diga|passa|passe)|vai\s+(?:mandando|listando)|(?:pode|podes|pode\s+me)\s+(?:mandar|manda|enviar|envia|passar|passa)|(?:pode|podes|pod[ei]a)\s+(?:continuar|seguir|prosseguir|ir\s+mandando|mandando)|(?:manda|mande|envia|envie|passa|passe)\s+(?:o|a|os|as)\s+(?:resto|restante|pr[óo]xim\w+|demais|outr\w+))\b/i;
 
 // Sprint 31.19 (caso Dai 05/06) — TOM PEDINDO CONFIRMAÇÃO antes de agir ("Certo? Se
 // confirmar, fecho...") NÃO é promessa quebrada — é o comportamento CERTO (perguntar →
