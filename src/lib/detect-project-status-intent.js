@@ -102,4 +102,18 @@ function detectProjectStatusIntent(rawText) {
   return null;
 }
 
-module.exports = { detectProjectStatusIntent, _extractNameAfterProjeto };
+// PROJETO-SIM-SEM-ANCORA (Arthur 17/07 — d0197281): "Pode apagar esse de teclas" não casa o detector
+// (sem "projeto", sem "do sistema"), então quem perguntou foi o LLM, em PROSA: "Quer encerrar o
+// projeto *LA Teclas* de vez? Confirma." — e a intent nasceu sem âncora; o "Sim" caía em "não
+// consegui registrar". Lê a PRÓPRIA pergunta do TOM com o mesmo detector. Só vale com o token
+// "projeto" (pergunta sobre tarefa nunca vira mudança de projeto). O nome para antes do resto da
+// frase ("de vez", "agora", "Confirma").
+function detectProjectStatusInTomQuestion(question) {
+  const q = String(question || '').replace(/[*_~]/g, '').replace(/\?/g, '.').trim();
+  const r = detectProjectStatusIntent(q);
+  if (!r || !r.viaProjectToken) return null;
+  const nome = String(r.nameHint || '').split(/[.!]|\s+(?:de\s+vez|agora|mesmo|ent[ãa]o|confirma)\b/i)[0].trim();
+  return { ...r, nameHint: nome.length >= 2 ? nome : null };
+}
+
+module.exports = { detectProjectStatusIntent, detectProjectStatusInTomQuestion, _extractNameAfterProjeto };

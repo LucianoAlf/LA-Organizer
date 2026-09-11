@@ -10319,6 +10319,43 @@ async function processMessage(phone, text, raw = {}) {
       // _yn === null → não é sim/não claro → segue (não consome o turno)
     }
 
+    // (a2) PROJETO-SIM-SEM-ANCORA (Arthur 17/07 — d0197281): o TOM perguntou em PROSA ("Quer encerrar
+    // o projeto *LA Teclas* de vez? Confirma.") e a intent nasceu sem âncora. O "sim" resolve o
+    // projeto pela PRÓPRIA pergunta e usa o MESMO executor e a MESMA autoridade do caminho (a)/(b).
+    // Não casou um projeto vivo dele → não consome o turno (segue pro fluxo normal).
+    if (!_projIntent) {
+      const { detectProjectStatusInTomQuestion } = require('./lib/detect-project-status-intent');
+      const _genIntent = _openIntents.find((i) => i.kind === 'confirmation' && i.payload && !i.payload.anchor
+        && withinConfirmWindow(i.asked_at, 60) && detectProjectStatusInTomQuestion(i.question_text));
+      if (_genIntent && pendingIntents.detectUserConfirmation(stripReplyScaffold(String(text || '')).userText) === 'yes') {
+        const _pi = detectProjectStatusInTomQuestion(_genIntent.question_text);
+        let _aliveQ2 = supabase.from('projects').select('id, name, status, created_by')
+          .in('status', [...projectStatusLib.ALIVE_STATUSES]);
+        if (!hasCoordLevel(collab)) _aliveQ2 = _aliveQ2.eq('created_by', collab.id);
+        const { data: _alive2 } = await _aliveQ2;
+        const _r2 = projectStatusLib.resolveProjectByName(_alive2 || [], _pi.nameHint, _pi.quotedText);
+        if (_r2.status === 'match') {
+          const _p2 = _r2.project;
+          const _newSt2 = projectStatusLib.STATUS_BY_ACTION[_pi.action];
+          const r2 = await applyProjectStatusChange(collab, { projectId: _p2.id, newStatus: _newSt2 });
+          await pendingIntents.resolveIntent(_genIntent.id, 'confirmed', 'project status change (pergunta sem âncora)');
+          let out2;
+          if (r2.ok) {
+            out2 = projectStatusLib.buildStatusResult({ name: _p2.name }, _pi.action, { total: 0, byPerson: [] });
+            await logMarker(collab.id, 'PROJECT_STATUS', 'executed', `name:${_p2.name} status:${_newSt2} via:pergunta_sem_ancora`, null);
+          } else if (r2.reason === 'already_closed') {
+            out2 = `O projeto *${_p2.name}* já tava ${_pi.action === 'cancel' ? 'cancelado' : 'fechado'}. 👍`;
+          } else {
+            out2 = '_Tentei mudar o status do projeto mas deu ruim — tenta de novo daqui a pouco?_';
+            await logMarker(collab.id, 'PROJECT_STATUS', 'rejected', r2.reason || 'unknown', { project_id: _p2.id, via: 'pergunta_sem_ancora' });
+          }
+          try { await whatsapp.sendMessage(phone, out2); await logConversation(collab.id, 'outbound', out2); } catch (e) { console.warn('[ProjStatus] sem-ancora post err:', e.message); }
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (project_status_sem_ancora_${r2.ok ? 'applied' : 'failed'})`);
+          return;
+        }
+      }
+    }
+
     // (b) nova intenção "fecha/cancela o projeto X"
     const _psIntent = detectProjectStatusIntent(String(text || ''));
     if (_psIntent) {
