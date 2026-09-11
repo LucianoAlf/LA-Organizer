@@ -158,3 +158,14 @@ test('binary: o vocabulário da própria dica funciona (pix, boleto, ted)', () =
 test('binary: os DOIS lados na fala real continua null (não chuta fonte)', () => {
   assert.strictEqual(matchSourceReply('foi no cartão ou na conta mesmo?', binaryPayload), null);
 });
+
+// MATCHSOURCE-NOME-MAIS-LONGO (triagem 11/09 — 4e45bbfa, 1df6f0af, 4c61d5dd): a Rose escolheu
+// "Cartão Mercado Pago Matheus" duas vezes e o TOM lançou no "Cartão Mercado Pago" as duas.
+test('list: nome que é prefixo de outro — vence o mais específico (Rose 16/07)', () => {
+  const p = { form: 'list', candidates: [
+    { kind: 'card', id: 'mp', name: 'Cartão Mercado Pago' },
+    { kind: 'card', id: 'mpm', name: 'Cartão Mercado Pago Matheus' },
+  ] };
+  assert.strictEqual(matchSourceReply('Cartão Mercado Pago Matheus', p).id, 'mpm');
+  assert.strictEqual(matchSourceReply('no cartão mercado pago', p).id, 'mp');
+});

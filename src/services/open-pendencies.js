@@ -16,9 +16,9 @@
 'use strict';
 
 // Select com join de collaborators+prefs — a escalação precisa (is_active/phone/quiet).
-const SELECT_FULL = 'id, title, end_at, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(*))';
+const SELECT_FULL = 'id, title, end_at, collaborator_id, followup_sent_at, recurrence_rule, recurrence_parent_id, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(*))';
 // Select enxuto — o planejador só precisa do compromisso em si.
-const SELECT_BASIC = 'id, title, end_at, collaborator_id';
+const SELECT_BASIC = 'id, title, end_at, collaborator_id, recurrence_rule, recurrence_parent_id';
 
 // YMD em America/Sao_Paulo (espelha nowSaoPaulo do dispatcher.js).
 function brtYmd(now) {
@@ -62,14 +62,20 @@ async function getStaleWorkEvents(supabase, opts = {}) {
   if (opts.sinceCooldownIso) {
     q = q.or(`followup_sent_at.is.null,followup_sent_at.lt.${opts.sinceCooldownIso}`);
   }
-  q = q.limit(opts.limit || 100);
+  q = q.order('end_at', { ascending: false }).limit(opts.limit || 100);
 
   const { data, error } = await q;
   if (error) {
     console.error('[open-pendencies] getStaleWorkEvents err:', error.message);
     return [];
   }
-  return data || [];
+  // DEDUP-SERIE-NA-COBRANCA-DE-EVENTO (triagem 11/09 — 9827c3ee, e7c34891, da83061a): a Ana
+  // recebeu 3 cobranças seguidas em 04/07, 2 byte a byte iguais de "Reunião ADM" — molde da
+  // série + ocorrência com o mesmo end_at, cada um com seu cooldown. Molde nunca é cobrado;
+  // ocorrências da mesma série viram UMA (a mais recente: a query vem por end_at desc). Mesmo
+  // helper do check-in de tarefas e do prompt.
+  const { dedupRecurringSeries } = require('../utils/recurring-dedup');
+  return dedupRecurringSeries(data || []);
 }
 
 module.exports = { getStaleWorkEvents };

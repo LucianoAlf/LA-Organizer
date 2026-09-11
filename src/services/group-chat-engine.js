@@ -8,7 +8,7 @@
 // Isso garante a quebra de linha/hierarquia (não depende de markdown) e dá a riqueza visual.
 const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
-const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, endSeries, resolveSeriesTemplate, reviveSeries, derecurSeries } = require('./group-chat-tasks');
+const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, endSeries, resolveSeriesTemplate, acharSeriePorTitulo, reviveSeries, derecurSeries } = require('./group-chat-tasks');
 const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
 const { buildGroupReport, dropOpenWithDoneTwin, categorize, spYmd } = require('./group-report-builder');
 const { detectaDataAfirmadaErrada } = require('../utils/date-claim');
@@ -644,7 +644,17 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           .eq('assigned_group_id', groupId).neq('status', 'cancelled')
           .ilike('title', String(ps.title || '').trim()).limit(5);
         const tpl = resolveSeriesTemplate(hit);
-        const templateId = tpl ? tpl.id : (((hit || []).find((r) => r.recurrence_parent_id) || {}).recurrence_parent_id || null);
+        let templateId = tpl ? tpl.id : (((hit || []).find((r) => r.recurrence_parent_id) || {}).recurrence_parent_id || null);
+        if (!templateId) {
+          // TASK-SERIES-TITULO-EXATO (triagem 11/09): o ilike acima exige o título EXATO; o
+          // marker às vezes vem com sufixo (": Dia 3"). Busca os moldes do grupo e casa por prefixo.
+          const { data: _moldes } = await supabase.from('tasks')
+            .select('id, title, recurrence_rule, recurrence_parent_id')
+            .eq('assigned_group_id', groupId).neq('status', 'cancelled')
+            .not('recurrence_rule', 'is', null).is('recurrence_parent_id', null).limit(100);
+          const _achado = acharSeriePorTitulo(ps.title, _moldes);
+          if (_achado) templateId = _achado.id;
+        }
         if (!templateId) {
           actions.push({ kind: 'task', status: 'fail', label: ps.title || 'Série', detail: 'não achei essa série recorrente' });
         } else {

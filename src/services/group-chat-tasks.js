@@ -140,6 +140,31 @@ function pickVisibleInstance(rows) {
 
 // Dado candidatos por título, acha o MOLDE da série (recurrence_rule != null). Pura.
 // Usado por ENCERRAR SÉRIE (ação deliberada): aí sim a gente quer o molde, não a instância.
+// TASK-SERIES-TITULO-EXATO (triagem 11/09 — 74fe32a5, 127d07e8). Rose, grupo, 17/08: "não
+// achei essa série recorrente" 2 min depois de criar "Conferir débito automático Light
+// (Recreio)" — o marker veio com "…(Recreio): Dia 3" e o ilike exigia o título EXATO. PURA:
+// recebe os moldes do grupo. Vale o molde cujo título é prefixo do pedido (o mais longo, se
+// houver mais de um) ou, senão, o ÚNICO cujo título começa com o pedido. Ambíguo, curto demais
+// (< 8 letras) ou sem parentesco → null: melhor dizer que não achou do que mexer na série errada.
+function _normSerie(s) {
+  return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ').replace(/[\s.:;,!?—–-]+$/, '').trim();
+}
+function acharSeriePorTitulo(titulo, moldes, minimo = 8) {
+  const m = _normSerie(titulo);
+  if (m.length < minimo) return null;
+  const lista = (Array.isArray(moldes) ? moldes : [])
+    .filter((r) => r && r.recurrence_rule != null && _normSerie(r.title).length >= minimo);
+  const prefixos = lista.filter((r) => m.startsWith(_normSerie(r.title)));
+  if (prefixos.length) {
+    const maior = Math.max(...prefixos.map((r) => _normSerie(r.title).length));
+    const top = prefixos.filter((r) => _normSerie(r.title).length === maior);
+    return top.length === 1 ? top[0] : null;
+  }
+  const contem = lista.filter((r) => _normSerie(r.title).startsWith(m));
+  return contem.length === 1 ? contem[0] : null;
+}
+
 function resolveSeriesTemplate(rows) {
   const list = Array.isArray(rows) ? rows : [];
   return list.find((r) => r && r.recurrence_rule != null) || null;
@@ -706,5 +731,5 @@ module.exports = {
   _resolveTituloContemPedido,
   applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, pickVisibleCompletionTarget, pickVisibleInstance,
   findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, matchPoolByPhrase,
-  resolveSeriesTemplate, endSeries, reviveSeries, derecurSeries, _resolvePackageChildByLabel,
+  resolveSeriesTemplate, acharSeriePorTitulo, endSeries, reviveSeries, derecurSeries, _resolvePackageChildByLabel,
 };

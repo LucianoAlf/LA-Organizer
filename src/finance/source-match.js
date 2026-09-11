@@ -70,10 +70,16 @@ function matchSourceReply(rawText, payload) {
   // Passada 1 (specific): full-name em TODOS os candidatos primeiro — a resposta exata sempre
   // vence antes de qualquer heurística de marca entrar em jogo.
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const porNomeCompleto = cands.find((c) => {
-    const name = String(c.name || '').toLowerCase().trim();
-    return name && t.includes(name);
-  });
+  // MATCHSOURCE-NOME-MAIS-LONGO (triagem 11/09 — 4e45bbfa, 1df6f0af, 4c61d5dd): com
+  // "Cartão Mercado Pago" e "Cartão Mercado Pago Matheus" na lista, os DOIS nomes cabem dentro
+  // da resposta "Cartão Mercado Pago Matheus", e o .find() devolvia o primeiro da lista: a Rose
+  // escolheu o do Matheus duas vezes e o TOM lançou no outro as duas. Vence o mais longo.
+  const porNomeCompleto = cands
+    .filter((c) => {
+      const name = String(c.name || '').toLowerCase().trim();
+      return name && t.includes(name);
+    })
+    .sort((a, b) => String(b.name).trim().length - String(a.name).trim().length)[0];
   if (porNomeCompleto) return porNomeCompleto;
 
   // Passada 2 (fallback): marca — pula prefixo GENÉRICO ("cartão"/"conta"/"carteira"/"banco")

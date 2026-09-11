@@ -804,3 +804,33 @@ test('tarefa de OUTRO grupo nunca é alcançada pelo degrau novo', async () => {
   assert.strictEqual(r.updated.length, 0);
   assert.strictEqual(r.failed.length, 1);
 });
+
+// ── TASK-SERIES-TITULO-EXATO (triagem 11/09 — 74fe32a5, 127d07e8) ─────────────────────────
+// Rose, grupo, 17/08: "não achei essa série recorrente" 2 min depois de criar a série — o
+// marker veio com "…(Recreio): Dia 3" e a busca exigia o título salvo EXATO.
+const { acharSeriePorTitulo } = require('./group-chat-tasks');
+const MOLDES = [
+  { id: 'L', title: 'Conferir débito automático Light (Recreio)', recurrence_rule: 'FREQ=MONTHLY' },
+  { id: 'N', title: 'Conferir débito automático Naturgy', recurrence_rule: 'FREQ=MONTHLY' },
+];
+test('acharSeriePorTitulo: título do marker com sufixo acha o molde', () => {
+  assert.strictEqual(acharSeriePorTitulo('Conferir débito automático Light (Recreio): Dia 3', MOLDES).id, 'L');
+  assert.strictEqual(acharSeriePorTitulo('conferir debito automatico light (recreio)', MOLDES).id, 'L');
+});
+test('acharSeriePorTitulo: ambíguo, curto demais ou sem parentesco → null (não chuta série)', () => {
+  assert.strictEqual(acharSeriePorTitulo('Conferir débito automático', MOLDES), null);
+  assert.strictEqual(acharSeriePorTitulo('Conferir', MOLDES), null);
+  assert.strictEqual(acharSeriePorTitulo('Pagar aluguel', MOLDES), null);
+  assert.strictEqual(acharSeriePorTitulo('Conferir débito automático Light (Recreio)', [{ id: 'x', title: 'Conferir débito automático Light (Recreio)', recurrence_rule: null }]), null, 'sem regra não é molde');
+});
+test('acharSeriePorTitulo: entre moldes que são prefixo do pedido, vence o mais longo', () => {
+  const m = [
+    { id: 'curto', title: 'Conferir débito', recurrence_rule: 'FREQ=MONTHLY' },
+    { id: 'longo', title: 'Conferir débito automático Light', recurrence_rule: 'FREQ=MONTHLY' },
+  ];
+  assert.strictEqual(acharSeriePorTitulo('Conferir débito automático Light: Dia 3', m).id, 'longo');
+});
+test('engine do grupo: TASK_SERIES cai no acharSeriePorTitulo quando o título exato não acha', () => {
+  const ENG = require('node:fs').readFileSync(require('node:path').join(__dirname, 'group-chat-engine.js'), 'utf8');
+  assert.match(ENG, /const _achado = acharSeriePorTitulo\(ps\.title, _moldes\);\s*if \(_achado\) templateId = _achado\.id;/);
+});
