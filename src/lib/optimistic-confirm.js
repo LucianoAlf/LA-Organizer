@@ -495,6 +495,18 @@ function restatesRecentWrite(reply, itens, agoraMs) {
 }
 
 const NO_MARKER_HONEST_NOTE = '_⚠️ Na real não consegui registrar isso agora — me manda de novo, por favor._';
+// CHOKEPOINT-NEGA-NOOP-DECLARADO (triagem 11/09 — 39bca657). Vitoria 28/07 21:25: o TOM perguntou
+// "fico quieto até 07/08, sem cobranças?", ela respondeu "Pode continuar mandando lembrete. Sem
+// problemas" (= não pausa), e ele escreveu a resposta CERTA — "Beleza, Vitoria! Então fico ativo
+// normalmente, sem pausar." A camada FRACA leu o "Beleza" como confirmação-sem-ação (havia pergunta
+// pendente) e trocou tudo por "não consegui registrar". Quando a fala DECLARA que nada muda, não
+// havia o que persistir: nothingPersisted é o estado correto. Só a camada fraca; claim forte
+// ("✅ Criei…") segue disparando mesmo com a frase.
+const NOOP_DECLARADO_RE = /(?:^|[^\p{L}])(?:sem\s+pausar|n[ãa]o\s+(?:vou\s+)?(?:pausar|mudar|mexer|cancelar|alterar|mudo|mexo|cancelo|altero)|fico\s+ativ[oa]|sigo\s+(?:normal|ativ[oa]|como\s+est[áa])|continuo\s+(?:normal|mandando|te\s+lembrando|te\s+cobrando)|mantenho\s+(?:tudo\s+)?(?:como\s+est[áa]|igual)|deixo\s+(?:tudo\s+)?como\s+est[áa]|nada\s+muda)(?![\p{L}])/iu;
+function declaraNoopExplicito(reply) {
+  return NOOP_DECLARADO_RE.test(String(reply == null ? '' : reply));
+}
+
 function enforceNoMarkerHonesty(reply, opts, opts2) {
   const o = opts || {};
   const meta = !!(opts2 && opts2.meta);
@@ -529,7 +541,7 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   // `markerAttempted` mantém o freio: marker tentado-e-rejeitado é ação na mesa que FALHOU.
   if (strong && o.reportedState && !o.markerAttempted) strong = false;
   const weak = !strong && !o.infoGathering && !!o.pendingActionRecent
-    && !o.userProgressStatus && !o.restatesRecentWrite && hasWeakCompletionClaim(reply);
+    && !o.userProgressStatus && !o.restatesRecentWrite && !declaraNoopExplicito(reply) && hasWeakCompletionClaim(reply);
   if (!strong && !weak) return wrap(reply, false);
   const cleaned = sanitizeOptimisticConfirm(reply, 'failed', { includeWeak: weak });
   const out = cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;

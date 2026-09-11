@@ -822,3 +822,14 @@ test('parcial: número sem verbo de conclusão fica ("faltam as 3 da tarde")', (
   const out = sanitizeOptimisticConfirm('A reunião é às 3 da tarde, faltam os 2 relatórios.', 'partial');
   assert.match(out, /faltam os 2 relatórios/);
 });
+
+// ── CHOKEPOINT-NEGA-NOOP-DECLARADO (triagem 11/09 — 39bca657) ────────────────────────────
+// A resposta REAL do TOM à Vitoria (28/07 21:25), trocada por "não consegui registrar".
+const _NOOP_VITORIA = 'Beleza, Vitoria! Então fico ativo normalmente, sem pausar. Aproveita as férias e qualquer coisa estou aqui. 🌴';
+test('Vitoria 28/07: confirmar que NADA muda não vira "não consegui registrar" (camada fraca)', () => {
+  assert.strictEqual(enforceNoMarkerHonesty(_NOOP_VITORIA, { nothingPersisted: true, pendingActionRecent: true }, { meta: true }).fired, false);
+});
+test('noop declarado não desarma claim FORTE, e a camada fraca sem a frase segue valendo', () => {
+  assert.strictEqual(enforceNoMarkerHonesty('✅ Criei o lembrete — o resto não vou mexer.', { nothingPersisted: true, pendingActionRecent: true }, { meta: true }).fired, true);
+  assert.strictEqual(enforceNoMarkerHonesty('Beleza, Vitoria! Aproveita as férias. 🌴', { nothingPersisted: true, pendingActionRecent: true }, { meta: true }).fired, true);
+});
