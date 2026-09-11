@@ -20,6 +20,7 @@
 const CAMPOS_DE_DETALHE = ['notes', 'description', 'details', 'detalhes'];
 const MAX_TITULO = 200;
 const MAX_DETALHE = 2000;
+const { lerFlag } = require('./lembrete-diario');
 
 function _t(v) { return typeof v === 'string' ? v.trim() : ''; }
 
@@ -30,13 +31,16 @@ function lerEdicao(a) {
   if (!a || typeof a !== 'object' || Array.isArray(a)) return { erro: 'not_object' };
   const id = _t(a.id) || null;
   const titulo = _t(a.title);
-  const novoTitulo = (_t(a.new_title) || (id ? titulo : '')).slice(0, MAX_TITULO);
+  // LEMBRETE-DIARIO-POR-TAREFA (Alf 11/09): com o flag e sem new_title, o `title` só identifica —
+  // não renomeia (o LLM manda o nome junto com o id).
+  const lembreteDiario = lerFlag(a.lembrete_diario);
+  const novoTitulo = (_t(a.new_title) || (id && lembreteDiario === null ? titulo : '')).slice(0, MAX_TITULO);
   const busca = id ? null : (titulo || null);
   const detalhe = (CAMPOS_DE_DETALHE.map((k) => _t(a[k])).find(Boolean) || '').slice(0, MAX_DETALHE);
   const grupo = _t(a.assigned_group) || _t(a.group);
   if (!id && !busca) return { erro: 'bad_id' };
-  if (!novoTitulo && !detalhe && !grupo) return { erro: 'update:no_editable_field' };
-  return { id, busca, novoTitulo, detalhe, grupo };
+  if (!novoTitulo && !detalhe && !grupo && lembreteDiario === null) return { erro: 'update:no_editable_field' };
+  return { id, busca, novoTitulo, detalhe, grupo, lembreteDiario };
 }
 
 /**
@@ -64,6 +68,12 @@ function montarPatch(edicao, atual, grupo = null) {
     patch.assigned_group_id = grupo.id;
     patch.assigned_to = null;
     mudancas.push(`grupo ${grupo.name || ''}`.trim());
+  }
+  if (edicao.lembreteDiario === true || edicao.lembreteDiario === false) {
+    if (edicao.lembreteDiario !== (t.lembrete_diario === true)) {
+      patch.lembrete_diario = edicao.lembreteDiario;
+      mudancas.push(edicao.lembreteDiario ? 'lembrete diário ligado' : 'lembrete diário desligado');
+    }
   }
   return { patch, mudancas };
 }

@@ -5301,7 +5301,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         // Quem pode: responsável, membro do grupo dono (resolveTaskByShortId) ou quem criou.
         const { lerEdicao, montarPatch } = require('./lib/edicao-tarefa');
         const ed = lerEdicao(a);
-        const _COLS_ED = 'id, title, description, assigned_to, created_by, assigned_group_id, status';
+        const _COLS_ED = 'id, title, description, assigned_to, created_by, assigned_group_id, status, due_date, lembrete_diario';
         let t = null;
         if (ed.id) {
           t = await resolveTaskByShortId(collaborator.id, ed.id);
@@ -5352,6 +5352,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             continue;
           }
         }
+        // LEMBRETE-DIARIO-POR-TAREFA (decisão do Alf, 11/09 — bad1c55e): ligar exige prazo e dono individual.
+        const _rld = require('./lib/lembrete-diario').recusaLembreteDiario(ed, _full || t);
+        if (_rld) { failMessages.push(_rld); failCount++; continue; }
         const { patch: _patch, mudancas } = montarPatch(ed, _full || t, _grupo);
         if (!mudancas.length) {
           okCount++;
@@ -6057,6 +6060,12 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             // Degrade-safe: dedup de molde NUNCA trava a criação. Loga e segue pro insert normal.
             console.warn('[Task] recur-template dedup err (non-fatal):', _rtdErr.message);
           }
+        }
+        // LEMBRETE-DIARIO-POR-TAREFA (decisão do Alf, 11/09 — bad1c55e): "me lembra todo dia até o
+        // prazo" vale só pra esta tarefa. Sem prazo ou de grupo não há até quando/pra quem: não grava e avisa.
+        if (require('./lib/lembrete-diario').lerFlag(a.lembrete_diario) === true) {
+          if (insertRow.due_date && !insertRow.assigned_group_id) insertRow.lembrete_diario = true;
+          else groupNotices.push(`🔁 Não liguei o lembrete diário em *${String(a.title || 'tarefa').slice(0, 60)}* — ${insertRow.due_date ? 'é tarefa de grupo' : 'ela não tem prazo; me diz até quando'}.`);
         }
         const { data, error } = await supabase
           .from('tasks')

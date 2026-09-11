@@ -5760,6 +5760,14 @@ async function run(opts = {}) {
       console.error('[Dispatcher] checkDeadlineAlerts erro:', err.message);
     }
   }
+  // LEMBRETE-DIARIO-POR-TAREFA (Alf 11/09): 11h — depois do briefing, antes da cobrança da tarde.
+  if (opts['force-alerts'] || now.hour === 11) {
+    try {
+      await checkDailyTaskReminders(now.ymd);
+    } catch (err) {
+      console.error('[Dispatcher] checkDailyTaskReminders erro:', err.message);
+    }
+  }
 
   // Sprint 11.1 Bloco D — Adherence nudge. Weekdays at 19:00. Mensagem determinística
   // (sem LLM) que cutuca UMA vez quando há sinais de "vida travando" (atrasadas + projetos
@@ -6201,6 +6209,7 @@ async function checkDeadlineAlerts(ymdToday) {
     .eq('due_date', tomorrow)
     .not('status', 'in', '(done,cancelled)')
     .is('assigned_group_id', null) // #antecedencia: grupo tem fluxo próprio (remindGroupTasks)
+    .eq('lembrete_diario', false) // LEMBRETE-DIARIO-POR-TAREFA: essas o job das 11h leva (um dono só)
     .lt('updated_at', cooldownCutoff)
     .limit(200);
   if (error) {
@@ -6307,6 +6316,88 @@ async function checkDeadlineAlerts(ymdToday) {
   }
   if (sent) console.log(`[DeadlineAlert] fired ${sent} deadline alert(s) for ${tomorrow}`);
 }
+
+// LEMBRETE-DIARIO-POR-TAREFA (decisão do Alf, 11/09 — bad1c55e): tarefa com lembrete_diario recebe
+// UM toque por dia, às 11h (depois do briefing, antes da cobrança da tarde), do pedido até o prazo.
+// Essas tarefas saem da véspera das 18h (checkDeadlineAlerts) — um dono só por tarefa; na véspera
+// este job leva a cópia pros observadores. Claim atômico no mesmo índice único da véspera.
+async function checkDailyTaskReminders(ymdToday) {
+  const { elegivelHoje, textoLembreteDiario, diasAte } = require('../lib/lembrete-diario');
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select('id, title, assigned_to, due_date, status, lembrete_diario, department_id')
+    .eq('lembrete_diario', true)
+    .gte('due_date', ymdToday)
+    .not('status', 'in', '(done,cancelled)')
+    .is('assigned_group_id', null)
+    .limit(300);
+  if (error) { console.error('[LembreteDiario] query err:', error.message); return 0; }
+  if (!tasks || !tasks.length) return 0;
+  const ids = [...new Set(tasks.map(t => t.assigned_to).filter(Boolean))];
+  if (!ids.length) return 0;
+  const { data: collabs } = await supabase
+    .from('collaborators')
+    .select('id, phone, full_name, is_active, user_preferences(*)')
+    .in('id', ids).eq('is_active', true);
+  const byId = new Map((collabs || []).map(c => [c.id, c]));
+  let sent = 0;
+  for (const t of tasks) {
+    if (!elegivelHoje(t, ymdToday)) continue;
+    const collab = byId.get(t.assigned_to);
+    if (!collab || !collab.phone) continue;
+    const dnd = await getDndState(collab.id);
+    if (dnd.active) { await logRitualEvent(collab.id, 'lembrete_diario', 'skipped', `dnd_active until=${dnd.until}`, ymdToday); continue; }
+    const q = await isQuietNow(collab.user_preferences, nowSaoPaulo());
+    if (q.quiet) { await logRitualEvent(collab.id, 'lembrete_diario', 'skipped', q.reason, ymdToday); continue; }
+    const nick = collab.full_name === 'Luciano Alf' ? 'Alf' : (collab.full_name || '').split(' ')[0] || 'amigo';
+    const prazo = String(t.due_date).slice(0, 10);
+    const text = textoLembreteDiario({ nick, titulo: t.title, prazo, hoje: ymdToday });
+    const { data: claim, error: claimErr } = await supabase.from('notifications').insert({
+      collaborator_id: collab.id,
+      notification_type: 'daily_task_reminder',
+      title: `${t.title} — lembrete diário`,
+      body: text,
+      reference_type: 'task',
+      reference_id: t.id,
+      channel: 'whatsapp',
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+      alert_day: ymdToday,
+    }).select('id').single();
+    if (claimErr) {
+      const reason = (claimErr.code === '23505' ? 'ja_notificado:' : `claim_err(${claimErr.code}):`) + String(t.id).slice(0, 8);
+      await logRitualEvent(collab.id, 'lembrete_diario', 'skipped', reason, ymdToday);
+      continue;
+    }
+    if (await isChronicallySilent(collab.id, ymdToday)) {
+      await logRitualEvent(collab.id, 'lembrete_diario', 'skipped', 'silence_backoff:3d', ymdToday);
+      continue;
+    }
+    try {
+      // sendAndLink faz o ÚNICO log e vincula o toque à tarefa (um "feito" pelado acha a tarefa certa).
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
+      try {
+        await pendingFollowups.createOrRefresh({
+          collaboratorId: collab.id, targetType: 'task', targetId: t.id, targetTitle: t.title,
+          kind: 'reminder_due_today', questionText: text, ttlHours: 36,
+        });
+      } catch (e) { /* não-fatal */ }
+      await logRitualEvent(collab.id, 'lembrete_diario', 'sent', `task:${String(t.id).slice(0, 8)}`, ymdToday);
+      sent++;
+      if (diasAte(ymdToday, prazo) === 1) {
+        try { await fanoutWatcherAlerts(t, collab.full_name, 'deadline_alert', 'deadline', ymdToday); }
+        catch (e) { console.error('[LembreteDiario] watcher fanout err:', e.message); }
+      }
+    } catch (err) {
+      if (claim && claim.id) await supabase.from('notifications').delete().eq('id', claim.id);
+      console.error(`[LembreteDiario] send err for ${String(t.id).slice(0, 8)}:`, err.message);
+      await logRitualEvent(collab.id, 'lembrete_diario', 'error', `${String(t.id).slice(0, 8)}:${err.message}`, ymdToday);
+    }
+  }
+  if (sent) console.log(`[LembreteDiario] fired ${sent} daily reminder(s)`);
+  return sent;
+}
+
 
 // Sprint Fase B — Lojinha: verifica produtos abaixo do estoque mínimo e dispara
 // alerta WhatsApp pros responsáveis de reposição de cada unidade (segunda 9h BRT).
@@ -7545,4 +7636,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, checkReminders, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
+module.exports = { run, checkReminders, checkDailyTaskReminders, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
