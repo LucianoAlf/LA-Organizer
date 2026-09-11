@@ -12153,6 +12153,16 @@ async function processMessage(phone, text, raw = {}) {
   const onboardingActive = collab.onboarding_completed === false;
   // Onboarding skill is now loaded conditionally inside buildSystemPrompt via pickSkill.
 
+  // REFERENCIA-A-PROPRIA-FALA (Fabi 20/06 — edba1c46): "essa da Gabi que não entendi" 77 s depois de o TOM
+  // escrever "a tarefa é da *Gabi*: *Enviar e Verificar…*" → "não tenho registro" (turno no fallback Codex;
+  // replay 11/09: Codex 0/2, Claude 3/3). A referência curta é resolvida pela PRÓPRIA fala recente do TOM
+  // e entregue ancorada — vale pra qualquer modelo que estiver respondendo.
+  try {
+    const { pistaDeReferencia } = require('./lib/referencia-a-fala');
+    const _refFala = stripReplyScaffold(String(text || '')).userText.split('\n\n[')[0];
+    const _refPista = pistaDeReferencia(_refFala, ctx.recentMessages, Date.now());
+    if (_refPista) { text = `${text}${_refPista}`; console.log('[Engine] referência curta ancorada na própria fala'); }
+  } catch (e) { console.warn('[RefFala] err (non-fatal):', e.message); }
   const msgs = formatMessages(ctx.recentMessages, text);
   let response;
   try {
