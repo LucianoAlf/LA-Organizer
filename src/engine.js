@@ -1736,6 +1736,19 @@ function parseCoordinationRequestMarker(text) {
     // de julho (John, Anne…). Bloco extraído p/ helper puro coordination/coord-alias.js (TDD).
     const { normalizeCoordinationFields } = require('./coordination/coord-alias');
     normalizeCoordinationFields(parsed);
+    // RECADO-AGENDADO (decisão do Alf, 11/09 — 03f2c79b): `send_at` agenda; cancelar o agendado
+    // não tem mode nem texto.
+    const _ag = require('./coordination/recado-agendado');
+    if (_ag.ehCancelamentoAgendado(parsed)) {
+      if (!parsed.recipient_name || typeof parsed.recipient_name !== 'string') {
+        logSchemaErr('COORDINATION_REQUEST', [`marker[${i}]:recipient_name:missing`], parsed);
+        malformedReasons.push(`marker[${i}]:recipient_name`);
+        continue;
+      }
+      items.push({ action: 'cancel_scheduled', recipient_name: String(parsed.recipient_name).trim(), mode: 'relay_literal', message_body: '' });
+      continue;
+    }
+    const _envio = _ag.lerEnvioAgendado(parsed);
     if (!parsed.recipient_name || typeof parsed.recipient_name !== 'string') {
       logSchemaErr('COORDINATION_REQUEST', [`marker[${i}]:recipient_name:missing`], parsed);
       malformedReasons.push(`marker[${i}]:recipient_name`);
@@ -1758,6 +1771,8 @@ function parseCoordinationRequestMarker(text) {
       message_original:         parsed.message_original ? String(parsed.message_original).trim() : null,
       expects_response:         Boolean(parsed.expects_response),
       response_deadline_hours:  parsed.response_deadline_hours ? Number(parsed.response_deadline_hours) : null,
+      send_at:                  _envio.sendAt || null,
+      ...(_envio.erro ? { send_at_erro: _envio.erro } : {}),
     });
   }
 
@@ -1996,12 +2011,13 @@ function _buildIntegrityConfirmText(payload) {
 //   INSERIR row com status='rejected_by_tom' quando:
 //     - recipient existe E é ativo E é diferente do requester
 //     - alçada bloqueou (role_insufficient, cannot_followup_director)
-async function applyCoordinationRequestAction(collab, parsed) {
+async function applyCoordinationRequestAction(collab, parsed, opts = {}) {
   // 1. Lookup recipient — desambigua homônimos por contexto (requester confiável
   //    via phone + assunto do recado). Ambíguo → pergunta 1x, não cria nada.
-  const _recRes = await resolveCollaboratorByName(parsed.recipient_name, {
-    requester: collab,
-  });
+  // RECADO-AGENDADO: no envio de um agendado o destinatário já vem resolvido (é o da linha gravada).
+  const _recRes = opts.recipient
+    ? { status: 'resolved', collaborator: opts.recipient }
+    : await resolveCollaboratorByName(parsed.recipient_name, { requester: collab });
   if (_recRes.status === 'ambiguous') {
     return {
       ok: false,
@@ -2016,6 +2032,22 @@ async function applyCoordinationRequestAction(collab, parsed) {
       reason: 'recipient_not_found',
       replyText: `Não achei ninguém com o nome "${parsed.recipient_name}" ativo no sistema. Confere o nome completo, ou me avisa se a pessoa ainda não tá cadastrada que eu te oriento.`,
     };
+  }
+
+  // RECADO-AGENDADO (decisão do Alf, 11/09 — 03f2c79b): cancelar o que está agendado pra essa pessoa.
+  if (parsed.action === 'cancel_scheduled') {
+    const { data: _canc, error: _cErr } = await supabase.from('coordination_requests')
+      .update({ status: 'cancelled', cancelled_reason: 'cancelado_por_quem_pediu', cancelled_at: new Date().toISOString() })
+      .eq('requester_id', collab.id).eq('recipient_id', recipient.id).eq('status', 'scheduled')
+      .select('id');
+    if (_cErr) return { ok: false, reason: 'db_update_error', replyText: 'Tive um erro ao cancelar o recado agendado. Tenta de novo?' };
+    const { textoCancelado } = require('./coordination/recado-agendado');
+    return { ok: true, kind: 'cancel_scheduled', reason: `cancel_scheduled=${(_canc || []).length}`, replyText: textoCancelado(_displayName(recipient), (_canc || []).length) };
+  }
+  // Horário que não deu pra ler (ou que já passou) vira pergunta — nunca envio imediato no chute.
+  if (parsed.send_at_erro) {
+    const { textoErroHorario } = require('./coordination/recado-agendado');
+    return { ok: false, reason: parsed.send_at_erro, replyText: textoErroHorario(parsed.send_at_erro, _displayName(recipient)) };
   }
 
   // 2. Self-relay — sem row
@@ -2092,11 +2124,16 @@ async function applyCoordinationRequestAction(collab, parsed) {
     }
   }
 
-  // 5. Calcular response_deadline
+  // RECADO-AGENDADO: horário ainda à frente → guarda pro despachante; se passou enquanto a pessoa
+  // confirmava, vai agora. No envio do agendado (reuseRequestId) nunca re-agenda.
+  const _agendarPara = (!opts.reuseRequestId && parsed.send_at
+    && require('./coordination/recado-agendado').aindaAgendavel(parsed.send_at)) ? parsed.send_at : null;
+
+  // 5. Calcular response_deadline (a partir do envio: agora, ou o horário agendado)
   let response_deadline = null;
   if (parsed.expects_response && parsed.response_deadline_hours) {
     response_deadline = new Date(
-      Date.now() + parsed.response_deadline_hours * 60 * 60 * 1000
+      (_agendarPara ? Date.parse(_agendarPara) : Date.now()) + parsed.response_deadline_hours * 60 * 60 * 1000
     ).toISOString();
   }
 
@@ -2105,7 +2142,8 @@ async function applyCoordinationRequestAction(collab, parsed) {
   // "Pede confirmação a ela" — TOM criou 2 requests porque janela era 90s.
   // Resultado: REQ órfã foi casada 12h depois com resposta nova da Juliana,
   // disparando notificação duplicada. 30min cobre o caso de re-pedido humano.
-  try {
+  // RECADO-AGENDADO: no envio de um agendado a linha é a própria — o dedup não se aplica.
+  if (!opts.reuseRequestId) try {
     const dedupCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const { data: recent } = await supabase
       .from('coordination_requests')
@@ -2114,7 +2152,7 @@ async function applyCoordinationRequestAction(collab, parsed) {
       .eq('recipient_id', recipient.id)
       .eq('mode', parsed.mode)
       .gte('created_at', dedupCutoff)
-      .in('status', ['pending', 'sent', 'responded'])
+      .in('status', ['pending', 'sent', 'responded', 'scheduled'])
       .order('created_at', { ascending: false })
       .limit(3);
     if (recent && recent.length) {
@@ -2131,6 +2169,7 @@ async function applyCoordinationRequestAction(collab, parsed) {
       for (const prev of (_retrata ? [] : recent)) {
         const score = jaroWinkler(candNorm, normalizeForSim(prev.message_body || ''));
         if (score >= 0.75) {
+          if (prev.status === 'scheduled') return { ok: true, kind: 'dedup_scheduled', reason: 'dedup_scheduled', replyText: '🕘 Esse recado já estava agendado — não agendei de novo.' };
           console.warn(`[CoordinationRequest] DEDUP_BLOCK score=${score.toFixed(2)} prev=${prev.id.slice(0,8)} (${prev.status}) — skipping duplicate from ${String(collab.phone).slice(-4)}→${String(recipient.phone).slice(-4)}`);
           return {
             ok: true, // não é falha do user — é proteção silenciosa
@@ -2144,8 +2183,35 @@ async function applyCoordinationRequestAction(collab, parsed) {
     console.warn('[CoordinationRequest] dedup check err (non-fatal):', dedupErr.message);
   }
 
-  // 6. INSERT pending
-  const { data: inserted, error: insErr } = await supabase
+  // RECADO-AGENDADO (decisão do Alf, 11/09 — 03f2c79b): "manda pro Luciano amanhã às 9h" fica
+  // guardado e o despachante envia no horário (dispatchScheduledCoordination). Nada sai agora.
+  if (_agendarPara) {
+    const { data: _ag, error: _agErr } = await supabase.from('coordination_requests').insert({
+      requester_id: collab.id,
+      recipient_id: recipient.id,
+      mode: parsed.mode,
+      message_body: parsed.message_body,
+      message_original: parsed.message_original,
+      status: 'scheduled', send_after: _agendarPara,
+      expects_response: parsed.expects_response,
+      response_deadline,
+    }).select('id').single();
+    if (_agErr) {
+      console.error('[CoordinationRequest] schedule insert err:', _agErr.message);
+      return { ok: false, reason: 'db_insert_error', replyText: 'Tive um erro ao agendar o recado. Tenta de novo?' };
+    }
+    const { textoAgendado } = require('./coordination/recado-agendado');
+    return {
+      ok: true, kind: 'scheduled',
+      reason: `scheduled=${_ag.id.slice(0, 4)} recipient=${recipientFirstName}`,
+      replyText: textoAgendado(recipientFirstName, _agendarPara, Date.now(), _ag.id.slice(0, 4)),
+    };
+  }
+
+  // 6. INSERT pending (no envio de um agendado, a linha já existe e foi reivindicada pelo despachante)
+  const { data: inserted, error: insErr } = opts.reuseRequestId
+    ? { data: { id: opts.reuseRequestId }, error: null }
+    : await supabase
     .from('coordination_requests')
     .insert({
       requester_id:           collab.id,
@@ -2224,6 +2290,41 @@ async function applyCoordinationRequestAction(collab, parsed) {
     reason: `sent=${shortId} recipient=${recipientFirstName}`,
     replyText: `✓ Avisei o ${recipientFirstName}. [ID: ${shortId}]${expectsNote}`,
   };
+}
+
+// RECADO-AGENDADO (decisão do Alf, 11/09 — 03f2c79b): o despachante já trocou scheduled→pending
+// (claim atômico). Envia pelo MESMO executor do recado imediato (strip, apresentação, envio,
+// sent/cancelled) e avisa quem pediu que saiu — ou que não saiu.
+async function despacharRecadoAgendado(row) {
+  const { data: _pessoas } = await supabase.from('collaborators').select('*').in('id', [row.requester_id, row.recipient_id]);
+  const requester = (_pessoas || []).find((p) => p.id === row.requester_id);
+  const recipient = (_pessoas || []).find((p) => p.id === row.recipient_id);
+  const { textoAvisoSolicitante } = require('./coordination/recado-agendado');
+  let r;
+  if (!requester || !recipient || !recipient.is_active) {
+    r = { ok: false, reason: 'recipient_unavailable' };
+  } else {
+    r = await applyCoordinationRequestAction(requester, {
+      recipient_name: recipient.full_name,
+      mode: row.mode,
+      message_body: row.message_body,
+      message_original: row.message_original,
+      expects_response: row.expects_response,
+      response_deadline_hours: null,
+    }, { recipient, reuseRequestId: row.id });
+  }
+  if (!r.ok) {
+    // send_failed já cancela a linha no executor; os outros motivos (destinatário saiu, alçada) cancelam aqui.
+    await supabase.from('coordination_requests')
+      .update({ status: 'cancelled', cancelled_reason: `agendado:${String(r.reason).slice(0, 40)}`, cancelled_at: new Date().toISOString() })
+      .eq('id', row.id).eq('status', 'pending');
+  }
+  if (requester && requester.phone) {
+    const aviso = textoAvisoSolicitante(recipient ? _displayName(recipient) : 'a pessoa', row.message_body, r.ok);
+    try { await whatsapp.sendMessage(requester.phone, aviso); await logConversation(requester.id, 'outbound', aviso); }
+    catch (e) { console.warn('[RecadoAgendado] aviso a quem pediu err:', e.message); }
+  }
+  return r;
 }
 
 // Resolve project_id por nome quando o TOM só passou project_name. Match fuzzy
@@ -11014,7 +11115,7 @@ async function processMessage(phone, text, raw = {}) {
         // (applyCoordinationRequestAction), sem depender do LLM re-emitir. Espelha o executor
         // ancorado/batch. Retorna cedo → o LLM NÃO é chamado no 2º turno (sem re-estágio/loop).
         const _items = target.payload.coordination.items;
-        let _okC = 0; const _fail = []; const _jaIa = [];
+        let _okC = 0; const _fail = []; const _jaIa = []; const _extras = [];
         for (const _it of _items) {
           try {
             const _r = await applyCoordinationRequestAction(collab, _it);
@@ -11022,16 +11123,22 @@ async function processMessage(phone, text, raw = {}) {
             // RECADO-CORRECAO-BARRADA-COMO-DUPLICATA: o dedup devolve ok:true (não é falha de quem
             // pediu), mas NADA foi enviado — contar como "enviado" fazia o TOM afirmar "📨 Recado
             // enviado!" sobre recado que não saiu (Fefê/Anne 10/08).
-            if (_r.ok && _r.reason === 'dedup_recent_relay') _jaIa.push(_it.recipient_name);
+            if (_r.ok && _r.kind) _extras.push(_r.replyText);
+            else if (_r.ok && _r.reason === 'dedup_recent_relay') _jaIa.push(_it.recipient_name);
             else if (_r.ok) _okC++; else _fail.push(_r.replyText || `${_it.recipient_name} (${_r.reason})`);
           } catch (e) { console.warn('[CoordConfirm] exec err:', e.message); _fail.push(`${_it.recipient_name} (erro)`); }
         }
         await pendingIntents.resolveIntent(target.id, 'confirmed', `coord confirm (engine) ${_okC}/${_items.length}`);
-        let _outC;
-        if (_jaIa.length && !_okC && !_fail.length) _outC = `📨 Esse recado já tinha ido pra *${_jaIa.join(', ')}* agora há pouco — não mandei de novo pra não duplicar.`;
-        else if (_okC + _jaIa.length === _items.length) _outC = (_okC === 1 ? '📨 Recado enviado!' : `📨 ${_okC} recados enviados!`) + (_jaIa.length ? ` (Pra ${_jaIa.join(', ')} já tinha ido há pouco.)` : '');
-        else if (_okC > 0) _outC = `📨 Enviei ${_okC} de ${_items.length}. Não consegui: ${_fail.join('; ')}.`;
+        // RECADO-AGENDADO (Alf 11/09): agendar/cancelar não é "enviado" — cada um fala por si; o resto
+        // (envios de verdade) é contado à parte.
+        const _resto = _items.length - _extras.length;
+        let _outC = '';
+        if (_resto === 0) _outC = '';
+        else if (_jaIa.length && !_okC && !_fail.length) _outC = `📨 Esse recado já tinha ido pra *${_jaIa.join(', ')}* agora há pouco — não mandei de novo pra não duplicar.`;
+        else if (_okC + _jaIa.length === _resto) _outC = (_okC === 1 ? '📨 Recado enviado!' : `📨 ${_okC} recados enviados!`) + (_jaIa.length ? ` (Pra ${_jaIa.join(', ')} já tinha ido há pouco.)` : '');
+        else if (_okC > 0) _outC = `📨 Enviei ${_okC} de ${_resto}. Não consegui: ${_fail.join('; ')}.`;
         else _outC = _fail.length === 1 ? _fail[0] : `Não consegui enviar: ${_fail.join('; ')}.`;
+        if (_extras.length) _outC = [..._extras, _outC].filter(Boolean).join('\n');
         try { await whatsapp.sendMessage(phone, _outC); await logConversation(collab.id, 'outbound', _outC); } catch (_) { /* já persistiu */ }
         console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (coord_confirm_${_okC}/${_items.length})`);
         return;
@@ -14236,14 +14343,17 @@ Output AGORA, apenas o marker:`;
         let okCount = 0, failCount = 0;
         const failedRecipients = [];
         const failedResults = [];
+        const _extrasD = []; // RECADO-AGENDADO: agendar/cancelar falam por si (não é "enviado")
         for (const item of parsedCoord.items) {
           const result = await applyCoordinationRequestAction(collab, item);
           await logMarker(collab.id, 'COORDINATION_REQUEST', result.ok ? 'executed' : 'rejected', `${item.recipient_name}:${result.reason}`, null);
           if (result.ok) okCount++;
           else { failCount++; failedRecipients.push(`${item.recipient_name} (${result.reason})`); failedResults.push(result); }
+          if (result.ok && result.kind) _extrasD.push(result.replyText);
         }
         if (okCount > 0) coordRequestHandledThisTurn = true;
         reply = parsedCoord.cleanText || reply;
+        if (_extrasD.length && _extrasD.length === parsedCoord.items.length) reply = _extrasD.join('\n');
         if (failCount > 0) {
           if (parsedCoord.items.length === 1 && okCount === 0 && failedResults[0]?.replyText) reply = failedResults[0].replyText;
           else reply = (reply || '') + `\n\n⚠️ Não consegui enviar pra: ${failedRecipients.join(', ')}.`;
@@ -17355,3 +17465,4 @@ module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamS
 
 // LIDER-FECHA-TAREFA-DE-OUTRO: exposto pro teste de ponta a ponta do resolvedor.
 module.exports.resolveTaskParaLider = resolveTaskParaLider;
+module.exports.despacharRecadoAgendado = despacharRecadoAgendado;

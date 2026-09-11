@@ -26,7 +26,13 @@ function shouldStageCoordination(items, opts = {}) {
 function buildCoordinationConfirmPreview(items) {
   const list = (Array.isArray(items) ? items : []).filter((i) => i && i.recipient_name);
   if (!list.length) return 'Confirma que eu mando esse recado?';
-  if (list.length === 1) return `Aviso o ${list[0].recipient_name}? Confirma?`;
+  if (list.length === 1) {
+    const it = list[0];
+    // RECADO-AGENDADO (Alf 11/09): a pergunta diz QUANDO sai — ou que é cancelamento.
+    if (it.action === 'cancel_scheduled') return `Cancelo o recado agendado pra ${it.recipient_name}? Confirma?`;
+    if (it.send_at) return `Mando pra ${it.recipient_name} ${require('./recado-agendado').quandoLegivel(it.send_at)}? Confirma?`;
+    return `Aviso o ${it.recipient_name}? Confirma?`;
+  }
   return `Aviso ${list.length} pessoas (${list.map((i) => i.recipient_name).join(', ')})? Confirma?`;
 }
 

@@ -1811,6 +1811,42 @@ async function checkDepartmentOperational(now = new Date()) {
   }
 }
 
+// RECADO-AGENDADO (decisão do Alf, 11/09 — 03f2c79b): envia os recados agendados cujo horário
+// chegou. Claim atômico scheduled→pending (só um tick vence); o envio é o executor do recado
+// imediato (engine.despacharRecadoAgendado), que também avisa quem pediu.
+async function dispatchScheduledCoordination(now = new Date()) {
+  const { data: due, error } = await supabase
+    .from('coordination_requests')
+    .select('id, requester_id, recipient_id, mode, message_body, message_original, expects_response')
+    .eq('status', 'scheduled')
+    .lte('send_after', now.toISOString())
+    .order('send_after', { ascending: true })
+    .limit(20);
+  if (error) { console.error('[RecadoAgendado] query err:', error.message); return 0; }
+  if (!due || !due.length) return 0;
+  const { despacharRecadoAgendado } = require('../engine');
+  let n = 0;
+  for (const row of due) {
+    const { data: claim } = await supabase
+      .from('coordination_requests')
+      .update({ status: 'pending', updated_at: now.toISOString() })
+      .eq('id', row.id).eq('status', 'scheduled')
+      .select('id');
+    if (!claim || !claim.length) continue; // outro tick levou
+    try {
+      const r = await despacharRecadoAgendado(row);
+      if (r && r.ok) n++;
+    } catch (e) {
+      console.error(`[RecadoAgendado] err req=${String(row.id).slice(0, 8)}:`, e.message);
+      await supabase.from('coordination_requests')
+        .update({ status: 'cancelled', cancelled_reason: 'agendado:erro_no_envio', cancelled_at: new Date().toISOString() })
+        .eq('id', row.id).eq('status', 'pending');
+    }
+  }
+  if (n) console.log(`[RecadoAgendado] ${n} recado(s) agendado(s) enviado(s)`);
+  return n;
+}
+
 // Sprint 16 — Verifica coordination_requests com response_deadline expirado.
 // Transita 'sent' → 'timeout' e notifica o requester.
 // Gating por horário: 8h–20h BRT (evita mensagem de madrugada).
@@ -5855,6 +5891,13 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkDepartmentOperational erro:', err.message);
   }
 
+  // RECADO-AGENDADO (Alf 11/09): recados com horário que já chegou — a cada tick.
+  try {
+    await dispatchScheduledCoordination(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] dispatchScheduledCoordination erro:', err.message);
+  }
+
   // Sprint 16 — Alertas de timeout para coordination_requests sem resposta
   try {
     await checkCoordinationTimeouts(new Date());
@@ -7636,4 +7679,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, checkReminders, checkDailyTaskReminders, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
+module.exports = { run, checkReminders, checkDailyTaskReminders, dispatchScheduledCoordination, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
