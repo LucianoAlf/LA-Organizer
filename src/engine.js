@@ -15951,6 +15951,26 @@ Output AGORA, apenas o marker:`;
     if (reply !== _beforeSync) console.log('[SYNC_EXCUSE_STRIPPED] removeu desculpa de sincronização do reply');
   } catch (e) { console.warn('[SyncExcuseGuard] non-fatal:', e.message); }
 
+  // LISTA-NUMERADA-NAO-ENTREGUE (Alf 01/07 — 26f817b5): ele pediu "liste um, dois, três… pra saber quantas
+  // são" sobre a lista que tinha mandado; o LLM contou 71 e entregou só as grades, sem os nomes. A lista
+  // é da mensagem da pessoa (a última com lista, em 30 min — a atual já está no histórico): se a fala não
+  // numera, o engine acrescenta. Antes da voz, pra o áudio não sair sem a lista.
+  try {
+    const { pedeListaNumerada, gruposDaLista, falaJaNumera, textoListaNumerada, totalDe } = require('./lib/lista-numerada');
+    if (reply && reply.trim() && pedeListaNumerada(text)) {
+      let _lnGrupos = null;
+      const { data: _lnRec } = await supabase.from('conversation_history').select('content')
+        .eq('collaborator_id', collab.id).eq('direction', 'inbound')
+        .gte('created_at', new Date(Date.now() - 30 * 60000).toISOString())
+        .order('created_at', { ascending: false }).limit(10);
+      for (const r of _lnRec || []) { _lnGrupos = gruposDaLista(r.content); if (_lnGrupos) break; }
+      if (_lnGrupos && !falaJaNumera(reply, totalDe(_lnGrupos))) {
+        reply = `${reply}\n\n${textoListaNumerada(_lnGrupos)}`;
+        console.log(`[Engine] lista numerada acrescentada (${totalDe(_lnGrupos)} itens) — a fala não numerava`);
+      }
+    }
+  } catch (e) { console.warn('[ListaNumerada] err (non-fatal):', e.message); }
+
   // ---- Sprint 28 — TOM Voice (TTS via ElevenLabs)
   // Decide se manda áudio em vez de (ou junto com) texto. Gates em
   // shouldSendVoice: feature flag + allowlist + cap diário + matriz contextual.
