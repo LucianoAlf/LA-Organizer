@@ -5002,6 +5002,26 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           failCount++;
         } else {
           console.log(`[Task] complete ${a.id} by ${last4}`);
+          // SERIE-ANTIGAS-UMA-PERGUNTA (decisão do Alf, 11/09 — 8071e4f3, 4ce2d1ec): fechou uma
+          // ocorrência de série e há ocorrências ANTIGAS (vencidas antes de hoje) ainda abertas do
+          // mesmo dono → pergunta UMA vez "fecho as N antigas?". O "sim" cai no executor
+          // determinístico de batch_complete (sem LLM). Nunca fecha sozinho.
+          try {
+            const { data: _tr } = await supabase.from('tasks').select('recurrence_parent_id, assigned_to, title').eq('id', t.id).maybeSingle();
+            if (_tr && _tr.recurrence_parent_id && _tr.assigned_to) {
+              const { data: _irmas } = await supabase.from('tasks').select('id, title, due_date, status')
+                .eq('recurrence_parent_id', _tr.recurrence_parent_id).eq('assigned_to', _tr.assigned_to)
+                .not('status', 'in', '("done","cancelled")').neq('id', t.id).limit(60);
+              const { antigasDaMesmaSerie, perguntaAntigas } = require('./lib/serie-antigas');
+              const _antigas = antigasDaMesmaSerie(_irmas || [], { hojeYmd: todaySaoPaulo() });
+              const _pergunta = _antigas.length ? perguntaAntigas(_tr.title || t.title, _antigas) : null;
+              if (_pergunta && !groupNotices.includes(_pergunta)) {
+                const _iid = await pendingIntents.openIntent(collaborator.id, 'confirmation',
+                  { batch_complete: _antigas.map((x) => String(x.id).replace(/-/g, '').slice(0, 8)) }, _pergunta);
+                if (_iid) { groupNotices.push(_pergunta); _perguntouConfirmacao = true; }
+              }
+            }
+          } catch (eSA) { console.warn('[Task] série antigas err (non-fatal):', eSA.message); }
           // Grupo: avisa criador e demais membros do fechamento (com histórico —
           // lição RSVP-HISTORY-MISSING).
           if (t.assigned_group_id) {
