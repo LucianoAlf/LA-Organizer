@@ -55,7 +55,13 @@ function seriesFamintas({ moldes, diasPorMolde, agoraMs, janelaDias = JANELA_PAD
     const tem = new Set(dias.get(m.id) || []);
     const proprio = _dia(m.table === 'tasks' ? m.due_date : m.start_at);
     if (proprio) tem.add(proprio);
-    const faltam = occ.map((d) => d.toISOString().slice(0, 10)).filter((k) => !tem.has(k));
+    // SERIE-FAMINTA-IGNORA-EMPURRAO (auditoria 12/09): o gerador empurra a ocorrência MENSAL de TAREFA
+    // que cai em sábado/domingo pra segunda (FIM-DE-SEMANA-EMPURRA-SEGUNDA, 11/09 — aaf37e2b). Quem mede
+    // o efeito tem que aceitar a data EMPURRADA, senão acusa gerador parado com a filha criada na segunda.
+    const { empurraFimDeSemana, ehRegraMensal } = require('./fim-de-semana');
+    const _empurra = m.table === 'tasks' && ehRegraMensal(m.recurrence_rule);
+    const faltam = occ.map((d) => d.toISOString().slice(0, 10))
+      .filter((k) => !tem.has(k) && !(_empurra && tem.has(empurraFimDeSemana(k))));
     if (faltam.length) out.push({ id: m.id, table: m.table, title: m.title || '(sem título)', faltam: faltam.length });
   }
   return out;

@@ -73,3 +73,35 @@ test('uma noite só de gerador falhando já aparece na manhã seguinte', () => {
   assert.strictEqual(r.length, 1);
   assert.strictEqual(r[0].faltam, 1);
 });
+
+// SERIE-FAMINTA-IGNORA-EMPURRAO (auditoria 12/09) — FIM-DE-SEMANA-EMPURRA-SEGUNDA (Alf 11/09,
+// aaf37e2b) é POSTERIOR a este sensor (10/09): o gerador empurra a ocorrência MENSAL que cai em
+// sábado/domingo pra segunda, e o sensor comparava a data CRUA da regra. Caso real: RELATÓRIO
+// TRIMESTRAL (mensal desde 03/08) — 03/10 é sábado, a filha nasceu em 05/10, e a auditoria de
+// 12/09 acusou "o gerador não está criando" com o gerador funcionando.
+const TRIMESTRAL = { id: 'm3', table: 'tasks', title: 'RELATÓRIO TRIMESTRAL ( Q1, Q2, Q3 )', recurrence_rule: 'FREQ=MONTHLY',
+  due_date: '2026-08-03', created_at: '2026-07-30T12:00:00Z' };
+const soTresDeOutubro = () => [new Date('2026-10-03T15:00:00Z')]; // sábado
+const AGORA12 = Date.parse('2026-09-12T12:00:00Z');
+
+test('mensal que cai no sábado conta como criada na segunda (RELATÓRIO TRIMESTRAL, auditoria 12/09)', () => {
+  assert.deepStrictEqual(seriesFamintas({ moldes: [TRIMESTRAL], diasPorMolde: new Map([['m3', ['2026-10-05']]]), agoraMs: AGORA12, proximas: soTresDeOutubro }), []);
+});
+
+test('sem a filha da segunda, a mensal continua faminta', () => {
+  const r = seriesFamintas({ moldes: [TRIMESTRAL], diasPorMolde: new Map(), agoraMs: AGORA12, proximas: soTresDeOutubro });
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].faltam, 1);
+});
+
+test('a folga é só da regra mensal: diária que falta no sábado segue faminta mesmo com a segunda criada', () => {
+  const diariaTk = { id: 'm4', table: 'tasks', title: 'Conferir caixa', recurrence_rule: 'FREQ=DAILY', due_date: '2026-08-01', created_at: '2026-08-01T10:00:00Z' };
+  const r = seriesFamintas({ moldes: [diariaTk], diasPorMolde: new Map([['m4', ['2026-10-05']]]), agoraMs: AGORA12, proximas: soTresDeOutubro });
+  assert.strictEqual(r.length, 1);
+});
+
+test('evento mensal não ganha a folga — o empurrão é só de tarefa', () => {
+  const ev = { id: 'm5', table: 'events', title: 'Reunião mensal', recurrence_rule: 'FREQ=MONTHLY', start_at: '2026-08-03T15:00:00Z', created_at: '2026-07-30T12:00:00Z' };
+  const r = seriesFamintas({ moldes: [ev], diasPorMolde: new Map([['m5', ['2026-10-05']]]), agoraMs: AGORA12, proximas: soTresDeOutubro });
+  assert.strictEqual(r.length, 1);
+});
