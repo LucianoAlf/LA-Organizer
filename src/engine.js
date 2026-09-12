@@ -15645,7 +15645,30 @@ Output AGORA, apenas o marker:`;
     // já tem dono: a intent `credencial_write` que o executor abriu. `_credenciaisNoTurno`
     // é ligada nos dois blocos de credencial e é exatamente esse sinal.
     if (reply && typeof reply === 'string' && noMarkerEmitted && !_credenciaisNoTurno) {
-      const detected = pendingIntents.detectConfirmationQuestion(reply);
+      // FATIA 7 (confirmação parse-on-open, status de PROJETO) — PROJETO-PERGUNTA-NAO-VIRA-INTENT
+      // (Leo 11/09, a3a511bc): "Quer fechar o projeto *X*?" não casa nenhum idioma do
+      // detectConfirmationQuestion (tarefa/evento/"Confirma?"), então a pergunta nunca virava
+      // intent e o "Sim" caía no LLM → chokepoint "não consegui registrar" sobre projeto vivo.
+      // Resolve o projeto na hora da PERGUNTA e estagia a alça {anchor:{type:'project'}} — o "sim"
+      // é consumido pelo executor (a) @10362, o mesmo do caminho ancorado. FAIL-CLOSED: sem
+      // projeto vivo do alcance dele, não estagia e não abre intent (comportamento de hoje).
+      let _projAnchor = null;
+      try {
+        const { detectProjectCloseQuestionAtEnd } = require('./lib/detect-project-status-intent');
+        const _pq = detectProjectCloseQuestionAtEnd(reply);
+        if (_pq) {
+          let _pqQ = supabase.from('projects').select('id, name, status, created_by')
+            .in('status', [...projectStatusLib.ALIVE_STATUSES]);
+          if (!hasCoordLevel(collab)) _pqQ = _pqQ.eq('created_by', collab.id);
+          const { data: _pqAlive } = await _pqQ;
+          const _rp = projectStatusLib.resolveProjectByName(_pqAlive || [], _pq.nameHint, _pq.quotedText);
+          if (_rp.status === 'match') {
+            _projAnchor = { anchor: { type: 'project', id: _rp.project.id, title: _rp.project.name }, action: _pq.action };
+            _metrics.confirm_parse_project = 1;
+          }
+        }
+      } catch (e) { console.warn('[PendingIntents] project parse-on-open err (non-fatal):', e.message); }
+      const detected = pendingIntents.detectConfirmationQuestion(reply) || (_projAnchor ? { kind: 'confirmation' } : null);
       if (detected) {
         // GUARD-CONFIRM-LOOP (Matheus 10/06): se a guarda temporal abriu intent
         // ANCORADA neste turno (complete bloqueado vira pergunta "Confirma...?"),
@@ -15667,6 +15690,9 @@ Output AGORA, apenas o marker:`;
             last_user_text: String(text || '').slice(0, 600),
             last_tom_reply: reply.slice(0, 900),
           };
+          // FATIA 7: alça de projeto resolvida acima (fail-closed). Vai junto no payload pra o
+          // executor (a) @10362 consumir o "sim" determinístico.
+          if (_projAnchor) Object.assign(payload, _projAnchor);
           // FATIA 3 (confirmação parse-on-open, coordenação): se a pergunta do TOM é um recado
           // ("Aviso o X? Segue o texto: '…'. Confirma?") com destinatário E texto explícitos,
           // estagia coordination.items ESTRUTURADO — aí o "sim" despacha determinístico (executor

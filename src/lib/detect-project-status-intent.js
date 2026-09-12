@@ -116,4 +116,18 @@ function detectProjectStatusInTomQuestion(question) {
   return { ...r, nameHint: nome.length >= 2 ? nome : null };
 }
 
-module.exports = { detectProjectStatusIntent, detectProjectStatusInTomQuestion, _extractNameAfterProjeto };
+// PROJETO-PERGUNTA-NAO-VIRA-INTENT (Leo 11/09 — a3a511bc): o executor (a2) existe, mas a pergunta
+// "Quer fechar o projeto *X*?" não casa nenhum idioma de detectConfirmationQuestion → nunca vira
+// pending_intent → o "Sim" cai no LLM e o chokepoint devolve "não consegui registrar".
+// Gate de ESTÁGIO: só a pergunta FINAL da reply. Medido em 12/09 sobre 16.190 outbound — ler a
+// reply inteira daria 10 estágios novos, vários em briefing INFORMATIVO que cita projeto (um "Sim"
+// ali fecharia projeto vivo); só-a-última dá 3, e as outras 2 não casam projeto vivo (fail-closed).
+function detectProjectCloseQuestionAtEnd(reply) {
+  const t = String(reply || '').trim();
+  if (!/\?\s*$/.test(t)) return null;
+  const parts = t.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+  const ultima = parts.length ? parts[parts.length - 1] : null;
+  return ultima ? detectProjectStatusInTomQuestion(ultima) : null;
+}
+
+module.exports = { detectProjectStatusIntent, detectProjectStatusInTomQuestion, detectProjectCloseQuestionAtEnd, _extractNameAfterProjeto };
