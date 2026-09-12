@@ -2130,3 +2130,54 @@ que o call site (guardar o `reply` da pergunta no payload, ou medir sobre `conve
 (2) o `tema` de cada fatia ganha um veto para os rituais determinísticos, senão a razão sinal/ruído
 fica em 7%; (3) quando a fatia estagia por caminho direto (sem parser), o medidor deveria dizer
 isso — `parser N/A` em vez de `parser 0`.
+
+### ETAPA 2.6 — o alarme falso do `batch_complete` voltou pela 3ª vez, e virou CÓDIGO
+
+**Ocorrências:** 3 (07/09, 11/09, 12/09). A proposta (3) do registro acima foi embarcada em 12/09.
+
+Em 11/09 ficou medido que `parser 0` no `batch_complete` é artefato do medidor, e ficou escrito
+aqui. Em 12/09 o mesmo alarme voltou no briefing — `tema 329 · parser casou 0 · estagiou 15` — com
+a instrução do protocolo ao lado mandando investigar a âncora. **Diagnóstico escrito na escada não
+impede o alarme de voltar: enquanto o veredito for calculado errado, cada rodada paga a
+investigação de novo.** Três rodadas gastas no mesmo não-defeito.
+
+O conserto foi de uma linha de precedência: **ESTAGIOU manda em PARSER.**
+`estagiou > 0 && parser === 0` deixa de ser `ancora_nao_casa` e vira `viva_sem_parser`, que o
+`blocoDoLaudo` não lista como doente. `ancora_nao_casa` continua valendo quando `estagiou === 0` —
+há teste de controle pra isso, porque um veredito que nunca acusa é pior que um que acusa demais.
+
+Medido antes de embarcar (regra de 04/09, população antes do guard): 435 intents na janela de 30
+dias; `batch_complete` tema 329 / parser 0 / **estagiou 15, último 11/09**. As outras três fatias
+não mudam de veredito com a regra nova.
+
+🔑 A generalização, e vale além desta fatia: **o medidor não sabe por quantas portas a alça pode
+chegar.** Ele foi escrito assumindo que estagiar *implica* passar pelo parser, e essa premissa é
+falsa sempre que o engine resolve o alvo na hora e escreve o payload direto. É a mesma classe do
+"sinal é o nome da PORTA, não do defeito" (09/09): aqui o instrumento confunde *um* caminho de
+estágio com *o* caminho.
+
+**O que NÃO foi consertado, de propósito:** o `tema` do `batch_complete` continua com razão
+sinal/ruído de 17% — 274 dos 329 hits são o ritual determinístico "Fechamento do dia", que nunca
+foi alvo deste parser. Vetar o ritual no regex de tema é mexer na definição da medição sem um caso
+concreto que o exija, e o número de tema não alimenta nenhum veredito sozinho. Fica anotado como
+proposta (2) do registro anterior, não como dívida embarcada.
+
+### ETAPA 2.7 — "o fix existe e a intent nunca é estagiada" é a porta nova mais comum
+
+**Ocorrência:** 1 (12/09), mas explica a forma de várias reincidências anteriores.
+
+O achado `a3a511bc` (Leo 11/09) tinha executor pronto: o caminho que fecha projeto pelo "sim"
+existe desde 11/09 (`10c4df63`, executor a2), e mesmo assim o "Sim" do Leo caiu no LLM e virou
+"não consegui registrar". A raiz não estava no executor nem no detector de intenção — estava
+**um passo antes**, no gate que decide se a pergunta do TOM vira `pending_intent`:
+`detectConfirmationQuestion` (`src/services/pending-intents.js:178`) é uma **lista fechada de
+idiomas** (tarefa, evento, "Confirma?"), e "Quer fechar o projeto *X*?" não casa nenhum.
+
+Isso faz desse gate o **chokepoint de toda família nova de confirmação**: por mais completo que
+seja o executor, se a pergunta não vira intent, o executor nunca é consultado. Quem for investigar
+um "o Sim não executou" deve conferir, nesta ordem: (1) a pergunta virou intent? (2) a intent
+nasceu com alça? (3) o executor leu a alça? — e não começar pelo (3), que é o que parece o alvo.
+
+Vale também como aviso sobre a leitura de reincidência: `10c4df63` entrou **3h15 depois** do
+incidente do Leo e trata outra porta da mesma família. Sem olhar a hora, isso se lê como
+"consertaram e voltou".
