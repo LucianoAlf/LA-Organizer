@@ -671,18 +671,25 @@ async function checkProviderHealth() {
   const since = isoHoursAgo(24);
   const { data, error } = await supabase
     .from('tom_metrics')
-    .select('latency_ms, provider_used, fallback_from, error_kind')
+    .select('collaborator_id, latency_ms, provider_used, fallback_from, error_kind')
     .gte('ts', since);
   if (error) return { status: 'error', detail: `provider-health indisponível: ${error.message}` };
   if (!data || data.length === 0) return { status: 'ok', detail: 'Sem mensagens nas últimas 24h' };
 
-  const n = data.length;
-  const lat = data.map(r => r.latency_ms).filter(v => typeof v === 'number').sort((a, b) => a - b);
+  // RUIDO-QA-NA-AUDITORIA (12/09): os perfis de replay ("[QA] …") são MEUS testes — latência,
+  // fallback forçado e erro deles não são sinal de produção. Saem da amostra (lib/perfis-qa).
+  const { idsQA, foraDoQA } = require('../lib/perfis-qa');
+  const { data: _qaRows } = await supabase.from('collaborators').select('id, full_name').ilike('full_name', '[QA]%');
+  const dados = foraDoQA(data || [], idsQA(_qaRows || []));
+  if (!dados.length) return { status: 'ok', detail: 'Sem mensagens de produção nas últimas 24h' };
+
+  const n = dados.length;
+  const lat = dados.map(r => r.latency_ms).filter(v => typeof v === 'number').sort((a, b) => a - b);
   const med = _percentileMs(lat, 50);
   const p95 = _percentileMs(lat, 95);
   const max = lat.length ? lat[lat.length - 1] : 0;
-  const fb = data.filter(r => r.fallback_from).length;
-  const fails = data.filter(r => r.error_kind).length;
+  const fb = dados.filter(r => r.fallback_from).length;
+  const fails = dados.filter(r => r.error_kind).length;
   const over60 = lat.filter(v => v > 60000).length;
   const fbPct = n ? (fb / n) * 100 : 0;
   const s = (ms) => (ms / 1000).toFixed(1);
