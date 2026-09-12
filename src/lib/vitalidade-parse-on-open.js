@@ -15,6 +15,8 @@
 //   parser   — dessas, quantas o parser REAL de hoje casa
 //   estagiou — quantas de fato nasceram com a chave no payload
 //
+//   estagiou > 0 e parser == 0 → a fatia estagia por caminho DIRETO (o parser nem é chamado).
+//                                Está VIVA; o `parser 0` é artefato do medidor, não achado.
 //   tema > 0  e  parser == 0   → ÂNCORA NÃO CASA A PROSA. É achado. (caso do fechamento)
 //   parser > 0 e estagiou == 0 → quebra DEPOIS do parser (resolução título→id fail-closed)
 //   tema == 0                  → sem oportunidade no período: a fatia dorme, não quebrou.
@@ -106,6 +108,13 @@ function vitalidadeDasFatias(intents, opts = {}) {
 
     let veredito;
     if (tema === 0 && estagiou === 0) veredito = 'sem_oportunidade';
+    // ESTAGIOU manda em PARSER. Nem toda fatia passa pelo parser pra estagiar: o ramo A2 do
+    // fechamento em lote resolve os ids na hora e escreve payload.batch_complete direto, e o
+    // rótulo que ele grava em question_text ("Confirmar fechamento em lote: …") não é a frase
+    // que o parser ancora (essa vai pro usuário, no reply). Com estágio recente, `parser 0` é
+    // artefato do medidor — a alça está chegando. Sem esta linha o laudo mandou investigar uma
+    // âncora intacta em 07/09, 11/09 e 12/09.
+    else if (estagiou > 0 && parser === 0) veredito = 'viva_sem_parser';
     else if (tema > 0 && parser === 0) veredito = 'ancora_nao_casa';
     else if (parser > 0 && estagiou === 0) veredito = 'quebra_depois_do_parser';
     else veredito = 'viva';
@@ -127,7 +136,7 @@ const _EXPLICA = {
 function blocoDoLaudo(vits) {
   const linhas = Array.isArray(vits) ? vits : [];
   if (!linhas.length) return '';
-  const doentes = linhas.filter((v) => v.veredito !== 'viva');
+  const doentes = linhas.filter((v) => v.veredito !== 'viva' && v.veredito !== 'viva_sem_parser');
   if (!doentes.length) return '';
 
   const corpo = doentes.map((v) => `- ${v.nome} (${v.chave}): tema ${v.tema} · parser casou `

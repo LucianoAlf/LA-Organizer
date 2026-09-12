@@ -65,6 +65,45 @@ test('parser casou e nada estagiou → quebra_depois_do_parser (fala real de fec
   assert.strictEqual(c.veredito, 'quebra_depois_do_parser');
 });
 
+// ---------------------------------------------------------------------------
+// O ALARME FALSO do medidor: a fatia estagia por caminho DIRETO (sem parser).
+// Literal real de producao (pending_intents 11/09/2026 22:23 UTC): o ramo A2 do engine
+// escreve `question_text = "Confirmar fechamento em lote: ..."` e estagia
+// payload.batch_complete de uma vez — o parser NUNCA é consultado nesse caminho. A âncora
+// dele ("fechamento destas N tarefas:") é a frase que vai pro USUÁRIO, não esse rótulo.
+// Com `parser 0 + estagiou 15` o laudo dizia "a âncora envelheceu, é achado" — e mandava
+// consertar um parser que está intacto. Três rodadas (07/09, 11/09, 12/09) gastas nisso.
+// ---------------------------------------------------------------------------
+const Q_BATCH_ROTULO = 'Confirmar fechamento em lote: *Olhar o CRM (chat)*, '
+  + '*Verificar a agenda do dia*, *Abrir o caixa pelo grupo do financeiro*?';
+
+test('estagiou por caminho direto → viva_sem_parser, NÃO ancora_nao_casa', () => {
+  const v = vitalidadeDasFatias([
+    { question_text: Q_BATCH_ROTULO, payload: { batch_complete: ['a', 'b'] }, asked_at: '2026-09-11' },
+  ], { hoje: HOJE });
+  const c = acha(v, 'batch_complete');
+  assert.strictEqual(c.tema, 1);
+  assert.strictEqual(c.parser, 0, 'o rótulo da intent não é a frase que o parser ancora');
+  assert.strictEqual(c.estagiou, 1);
+  assert.strictEqual(c.veredito, 'viva_sem_parser');
+});
+
+test('blocoDoLaudo não cobra conserto de fatia que está estagiando', () => {
+  const v = vitalidadeDasFatias([
+    { question_text: Q_BATCH_ROTULO, payload: { batch_complete: ['a'] }, asked_at: '2026-09-11' },
+    { question_text: Q_DELEG_REAL, payload: { delegation: {} }, asked_at: '2026-09-10' },
+  ], { hoje: HOJE });
+  const b = blocoDoLaudo(v);
+  assert.ok(!b.includes('fechamento por pergunta'), 'fatia viva não entra na lista de doentes');
+});
+
+test('ancora_nao_casa continua valendo quando NADA estagiou', () => {
+  const v = vitalidadeDasFatias([
+    { question_text: Q_BATCH_ROTULO, payload: {}, asked_at: '2026-09-11' },
+  ], { hoje: HOJE });
+  assert.strictEqual(acha(v, 'batch_complete').veredito, 'ancora_nao_casa');
+});
+
 test('parser casou E estagiou → viva (fala real de delegação)', () => {
   const v = vitalidadeDasFatias([
     { question_text: Q_DELEG_REAL, payload: { delegation: { task_id: 'x', to_name: 'Matheus Felipe' } }, asked_at: '2026-07-10' },
