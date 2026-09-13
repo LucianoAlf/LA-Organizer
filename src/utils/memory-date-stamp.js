@@ -28,6 +28,26 @@ const RELATIVO_RE = new RegExp(
   + '|semana\\s+que\\s+vem|semana\\s+passada|m[êe]s\\s+que\\s+vem|m[êe]s\\s+passado'
   + '|pr[óo]xima\\s+semana|essa\\s+semana|esta\\s+semana)(?![\\p{L}])', 'iu');
 
+// DIA DA SEMANA (caso Anne Susan, 12/09/2026 — um sábado)
+// "Anne Susan precisa estudar para a prova de clínica psicanalítica no sábado." foi gravada em
+// 31/05 e continuou ativa. Em 12/09 o briefing anunciou a prova como sendo de HOJE, e a prova
+// não existia. Dia da semana envelhece exatamente como "amanhã" — e vinha passando batido.
+//
+// O candidato é ESTREITO POR CONSTRUÇÃO: só a forma PONTUAL ("no sábado", "na segunda-feira",
+// "nesta quinta", "próxima sexta", "sexta que vem"). A forma recorrente usa outra preposição
+// ("às sextas", "aos sábados", "toda terça", "de terça a sábado") e não casa — carimbar regra
+// permanente é pior que não carimbar, porque sugere um evento pontual que já passou.
+const _DIA = '(?:segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:[-\\s]feira)?';
+const DIA_SEMANA_PONTUAL_RE = new RegExp(
+  '(?<![\\p{L}])(?:n[oa]|nest[ae]|ness[ae]|pr[óo]xim[oa])\\s+' + _DIA + '(?![\\p{L}])'
+  + '|(?<![\\p{L}])' + _DIA + '\\s+que\\s+vem(?![\\p{L}])', 'iu');
+
+// "segunda"/"terça"/"quarta" também são ORDINAIS: "na segunda dose", "na segunda quinzena".
+const _ORDINAL_RE = /(?<![\p{L}])n[oa]\s+(?:segunda|ter[çc]a|quarta|quinta)\s+(?!feira)(?:dose|vez|quinzena|etapa|fase|parte|semana|reuni[ãa]o|metade|tentativa)/iu;
+
+// Regra permanente disfarçada de dia pontual — medido no banco em 13/09 (2 linhas em 21).
+const _PERMANENTE_RE = /(?<![\p{L}])(?:prefere|prefiro|nunca|sempre|semanalmente|rotina)(?![\p{L}])|n[ãa]o\s+quer/iu;
+
 function _ddmm(when) {
   if (!when) return null;
   const d = when instanceof Date ? when : new Date(when);
@@ -42,7 +62,10 @@ function _ddmm(when) {
 
 /** A frase depende de quando foi dita? */
 function precisaCarimbo(content) {
-  return typeof content === 'string' && RELATIVO_RE.test(content);
+  if (typeof content !== 'string') return false;
+  if (RELATIVO_RE.test(content)) return true;
+  if (!DIA_SEMANA_PONTUAL_RE.test(content)) return false;
+  return !_ORDINAL_RE.test(content) && !_PERMANENTE_RE.test(content);
 }
 
 /**
@@ -61,4 +84,4 @@ function carimbaMemoriaRelativa(content, createdAt) {
   return `(${dm}) ${content}`;
 }
 
-module.exports = { carimbaMemoriaRelativa, precisaCarimbo, RELATIVO_RE };
+module.exports = { carimbaMemoriaRelativa, precisaCarimbo, RELATIVO_RE, DIA_SEMANA_PONTUAL_RE };

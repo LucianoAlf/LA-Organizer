@@ -61,6 +61,39 @@ test('carimbo usa BRT, não UTC — 21h em SP não vira o dia seguinte', () => {
   assert.ok(carimbaMemoriaRelativa('Manda amanhã', '2026-07-29T02:30:00Z').startsWith('(28/07)'));
 });
 
+// Caso Anne Susan, 12/09/2026 (um SÁBADO). A memória abaixo foi gravada em 31/05 e o briefing
+// da manhã renderizou "⚠️ Prova de clínica psicanalítica é hoje" — a prova não existia. Dia da
+// semana envelhece exatamente como "amanhã": sem a data de origem, "no sábado" é sempre o
+// sábado de hoje. 19 das 506 memórias ativas estão nessa situação (medido em 13/09).
+test('dia da semana PONTUAL envelhece igual a "amanhã" — caso Anne 12/09', () => {
+  assert.strictEqual(
+    carimbaMemoriaRelativa('Anne Susan precisa estudar para a prova de clínica psicanalítica no sábado.', '2026-05-31T03:00:28Z'),
+    '(31/05) Anne Susan precisa estudar para a prova de clínica psicanalítica no sábado.');
+  for (const s of ['Arthur irá fazer a encomenda de descartáveis na segunda às 9:30.',
+                   'Juliana precisa agendar uma reunião com Rodrigo na segunda-feira às 15h.',
+                   'Luciano planeja uma reunião com Vitor na próxima sexta-feira às 9h.',
+                   'Yuri irá agendar a gravação da Legacy nesta quinta.',
+                   'Dai vai concluir a anamnese dos alunos sexta que vem.']) {
+    assert.ok(precisaCarimbo(s), `"${s}" deveria precisar de carimbo`);
+  }
+});
+
+// O carimbo mente quando a frase é uma REGRA permanente: "(04/05) prefere receber na segunda"
+// sugere um evento pontual que passou. Os dois primeiros são linhas reais do banco.
+test('dia da semana RECORRENTE ou ordinal passa intacto', () => {
+  for (const s of ['Prefere receber o planejamento da semana na segunda-feira às 10h.',
+                   'Matheus NÃO quer cobranças no fim de semana. Lembretes começam na segunda-feira.',
+                   'Bianca deve evitar reuniões às sextas-feiras após 17h',
+                   'Tom organiza reuniões online às terças às 15h',
+                   'Krissya acompanha prazos de tarefas até sexta-feira',
+                   'Trabalha de terça a sábado',
+                   'Anne precisa dar a segunda dose do quimioterápico no dia 1º de agosto',
+                   'Revisar o material na segunda quinzena']) {
+    assert.strictEqual(precisaCarimbo(s), false, s);
+    assert.strictEqual(carimbaMemoriaRelativa(s, '2026-07-10T12:00:00Z'), s, s);
+  }
+});
+
 test('defensivo: não-string / vazio', () => {
   for (const v of [null, undefined, '', 42, {}]) {
     assert.strictEqual(carimbaMemoriaRelativa(v, '2026-07-28T14:00:00Z'), v);
