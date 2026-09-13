@@ -4765,6 +4765,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   // FATIA 6 (#1): horários de lembrete das tarefas CRIADAS neste lote (remind_at one-shot +
   // reminders_at). O caller anexa "🔔 Lembro às HHh" quando a fala do TOM omite a hora.
   const createdReminderTimes = [];
+  // DATA-DA-TAREFA-NAO-DITA (Yuri 12/09): a data das tarefas CRIADAS neste lote — o caller anexa
+  // "📅 Fica para *segunda, 14/09*" quando a fala do TOM confirma sem dizer o dia.
+  const _criadasDatas = [];
   const last4 = String(collaborator.phone || '').slice(-4);
   // Guardrail anti-bomba (BULK-RECUR): se o lote tem >10 creates de título
   // idêntico, bloqueia esse grupo e orienta o caminho recorrente. Backstop
@@ -6234,6 +6237,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         // FATIA 6 (#1): guarda os horários de lembrete desta tarefa criada (one-shot + múltiplos)
         // pra o caller poder surfacer "🔔 Lembro às HHh" se a fala do TOM não citar a hora.
         if (insertRow.remind_at) createdReminderTimes.push(insertRow.remind_at);
+        _criadasDatas.push({ title: insertRow.title, due_date: insertRow.due_date || null });
         if (reminders.length) createdReminderTimes.push(...reminders);
         // Subtarefas/checklist (2026-06-26): create com subtasks:[...] → cria as filhas (helper
         // LITE; herda context/assigned do pai). Best-effort: o pai já persistiu, falha das filhas
@@ -6874,7 +6878,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       if (okCount === _okB && failCount > _failB) _falharam.push(a);
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit, criadas: _criadasDatas };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -13083,7 +13087,7 @@ Output AGORA, apenas o marker:`;
       // replyText (CANCELA-SERIE-PROMETE-TODOS): a fala do TOM que acompanha o marker — o executor usa
       // pra não cancelar UMA ocorrência quando ela promete "todos"/"fora do sistema".
       const _falaTomTask = (parsedTask && parsedTask.cleanText) || '';
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm, retidos, concluidas } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm, retidos, concluidas, criadas } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -13240,6 +13244,21 @@ Output AGORA, apenas o marker:`;
             const _rn = buildReminderNotice(createdReminderTimes, _alvoTxt);
             if (_rn) base = (_alvoTxt ? _alvoTxt + '\n\n' : '') + _rn;
           } catch (e) { console.warn('[ReminderNotice] non-fatal:', e.message); }
+        }
+        // DATA-DA-TAREFA-NAO-DITA (Yuri 12/09): ele pediu "segunda feira", a tarefa nasceu 14/09 e a
+        // confirmação saiu "Anotado. 🔔 Lembro às 14h" — sem o dia. Mesmo remédio da hora (Fatia 6),
+        // agora pro dia: só anexa quando a fala NÃO diz a data, e tarefa de HOJE não vira ruído.
+        if (okCount > 0 && Array.isArray(criadas) && criadas.length) {
+          try {
+            const { faltaDataNaFala, textoDataCriada } = require('./lib/data-da-tarefa-criada');
+            const _hojeYmdData = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+            const _alvoTxtData = base || reply || '';
+            const _alvoData = faltaDataNaFala(_alvoTxtData, criadas, _hojeYmdData);
+            if (_alvoData) {
+              const _txtData = textoDataCriada(_alvoData, _hojeYmdData);
+              if (_txtData) base = (_alvoTxtData ? _alvoTxtData + '\n\n' : '') + _txtData;
+            }
+          } catch (e) { console.warn('[DataCriada] non-fatal:', e.message); }
         }
         reply = base || reply;
       }

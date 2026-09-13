@@ -35,6 +35,6 @@ test('título de uma palavra só precisa dessa palavra; repetido conta uma vez',
 const ENG = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'engine.js'), 'utf8');
 test('engine: guarda o título concluído, devolve e completa a fala que esqueceu', () => {
   assert.match(ENG, /console\.log\(`\[Task\] complete \$\{a\.id\} by \$\{last4\}`\);\n\s*_concluidasTit\.push\(/);
-  assert.match(ENG, /concluidas: _concluidasTit \};/);
+  assert.match(ENG, /concluidas: _concluidasTit\b/); // a POSICAO no retorno nao e contrato (13/09 entrou "criadas" depois)
   assert.match(ENG, /const _faltamFala = faltamNaFala\(base, concluidas\);/);
 });
