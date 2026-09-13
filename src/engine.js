@@ -15099,10 +15099,36 @@ Output AGORA, apenas o marker:`;
       await logMarker(collab.id, 'MEMORY_SAVE', 'rejected', 'schema_invalid', reply);
       reply = parsedMem.cleanText || reply;
     } else if (parsedMem) {
-      const saved = await persistMemoryRows(collab.id, parsedMem.rows);
-      console.log(`[Memory] saved ${saved} facts for ${String(collab.phone).slice(-4)}`);
-      await logMarker(collab.id, 'MEMORY_SAVE', 'executed', `saved=${saved}`, null);
+      // MEMORIA-APAGAR-PELO-CHAT (Anne 12/09 — 84d9581f): "pode tirar da lista" emitia action:"delete",
+      // que este executor ignorava — o TOM prometia "tiro isso agora" e a anotação seguia ativa. Agora a
+      // remoção tem caminho: alvo ÚNICO do PRÓPRIO dono (lib/memoria-remocao, fail-closed) e o texto do
+      // que saiu é anexado pelo sistema — o TOM não afirma remoção sozinho.
+      const { ehRemocao, escolherMemoriaParaRemover, textoRemocao } = require('./lib/memoria-remocao');
+      const _memRemocoes = parsedMem.rows.filter(ehRemocao);
+      const _memGuardar = parsedMem.rows.filter((r) => !ehRemocao(r));
+      const saved = _memGuardar.length ? await persistMemoryRows(collab.id, _memGuardar) : 0;
+      const _memRemovidas = [];
+      const _memNaoAchadas = [];
+      if (_memRemocoes.length) {
+        try {
+          const { data: _memAtivas } = await supabase.from('collaborator_memory')
+            .select('id, content').eq('collaborator_id', collab.id).eq('is_active', true).limit(500);
+          for (const _r of _memRemocoes) {
+            const _alvo = escolherMemoriaParaRemover(_r.content, _memAtivas || []);
+            if (!_alvo) { _memNaoAchadas.push(_r.content); continue; }
+            const { data: _off } = await supabase.from('collaborator_memory')
+              .update({ is_active: false, updated_at: new Date().toISOString() })
+              .eq('id', _alvo.id).eq('collaborator_id', collab.id).eq('is_active', true)
+              .select('id, content').maybeSingle();
+            if (_off) _memRemovidas.push(_off.content); else _memNaoAchadas.push(_r.content);
+          }
+        } catch (eRem) { console.warn('[Memory] remoção err:', eRem.message); }
+      }
+      console.log(`[Memory] saved ${saved} facts, removed ${_memRemovidas.length} for ${String(collab.phone).slice(-4)}`);
+      await logMarker(collab.id, 'MEMORY_SAVE', 'executed', `saved=${saved} removidas=${_memRemovidas.length} naoachadas=${_memNaoAchadas.length}`, null);
       reply = parsedMem.cleanText || reply;
+      const _memNota = textoRemocao({ removidas: _memRemovidas, naoAchadas: _memNaoAchadas });
+      if (_memNota) reply = `${reply || ""}\n\n${_memNota}`.trim();
     }
   }
 

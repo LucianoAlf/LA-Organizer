@@ -18,7 +18,9 @@
 'use strict';
 
 // Ordem = precedência. `content` é o canônico; os outros são variações observadas.
-const CHAVES_CONTEUDO = ['content', 'text', 'value', 'body'];
+// `fact` entrou em 13/09 (caso Anne): o marcador de REMOÇÃO veio como {action:'delete',fact:'...'}
+// e morria em schema_invalid — o pedido dela ("pode tirar da lista") não tinha como ser lido.
+const CHAVES_CONTEUDO = ['content', 'text', 'value', 'body', 'fact'];
 
 function extrairConteudoMemoria(row) {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {

@@ -60,5 +60,7 @@ test('row nulo/inválido não explode', () => {
 });
 
 test('a lista de chaves aceitas é explícita e fechada', () => {
-  assert.deepEqual(CHAVES_CONTEUDO, ['content', 'text', 'value', 'body']);
+  // `fact` entrou em 13/09 (Anne): o marcador de REMOCAO veio {action:'delete',fact:'...'} e caiu
+  // em schema_invalid — o pedido dela de tirar a anotacao nao tinha como ser lido. Ver lib/memoria-remocao.
+  assert.deepEqual(CHAVES_CONTEUDO, ['content', 'text', 'value', 'body', 'fact']);
 });
