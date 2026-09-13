@@ -204,7 +204,9 @@ test('pergunta DEPOIS da âncora que não casa continua sendo achado', () => {
 
 test('toda fatia padrão declara desde — senão o alarme volta a envelhecer', () => {
   for (const f of _FATIAS) {
-    assert.match(String(f.desde || ""), /^\d{4}-\d{2}-\d{2}$/, `fatia ${f.chave} sem desde`);
+    const _d = String(f.desde);
+    assert.ok(Number.isFinite(Date.parse(_d)) && _d.includes("T") && _d.includes(":"),
+      `fatia ${f.chave} precisa declarar desde COM HORA (a da delegacao nasceu 16/08 as 17h BRT; por DIA o laudo acusava parser intacto)`);
   }
 });
 
@@ -213,4 +215,29 @@ test('fatia sem desde (custom) mede como antes — zero regressão pra quem cham
   const v = vitalidadeDasFatias([{ question_text: 'reagenda isso', payload: {}, asked_at: '2020-01-01T00:00:00Z' }], { fatias: fatia })[0];
   assert.strictEqual(v.veredito, 'ancora_nao_casa');
   assert.strictEqual(v.tema, 1);
+});
+
+// 2ª camada (13/09): as 3 perguntas que faziam a delegação acusar eram (a) duas de 15/08 21h55 BRT,
+// anteriores à âncora que nasceu 16/08 17h, e (b) uma pergunta de RECADO que só CITA "delegou".
+test('âncora com HORA: pergunta da véspera à noite não é oportunidade', () => {
+  const v = vitalidadeDasFatias([{ question_text: 'Delego pra Mayra com prazo 03/09 — *"Lembrar do Pix"*. Confirma?', payload: {}, asked_at: '2026-08-16T00:55:22.688494+00:00' }]);
+  const d = v.find((x) => x.chave === 'delegation');
+  assert.strictEqual(d.veredito, 'sem_oportunidade');
+  assert.strictEqual(d.anteriores, 1);
+});
+
+test('pergunta que estagiou OUTRA fatia não conta como oportunidade desta', () => {
+  const jereh = [{ question_text: 'Assumindo que é o Jhonatan — foi quem delegou essa reunião. Aviso ele? Confirma?',
+    payload: { coordination: { items: [{ mode: 'relay_literal' }] } }, asked_at: '2026-09-12T12:00:00Z' }];
+  const v = vitalidadeDasFatias(jereh);
+  assert.strictEqual(v.find((x) => x.chave === 'delegation').veredito, 'sem_oportunidade');
+  assert.strictEqual(v.find((x) => x.chave === 'coordination').estagiou, 1);
+});
+
+test('a pergunta feita NO instante da ancora conta (a borda e inclusiva pro parser novo)', () => {
+  const naBorda = [{ question_text: 'Delego pra Mayra com prazo 03/09 — *"Lembrar do Pix"*. Confirma?',
+    payload: {}, asked_at: '2026-08-16T20:00:43Z' }];
+  const d = vitalidadeDasFatias(naBorda).find((x) => x.chave === 'delegation');
+  assert.strictEqual(d.anteriores, 0, "no instante exato da ancora a pergunta JA e oportunidade");
+  assert.strictEqual(d.tema, 1);
 });

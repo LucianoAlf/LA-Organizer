@@ -40,32 +40,33 @@ const FATIAS_PADRAO = [
   {
     chave: 'coordination',
     nome: 'recado/coordenação',
-    // A âncora atual nasceu em 16/08 (b9763ed7) e foi REESCRITA em 11/09 (a6f01ce7).
-    desde: '2026-09-11',
+    // A âncora atual nasceu em 16/08 (b9763ed7) e foi REESCRITA em 11/09 (a6f01ce7, 09:06 BRT).
+    desde: '2026-09-11T12:06:22Z',
     tema: /\b(aviso|avisar|recado|mando|mandar|encaminh\w*)\b/i,
     parse: (q) => parseCoordinationConfirmQuestion(q),
   },
   {
     chave: 'batch_complete',
     nome: 'fechamento por pergunta',
-    // Âncora de 16/08 (ec92ab17), nunca reescrita.
-    desde: '2026-08-16',
+    // Âncora de 16/08 16:48 BRT (ec92ab17), nunca reescrita.
+    desde: '2026-08-16T19:48:27Z',
     tema: /\bfechamento\b|\bfechar\b|\bconclu\w+\b/i,
     parse: (q) => parseCompleteConfirmQuestion(q),
   },
   {
     chave: 'delegation',
     nome: 'delegação',
-    // Âncora de 16/08 (d5d9c0a6), nunca reescrita.
-    desde: '2026-08-16',
+    // Âncora de 16/08 17:00 BRT (d5d9c0a6), nunca reescrita. HORA importa: as duas perguntas da Ana
+    // Paula são de 15/08 21:55 BRT — por DIA elas passavam por oportunidade e o laudo acusava.
+    desde: '2026-08-16T20:00:43Z',
     tema: /\bdeleg\w*/i,
     parse: (q) => parseDelegateConfirmQuestion(q),
   },
   {
     chave: 'reschedule',
     nome: 'reagendamento',
-    // Nasceu em 24/08 (530a57d2) e a âncora mudou em 08/09 (9e9f73be).
-    desde: '2026-09-08',
+    // Nasceu em 24/08 (530a57d2) e a âncora mudou em 08/09 09:20 BRT (9e9f73be).
+    desde: '2026-09-08T12:20:19Z',
     tema: /reagend\w*|remarc\w*|novos?\s+prazos?/i,
     parse: (q, hoje) => parseRescheduleConfirmQuestion(q, { todayYmd: hoje }),
   },
@@ -112,8 +113,16 @@ function vitalidadeDasFatias(intents, opts = {}) {
       // isto o laudo acusa `ancora_nao_casa` pela janela inteira (30 dias) depois de CADA conserto de
       // âncora: foi o que fez a casa investigar defeito inexistente em 07, 11, 12 e 13/09. O comentário
       // no topo já dizia isso desde 07/09; agora é código.
-      const _quando = String((r && r.asked_at) || '').slice(0, 10);
-      if (f.desde && _quando && _quando < f.desde) { anteriores++; continue; }
+      // Comparação por INSTANTE (não por dia): a âncora da delegação nasceu 16/08 às 17h BRT e as
+      // perguntas medidas eram das 21h55 do dia 15 — por dia elas viravam "oportunidade" e o laudo
+      // acusava parser intacto. Data ilegível não filtra nada (mede como antes).
+      const _quando = Date.parse(String((r && r.asked_at) || ""));
+      const _desde = f.desde ? Date.parse(f.desde) : NaN;
+      if (Number.isFinite(_quando) && Number.isFinite(_desde) && _quando < _desde) { anteriores++; continue; }
+      // A pergunta estagiou OUTRA fatia? Então ela é daquele assunto, não deste — o tema é largo de
+      // propósito e pega palavra solta ("...foi quem delegou essa reunião" numa pergunta de RECADO).
+      const _outra = fatias.some((g) => g.chave !== f.chave && Object.prototype.hasOwnProperty.call(pl, g.chave));
+      if (_outra && !temChave) { anteriores++; continue; }
       tema++;
       // Parser quebrado NUNCA derruba a medição: um throw viraria laudo em branco, e
       // laudo em branco é lido como saúde. Conta como "não casou" e segue.
