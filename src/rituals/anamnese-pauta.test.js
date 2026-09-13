@@ -1325,7 +1325,9 @@ test('atualização: os dois gatilhos do disjuntor são EXPORTADOS e o teto é "
 });
 
 // ── LACUNA 4 (04/09): os NÚMEROS têm que sobreviver ao corte do marcador ─────────────────────
-// O dispatcher grava o reason em `marker_logs` cortado em 120 caracteres, e a chave de
+// O dispatcher grava o reason em `marker_logs` cortado em 300 caracteres (13/09: era 120, corte
+// auto-imposto que apagou a mensagem do erro do LA Report em 12/09 — ver dispatcher-motivo-marker),
+// e a chave de
 // idempotência do slot (`pauta_refresh:<uuid>:<ymd>:<HH:MM>`) já come 67 deles. Somando o que o
 // dispatcher escreve antes do motivo — ` fech=0 pend=NN nd=N` e ` erro=` — sobram 27 caracteres.
 // O texto antigo abria com prosa ("disjuntor do meio do dia: 30 de 30 filhas pendentes...") e o
@@ -1337,7 +1339,7 @@ test('atualização: os dois gatilhos do disjuntor são EXPORTADOS e o teto é "
 // O orçamento é DERIVADO aqui, não redigitado: se um dia o dispatcher passar a imprimir mais um
 // contador antes do `erro=`, o número muda junto e o teste continua medindo a verdade. A prova
 // de ponta a ponta (fórmula REAL do dispatcher, chave REAL de 67 chars) está no harness.
-const ORCAMENTO_MOTIVO_NO_MARCADOR = 120
+const ORCAMENTO_MOTIVO_NO_MARCADOR = 300
   - 'pauta_refresh:11111111-2222-3333-4444-555555555555:2026-09-04:17:00'.length
   - ' fech=0 pend=30 nd=0'.length
   - ' erro='.length;

@@ -262,7 +262,7 @@ test('bloco da pauta: BRECHA 1 — filha travada com outras fechando vira execut
 test('bloco da pauta: BRECHA 1 — dia saudavel nao gasta o reason com falha=0', async () => {
   const w = mundo();
   await w.tick('15:00', 0);
-  assert.ok(w.inseridos.every((m) => !/falha=/.test(m.reason)), 'sem falha, o contador nao entra no reason (120 chars)');
+  assert.ok(w.inseridos.every((m) => !/falha=/.test(m.reason)), 'sem falha, o contador nao entra no reason');
 });
 
 test('bloco da pauta: BRECHA 2 — disjuntor volta como fallback e NAO trava o slot (o proximo tick tenta de novo)', async () => {
@@ -302,7 +302,7 @@ test('bloco da pauta: BRECHA 4 — no dispatcher instalado, o bloco da ATUALIZAC
 });
 
 // ── LACUNA 4 (04/09): o que o AUDITOR ve em marker_logs ─────────────────────────────────────
-// O reason e cortado em 120 caracteres, e a chave de idempotencia do slot ja gasta 67 deles com
+// O reason e cortado em 300 caracteres (13/09: era 120), e a chave de idempotencia do slot ja gasta 67 deles com
 // um uuid de unidade de verdade (as unidades fake acima tem id curto e escondem o aperto). Este
 // e o unico lugar da suite onde a formula REAL do dispatcher encontra uma chave REAL: o motivo
 // vem do ritual REAL, nada e redigitado. Antes, o banco guardava `erro=disjuntor do meio do dia:
@@ -350,14 +350,14 @@ test('bloco da pauta: LACUNA 4 — a chave ocupa os 67 primeiros chars e sobrevi
   });
   await w.tick('17:00', 0);
   const { reason } = w.inseridos[0];
-  assert.strictEqual(reason.length, 120, 'o corte do dispatcher e em 120 — se mudar, os orcamentos abaixo mudam junto');
+  assert.ok(reason.length <= 300, 'o corte do dispatcher e em 300 — se mudar, os orcamentos abaixo mudam junto');
   assert.strictEqual(reason.slice(0, CHAVE_ESPERADA.length), CHAVE_ESPERADA,
     'a chave de idempotencia do slot nao pode ser tocada pelo corte');
-  assert.strictEqual(CHAVE_ESPERADA.length, 67, 'a chave com uuid real gasta 67 dos 120 caracteres');
+  assert.strictEqual(CHAVE_ESPERADA.length, 67, 'a chave com uuid real gasta 67 dos 300 caracteres');
   // O que sobra pro motivo depois de ` fech=0 pend=30 nd=0` e ` erro=`. E este numero que o teste
   // de orcamento do ritual (anamnese-pauta.test.js) usa pra exigir os numeros na frente do texto.
   const sobra = reason.length - (reason.indexOf(' erro=') + ' erro='.length);
-  assert.strictEqual(sobra, 27, `o motivo tem ${sobra} caracteres no marcador — o ritual precisa por sensor e numeros ai dentro`);
+  assert.strictEqual(sobra, 207, `o motivo tem ${sobra} caracteres no marcador — o ritual precisa por sensor e numeros ai dentro`);
 });
 
 test('bloco da pauta: LACUNA 4 — os NUMEROS do disjuntor chegam ao marker_logs, nao so a palavra', async () => {

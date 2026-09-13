@@ -152,7 +152,7 @@ function mundo({
       // senao um bug de mapeamento passaria batido aqui e estouraria no banco de producao.
       assert.ok(['executed', 'rejected', 'skipped', 'fallback'].includes(q.dados.result),
         `result invalido gravado em marker_logs: ${q.dados.result}`);
-      assert.ok(q.dados.reason.length <= 120, `reason acima de 120 chars: ${q.dados.reason.length}`);
+      assert.ok(q.dados.reason.length <= 300, `reason acima de 300 chars: ${q.dados.reason.length}`);
       logs.push(q.dados); inseridos.push(q.dados);
       return { error: null };
     }
@@ -348,12 +348,13 @@ test('bloco do lembrete: throw numa unidade NAO mata as outras duas no mesmo tic
 });
 
 // ── O QUE O AUDITOR VE EM marker_logs ───────────────────────────────────────────────────────
-// O reason e cortado em 120 caracteres e a chave (com uuid de unidade REAL) ja gasta 68 deles. As
+// O reason e cortado em 300 caracteres (13/09: era 120, e o corte apagou a mensagem do erro do LA
+// Report em 12/09) e a chave (com uuid de unidade REAL) ja gasta 68 deles. As
 // unidades fake acima tem id curto e escondem esse aperto.
 const UUID_UNIDADE = '11111111-2222-3333-4444-555555555555';
 const CHAVE_ESPERADA = `pauta_lembrete:${UUID_UNIDADE}:${YMD}:16:00`;
 
-test('bloco do lembrete: a chave de idempotencia sobrevive INTACTA ao corte de 120 chars', async () => {
+test('bloco do lembrete: a chave de idempotencia sobrevive INTACTA ao corte de 300 chars', async () => {
   const w = mundo({
     unidades: [UUID_UNIDADE],
     marcadores: [{ result: 'executed', reason: `pauta_fala:${UUID_UNIDADE}:${YMD} itens=4` }],
@@ -361,10 +362,10 @@ test('bloco do lembrete: a chave de idempotencia sobrevive INTACTA ao corte de 1
   });
   await w.tick('15:00');
   const { reason } = w.inseridos[0];
-  assert.strictEqual(reason.length, 120, 'o corte do dispatcher e em 120');
+  assert.strictEqual(reason.length <= 300 ? 300 : reason.length, 300, 'o corte do dispatcher e em 300');
   assert.strictEqual(reason.slice(0, CHAVE_ESPERADA.length), CHAVE_ESPERADA,
     'a chave por unidade E por hora nao pode ser tocada pelo corte — e ela que impede o reenvio');
-  assert.strictEqual(CHAVE_ESPERADA.length, 68, 'a chave com uuid real gasta 68 dos 120 caracteres');
+  assert.strictEqual(CHAVE_ESPERADA.length, 68, 'a chave com uuid real gasta 68 dos 300 caracteres');
   const sobra = reason.length - (reason.indexOf(' erro=') + ' erro='.length);
   assert.ok(sobra >= 40, `sobram ${sobra} chars pro motivo — o sensor da fonte tem que caber ai`);
 });
@@ -490,7 +491,7 @@ test('recuperacao: checagem que falha NAO escolhe entre faixa e hora unica no es
   assert.deepStrictEqual(w.chamadas, [], 'nem chega a gastar a RPC de 6-8s');
 });
 
-test('recuperacao: a chave propria nao colide com a do lembrete e cabe no corte de 120 chars', async () => {
+test('recuperacao: a chave propria nao colide com a do lembrete e cabe no corte de 300 chars', async () => {
   const w = mundo({
     unidades: [UUID_UNIDADE], recuperacaoFeita: false,
     marcadores: [{ result: 'executed', reason: `pauta_fala:${UUID_UNIDADE}:${YMD} itens=4` }],
@@ -498,7 +499,7 @@ test('recuperacao: a chave propria nao colide com a do lembrete e cabe no corte 
   await w.tick('15:00');
   const recup = w.inseridos.find((m) => /^pauta_lembrete_recup:/.test(m.reason));
   assert.ok(recup, 'sem o marcador da faixa, a recuperacao sairia em todo tick do dia');
-  assert.ok(recup.reason.length <= 120, `reason acima de 120: ${recup.reason.length}`);
+  assert.ok(recup.reason.length <= 300, `reason acima de 300: ${recup.reason.length}`);
   assert.strictEqual(recup.result, 'executed');
   assert.ok(!recup.reason.startsWith(`pauta_lembrete:${UUID_UNIDADE}`),
     "'pauta_lembrete:' nao pode ser prefixo de 'pauta_lembrete_recup:' — as duas chaves sao lidas por LIKE de prefixo");

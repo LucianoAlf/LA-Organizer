@@ -4110,7 +4110,7 @@ async function run(opts = {}) {
             await supabase.from('marker_logs').insert({
               marker_type: 'GROUP_MEMORY',
               result: r.erro ? 'fallback' : 'executed',
-              reason: `${chaveDia} msgs=${r.mensagens} cand=${r.candidatas} salvas=${r.salvas}${r.erro ? ' erro=' + r.erro : ''}`.slice(0, 120),
+              reason: `${chaveDia} msgs=${r.mensagens} cand=${r.candidatas} salvas=${r.salvas}${r.erro ? ' erro=' + r.erro : ''}`.slice(0, 300),
             });
             if (r.salvas) console.log(`[GroupMemory] ${g.name}: ${r.salvas} memoria(s) de ${r.candidatas} candidata(s)`);
             if (r.erro) console.error(`[GroupMemory] ${g.name}: ${r.erro}`);
@@ -4318,7 +4318,7 @@ async function run(opts = {}) {
             //    duplicata e fecha a chave com skipped), e é barato perto de uma escada
             //    desligada em silêncio.
             result: r.jaExistia ? 'skipped' : (r.motivo ? 'fallback' : (r.criou ? 'executed' : 'skipped')),
-            reason: `${chaveDia} total=${r.total} escalados=${r.escalados}${r.motivo ? (r.jaExistia ? ' nota=' : ' erro=') + r.motivo : ''}`.slice(0, 120),
+            reason: `${chaveDia} total=${r.total} escalados=${r.escalados}${r.motivo ? (r.jaExistia ? ' nota=' : ' erro=') + r.motivo : ''}`.slice(0, 300),
           });
           // Global Constraint: todo error de chamada Supabase é checado. Risco menor que na fala
           // — montarPautaDaUnidade já tem guarda própria contra retentativa (_pacoteJaExiste) —
@@ -4410,7 +4410,7 @@ async function run(opts = {}) {
             // marcador que precisa dele. Mesmo criterio do `v=` no fechamento das 23:00.
             reason: (`${chaveRefresh} fech=${r.fechadas} pend=${r.continuamPendentes} nd=${r.naoDecididas}`
               + (r.falhasAoFechar ? ` falha=${r.falhasAoFechar}` : '')
-              + (r.motivo && !r.semPauta ? ` erro=${r.motivo}` : '')).slice(0, 120),
+              + (r.motivo && !r.semPauta ? ` erro=${r.motivo}` : '')).slice(0, 300),
           });
           // Global Constraint: todo error de chamada Supabase e checado. Uma falha muda de log
           // continua sendo uma falha muda — e aqui ela custaria a idempotencia do slot.
@@ -4729,7 +4729,7 @@ async function run(opts = {}) {
             console.error(`[Pauta] fala: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviada.message}`);
             const { error: erroMarkerChkFallback } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveMsg} checagem de duplicata falhou: ${erroJaEnviada.message}`.slice(0, 120),
+              reason: `${chaveMsg} checagem de duplicata falhou: ${erroJaEnviada.message}`.slice(0, 300),
             });
             if (erroMarkerChkFallback) console.error(`[Pauta] fala: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChkFallback.message}`);
             continue;
@@ -4739,7 +4739,7 @@ async function run(opts = {}) {
             // Não envia de novo — só fecha o marcador que faltou.
             const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
-              reason: `${chaveMsg} mensagem já enviada (achada por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
+              reason: `${chaveMsg} mensagem já enviada (achada por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 300),
             });
             if (erroMarkerSkip) console.error(`[Pauta] fala: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
             continue;
@@ -4762,13 +4762,13 @@ async function run(opts = {}) {
             console.error(`[Pauta] fala: envio da mensagem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMsg.message}`);
             const { error: erroMarkerFallback } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveMsg} envio falhou: ${erroMsg.message}`.slice(0, 120),
+              reason: `${chaveMsg} envio falhou: ${erroMsg.message}`.slice(0, 300),
             });
             if (erroMarkerFallback) console.error(`[Pauta] fala: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerFallback.message}`);
             continue;
           }
           const { error: erroMarker } = await supabase.from('marker_logs').insert({
-            marker_type: 'PAUTA_ANAMNESE', result: 'executed', reason: `${chaveMsg} ${sufixoReason}`.slice(0, 120),
+            marker_type: 'PAUTA_ANAMNESE', result: 'executed', reason: `${chaveMsg} ${sufixoReason}`.slice(0, 300),
           });
           if (erroMarker) {
             // A mensagem JÁ SAIU pro grupo real e o marcador que travaria a retentativa não
@@ -4876,7 +4876,7 @@ async function run(opts = {}) {
             // "nao rodei" nao podem ser indistinguiveis pra quem for investigar o silencio.
             const { error: erroMarkerSemAbertura } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
-              reason: `${chaveLembrete} sem abertura da unidade hoje — nao cobro ainda`.slice(0, 120),
+              reason: `${chaveLembrete} sem abertura da unidade hoje — nao cobro ainda`.slice(0, 300),
             });
             if (erroMarkerSemAbertura) console.error(`[Pauta] lembrete: marker_logs insert (sem abertura) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSemAbertura.message}`);
             continue;
@@ -4922,7 +4922,7 @@ async function run(opts = {}) {
             if (!ehRecuperacao) return;
             const { error: erroRecup } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'executed',
-              reason: `${chaveRecup} faixa ate ${_lembreteProxima} coberta`.slice(0, 120),
+              reason: `${chaveRecup} faixa ate ${_lembreteProxima} coberta`.slice(0, 300),
             });
             if (erroRecup) console.error(`[Pauta] lembrete: marker_logs insert (recuperacao) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroRecup.message}`);
           };
@@ -4951,7 +4951,7 @@ async function run(opts = {}) {
             console.error(`[Pauta] lembrete ${situAl.nomeDaUnidade(unidadeId)}: ${r.motivo}`);
             const { error: erroMarkerFonte } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveLembrete} erro=${r.motivo}`.slice(0, 120),
+              reason: `${chaveLembrete} erro=${r.motivo}`.slice(0, 300),
             });
             if (erroMarkerFonte) console.error(`[Pauta] lembrete: marker_logs insert (fallback) tambem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerFonte.message}`);
             continue;
@@ -4962,7 +4962,7 @@ async function run(opts = {}) {
             // indistinguiveis, e a diferenca entre os dois esta aqui: 'skipped' sem `erro=`.
             const { error: erroMarkerVazio } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
-              reason: `${chaveLembrete} ninguem pendente chegando`.slice(0, 120),
+              reason: `${chaveLembrete} ninguem pendente chegando`.slice(0, 300),
             });
             if (erroMarkerVazio) console.error(`[Pauta] lembrete: marker_logs insert (silencio) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerVazio.message}`);
             // A faixa FOI varrida e nao tinha ninguem — desfecho resolvido, recuperacao cumprida.
@@ -4991,7 +4991,7 @@ async function run(opts = {}) {
             console.error(`[Pauta] lembrete: checagem de mensagem ja enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaNoGrupo.message}`);
             const { error: erroMarkerChk } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveLembrete} checagem de duplicata falhou: ${erroJaNoGrupo.message}`.slice(0, 120),
+              reason: `${chaveLembrete} checagem de duplicata falhou: ${erroJaNoGrupo.message}`.slice(0, 300),
             });
             if (erroMarkerChk) console.error(`[Pauta] lembrete: marker_logs insert (fallback) tambem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChk.message}`);
             continue;
@@ -5000,7 +5000,7 @@ async function run(opts = {}) {
             // Achou o artefato: um tick anterior ja mandou este lembrete e so o marcador falhou.
             const { error: erroMarkerJa } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
-              reason: `${chaveLembrete} ja enviado (achado por conteudo — marcador anterior falhou)`.slice(0, 120),
+              reason: `${chaveLembrete} ja enviado (achado por conteudo — marcador anterior falhou)`.slice(0, 300),
             });
             if (erroMarkerJa) console.error(`[Pauta] lembrete: marker_logs insert (skipped) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerJa.message}`);
             // A faixa ja esta no grupo (so o marcador anterior falhou) — tambem e desfecho resolvido.
@@ -5017,14 +5017,14 @@ async function run(opts = {}) {
             console.error(`[Pauta] lembrete: envio falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroEnvio.message}`);
             const { error: erroMarkerEnvio } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveLembrete} envio falhou: ${erroEnvio.message}`.slice(0, 120),
+              reason: `${chaveLembrete} envio falhou: ${erroEnvio.message}`.slice(0, 300),
             });
             if (erroMarkerEnvio) console.error(`[Pauta] lembrete: marker_logs insert (fallback) tambem falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerEnvio.message}`);
             continue;
           }
           const { error: erroMarker } = await supabase.from('marker_logs').insert({
             marker_type: 'PAUTA_ANAMNESE', result: 'executed',
-            reason: `${chaveLembrete}${ehRecuperacao ? ' recup' : ''} alunos=${(r.alunos || []).length}`.slice(0, 120),
+            reason: `${chaveLembrete}${ehRecuperacao ? ' recup' : ''} alunos=${(r.alunos || []).length}`.slice(0, 300),
           });
           if (erroMarker) {
             // A mensagem JA SAIU pro grupo real e o marcador que travaria a retentativa nao
@@ -5198,7 +5198,7 @@ async function run(opts = {}) {
             console.error(`[Pauta] fim de dia: checagem de mensagem já enviada falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroJaEnviadoFim.message}`);
             const { error: erroMarkerChk } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveFim} checagem de duplicata falhou: ${erroJaEnviadoFim.message}`.slice(0, 120),
+              reason: `${chaveFim} checagem de duplicata falhou: ${erroJaEnviadoFim.message}`.slice(0, 300),
             });
             if (erroMarkerChk) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerChk.message}`);
             continue;
@@ -5212,7 +5212,7 @@ async function run(opts = {}) {
             // "envio ok, marcador de um tick anterior falhou".)
             const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'skipped',
-              reason: `${chaveFim} relatório já enviado (achado por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 120),
+              reason: `${chaveFim} relatório já enviado (achado por conteúdo — marcador de um tick anterior deve ter falhado)`.slice(0, 300),
             });
             if (erroMarkerSkip) console.error(`[Pauta] fim de dia: marker_logs insert (duplicata) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip.message}`);
             continue;
@@ -5232,7 +5232,7 @@ async function run(opts = {}) {
             const { error: erroMarkerVazio } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE',
               result: rel.motivo ? 'fallback' : 'skipped',
-              reason: `${chaveFim} ${rel.motivo || 'sem pauta hoje — nada a relatar'}`.slice(0, 120),
+              reason: `${chaveFim} ${rel.motivo || 'sem pauta hoje — nada a relatar'}`.slice(0, 300),
             });
             if (erroMarkerVazio) console.error(`[Pauta] fim de dia: marker_logs insert falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerVazio.message}`);
             if (rel.motivo) console.error(`[Pauta] fim de dia ${situAl.nomeDaUnidade(unidadeId)}: ${rel.motivo}`);
@@ -5254,7 +5254,7 @@ async function run(opts = {}) {
               console.error(`[Pauta] fim de dia: reconferência de duplicata falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroReconferir.message}`);
               const { error: erroMarkerRec } = await supabase.from('marker_logs').insert({
                 marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-                reason: `${chaveFim} reconferência de duplicata falhou: ${erroReconferir.message}`.slice(0, 120),
+                reason: `${chaveFim} reconferência de duplicata falhou: ${erroReconferir.message}`.slice(0, 300),
               });
               if (erroMarkerRec) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerRec.message}`);
               continue;
@@ -5275,7 +5275,7 @@ async function run(opts = {}) {
               result: jaTemRelatorioReal ? 'skipped' : 'fallback',
               reason: (jaTemRelatorioReal
                 ? `${chaveFim} relatório já enviado (achado por conteúdo — marcador de um tick anterior deve ter falhado)`
-                : `${chaveFim} degradado já no grupo, esperando a fonte voltar: ${rel.motivo}`).slice(0, 120),
+                : `${chaveFim} degradado já no grupo, esperando a fonte voltar: ${rel.motivo}`).slice(0, 300),
             });
             if (erroMarkerSkip2) console.error(`[Pauta] fim de dia: marker_logs insert (duplicata) falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerSkip2.message}`);
             continue;
@@ -5290,7 +5290,7 @@ async function run(opts = {}) {
             console.error(`[Pauta] fim de dia: envio falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMsgFim.message}`);
             const { error: erroMarkerFb } = await supabase.from('marker_logs').insert({
               marker_type: 'PAUTA_ANAMNESE', result: 'fallback',
-              reason: `${chaveFim} envio falhou: ${erroMsgFim.message}`.slice(0, 120),
+              reason: `${chaveFim} envio falhou: ${erroMsgFim.message}`.slice(0, 300),
             });
             if (erroMarkerFb) console.error(`[Pauta] fim de dia: marker_logs insert (fallback) também falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroMarkerFb.message}`);
             continue;
@@ -5313,7 +5313,7 @@ async function run(opts = {}) {
             result: relDegradado ? 'fallback' : 'executed',
             reason: (relDegradado
               ? `${chaveFim} degradado: ${rel.motivo}`
-              : `${chaveFim} ok=${rel.preencheram} falta=${rel.faltaram.length} semver=${rel.semVerificacao}`).slice(0, 120),
+              : `${chaveFim} ok=${rel.preencheram} falta=${rel.faltaram.length} semver=${rel.semVerificacao}`).slice(0, 300),
           });
           if (erroMarkerFim) {
             // Mensagem JÁ no grupo real e o marcador que travaria a retentativa não gravou: o
@@ -5381,7 +5381,7 @@ async function run(opts = {}) {
           const { error: erroMarker } = await supabase.from('marker_logs').insert({
             marker_type: 'PAUTA_ANAMNESE',
             result: r.motivo ? 'fallback' : 'executed',
-            reason: reasonFecha.slice(0, 120),
+            reason: reasonFecha.slice(0, 300),
           });
           // Global Constraint: todo error de chamada Supabase é checado. Risco menor que na fala
           // — fecharPautaDaUnidade não depende deste marker pra evitar duplicata (ela lê a fonte

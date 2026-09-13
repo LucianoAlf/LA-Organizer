@@ -153,7 +153,7 @@ function mundo({
       // senao um bug de mapeamento passaria batido aqui e estouraria no banco de producao.
       assert.ok(['executed', 'rejected', 'skipped', 'fallback'].includes(q.dados.result),
         `result invalido gravado em marker_logs: ${q.dados.result}`);
-      assert.ok(q.dados.reason.length <= 120, `reason acima de 120 chars: ${q.dados.reason.length}`);
+      assert.ok(q.dados.reason.length <= 300, `reason acima de 300 chars: ${q.dados.reason.length}`);
       logs.push(q.dados); inseridos.push(q.dados);
       return { error: null };
     }
