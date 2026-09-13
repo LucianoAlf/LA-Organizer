@@ -16020,6 +16020,29 @@ Output AGORA, apenas o marker:`;
     if (reply !== _beforeSync) console.log('[SYNC_EXCUSE_STRIPPED] removeu desculpa de sincronização do reply');
   } catch (e) { console.warn('[SyncExcuseGuard] non-fatal:', e.message); }
 
+  // TOTAL-DA-LISTA-E-RESPOSTA (Rose 04/07 — cfdf9bdb / ded67aeb): ela pediu o total DUAS vezes ("qual o
+  // total de contas ai?", "adiciona o total na lista") e recebeu a lista de novo com "faltam 4 valores",
+  // sem número — o total só veio no 3º pedido. Somar o que já está escrito é determinístico: se a pessoa
+  // pediu e a fala não traz, o engine soma. Fonte: a própria fala (quando ela re-renderiza a lista) ou a
+  // última lista da conversa em 30 min. Item sem valor não vira zero: o texto diz quantos faltam.
+  try {
+    const { pedeTotal, somaDaLista, falaJaTemTotal, textoTotal } = require('./lib/total-da-lista');
+    if (reply && reply.trim() && pedeTotal(stripReplyScaffold(String(text || '')).userText)) {
+      let _totLista = somaDaLista(reply);
+      if (!_totLista) {
+        const { data: _totRec } = await supabase.from('conversation_history').select('content')
+          .eq('collaborator_id', collab.id)
+          .gte('created_at', new Date(Date.now() - 30 * 60000).toISOString())
+          .order('created_at', { ascending: false }).limit(12);
+        for (const _r of _totRec || []) { _totLista = somaDaLista(_r.content); if (_totLista) break; }
+      }
+      if (_totLista && !falaJaTemTotal(reply, _totLista.total)) {
+        reply = `${reply}\n\n${textoTotal(_totLista)}`;
+        console.log(`[Engine] total da lista acrescentado (${_totLista.itens} itens, ${_totLista.faltando} sem valor)`);
+      }
+    }
+  } catch (e) { console.warn('[TotalDaLista] err (non-fatal):', e.message); }
+
   // LISTA-NUMERADA-NAO-ENTREGUE (Alf 01/07 — 26f817b5): ele pediu "liste um, dois, três… pra saber quantas
   // são" sobre a lista que tinha mandado; o LLM contou 71 e entregou só as grades, sem os nomes. A lista
   // é da mensagem da pessoa (a última com lista, em 30 min — a atual já está no histórico): se a fala não
