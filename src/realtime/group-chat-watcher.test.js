@@ -133,3 +133,45 @@ test('no grupo de ops, conversa que não é comando continua exigindo o TOM cham
   await processOne(fakeSupabase(), { ...MSG_FILA, content: 'bom dia, pessoal' }, { processMessage: async (a) => { chamadas.push(a); }, isOpsChannel: () => true, sendTyping: async () => {} });
   assert.strictEqual(chamadas.length, 0);
 });
+
+// ── GRUPO-AUDIO-VIRA-REACAO (auditoria 13/09) ─────────────────────────────────────────────
+// O ramo `reacaoSemTexto` nasceu em 02/09 pra o "👀" da Ana Paula: gesto nao e conversa, e com
+// a janela aberta o TOM emendava assunto sozinho. Certo — mas o watcher alimenta esse gate com
+// `msg.content`, enquanto TODO o resto da linha (vocativo, despedida, comando de ops, engine)
+// usa o `text` EFETIVO, que ja inclui a transcricao da midia. Audio e imagem entram com
+// `content` NULL: para o gate, um audio de 40 segundos e indistinguivel de uma figurinha.
+//
+// O ramo e o PRIMEIRO do decideGroupReply, entao ele passa por cima da janela aberta. Medido
+// no banco em 13/09, desde o nascimento do ramo: 33 midias de membro com transcricao real e
+// sem vocativo, e em 5 delas o TOM tinha acabado de falar (<=8min) — ou seja, a janela estava
+// aberta e o gate inverteu o desfecho.
+const AUDIO_SEM_CONTENT = { id: 'M1', group_id: 'G1', sender_id: 'C1', kind: 'audio', content: null };
+const JANELA_ABERTA = { tom_chat_engaged_at: new Date().toISOString(), wa_group_jid: null };
+
+test('REGRESSAO: audio com transcricao real nao e tratado como reacao (janela aberta)', async () => {
+  const chamadas = [];
+  await processOne(fakeSupabase({ group: JANELA_ABERTA }), AUDIO_SEM_CONTENT, {
+    processMessage: async (a) => { chamadas.push(a); },
+    extractMediaText: async () => 'Isso ai a gente nao vai ter nao, e muito antigo',
+    sendTyping: async () => {},
+  });
+  assert.strictEqual(chamadas.length, 1, 'audio falado com a janela aberta e conversa, nao gesto');
+});
+
+test('CONTROLE: midia sem texto extraido segue sendo reacao — cala igual', async () => {
+  const chamadas = [];
+  await processOne(fakeSupabase({ group: JANELA_ABERTA }), { ...AUDIO_SEM_CONTENT, kind: 'image' }, {
+    processMessage: async (a) => { chamadas.push(a); },
+    extractMediaText: async () => '',
+    sendTyping: async () => {},
+  });
+  assert.strictEqual(chamadas.length, 0, 'figurinha/emoji continua sendo gesto');
+});
+
+test('CONTROLE: emoji em texto com a janela aberta continua mudo (o caso Ana Paula 02/09)', async () => {
+  const chamadas = [];
+  await processOne(fakeSupabase({ group: JANELA_ABERTA }), { ...AUDIO_SEM_CONTENT, kind: 'text', content: '👀' }, {
+    processMessage: async (a) => { chamadas.push(a); }, sendTyping: async () => {},
+  });
+  assert.strictEqual(chamadas.length, 0);
+});

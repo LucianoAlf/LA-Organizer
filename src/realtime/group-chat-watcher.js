@@ -89,7 +89,7 @@ async function processOne(supabase, msg, deps = {}) {
   // sem isso o gatilho ("fala tom" dito no áudio) e o engine recebiam string vazia → TOM mudo.
   let text = msg.content || '';
   if (['image', 'audio', 'pdf'].includes(msg.kind)) {
-    const extracted = await extractMediaText({ supabase, message: msg });
+    const extracted = await (deps.extractMediaText || extractMediaText)({ supabase, message: msg });
     if (extracted) text = text ? `${text}\n${extracted}` : extracted;
   }
   const senderCollabId = msg.sender_id || null;
@@ -113,7 +113,11 @@ async function processOne(supabase, msg, deps = {}) {
   const comandoDeOps = !!(_isOps({ groupId: msg.group_id, senderCollabId })
     && require('../services/fila-memorias').parseComandoFila(text));
   const tomAwaiting = (engaged || vocative || comandoDeOps) ? false : await computeTomAwaiting(supabase, msg.group_id);
-  const { shouldRun, clearAfter, opensWindow } = decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting, reacaoSemTexto: isReacaoSemTexto(msg.content), comandoDeOps });
+  // `text`, nao `msg.content`: audio/imagem entram com content NULL e o conteudo mora na
+  // transcricao. Lendo o campo cru, o gate de REACAO (que e o primeiro do decideGroupReply e
+  // passa por cima da janela aberta) tratava audio falado como figurinha. Ver o teste
+  // GRUPO-AUDIO-VIRA-REACAO.
+  const { shouldRun, clearAfter, opensWindow } = decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting, reacaoSemTexto: isReacaoSemTexto(text), comandoDeOps });
 
   if (!shouldRun) {
     // Marca como TRATADA (silêncio intencional) pra recuperação de órfã NÃO re-disparar.
