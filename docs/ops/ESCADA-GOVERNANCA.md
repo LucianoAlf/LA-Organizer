@@ -2181,3 +2181,83 @@ nasceu com alça? (3) o executor leu a alça? — e não começar pelo (3), que 
 Vale também como aviso sobre a leitura de reincidência: `10c4df63` entrou **3h15 depois** do
 incidente do Leo e trata outra porta da mesma família. Sem olhar a hora, isso se lê como
 "consertaram e voltou".
+
+### ETAPA 3 — o gate lê o campo CRU enquanto a linha inteira usa o campo EFETIVO
+
+**Ocorrência:** 1 (13/09), e é a 2ª correção da rodada.
+
+O `group-chat-watcher.js` monta, nas linhas 90-94, um `text` EFETIVO: `msg.content` mais a
+transcrição da mídia quando o `kind` é `audio`/`image`/`pdf`. Todo o resto da linha consome esse
+`text` — vocativo, despedida, comando de ops, e o próprio engine. **Um** consumidor ficou com o
+campo cru: o gate de reação, em `isReacaoSemTexto(msg.content)`.
+
+Áudio e imagem entram com `content` NULL. Para esse gate, um áudio falado de 40 segundos é
+byte a byte indistinguível de uma figurinha. E o ramo `reacaoSemTexto` é o **PRIMEIRO** do
+`decideGroupReply` — ele passa por cima da janela aberta, que é justamente o estado em que o TOM
+deveria responder a tudo sem precisar do nome.
+
+Medido antes de embarcar (regra de 04/09): nas últimas 1000 mídias de grupo, 239 são de membro,
+190 entram com `content` vazio e 172 têm transcrição real; 4 escapam por vocativo e **168 o gate
+silenciaria**. Desde o nascimento do ramo (`54b5e5d8`, 02/09): **33 candidatos, e em 5 deles o TOM
+tinha falado há ≤8 min** — ou seja, a janela estava aberta e o gate inverteu o desfecho.
+
+O que isto acrescenta como classe: o ramo estava **certo** (o "👀" da Ana Paula em 02/09 é gesto,
+não conversa) e mesmo assim produziu o dano, porque foi ligado no campo errado. Não é regex
+frouxo nem veto faltando — é **um argumento**. Prima da regra de 06/09 ("conte os canais" do veto
+por evidência de banco) e de 09/09 ("conte vetos por PORTA"): aqui a pergunta é **conte os
+CONSUMIDORES do campo efetivo**.
+
+Regra: **quando um pipeline normaliza uma entrada (transcrição, strip de scaffold, lowercase), o
+campo cru vira armadilha.** `grep` o nome do campo cru no arquivo e confira se algum consumidor
+ficou para trás — o custo é uma busca e o defeito é silencioso por construção, porque o gate não
+erra: ele acerta sobre um texto vazio que não é o texto real.
+
+Proposta de virar código: é a mesma da ETAPA 5 de 07/09 (`falaReal(texto)` compartilhado). Enquanto
+a normalização for uma variável local que cada consumidor escolhe usar, o default continua sendo
+ler o cru.
+
+### ETAPA 4 — o teste vermelho pela razão ERRADA: ligue a injeção ANTES de corrigir
+
+**Ocorrência:** 1 (13/09), evitada a tempo.
+
+O teste de reversão do caso acima precisa de uma mídia com transcrição. `extractMediaText`
+(`services/group-chat-media.js`) sempre baixa o buffer do bucket, então sem URL ele devolve null —
+e com `text` vazio a mensagem **é** uma reação de verdade. O primeiro vermelho que eu medi estava
+certo pelo motivo errado: não provava o gate, provava a falta de fixture.
+
+O que separou os dois: **ligar a injeção (`deps.extractMediaText`) PRIMEIRO, num commit de
+testabilidade, e re-rodar.** O teste continuou vermelho — e só aí o vermelho era do gate. Depois
+disso a correção foi de um argumento (`msg.content` → `text`) e virou verde.
+
+Regra: **quando o teste vermelho depende de um fixture que o código não sabe produzir sozinho,
+monte o fixture e confirme que o vermelho SOBREVIVE a ele.** Vermelho que some junto com o andaime
+nunca foi prova do defeito. É a versão de fixture da regra do neutro (15/08): resultado que uma
+chamada malformada também produziria não desempata nada.
+
+### ETAPA 2.6 — a fatia acusa `quebra_depois_do_parser` sobre pergunta anterior ao CONSERTO
+
+**Ocorrências:** 4 (07/09, 11/09, 12/09, 13/09). O bloco de vitalidade dispara pela 4ª rodada
+seguida sobre dado que não sustenta achado.
+
+Em 12/09 o alarme falso do `batch_complete` virou código (`viva_sem_parser`). Em 13/09 as outras
+duas fatias acusaram `quebra_depois_do_parser`, e as duas caíram na mesma checagem barata:
+
+| fatia | o que o parser casou | veredito real |
+|---|---|---|
+| `delegation` | 2 perguntas, **15/08 21:53 e 21:55 BRT** (a mesma, repetida em 2 min) | o parser nasceu em **16/08 17:00:43 BRT** — a pergunta é 19h ANTERIOR. Falta de oportunidade. |
+| `reschedule` | 1 pergunta, **03/09 21:40:50 BRT** (`Vou reagendar: • *tarefa 0c528968* → 04/09`) | é o caso do short-id, **já corrigido** em `9e9f73be` (08/09) — 5 dias DEPOIS da pergunta. |
+
+⚠️ Detalhe de instrumento que quase inverteu o primeiro: a minha primeira medição rotulou as duas
+intents de delegação como "POSTERIOR ao parser" porque comparava `created_at.slice(0,10)` em **UTC**
+contra a data de nascimento, enquanto exibia o horário em **BRT**. 15/08 21:53 BRT é 16/08 em UTC —
+exatamente em cima da fronteira. Só o timestamp COMPLETO (`--date=iso-strict`) desempata.
+
+O que isto acrescenta ao bloco de VITALIDADE: a tabela do protocolo manda comparar com o
+**nascimento do parser**, e isso é necessário mas não suficiente. `estagiou 0` também é o estado
+esperado quando a única pergunta da janela é anterior ao **conserto** do resolvedor — e a janela
+é de 30 dias, então uma pergunta velha continua acusando por um mês inteiro depois de resolvida.
+
+Proposta de virar código: o veredito `quebra_depois_do_parser` deveria comparar o `asked_at` da
+pergunta mais recente que casou o parser contra o último commit do arquivo do resolvedor daquela
+fatia, e rebaixar para `sem_oportunidade_desde_o_fix` quando não houver pergunta posterior. Sem
+isso, cada rodada paga a mesma investigação — já são quatro.
