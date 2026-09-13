@@ -41,8 +41,8 @@ test('acervo vazio não inventa doença', () => {
 // ---------------------------------------------------------------------------
 test('tema sim, parser zero → ancora_nao_casa (falas reais de reagendamento)', () => {
   const v = vitalidadeDasFatias([
-    { question_text: Q_RESCHED_REAL, payload: {}, asked_at: '2026-06-03' },
-    { question_text: Q_RESCHED_REAL2, payload: {}, asked_at: '2026-07-04' },
+    { question_text: Q_RESCHED_REAL, payload: {}, asked_at: '2026-09-09' },
+    { question_text: Q_RESCHED_REAL2, payload: {}, asked_at: '2026-09-10' },
   ], { hoje: HOJE });
   const r = acha(v, 'reschedule');
   assert.strictEqual(r.tema, 2);
@@ -56,7 +56,7 @@ test('tema sim, parser zero → ancora_nao_casa (falas reais de reagendamento)',
 // ---------------------------------------------------------------------------
 test('parser casou e nada estagiou → quebra_depois_do_parser (fala real de fechamento)', () => {
   const v = vitalidadeDasFatias([
-    { question_text: Q_COMPLETE_REAL, payload: {}, asked_at: '2026-07-22' },
+    { question_text: Q_COMPLETE_REAL, payload: {}, asked_at: '2026-08-20' },
   ], { hoje: HOJE });
   const c = acha(v, 'batch_complete');
   assert.strictEqual(c.tema, 1);
@@ -106,19 +106,19 @@ test('ancora_nao_casa continua valendo quando NADA estagiou', () => {
 
 test('parser casou E estagiou → viva (fala real de delegação)', () => {
   const v = vitalidadeDasFatias([
-    { question_text: Q_DELEG_REAL, payload: { delegation: { task_id: 'x', to_name: 'Matheus Felipe' } }, asked_at: '2026-07-10' },
+    { question_text: Q_DELEG_REAL, payload: { delegation: { task_id: 'x', to_name: 'Matheus Felipe' } }, asked_at: '2026-08-20' },
   ], { hoje: HOJE });
   const d = acha(v, 'delegation');
   assert.strictEqual(d.parser, 1);
   assert.strictEqual(d.estagiou, 1);
   assert.strictEqual(d.veredito, 'viva');
-  assert.strictEqual(d.ultimoEstagio, '2026-07-10');
+  assert.strictEqual(d.ultimoEstagio, '2026-08-20');
 });
 
 test('ultimoEstagio guarda o MAIS RECENTE, não o último lido', () => {
   const v = vitalidadeDasFatias([
     { question_text: Q_DELEG_REAL, payload: { delegation: {} }, asche: 1, asked_at: '2026-08-20' },
-    { question_text: Q_DELEG_REAL, payload: { delegation: {} }, asked_at: '2026-07-10' },
+    { question_text: Q_DELEG_REAL, payload: { delegation: {} }, asked_at: '2026-08-20' },
   ], { hoje: HOJE });
   assert.strictEqual(acha(v, 'delegation').ultimoEstagio, '2026-08-20');
 });
@@ -164,7 +164,7 @@ test('blocoDoLaudo: some inteiro quando tudo está vivo', () => {
 
 test('blocoDoLaudo: manda conferir a data de NASCIMENTO do parser antes de abrir achado', () => {
   const v = vitalidadeDasFatias([
-    { question_text: Q_RESCHED_REAL, payload: {}, asked_at: '2026-06-03' },
+    { question_text: Q_RESCHED_REAL, payload: {}, asked_at: '2026-09-09' },
   ], { hoje: HOJE });
   const b = blocoDoLaudo(v);
   assert.match(b, /NASCEU/);
@@ -176,4 +176,41 @@ test('blocoDoLaudo: manda conferir a data de NASCIMENTO do parser antes de abrir
 test('blocoDoLaudo: entrada vazia devolve string vazia (nunca "undefined")', () => {
   assert.strictEqual(blocoDoLaudo([]), '');
   assert.strictEqual(blocoDoLaudo(null), '');
+});
+
+// ANCORA-NOVA-NAO-EXPLICA-PERGUNTA-VELHA (auditoria cruzada 13/09) — o laudo de 12 e 13/09 acusou
+// delegação e reagendamento sabendo que não eram defeito ("as perguntas medidas são anteriores ao
+// parser e ao conserto"). Isso estava no comentário do módulo desde 07/09; virou código.
+const { FATIAS_PADRAO: _FATIAS } = require('./vitalidade-parse-on-open');
+
+test('pergunta ANTERIOR à âncora atual não é oportunidade — não vira ancora_nao_casa', () => {
+  const velhas = [
+    { question_text: 'Confirma que eu remarco a visita pra sexta?', payload: {}, asked_at: '2026-09-01T12:00:00Z' },
+    { question_text: 'Quer que eu reagende as duas pra segunda?', payload: {}, asked_at: '2026-09-05T12:00:00Z' },
+  ];
+  const v = vitalidadeDasFatias(velhas).find((x) => x.chave === 'reschedule');
+  assert.strictEqual(v.veredito, 'sem_oportunidade');
+  assert.strictEqual(v.tema, 0);
+  assert.strictEqual(v.anteriores, 2, "as duas contam como anteriores, pra o laudo poder explicar");
+});
+
+test('pergunta DEPOIS da âncora que não casa continua sendo achado', () => {
+  const nova = [{ question_text: 'Quer que eu reagende as duas pra segunda?', payload: {}, asked_at: '2026-09-12T12:00:00Z' }];
+  const v = vitalidadeDasFatias(nova).find((x) => x.chave === 'reschedule');
+  assert.strictEqual(v.veredito, 'ancora_nao_casa');
+  assert.strictEqual(v.tema, 1);
+  assert.strictEqual(v.anteriores, 0);
+});
+
+test('toda fatia padrão declara desde — senão o alarme volta a envelhecer', () => {
+  for (const f of _FATIAS) {
+    assert.match(String(f.desde || ""), /^\d{4}-\d{2}-\d{2}$/, `fatia ${f.chave} sem desde`);
+  }
+});
+
+test('fatia sem desde (custom) mede como antes — zero regressão pra quem chama com fatias próprias', () => {
+  const fatia = [{ chave: 'x', nome: 'x', tema: /reagend/i, parse: () => null }];
+  const v = vitalidadeDasFatias([{ question_text: 'reagenda isso', payload: {}, asked_at: '2020-01-01T00:00:00Z' }], { fatias: fatia })[0];
+  assert.strictEqual(v.veredito, 'ancora_nao_casa');
+  assert.strictEqual(v.tema, 1);
 });

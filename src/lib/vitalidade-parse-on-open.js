@@ -40,24 +40,32 @@ const FATIAS_PADRAO = [
   {
     chave: 'coordination',
     nome: 'recado/coordenação',
+    // A âncora atual nasceu em 16/08 (b9763ed7) e foi REESCRITA em 11/09 (a6f01ce7).
+    desde: '2026-09-11',
     tema: /\b(aviso|avisar|recado|mando|mandar|encaminh\w*)\b/i,
     parse: (q) => parseCoordinationConfirmQuestion(q),
   },
   {
     chave: 'batch_complete',
     nome: 'fechamento por pergunta',
+    // Âncora de 16/08 (ec92ab17), nunca reescrita.
+    desde: '2026-08-16',
     tema: /\bfechamento\b|\bfechar\b|\bconclu\w+\b/i,
     parse: (q) => parseCompleteConfirmQuestion(q),
   },
   {
     chave: 'delegation',
     nome: 'delegação',
+    // Âncora de 16/08 (d5d9c0a6), nunca reescrita.
+    desde: '2026-08-16',
     tema: /\bdeleg\w*/i,
     parse: (q) => parseDelegateConfirmQuestion(q),
   },
   {
     chave: 'reschedule',
     nome: 'reagendamento',
+    // Nasceu em 24/08 (530a57d2) e a âncora mudou em 08/09 (9e9f73be).
+    desde: '2026-09-08',
     tema: /reagend\w*|remarc\w*|novos?\s+prazos?/i,
     parse: (q, hoje) => parseRescheduleConfirmQuestion(q, { todayYmd: hoje }),
   },
@@ -84,6 +92,7 @@ function vitalidadeDasFatias(intents, opts = {}) {
 
   return fatias.map((f) => {
     let tema = 0;
+    let anteriores = 0;
     let parser = 0;
     let estagiou = 0;
     let ultimoEstagio = null;
@@ -98,6 +107,13 @@ function vitalidadeDasFatias(intents, opts = {}) {
         if (t && (!ultimoEstagio || t > ultimoEstagio)) ultimoEstagio = t;
       }
       if (!q || !f.tema.test(q)) continue;
+      // ANCORA-NOVA-NAO-EXPLICA-PERGUNTA-VELHA (13/09): pergunta feita ANTES da âncora ATUAL não é
+      // oportunidade — o parser de hoje não existia (ou era outro) quando o TOM escreveu aquilo. Sem
+      // isto o laudo acusa `ancora_nao_casa` pela janela inteira (30 dias) depois de CADA conserto de
+      // âncora: foi o que fez a casa investigar defeito inexistente em 07, 11, 12 e 13/09. O comentário
+      // no topo já dizia isso desde 07/09; agora é código.
+      const _quando = String((r && r.asked_at) || '').slice(0, 10);
+      if (f.desde && _quando && _quando < f.desde) { anteriores++; continue; }
       tema++;
       // Parser quebrado NUNCA derruba a medição: um throw viraria laudo em branco, e
       // laudo em branco é lido como saúde. Conta como "não casou" e segue.
@@ -119,7 +135,7 @@ function vitalidadeDasFatias(intents, opts = {}) {
     else if (parser > 0 && estagiou === 0) veredito = 'quebra_depois_do_parser';
     else veredito = 'viva';
 
-    return { chave: f.chave, nome: f.nome, tema, parser, estagiou, ultimoEstagio, veredito };
+    return { chave: f.chave, nome: f.nome, tema, anteriores, parser, estagiou, ultimoEstagio, veredito };
   });
 }
 
@@ -128,8 +144,8 @@ const _EXPLICA = {
     + 'envelheceu em relacao a prosa que o LLM escreve. E achado: investigue a ancora.',
   quebra_depois_do_parser: 'o parser casou mas nada foi estagiado — o furo esta DEPOIS dele '
     + '(tipicamente a resolucao titulo->id, que e fail-closed e pode estar fechada sempre).',
-  sem_oportunidade: 'nao houve pergunta desse assunto no periodo. A fatia dorme; isso NAO e '
-    + 'defeito e NAO deve virar achado.',
+  sem_oportunidade: 'nao houve pergunta desse assunto no periodo — ou as que houve sao ANTERIORES '
+    + 'a ancora atual (campo `anteriores`). A fatia dorme; isso NAO e defeito e NAO deve virar achado.',
 };
 
 /** O bloco que entra no pedido do agente. Sem fatia doente, devolve string vazia. */
@@ -152,4 +168,4 @@ que o parser NASCEU (git log --diff-filter=A no arquivo dele): pergunta ANTERIOR
 nascimento nao prova nada. Foi esse passo que evitou um alarme falso em 07/09.`;
 }
 
-module.exports = { vitalidadeDasFatias, blocoDoLaudo, FATIAS_PADRAO };
+module.exports = { FATIAS_PADRAO, vitalidadeDasFatias, blocoDoLaudo, FATIAS_PADRAO };
