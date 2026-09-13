@@ -6559,6 +6559,11 @@ async function checkOverdueAlerts(ymdToday) {
 
   const whatsapp = require('../services/whatsapp');
   const { renderChecklistBlock } = require('../services/checklist-render');
+  // COBRANCA-EM-RAJADA (Vitoria 12/09 16:00): 6 cobranças em 13 segundos, uma por tarefa. Todas
+  // verdadeiras (6 tarefas distintas), mas chegam como enxurrada. A decisão segue por tarefa (claim,
+  // follow-up, escalonamento); o ENVIO é que passa a ser por PESSOA — a partir de 3, uma mensagem só.
+  const { LIMITE_COBRANCA_AGRUPADA, textoCobrancaAgrupada } = require('../lib/cobranca-agrupada');
+  const _cobrancasPorPessoa = new Map();
   // Checklist (subtarefas via parent_task_id) das atrasadas — batch load 1x (não N queries);
   // o bloco de progresso entra na cobrança byte-exato. Não-fatal: sem checklist segue a cobrança base.
   const kidsByParent = new Map();
@@ -6633,8 +6638,11 @@ async function checkOverdueAlerts(ymdToday) {
       // um "Feito" pelado entre 3 cobrancas nao via ambiguidade e o LLM chutava a tarefa
       // errada. Linkando (sendAndLink), o freio ">1 distinta = pergunta" passa a disparar
       // (familia do DISPATCHER-ENVIO-INVISIVEL). O reply-quote a cobranca tambem passa a
-      // bindar por id exato (Lote D). sendAndLink faz o UNICO log — o insert manual sai.
-      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
+      // bindar por id exato (Lote D). O ENVIO agora acontece por PESSOA, depois da decisão de
+      // todas as tarefas — ver COBRANCA-EM-RAJADA no fim desta função.
+      const _fila = _cobrancasPorPessoa.get(collab.id) || { collab, itens: [] };
+      _fila.itens.push({ id: t.id, title: t.title, dias: n, texto: text });
+      _cobrancasPorPessoa.set(collab.id, _fila);
       // Sprint 31.1 — rastro pra TASK_UPDATE via id exato
       try {
         const kind = n <= 3 ? 'overdue_check' : 'staleness_check';
@@ -6679,8 +6687,6 @@ async function checkOverdueAlerts(ymdToday) {
           }
         }
       } catch (e) { /* não-fatal */ }
-      await logRitualEvent(collab.id, 'alerta_atraso', 'sent', `task:${String(t.id).slice(0,8)} late=${n}d`, ymdToday);
-      sent++;
       // #em-copia: cobra os observadores junto, com tom escalado pela idade do atraso.
       try {
         const ckind = n === 1 ? 'overdue1' : (n <= 3 ? 'overdueN' : 'overdueOld');
@@ -6689,6 +6695,32 @@ async function checkOverdueAlerts(ymdToday) {
     } catch (err) {
       console.error(`[OverdueAlert] send err for ${String(t.id).slice(0,8)}:`, err.message);
       await logRitualEvent(collab.id, 'alerta_atraso', 'error', `${String(t.id).slice(0,8)}:${err.message}`, ymdToday);
+    }
+  }
+  // ENVIO (COBRANCA-EM-RAJADA): 1 ou 2 saem individuais — aí o reply-quote ancora a resposta na
+  // tarefa certa (COBRANCA-INVISIVEL-AO-RESOLVEDOR, Krissya 05/08). De 3 em diante vai UMA mensagem
+  // com a lista; o rastro por tarefa continua no pending_followups, que o prompt entrega com id e
+  // título. O "sent" do ritual e o contador só acontecem DEPOIS do envio de verdade.
+  for (const _fila of _cobrancasPorPessoa.values()) {
+    const { collab: _c, itens: _itens } = _fila;
+    try {
+      if (_fila.itens.length < LIMITE_COBRANCA_AGRUPADA) {
+        for (const _it of _itens) {
+          await proactiveLink.sendAndLink(supabase, { phone: _c.phone, content: _it.texto, collaboratorId: _c.id, refType: 'task', refId: _it.id });
+        }
+      } else {
+        await proactiveLink.sendAndLink(supabase, { phone: _c.phone, content: textoCobrancaAgrupada(_itens), collaboratorId: _c.id });
+        console.log(`[OverdueAlert] agrupou ${_itens.length} cobranças numa mensagem (collab=${String(_c.id).slice(0, 8)})`);
+      }
+      for (const _it of _itens) {
+        await logRitualEvent(_c.id, 'alerta_atraso', 'sent', `task:${String(_it.id).slice(0, 8)} late=${_it.dias}d`, ymdToday);
+        sent++;
+      }
+    } catch (err) {
+      console.error('[OverdueAlert] envio err:', err.message);
+      for (const _it of _itens) {
+        await logRitualEvent(_c.id, 'alerta_atraso', 'error', `${String(_it.id).slice(0, 8)}:${err.message}`, ymdToday);
+      }
     }
   }
   if (sent) console.log(`[OverdueAlert] fired ${sent} overdue alert(s) (today=${ymdToday})`);
