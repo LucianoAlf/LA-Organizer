@@ -2261,3 +2261,64 @@ Proposta de virar código: o veredito `quebra_depois_do_parser` deveria comparar
 pergunta mais recente que casou o parser contra o último commit do arquivo do resolvedor daquela
 fatia, e rebaixar para `sem_oportunidade_desde_o_fix` quando não houver pergunta posterior. Sem
 isso, cada rodada paga a mesma investigação — já são quatro.
+
+### ETAPA 1 — o alarme de cobertura de sensor ficou INALCANÇÁVEL pela própria higiene de 09/09
+
+**Ocorrência:** 1 (14/09), mas é medição de população sobre o instrumento que sustenta a ETAPA 1.
+
+O acervo amanheceu **vazio pela primeira vez** (454 achados, todos fechados; 0 abertos), e a
+verificação de que o zero é real — e não instrumento cego — deixou a rodada sem correção e sem
+varredura. Com o tempo livre fui medir o que produz o número da ETAPA 1: a rede de sensores de
+regressão.
+
+**O que está medido.** 605 known-issues; 34 se declaram `sinal_tipo='marker_log'`. Em 90 dias:
+**6 vivos, 28 mudos**. Contra a história INTEIRA de `marker_logs`: **7 já casaram alguma linha e
+27 nunca casaram uma única vez.**
+
+O silêncio dos 27 não se explica por porta parada. As portas que eles nomeiam estão movimentadas
+em 90 dias: `TASK_UPDATE` 1124 linhas, `CHOKEPOINT` 144, `CONFIRM_NOEXEC` 36,
+`UNKNOWN_MARKER_STRIPPED` 15, `WRITE_DATE_RELABEL` 3, `CHECKLIST_ACTION` 2. Eles são cegos por
+construção, em dois modos:
+
+| modo | exemplo de `sinal_padrao` |
+|---|---|
+| **prosa em português** no lugar de padrão de máquina | `TASK_UPDATE rejected all_failed:N com fails:[] vazio` · `TOM diz que nao consegue concluir/finalizar tendo tasks.completed_at do mesmo colaborador nos minutos anteriores` |
+| nome de marker **sem curinga**, ou sem o prefixo `marker_type` | `CONFIRM_NOEXEC` (4×) · `WRITE_DATE_RELABEL` · `confab:promise_nomarker` |
+
+**Por que ninguém viu.** `checkSensoresDeRegressao` (`src/rituals/health-check.js:642`) alarma
+**só** quando `sem_padrao > 0` — KI que se diz monitorado e tem `sinal_padrao` NULL/vazio. A
+higiene de 09/09 (`20260909b_medir_cobertura_sensores.sql`) reclassificou todos esses para
+`manual` e levou `sem_padrao` a **zero permanente**. Desde então o único alarme do bloco é
+**estruturalmente inalcançável**, e `mudos_90d` é impresso no detalhe de propósito, sem alarmar.
+
+E o modo de falha "prosa" está nomeado **no comentário do mesmo commit de 09/09** — foi descrito e
+não foi ligado no alarme. É a forma recorrente já registrada cinco vezes em 07-08/09: *o mecanismo
+existe e não está ligado nesta porta.* Aqui com o agravante de que a porta que sobrou é a única, e
+foi fechada pelo próprio conserto.
+
+⚠️ **Hipótese estrutural REFUTADA antes de virar código, e vale mais que o achado.** Eu ia embarcar
+um guard sobre a premissa "padrão sem `%` nunca casa" — `ilike` é ancorado e a comparação é sobre
+`marker_type || ' ' || coalesce(reason,'')`, logo um padrão curto jamais cobriria a string inteira.
+Testei antes: agrupando por `sinal_padrao like '%\%%'`, os padrões **sem** `%` somam **29 hits
+reais**. O `PROMISE-DOWNGRADE-REBAIXA-ADMISSAO` tem padrão `CHOKEPOINT confab:promise_nomarker`,
+sem curinga nenhum, e casa 29 vezes — porque é a string COMPLETA quando `reason` é exatamente
+aquilo. A premissa era falsa e o guard teria nascido errado. O teste que substituiu a premissa é
+o defensável: **rodar cada padrão contra a história inteira da tabela** e contar.
+
+**Por que a rodada não corrigiu nada.** Os três caminhos de conserto estão fora da autonomia:
+(a) reescrever os 27 padrões são 27 chutes, e padrão errado produz alarme de regressão FALSO, que
+é pior que silêncio — a ETAPA 1 passaria a mandar parar famílias que não reincidiram; (b) a
+higiene de dados é **migration**, fora de `src/`; (c) fazer o alarme tocar reverte uma escolha de
+desenho deliberada de 09/09 e emitiria warning diário que ninguém consegue limpar enquanto (b)
+não rodar. Foi ao grupo como pergunta, com o custo medido.
+
+Ressalva honesta da medição: `marker_logs` guarda de **27/04 a 14/09** (7429 linhas, 63
+`marker_type`). São ~4,5 meses sem poda agressiva, mas a tabela não alcança a criação dos KIs mais
+antigos — um sensor nascido antes de 27/04 poderia, em tese, ter casado uma linha que já não
+existe.
+
+Proposta de virar código, em ordem de retorno: (1) `medir_cobertura_sensores()` passa a devolver
+`nunca_casaram` (padrão que não casa nenhuma linha da história) e o alarme troca `sem_padrao` por
+esse número; (2) a escrita do KI valida o padrão na hora — se não casar nada em 90 dias, recusa
+`marker_log` e grava `manual`, que é o que a ETAPA 6 já manda fazer à mão. Enquanto a validação
+depender de disciplina de quem escreve o KI, a rede volta a cegar.
