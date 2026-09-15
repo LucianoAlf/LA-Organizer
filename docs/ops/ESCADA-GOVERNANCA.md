@@ -2322,3 +2322,73 @@ Proposta de virar código, em ordem de retorno: (1) `medir_cobertura_sensores()`
 esse número; (2) a escrita do KI valida o padrão na hora — se não casar nada em 90 dias, recusa
 `marker_log` e grava `manual`, que é o que a ETAPA 6 já manda fazer à mão. Enquanto a validação
 depender de disciplina de quem escreve o KI, a rede volta a cegar.
+
+### ETAPA 3 — o `kind` é o BALDE, e o supersede indiscriminado mata alça de outra família
+
+**Ocorrência:** 1 (15/09), e é a correção da rodada.
+
+O caso do Dudu (14/09 19:13) é uma porta nova de uma forma já registrada cinco vezes em 07-08/09
+(*o mecanismo existe e não está ligado nesta porta*), com um agravante novo: **o mecanismo não é
+um guard, é uma CLASSIFICAÇÃO — e a classificação estava grossa demais.**
+
+`openIntent` superseçava, sem filtro, toda intent aberta do mesmo `kind`. Só que
+`kind='confirmation'` é um balde com **cinco** famílias de executor determinístico dentro
+(`anchor`, `batch_complete`, `coordination.items`, `reschedule.actions`, `closing.items`). O ritual
+de Fechamento do dia — que é **cron**, não é resposta a ninguém — abriu a intent dele às 19:16:28 e
+matou a intent do recado pro Rafinha, nascida 3min22s antes, viva e com alça
+(`resolution:'superseded'`, note `new intent of same kind opened`, medido em produção).
+
+Duas observações que valem além deste caso:
+
+1. **A quinta família (`closing`) nasceu fora do registro.** `intentCarriesDeterministicExecutor`
+   conhecia quatro; quem escreveu o ritual de fechamento estagiou `closing.items` e não registrou a
+   família em lugar nenhum. É o mesmo padrão de 10/09 (`PERSONAL_LIST_ACTION` parseado inline, fora
+   da varredura que se declarava exaustiva): **um enumerador manual de famílias envelhece em
+   silêncio a cada porta nova.**
+2. **O precedente de casar por citação já existia em TRÊS lugares do engine** — `approval_pending`
+   por `quotedText` (~10145), `pickDupBypassIntentForReply`, `pickEventDupMenu` — e não foi reusado
+   na porta genérica. `listOpenIntents` ordena `asked_at DESC`, então
+   `openIntents.find(i => i.kind !== 'approval_pending')` é **a mais nova ganha**, e a citação do
+   usuário (intenção explícita) perdia para a recência.
+
+Regra: **antes de tratar um `kind`/`type`/`category` como chave de decisão, conte quantas coisas
+semanticamente distintas cabem nele.** Se couber mais de uma, a chave não é o `kind` — é a família,
+e ela precisa ser derivada do payload, não do rótulo.
+
+Proposta de virar código: um teste de contrato que falhe quando existir, no `engine.js`, um
+`openIntent` cujo payload tenha chave de executor não reconhecida por `familiaDoExecutor`. Hoje a
+sexta família vai nascer órfã do mesmo jeito que a quinta nasceu.
+
+### ETAPA 3 — coluna inexistente devolve ZERO e o zero lê como "o registro não existe"
+
+**Ocorrências:** 3 (18/08, 08/09, 15/09). Terceira origem do mesmo neutro, e a mais barata de repetir.
+
+Em 18/08 foi `role` numa tabela que tem `direction`; em 08/09 foi `ilike` numa coluna `uuid`. Em
+15/09 foi `starts_at` numa tabela `events` que não tem essa coluna. Nos três o supabase-js devolve
+`error` com `data:null`, o `(data || [])` transforma em zero, e **nada estoura**.
+
+O custo aqui foi quase um alto fechado ao contrário. O achado `41cd063f` acusava o TOM de
+confabular o "✅ Criado" da *Mentoria com Kennedy*; a consulta por `starts_at` devolveu `n=0`, que
+se lê exatamente como "o evento não existe" — ou seja, **confabulação confirmada**. O controle
+(procurar os três irmãos pelo título) é que trouxe o erro à tona: os três existem, e a *Mentoria
+com Kennedy* foi criada às **18:26:13 BRT, no mesmo segundo** da fala. O TOM disse a verdade.
+
+Regra, agora com três origens medidas: **zero vindo de um filtro é hipótese, não fato — e a
+conferência é o CONTROLE, não a releitura da query.** Ler a query de novo não pega nome de coluna
+errado (ela parece correta); rodar uma busca que você sabe que DEVE devolver linha pega sempre.
+
+Vale notar a assimetria de dano: aqui o neutro empurra para *"o registro não existe"*, que é o lado
+que **confirma** o achado. Nas outras duas origens empurrava para *"já corrigido"*. Os dois lados
+custam caro, e nenhum se denuncia.
+
+### ETAPA 3 — `occurred_at` errado pela 5ª rodada, agora apontando pra uma REAÇÃO
+
+**Ocorrências:** 5 rodadas (19/08, 22/08, 31/08, 09/09, 15/09).
+
+`41cd063f` marcava 14/09 **20:56:44** BRT e o turno real é **18:26:13** (+2h30). O que mora no
+`occurred_at` é um turno de **reação ❤️** — nem sequer uma fala. Quem conferisse por ali não
+encontraria nada e concluiria "não reproduzi", que é o desfecho barato e errado.
+
+A agulha (`ilike` no literal da evidência, sem janela temporal) achou o turno em uma consulta. Já
+são cinco rodadas; a proposta de `literalDoAchado(finding)` (18/08, 19/08) segue sendo a única
+forma de isto parar de ser redescoberto.
