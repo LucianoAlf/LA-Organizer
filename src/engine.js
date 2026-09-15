@@ -1986,7 +1986,7 @@ function _buildIntegrityConfirmText(payload) {
       return `Achei uma tarefa parecida já criada:\n_"${existing}"_\n\nA nova seria:\n_"${cand}"_\n\nResponde com o **número**:\n\n1️⃣ *Mesma situação* — já tá coberta, não preciso criar nova.\n2️⃣ *Outro caso* — crio essa nova mesmo (com nome um pouco diferente pra não confundir).\n3️⃣ Cancela, vou reformular.`;
     }
     case 'dup_event':
-      return `Achei um compromisso parecido já criado:\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ É o *mesmo compromisso* — atualizo o existente\n2️⃣ É *outro compromisso* — crio novo\n3️⃣ Cancela, vou reformular`;
+      return `Você já tem um compromisso nesse mesmo horário${first && first.start_at ? ` (${require('./lib/mesmo-horario').rotuloHorario(first)})` : ''}:\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ É o *mesmo compromisso* — atualizo o existente\n2️⃣ É *outro compromisso* — crio novo\n3️⃣ Cancela, vou reformular`;
     case 'temporal_hard': {
       const overlap = first.overlapMin ? ` (sobrepõe ${first.overlapMin}min)` : '';
       return `Tem um conflito de horário/local com _"${existing}"_${overlap}. Não dá pra criar como está.\n\nQuer ajustar horário ou local de "${cand}"? Ou cancelar o existente?`;
@@ -8065,7 +8065,12 @@ async function detectDuplicateSemanticEvent(collab, candidate) {
     const candKeywords = (candCore.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [])
       .filter(k => !KEYWORD_STOPWORDS.has(k.toLowerCase()));
     const probable = [], possible = [];
+    // EVENTO-PARECIDO-EM-OUTRO-DIA (Alf 14/09, decisão 15/09): "Mentoria com Kennedy" (qui 9h) era lida
+    // como duplicata de "Mentoria com Levi" (sex 9h) — janela de ±48h + prefixo comum + "Mentoria" contando
+    // como palavra distintiva. Ele teve de insistir três vezes. Regra dele: só colide no MESMO horário.
+    const { mesmoHorario } = require('./lib/mesmo-horario');
     for (const ev of (candidates || [])) {
+      if (!mesmoHorario(candidate, ev)) continue;
       const evCore = stripVerbPrefix(ev.title);
       let score = jaroWinkler(candTitleNorm, normalizeForSim(evCore));
       const evDate = ev.start_at ? brtDateOf(ev.start_at) : null; // BUG-11: UTC→BRT
@@ -8351,6 +8356,9 @@ async function tryDupBypass(collab, text) {
     const { okCount, integrityPayload } = await applyEventActions(collab, [eventWithBypass]);
     if (integrityPayload) return { reply: _buildIntegrityConfirmText(integrityPayload) };
     if (okCount > 0) {
+      // DUP-BYPASS-SEM-RASTRO (auditoria 15/09, 41cd063f): o "2 = crio mesmo assim" gravava o evento e
+      // não deixava marcador — o auditor lia o "✅ Criado" como confabulação (proposta aberta desde 03/09).
+      try { await logMarker(collab.id, 'EVENT_CREATE', 'executed', `dup_bypass_choice2:${String(e.title).slice(0, 40)}`, null); } catch (_) { /* rastro não derruba a resposta */ }
       const dtOptions = { timeZone: 'America/Sao_Paulo' };
       const dateStr = new Date(e.start_at).toLocaleDateString('pt-BR', { ...dtOptions, weekday: 'short', day: '2-digit', month: '2-digit' });
       const timeStr = new Date(e.start_at).toLocaleTimeString('pt-BR', { ...dtOptions, hour: '2-digit', minute: '2-digit' });
@@ -9718,7 +9726,10 @@ async function processMessage(phone, text, raw = {}) {
         let _out;
         if (_res.okCount > 0 && !_res.failCount) _out = _res.okCount === 1 ? '✅ Marquei o compromisso.' : `✅ Marquei os ${_res.okCount} compromissos.`;
         else if (_res.okCount > 0) _out = `Marquei ${_res.okCount}, mas ${_res.failCount} não ${_res.failCount === 1 ? 'entrou' : 'entraram'}. Me manda de novo ${_res.failCount === 1 ? 'o que faltou' : 'os que faltaram'}?`;
-        else if (_res.integrityPayload) _out = '_Parece que já existe um compromisso parecido na agenda — dá uma conferida?_';
+        // EVENTO-PARECIDO-EM-OUTRO-DIA (Alf 14/09 18:19): o "Sim" levava "Parece que já existe um compromisso
+        // parecido — dá uma conferida?", sem dizer QUAL nem dar opção, e ele teve de pedir de novo. Agora sai
+        // o mesmo menu do caminho normal (o compromisso que colide + 1/2/3).
+        else if (_res.integrityPayload) _out = _buildIntegrityConfirmText(_res.integrityPayload);
         else _out = '_Não consegui marcar agora. Me manda de novo?_';
         try {
           await whatsapp.sendMessage(phone, _out);
