@@ -15147,7 +15147,7 @@ Output AGORA, apenas o marker:`;
           if (_it.action !== 'pausar_cobranca') continue;
           const _p = resolverProjeto(_it.project, _puProjs || []);
           if (!_p) {
-            await logMarker(collab.id, 'PROJECT_UPDATE', 'rejected', `projeto_nao_achado:${String(_it.project).slice(0, 40)}`, null);
+            await logMarker(collab.id, 'PROJECT_UPDATE', 'rejected', `projeto_nao_achado:${String(_it.project).slice(0, 40)}`, { item: _it, candidatos: (_puProjs || []).map((x) => x.name).slice(0, 10) });
             _puNotas.push(textoProjetoNaoAchado(_it.project));
             continue;
           }
@@ -15159,7 +15159,7 @@ Output AGORA, apenas o marker:`;
             await logMarker(collab.id, 'PROJECT_UPDATE', 'executed', `pausar_cobranca:${String(_p.id).slice(0, 8)} ate=${_ate}`, null);
             _puNotas.push(textoPausa({ nome: _p.name, ate: _ate, motivo: _it.motivo }));
           } else {
-            await logMarker(collab.id, 'PROJECT_UPDATE', 'rejected', `update_sem_linha:${String(_p.id).slice(0, 8)}`, null);
+            await logMarker(collab.id, 'PROJECT_UPDATE', 'rejected', `update_sem_linha:${String(_p.id).slice(0, 8)}`, { item: _it, projeto: _p.id, ate: _ate });
             _puNotas.push(textoProjetoNaoAchado(_it.project));
           }
         }
