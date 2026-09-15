@@ -6343,13 +6343,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           // Com isso, TOM CONDUZ a decisão (resolve agora? agenda? delega? precisa apoio?).
           notifText += `\n\n❓ *Como você quer tratar?*\n1️⃣ *Resolvo agora* — vou cuidar disso hoje\n2️⃣ *Agendo* — vou tratar nos próximos dias\n3️⃣ *Delego* — passa pra outra pessoa da equipe\n4️⃣ *Preciso de apoio* — me ajuda a destravar\n\n_Responde com o número, ou me chama pra atualizar de outro jeito (ex.: "concluí", "marquei reunião com a família amanhã", "encaminha pro Leo")._`;
           try {
-            await whatsapp.sendMessage(recipient.phone, notifText);
-            await supabase.from('conversation_history').insert({
-              collaborator_id: recipient.id,
-              direction: 'outbound',
-              message_type: 'text',
-              content: notifText,
-            });
+            // CARDAPIO-SEM-EXECUTOR (Rafinha 14/09): sai VINCULADA à tarefa (ref + whatsapp_message_id) — é o
+            // que tryCardapioTarefa lê pra saber de qual tarefa é a resposta "1" / "Resolve aí".
+            await require('./services/proactive-link').sendAndLink(supabase, { phone: recipient.phone, content: notifText, collaboratorId: recipient.id, refType: 'task', refId: taskId });
             await supabase.from('notifications').insert({
               collaborator_id: recipient.id,
               notification_type: 'task_assigned_by_other',
@@ -8277,6 +8273,73 @@ async function tryHandleAnnouncementConfirmation(collab, text) {
     console.warn('[Announcement] confirmation ack send err:', err.message);
   }
   return true;
+}
+
+// CARDAPIO-SEM-EXECUTOR (Rafinha 14/09/2026 — achado 85a251a4): quem recebe tarefa de outra pessoa ganha o
+// cardápio "Como você quer tratar? 1️⃣ Resolvo agora 2️⃣ Agendo 3️⃣ Delego 4️⃣ Preciso de apoio" — e nenhum código
+// lia a resposta: "Resolve aí" caía no LLM, que dizia "fica no radar", e o chokepoint rebaixava pra "não consegui".
+// Retorna { reply, refId? } se tratou, ou null (segue o fluxo normal). Só age com cardápio EM ABERTO: o citado,
+// ou a sequência mais nova do que o TOM falou (se o TOM falou outra coisa depois, o número é dessa outra).
+// "Resolvo agora" põe o prazo pra hoje e NÃO muda o status (25 leitores só enxergam pending).
+async function tryCardapioTarefa(collab, text, raw) {
+  const cd = require('./lib/cardapio-tarefa-recebida');
+  const { userText } = stripReplyScaffold(String(text || ''));
+  const _cdEscolha = cd.escolhaDoCardapio(userText);
+  if (!_cdEscolha) return null;
+  const { data: _outs } = await supabase.from('conversation_history')
+    .select('content, ref_type, ref_id, whatsapp_message_id')
+    .eq('collaborator_id', collab.id).eq('direction', 'outbound')
+    .gte('created_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString())
+    .order('created_at', { ascending: false }).limit(10);
+  let _cdAlvos = cd.cardapiosEmAberto(_outs || []);
+  const _q = whatsapp.extractQuotedMessage(raw);
+  if (_q && _q.id) {
+    const _citado = (_outs || []).find((r) => r.whatsapp_message_id === _q.id);
+    if (!_citado || !cd.ehCardapio(_citado.content) || _citado.ref_type !== 'task' || !_citado.ref_id) return null;
+    _cdAlvos = [_citado];
+  }
+  if (!_cdAlvos.length) return null;
+  const { data: _tks } = await supabase.from('tasks').select('id, title, created_by')
+    .in('id', _cdAlvos.map((r) => r.ref_id)).eq('assigned_to', collab.id).in('status', ['pending', 'overdue']);
+  const _tarefas = _tks || [];
+  if (!_tarefas.length) return null;
+  const _curto = (ts) => ts.map((t) => String(t.id).slice(0, 8)).join(',');
+  const _refUnica = _tarefas.length === 1 ? _tarefas[0].id : null;
+  if (_cdEscolha === '1') {
+    const _hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    const { data: _upd, error: _eUpd } = await supabase.from('tasks').update({ due_date: _hoje })
+      .in('id', _tarefas.map((t) => t.id)).eq('assigned_to', collab.id).select('id');
+    if (_eUpd || !_upd || !_upd.length) {
+      console.warn('[Cardapio] resolvo agora sem linha:', _eUpd ? _eUpd.message : 'rowcount 0');
+      return null;
+    }
+    await logMarker(collab.id, 'TASK_UPDATE', 'executed', `cardapio_resolvo_agora:${_curto(_tarefas)}`, null);
+    return { reply: cd.textoResolvoAgora(_tarefas.map((t) => t.title)), refId: _refUnica };
+  }
+  if (_cdEscolha === '2') return { reply: cd.textoPerguntaAgendo(_tarefas.map((t) => t.title)), refId: _refUnica };
+  if (_cdEscolha === '3') return { reply: cd.textoPerguntaDelego(_tarefas.map((t) => t.title)), refId: _refUnica };
+  const _porCriador = new Map();
+  for (const t of _tarefas) {
+    if (!t.created_by || t.created_by === collab.id) continue;
+    if (!_porCriador.has(t.created_by)) _porCriador.set(t.created_by, []);
+    _porCriador.get(t.created_by).push(t);
+  }
+  if (!_porCriador.size) return null;
+  const { data: _criadores } = await supabase.from('collaborators').select('id, full_name, phone').in('id', [..._porCriador.keys()]);
+  const _avisados = [];
+  const _destravar = [];
+  for (const c of _criadores || []) {
+    const _ts = _porCriador.get(c.id) || [];
+    if (!c.phone || !_ts.length) continue;
+    try {
+      await require('./services/proactive-link').sendAndLink(supabase, { phone: c.phone, content: cd.textoApoioParaCriador({ quemPede: nameForCollab(collab), titulos: _ts.map((t) => t.title) }), collaboratorId: c.id, refType: 'task', refId: _ts[0].id });
+      await logMarker(collab.id, 'TASK_UPDATE', 'executed', `cardapio_apoio:${_curto(_ts)}`, null);
+      _avisados.push(nameForCollab(c));
+      _destravar.push(..._ts);
+    } catch (eAp) { console.warn('[Cardapio] aviso de apoio err:', eAp.message); }
+  }
+  if (!_avisados.length) return null;
+  return { reply: cd.textoApoioAvisado({ criadores: _avisados, titulos: _destravar.map((t) => t.title) }), refId: _destravar.length === 1 ? _destravar[0].id : null };
 }
 
 // Sprint 23.5 — bypass engine-side para dup microconfirm (eventos e tasks).
@@ -11940,6 +12003,23 @@ async function processMessage(phone, text, raw = {}) {
     await logConversation(collab.id, 'outbound', dupBypass.reply);
     await whatsapp.sendMessage(collab.phone, dupBypass.reply);
     console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (dup_bypass)`);
+    return;
+  }
+
+  // CARDAPIO-SEM-EXECUTOR (Rafinha 14/09 — 85a251a4): resposta ao cardápio de tarefa recebida, sem LLM.
+  // Depois do menu de duplicata (prazo de 10 min, mais específico). Com uma tarefa só, a resposta sai
+  // vinculada a ela — o "sexta" / "pro Leo" seguinte chega ancorado por citação.
+  let _cardapio = null;
+  try { _cardapio = await tryCardapioTarefa(collab, String(inboundVerbatimText || ''), raw); }
+  catch (eCd) { console.warn('[Cardapio] err (segue o fluxo normal):', eCd.message); }
+  if (_cardapio) {
+    if (_cardapio.refId) {
+      await require('./services/proactive-link').sendAndLink(supabase, { phone: collab.phone, content: _cardapio.reply, collaboratorId: collab.id, refType: 'task', refId: _cardapio.refId });
+    } else {
+      await logConversation(collab.id, 'outbound', _cardapio.reply);
+      await whatsapp.sendMessage(collab.phone, _cardapio.reply);
+    }
+    console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (cardapio_tarefa)`);
     return;
   }
 
