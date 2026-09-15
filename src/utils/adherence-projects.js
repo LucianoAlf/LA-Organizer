@@ -33,6 +33,8 @@ function classifyAdherenceProjects(activeProjects, collabTasks, cutoffIso, ymdTo
   const pausedProjects = [];
   const readyProjects = [];
   for (const p of (activeProjects || [])) {
+    // PROJETO-SEM-COMO-PAUSAR-COBRANCA (Juliana 14/09): pausa pedida pela pessoa vale até o último dia.
+    if (p.cobranca_pausada_ate && String(p.cobranca_pausada_ate).slice(0, 10) >= ymdToday) continue;
     const e = byProj.get(p.id);
     if (!e || !e.last) continue;        // collab não tem task nesse projeto
     if (e.last >= cutoffIso) continue;  // teve atividade recente — não cobra

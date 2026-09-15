@@ -7442,7 +7442,7 @@ async function gatherAdherenceSignals(collabId, ymdToday) {
   // Projetos active no banco. RLS: assumindo todos visíveis ao service_role.
   const { data: activeProjects, error: pErr } = await supabase
     .from('projects')
-    .select('id, name, status')
+    .select('id, name, status, cobranca_pausada_ate')
     .eq('status', 'active')
     .limit(50);
   if (pErr) console.error('[AdherenceNudge] projects query err:', pErr.message);

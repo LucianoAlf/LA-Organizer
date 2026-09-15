@@ -15126,6 +15126,48 @@ Output AGORA, apenas o marker:`;
     }
   }
 
+  // PROJETO-SEM-COMO-PAUSAR-COBRANCA (Juliana 14/09 — e1ad051e): o balanço cobrou um projeto "parado"
+  // que estava em divulgação de propósito; o TOM prometeu "vou parar de cobrar" sem ter como. Executa
+  // <<PROJECT_UPDATE>> pausar_cobranca ANTES dos guards (o marker_logs executed é o que eles leem) e o
+  // texto de confirmação é do sistema — com a data de volta, ou a linha honesta de não-achou.
+  {
+    const { parseProjectUpdate, resolverProjeto, dataDaPausa, textoPausa, textoProjetoNaoAchado } = require('./lib/projeto-pausa');
+    const _pu = parseProjectUpdate(reply);
+    if (_pu) {
+      const _puNotas = [];
+      try {
+        const _puHoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+        const { data: _puTarefas } = await supabase.from('tasks').select('project_id')
+          .eq('assigned_to', collab.id).not('project_id', 'is', null).limit(1000);
+        const _puIds = [...new Set((_puTarefas || []).map((x) => x.project_id))];
+        const { data: _puProjs } = _puIds.length
+          ? await supabase.from('projects').select('id, name').in('id', _puIds).eq('status', 'active')
+          : { data: [] };
+        for (const _it of _pu.itens) {
+          if (_it.action !== 'pausar_cobranca') continue;
+          const _p = resolverProjeto(_it.project, _puProjs || []);
+          if (!_p) {
+            await logMarker(collab.id, 'PROJECT_UPDATE', 'rejected', `projeto_nao_achado:${String(_it.project).slice(0, 40)}`, null);
+            _puNotas.push(textoProjetoNaoAchado(_it.project));
+            continue;
+          }
+          const _ate = dataDaPausa(_it.ate, _puHoje);
+          const { data: _upd } = await supabase.from('projects')
+            .update({ cobranca_pausada_ate: _ate, cobranca_pausa_motivo: _it.motivo || null })
+            .eq('id', _p.id).select('id').maybeSingle();
+          if (_upd) {
+            await logMarker(collab.id, 'PROJECT_UPDATE', 'executed', `pausar_cobranca:${String(_p.id).slice(0, 8)} ate=${_ate}`, null);
+            _puNotas.push(textoPausa({ nome: _p.name, ate: _ate, motivo: _it.motivo }));
+          } else {
+            await logMarker(collab.id, 'PROJECT_UPDATE', 'rejected', `update_sem_linha:${String(_p.id).slice(0, 8)}`, null);
+            _puNotas.push(textoProjetoNaoAchado(_it.project));
+          }
+        }
+      } catch (ePu) { console.warn('[ProjectUpdate] err:', ePu.message); }
+      reply = [_pu.cleanText, ..._puNotas].filter(Boolean).join('\n\n');
+    }
+  }
+
   // 3) Memory save (sempre por último — o conteúdo do bloco NUNCA deve vazar)
   {
     const parsedMem = parseMemoryMarker(reply);
