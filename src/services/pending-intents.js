@@ -11,7 +11,7 @@
 //   - confirmation:    { action_summary, details? }
 
 const supabase = require('../supabase/client');
-const { intentCarriesDeterministicExecutor } = require('../lib/intent-executor');
+const { intentCarriesDeterministicExecutor, intentsASuperseder } = require('../lib/intent-executor');
 // detectUserConfirmation extraída pra módulo PURO (testável isolado — este arquivo requer
 // supabase/client e não roda em node --test). CONFIRM-SHORTYES-S-UNRECOGNIZED (Clayton 09/07).
 const { detectUserConfirmation } = require('./user-confirmation');
@@ -41,17 +41,29 @@ async function openIntent(collaboratorId, kind, payload = {}, questionText = nul
   // abertas. O fluxo de duas etapas da credencial se apoia exatamente nesta garantia
   // (a intent de desambiguacao tem de morrer quando a de confirmacao nasce). Seguir pro
   // INSERT continua certo; o que muda e existir rastro.
+  // CLOSING-RITUAL-CLOBBERS-COORD (Dudu 14/09): same-kind sozinho e grosso demais —
+  // 'confirmation' guarda cinco familias de executor, e o ritual de Fechamento matava a
+  // intent de recado viva de outra familia. Morre a generica e a da MESMA familia (repergunta).
   try {
-    const { error: supErr } = await supabase
+    const { data: abertas, error: listErr } = await supabase
       .from('pending_intents')
-      .update({
-        resolved_at: new Date().toISOString(),
-        resolution: 'superseded',
-        resolution_note: 'new intent of same kind opened',
-      })
+      .select('id, payload')
       .eq('collaborator_id', collaboratorId)
       .eq('kind', kind)
       .is('resolved_at', null);
+    if (listErr) throw listErr;
+
+    const alvos = intentsASuperseder(abertas || [], payload).map((i) => i.id);
+    const { error: supErr } = alvos.length
+      ? await supabase
+        .from('pending_intents')
+        .update({
+          resolved_at: new Date().toISOString(),
+          resolution: 'superseded',
+          resolution_note: 'new intent of same kind opened',
+        })
+        .in('id', alvos)
+      : { error: null };
     if (supErr) {
       console.warn(`[PendingIntents] supersede FALHOU collab=${String(collaboratorId).slice(0, 8)} kind=${kind}:`,
         supErr.message || String(supErr), '— pode haver mais de uma intent aberta deste kind');

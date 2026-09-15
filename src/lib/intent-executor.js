@@ -34,4 +34,37 @@ function intentCarriesDeterministicExecutor(payload) {
   return !!(hasAnchor || hasBatch || hasCoord || hasResched);
 }
 
-module.exports = { intentCarriesDeterministicExecutor };
+// CLOSING-RITUAL-CLOBBERS-COORD (Dudu 14/09) — `kind` é grosso demais pra decidir supersede.
+//
+// `kind='confirmation'` é um balde com pelo menos CINCO famílias de executor determinístico
+// dentro. O supersede same-kind do `openIntent` mata todas elas indiscriminadamente — foi assim
+// que o ritual de Fechamento (cron, 19:16:28) matou a intent do recado pro Rafinha (19:13:06),
+// que estava viva e com alça. A família é o que separa "repergunta minha, pode matar a anterior"
+// de "outro assunto, não encoste".
+//
+// `closing` entra AQUI e não no `intentCarriesDeterministicExecutor` de propósito: aquele
+// predicado alimenta `hasFreshDeterministicIntent`, e alargá-lo mudaria o comportamento do
+// registrador genérico de fim-de-turno, que não tem nada a ver com este caso.
+function familiaDoExecutor(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  if (payload.anchor != null) return 'anchor';
+  if (Array.isArray(payload.batch_complete) && payload.batch_complete.length) return 'batch_complete';
+  if (payload.coordination && Array.isArray(payload.coordination.items) && payload.coordination.items.length) return 'coordination';
+  if (payload.reschedule && Array.isArray(payload.reschedule.actions) && payload.reschedule.actions.length) return 'reschedule';
+  if (payload.closing && Array.isArray(payload.closing.items) && payload.closing.items.length) return 'closing';
+  return null;
+}
+
+// Quem morre quando uma intent nova do mesmo `kind` abre: a genérica (sem executor) sempre, e a
+// da MESMA família — que é a repergunta, o caso que CONFIRM-REASK-SUPERSEDE precisa manter vivo.
+// Intent de outra família com executor sobrevive.
+function intentsASuperseder(abertas, novoPayload) {
+  if (!Array.isArray(abertas)) return [];
+  const familiaNova = familiaDoExecutor(novoPayload);
+  return abertas.filter((i) => {
+    const fam = familiaDoExecutor(i && i.payload);
+    return fam === null || fam === familiaNova;
+  });
+}
+
+module.exports = { intentCarriesDeterministicExecutor, familiaDoExecutor, intentsASuperseder };

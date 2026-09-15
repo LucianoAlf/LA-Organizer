@@ -49,6 +49,7 @@ const projectStatusLib = require('./lib/project-status');
 const { applyProjectStatusChange } = require('./services/project-status-exec');
 const { detectExplicitDayIntent, resolveExplicitWeekdayDate } = require('./utils/temporal-intent');
 const { resolveTaskTarget, serieDe } = require('./lib/task-target');
+const { escolheIntentPorCitacao } = require('./lib/intent-por-citacao');
 const { resolverConclusaoDeLembrete } = require('./lib/completion-from-reminder');
 const { buildReminderRefsQuery, mapRefRows } = require('./lib/reminder-refs-query');
 const { isFutureCompletion } = require('./utils/complete-guards');
@@ -11222,7 +11223,11 @@ async function processMessage(phone, text, raw = {}) {
     if (openIntents.length > 0) {
       // approval_pending NUNCA resolve por sim/não genérico — aprovação tem funil
       // próprio (detect-approval-reply, acima). Pega a mais recente não-aprovação.
-      const target = openIntents.find((i) => i.kind !== 'approval_pending');
+      // CLOSING-RITUAL-CLOBBERS-COORD (Dudu 14/09): com duas intents abertas, a mais NOVA
+      // ganhava — e o "Isso" por reply-quote à pergunta do Rafinha fechou o Fechamento do dia,
+      // que nascera 12s antes. Citação é intenção explícita e vence recência; fail-closed.
+      const _citada = escolheIntentPorCitacao(openIntents, stripReplyScaffold(String(text || '')).quotedText);
+      const target = _citada || openIntents.find((i) => i.kind !== 'approval_pending');
       // GUARD-CONFIRM-LOOP (Matheus 10/06): reply-quote chegava CRU no detector —
       // o scaffold "[O usuário está RESPONDENDO...]" estourava o limite de resposta
       // curta e "Já conclui!" nunca casava. Strip primeiro (paridade c/ Approval-bare).
