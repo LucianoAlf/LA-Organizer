@@ -23,7 +23,7 @@ test('caso real (Codex, 01/07): "Vou criar na agenda e disparar pros 8" → reba
   const r = downgradeEmptyPromise(CODEX_REUNIAO);
   assert.strictEqual(r.fired, true, 'promessa vazia tem que ser rebaixada');
   assert.ok(!/vou criar na agenda/i.test(r.reply), 'a linha da promessa vazia some');
-  assert.match(r.reply, /N[ÃA]O foi executad/i, 'entra o aviso honesto');
+  assert.match(r.reply, /n[ãa]o foi feito/i, 'entra o aviso honesto (sem inventar problema técnico)');
   assert.match(r.reply, /Beleza, Alf/, 'linha neutra permanece');
 });
 
@@ -37,7 +37,7 @@ test('sem promessa → não age (reply intacto)', () => {
 test('reply 100% promessa vira só o aviso honesto', () => {
   const r = downgradeEmptyPromise('Vou criar a tarefa e te lembro às 9h.');
   assert.strictEqual(r.fired, true);
-  assert.match(r.reply, /N[ÃA]O foi executad/i);
+  assert.match(r.reply, /n[ãa]o foi feito/i);
 });
 
 test('CONTROLE: recusa honesta ("não consigo criar por aqui") não dispara', () => {
@@ -271,7 +271,7 @@ test('strip remove a frase da promessa e preserva a frase verdadeira (caso Ana 0
   assert.strictEqual(r.fired, true, 'a promessa vazia segue sendo rebaixada');
   assert.match(r.reply, /A Mayra segue com isso pra amanh[ãa]\./, 'o conteúdo verdadeiro sobrevive');
   assert.doesNotMatch(r.reply, /anotado/i, 'a frase da promessa sai');
-  assert.match(r.reply, /NÃO foi executada/, 'o aviso honesto continua anexado');
+  assert.match(r.reply, /n[ãa]o foi feito/i, 'o aviso honesto continua anexado');
 });
 
 test('frase única com promessa segue sendo apagada inteira (controle Arthur 04/08)', () => {

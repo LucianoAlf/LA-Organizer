@@ -15645,7 +15645,7 @@ Output AGORA, apenas o marker:`;
           // contradição). AUTO_RETRY_DUP_EXISTS seta auto_retry_succeeded (estado desejado já
           // existe) → NÃO rebaixa (lição 27/06, confab inverso).
           if (!_metrics.auto_retry_succeeded) {
-            let _pd = downgradeEmptyPromise(reply);
+            let _pd = downgradeEmptyPromise(reply, { markerAttempted: !!_metrics.marker_attempted });
             // PROMISE-NOMARKER-CEGO-PRA-ESCRITA-RECENTE (Rafinha 08/09 11:11 BRT): esta porta
             // roda ANTES do enforceNoMarkerHonesty e reescreve o `reply` — a porta de baixo
             // nunca vê o original, então nenhum veto dela alcança este ponto. Reafirmar escrita
@@ -15665,7 +15665,7 @@ Output AGORA, apenas o marker:`;
                 _pdRestates = restatesRecentWrite(reply, _pdRw);
               } catch (_) {}
               if (_pdRestates) {
-                _pd = downgradeEmptyPromise(reply, { restatesRecentWrite: true });
+                _pd = downgradeEmptyPromise(reply, { restatesRecentWrite: true, markerAttempted: !!_metrics.marker_attempted });
                 console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → VETADO (reafirma escrita recente)`);
               }
             }

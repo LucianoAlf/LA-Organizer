@@ -13,11 +13,14 @@
 // A REPLY_PROMISE_RE morava inline no engine (Sprint 28.2, com as lições de 01/06 nos
 // comentários de lá) — movida pra cá VERBATIM pra ser a fonte única: o mesmo vocabulário
 // que dispara o retry decide o strip. O engine importa daqui.
-const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:hoje\s+|amanh[aã]\s+|j[aá]\s+|de\s+novo\s+|mais\s+tarde\s+)?(?:[aà]s?\s+|nas?\s+)?\d{1,2}\s*[h:]|(?:reagendei|reagendo|reagendado|reagendamento|marquei\s+(?:pra|para)|agendei\s+(?:pra|para)|coloquei\s+(?:pra|para)|movi\s+(?:pra|para))\s+(?:hoje|amanh[aã]|segunda|terça|quarta|quinta|sexta|sábado|domingo|próxima|semana\s+que\s+vem|\d{1,2}\/\d{1,2})|\b(?:registr(?:ar|ei|ando|o)|anot(?:ar|ei|ando|ado)|adicion(?:ar|ei|ando|ado|o)|juntando|criando|criei|vou\s+criar|crio\s+as?|colocando\s+(?:na|no)\s+(?:lista|pacote|fila)|(?:t[oô]|estou)\s+(?:adicionando|registrando|anotando|criando)|adicionando\s+ao\s+pacote)\b/i;
+const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:hoje\s+|amanh[aã]\s+|j[aá]\s+|de\s+novo\s+|mais\s+tarde\s+)?(?:[aà]s?\s+|nas?\s+)?\d{1,2}\s*[h:]|(?:reagendei|reagendo|reagendado|reagendamento|marquei\s+(?:pra|para)|agendei\s+(?:pra|para)|coloquei\s+(?:pra|para)|movi\s+(?:pra|para))\s+(?:hoje|amanh[aã]|segunda|terça|quarta|quinta|sexta|sábado|domingo|próxima|semana\s+que\s+vem|\d{1,2}\/\d{1,2})|\b(?:registr(?:ar|ei|ando|o)|anot(?:ar|ei|ando|ado)|adicion(?:ar|ei|ando|ado|o)|juntando|criando|criei|vou\s+criar|crio\s+as?|colocando\s+(?:na|no)\s+(?:lista|pacote|fila)|(?:t[oô]|estou)\s+(?:adicionando|registrando|anotando|criando)|adicionando\s+ao\s+pacote)\b|\b(?:vou|irei)\s+parar\s+de\s+(?:te\s+)?cobrar\b|\bparo\s+de\s+(?:te\s+)?cobrar\b/i;
 
 // Sem verbo que casa REPLY_PROMISE_RE nem SEND_CLAIM_RE (não pode ser comido por outra rede).
-const PROMISE_NOMARKER_DISCLAIMER =
-  '_⚠️ Na real: deu um problema técnico e essa ação NÃO foi executada — nada entrou na agenda e ninguém foi acionado. Me pede de novo que eu faço na hora._';
+// NOTA-MENTE-A-CAUSA (Juliana 14/09 19:23): sem marcador tentado, NÃO houve "problema técnico" —
+// o TOM simplesmente não fez (às vezes nem tem como fazer). Dizer "deu um problema técnico" é trocar
+// uma mentira por outra. O texto técnico só vale quando um marcador foi tentado e rejeitado.
+const PROMISE_NOMARKER_DISCLAIMER = '_⚠️ Na real: isso não foi feito — não registrei nada por aqui. Me diz de novo o que você quer que eu faça._';
+const PROMISE_FALHOU_DISCLAIMER =  '_⚠️ Na real: deu um problema técnico e essa ação NÃO foi executada — nada entrou na agenda e ninguém foi acionado. Me pede de novo que eu faço na hora._';
 
 // OFERTA CONDICIONAL (Ana Paula, 15/08 22:01) — o verbo de promessa é o CONSEQUENTE de um
 // pedido futuro do usuário ("qualquer coisa, só manda que eu registro"). Não é compromisso
@@ -35,8 +38,11 @@ const PROMISE_NOMARKER_DISCLAIMER =
 // fim de frase, então "Registrei o pedido. Amanhã eu passo na loja" não vira oferta, e
 // "Vou criar a tarefa e qualquer coisa te aviso às 15h" — o contra-exemplo que o comentário
 // original já avisava — segue rebaixando, porque ali não há "eu" nenhum depois do gatilho.
-const OFERTA_CONDICIONAL_RE =
-  /(?:\b(?:se|quando)\s+(?:voc[êe]\s+)?(?:precisar|quiser|surgir|aparecer)\b|\bqualquer\s+coisa\b|(?:[ée]\s+)?\bs[óo]\s+(?:me\s+)?(?:mandar?|chamar?|falar?|avisar?|pedir?)\b|\bme\s+(?:manda|chama|fala|avisa)\b|\b(?:manda|chama|fala|avisa|passa)\s+(?:pra|para)\s+(?:mim|c[áa])\b)[^.!?]*(?:\bque\s+eu\b|[—–-]\s*eu\b|,\s*eu\b)/i;
+// OFERTA-E-SO-ME-DIZER (Juliana 14/09): "Quando quiser registrar algum avanço ou prazo, é só me dizer." é
+// a pessoa agindo no futuro, não o TOM prometendo agora — mas não tem o "que eu" que o veto abaixo exige,
+// e o "registrar" do vocabulário apagava ESSA frase em vez da promessa falsa ao lado dela.
+const OFERTA_E_SO_ME_DIZER_RE = /\b(?:se|quando)\s+(?:voc[êe]\s+)?(?:precisar|quiser|surgir|aparecer)\b[^.!?]*[ée]\s+s[óo]\s+(?:me\s+)?(?:dizer|falar|chamar|avisar|mandar|pedir)\b/i;
+const OFERTA_CONDICIONAL_RE =  /(?:\b(?:se|quando)\s+(?:voc[êe]\s+)?(?:precisar|quiser|surgir|aparecer)\b|\bqualquer\s+coisa\b|(?:[ée]\s+)?\bs[óo]\s+(?:me\s+)?(?:mandar?|chamar?|falar?|avisar?|pedir?)\b|\bme\s+(?:manda|chama|fala|avisa)\b|\b(?:manda|chama|fala|avisa|passa)\s+(?:pra|para)\s+(?:mim|c[áa])\b)[^.!?]*(?:\bque\s+eu\b|[—–-]\s*eu\b|,\s*eu\b)/i;
 
 // ADMISSÃO DE FALHA não é promessa (bug 01/06, revivido em 27/08 — Rafinha). O engine já sabe
 // disso: `_replyIsDecline` (engine.js ~13543) zera `replyHasPromise` quando a reply nega o
@@ -93,17 +99,22 @@ const LINHA_DE_LISTA_RE = /^\s*(?:[•▪◦‣·]|[-*+]\s|\d+[.)]\s|[\u{1F300}-
 function downgradeEmptyPromise(text, opts = {}) {
   const s = String(text || '');
   if (opts && opts.restatesRecentWrite) return { reply: s, fired: false };
+  const ehPromessaFrase = (f) => {
+    if (OFERTA_CONDICIONAL_RE.test(f) || OFERTA_E_SO_ME_DIZER_RE.test(f)) return false;
+    const re = new RegExp(REPLY_PROMISE_RE.source, 'gi');
+    let m;
+    while ((m = re.exec(f)) !== null) {
+      if (m[0].length === 0) { re.lastIndex += 1; continue; }
+      if (!NEGACAO_ANTES_RE.test(f.slice(0, m.index))) return true;
+    }
+    return false;
+  };
   const ehPromessa = (t) => {
     // Item de lista: o TOM está mostrando o que existe, não prometendo agir.
     if (LINHA_DE_LISTA_RE.test(t)) return false;
-    if (OFERTA_CONDICIONAL_RE.test(t)) return false;
-    const re = new RegExp(REPLY_PROMISE_RE.source, 'gi');
-    let m;
-    while ((m = re.exec(t)) !== null) {
-      if (m[0].length === 0) { re.lastIndex += 1; continue; }
-      if (!NEGACAO_ANTES_RE.test(t.slice(0, m.index))) return true;
-    }
-    return false;
+    // VETO POR FRASE (Juliana 14/09): a oferta vetava a LINHA inteira — uma promessa falsa na mesma
+    // linha ("Vou parar de cobrar. Quando quiser…, é só me dizer.") passava protegida por ela.
+    return String(t).split(/(?<=[.!?…])\s+/).some(ehPromessaFrase);
   };
   const linhas = s.split('\n');
   if (!linhas.some(ehPromessa)) return { reply: s, fired: false };
@@ -125,9 +136,12 @@ function downgradeEmptyPromise(text, opts = {}) {
   }
   const stripped = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   return {
-    reply: stripped ? `${stripped}\n\n${PROMISE_NOMARKER_DISCLAIMER}` : PROMISE_NOMARKER_DISCLAIMER,
+    // NOTA-MENTE-A-CAUSA (Juliana 14/09): "deu problema técnico" só quando um marcador foi tentado.
+    reply: stripped
+      ? `${stripped}\n\n${opts && opts.markerAttempted ? PROMISE_FALHOU_DISCLAIMER : PROMISE_NOMARKER_DISCLAIMER}`
+      : (opts && opts.markerAttempted ? PROMISE_FALHOU_DISCLAIMER : PROMISE_NOMARKER_DISCLAIMER),
     fired: true,
   };
 }
 
-module.exports = { downgradeEmptyPromise, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER, OFERTA_CONDICIONAL_RE, LINHA_DE_LISTA_RE };
+module.exports = { downgradeEmptyPromise, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER, PROMISE_FALHOU_DISCLAIMER, OFERTA_E_SO_ME_DIZER_RE, OFERTA_CONDICIONAL_RE, LINHA_DE_LISTA_RE };
