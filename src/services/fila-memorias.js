@@ -97,10 +97,16 @@ function _porLinha(texto) {
   return { tipo: 'decidir', ops, paraTodosOsGrupos: false };
 }
 
+// FILA-ARTIGO-PLURAL-VIRA-ITEM (Alf 15/09). "aprovo os 2" numa fila de 2 é "aprovo as duas" —
+// o artigo PLURAL diz quantidade, não item. O parser lia só o algarismo e aprovava a memória 2.
+// Quantidade não pode ser resolvida aqui (a função é pura e não sabe o tamanho da fila): sai na
+// op e quem confere contra a lista é o decidirFila.
+const _QUANTIDADE = /\b(?:os|as)\s+(\d{1,3})\b/g;
+
 /**
  * Lê o comando do grupo de ops. Devolve null para tudo que não for comando claro — aí a mensagem
  * segue pro agente. Ambíguo também é null: "aprova todas menos a 2" não é adivinhado.
- * @returns {null | {tipo:'listar'} | {tipo:'decidir', ops:Array<{acao:string, numeros:number[], todas:boolean}>, paraTodosOsGrupos:boolean}}
+ * @returns {null | {tipo:'listar'} | {tipo:'decidir', ops:Array<{acao:string, numeros:number[], todas:boolean, quantidade?:number}>, paraTodosOsGrupos:boolean}}
  */
 function parseComandoFila(texto) {
   const t = _norm(texto).replace(/[.!?]+$/, '');
@@ -118,6 +124,13 @@ function parseComandoFila(texto) {
     const acao = /^(aprova|aprovo|aprovad)/.test(p.trim()) ? 'aprovar' : 'descartar';
     const numeros = [...new Set((p.match(/\b\d{1,3}\b/g) || []).map(Number).filter((n) => n >= 1))];
     const todas = /\b(todas|tudo|todos)\b/.test(p);
+    const quantidades = [...p.matchAll(_QUANTIDADE)].map((m) => Number(m[1]));
+    if (quantidades.length) {
+      // Só é quantidade quando é o ÚNICO número da parte: "aprovo os 2 e o 5" é ambíguo.
+      if (quantidades.length > 1 || numeros.length !== 1 || todas || quantidades[0] < 2) return null;
+      ops.push({ acao, numeros: [], todas: false, quantidade: quantidades[0] });
+      continue;
+    }
     if (!numeros.length && !todas) return null;
     if (numeros.length && todas) return null;
     ops.push({ acao, numeros, todas });
@@ -125,7 +138,7 @@ function parseComandoFila(texto) {
   if (!ops.length) return null;
   const aprov = new Set(ops.filter((o) => o.acao === 'aprovar').flatMap((o) => o.numeros));
   if (ops.some((o) => o.acao === 'descartar' && o.numeros.some((n) => aprov.has(n)))) return null;
-  if (ops.filter((o) => o.todas).length && ops.length > 1) return null;
+  if (ops.some((o) => o.todas || o.quantidade) && ops.length > 1) return null;
   return { tipo: 'decidir', ops, paraTodosOsGrupos };
 }
 
@@ -155,10 +168,21 @@ async function decidirFila(supabase, cmd) {
   const pendentes = await listarFilaGlobal(supabase);
   if (pendentes === null) throw new Error('não consegui ler a fila');
   const numerados = pendentes.filter((p) => Number.isInteger(p.review_number));
+  const semNumero = pendentes.length - numerados.length;
+  // Quantidade ("aprovo os 2") só vale se bater com o tamanho da lista. Não batendo, não se
+  // adivinha se era quantidade ou item: devolve sem escrever nada e pede o número.
+  const desencontro = cmd.ops.find((op) => op.quantidade && op.quantidade !== numerados.length);
+  if (desencontro && numerados.length) {
+    return {
+      resultados: [], semNumero, havia: numerados.length,
+      restam: numerados.map((p) => p.review_number).sort((a, b) => a - b),
+      desencontro: { quantidade: desencontro.quantidade, havia: numerados.length },
+    };
+  }
   const resultados = [];
   const tocados = new Set();
   for (const op of cmd.ops) {
-    const pedidos = op.todas ? numerados.map((p) => p.review_number) : op.numeros;
+    const pedidos = (op.todas || op.quantidade) ? numerados.map((p) => p.review_number) : op.numeros;
     const alvos = numerados.filter((p) => pedidos.includes(p.review_number) && !tocados.has(p.id));
     const foraDaLista = pedidos.filter((n) => !numerados.some((p) => p.review_number === n));
     const escopo = op.acao === 'aprovar' && cmd.paraTodosOsGrupos ? 'tom' : 'group';
@@ -172,12 +196,14 @@ async function decidirFila(supabase, cmd) {
     resultados.push({ acao: op.acao, feitos: r.feitos, foraDaLista, escopoAplicado: r.escopoAplicado, pediuTodos: escopo === 'tom' });
   }
   const restam = numerados.filter((p) => !tocados.has(p.id)).map((p) => p.review_number).sort((a, b) => a - b);
-  const semNumero = pendentes.length - numerados.length;
   return { resultados, restam, semNumero, havia: numerados.length };
 }
 
-function renderResultado({ resultados = [], restam = [], semNumero = 0, havia = 0 } = {}) {
+function renderResultado({ resultados = [], restam = [], semNumero = 0, havia = 0, desencontro = null } = {}) {
   if (!havia) return 'Não tem lista numerada ainda — manda *memórias pendentes* que eu mostro a fila.';
+  if (desencontro) {
+    return `Você disse *${desencontro.quantidade}* e a lista tem *${desencontro.havia}* — não vou adivinhar se era quantidade ou número.\nManda o número (*aprova 1 3*) ou *aprova todas*.`;
+  }
   const linhas = [];
   for (const r of resultados) {
     const aprovar = r.acao === 'aprovar';

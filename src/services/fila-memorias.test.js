@@ -226,3 +226,39 @@ test('por linha: qualquer linha fora do formato manda tudo pro agente (null)', (
   assert.strictEqual(parseComandoFila('0. aprovo'), null);
   assert.strictEqual(parseComandoFila('1. aprovo a do Clayton'), null);
 });
+
+// ── FILA-ARTIGO-PLURAL-VIRA-ITEM (Alf 15/09) ──────────────────────────────────────────────
+// A fila das 07:30 de 15/09 tinha DUAS memórias. Às 08:26:38 BRT o Alf respondeu "aprovo os 2"
+// — artigo PLURAL, "aprovo as duas" — e o parser leu o 2 como número de item: aprovou só a
+// segunda e devolveu "⏳ Ainda esperando: 1.". Ele teve que repetir "aprovo o 1" 24 segundos
+// depois. O artigo é o que separa QUANTIDADE de ITEM, e o parser era cego pra ele.
+test('Alf 15/09: "aprovo os 2" com 2 na fila é quantidade — aprova as duas, não só a 2', async () => {
+  const linhas = [pend('a', 'G', 1), pend('b', 'G', 2)];
+  const sb = fakeSb(linhas);
+  const r = await decidirFila(sb, parseComandoFila('aprovo os 2'));
+  assert.deepStrictEqual(sb.escritas.filter((e) => e.is_active === true).map((e) => e.id).sort(), ['a', 'b']);
+  assert.deepStrictEqual(r.restam, []);
+});
+
+test('quantidade que não bate com a fila não é adivinhada: nada escrito, e diz o que fazer', async () => {
+  const sb = fakeSb([pend('a', 'G', 1), pend('b', 'G', 2), pend('c', 'G', 3)]);
+  const t = renderResultado(await decidirFila(sb, parseComandoFila('aprovo os 2')));
+  assert.strictEqual(sb.escritas.length, 0);
+  assert.match(t, /aprova todas/);
+});
+
+test('artigo SINGULAR continua sendo número de item', () => {
+  assert.deepStrictEqual(parseComandoFila('aprovo o 1').ops[0], { acao: 'aprovar', numeros: [1], todas: false });
+  assert.deepStrictEqual(parseComandoFila('descarta a 3').ops[0], { acao: 'descartar', numeros: [3], todas: false });
+});
+
+test('plural com mais de um número, ou junto de "todas", vai pro agente', () => {
+  assert.strictEqual(parseComandoFila('aprovo os 2 e o 5'), null);
+  assert.strictEqual(parseComandoFila('aprovo os 1'), null, 'quantidade 1 não existe em plural');
+});
+
+test('"aprovo os 2 pra todos os grupos" continua sendo alcance + quantidade', () => {
+  const c = parseComandoFila('aprovo os 2 pra todos os grupos');
+  assert.strictEqual(c.paraTodosOsGrupos, true);
+  assert.strictEqual(c.ops[0].quantidade, 2);
+});
