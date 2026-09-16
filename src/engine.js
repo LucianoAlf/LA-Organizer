@@ -10900,10 +10900,19 @@ async function processMessage(phone, text, raw = {}) {
   // atrasada e inclui a linha digitável quando bill.barcode (ritual-messages).
   try {
     const _boletoIntent = (_openIntents || []).find((i) => i.kind === 'bill_from_boleto' && i.payload && i.payload.stage === 'awaiting_confirm');
-    if (_boletoIntent) {
+    // BOLETO-CONFIRM-FAIL-OPEN (Rose 15/09): era fail-OPEN — só recusava palavra de cancelamento
+    // e criava a conta pra qualquer outra fala. Numa rajada de 5 mensagens, a seguinte quase nunca
+    // é sobre o boleto. Agora fail-CLOSED, igual à porta irmã do lançamento (detectLaunchConfirm).
+    // Decisão ambígua (null) NÃO entra no bloco: a intent fica ABERTA e o turno segue o fluxo
+    // normal — o "sim" que vier depois ainda cria a conta.
+    const _boletoUser = stripReplyScaffold(String(text || '')).userText;
+    const _boletoDec = _boletoIntent
+      ? require('./finance/boleto-confirm').detectBoletoConfirm(_boletoUser, pendingIntents.detectUserConfirmation(_boletoUser))
+      : null;
+    if (_boletoIntent && _boletoDec) {
       const _p = _boletoIntent.payload;
       const _low = text.toLowerCase();
-      if (/\b(cancela|deixa|esquece|n[ãa]o precisa|nao precisa)\b/.test(_low)) {
+      if (_boletoDec === 'no') {
         await pendingIntents.resolveIntent(_boletoIntent.id, 'denied', 'user cancelou boleto');
         await whatsapp.sendMessage(phone, 'Beleza, não criei a conta. 👍');
         return;
