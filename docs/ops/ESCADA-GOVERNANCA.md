@@ -2392,3 +2392,52 @@ encontraria nada e concluiria "não reproduzi", que é o desfecho barato e errad
 A agulha (`ilike` no literal da evidência, sem janela temporal) achou o turno em uma consulta. Já
 são cinco rodadas; a proposta de `literalDoAchado(finding)` (18/08, 19/08) segue sendo a única
 forma de isto parar de ser redescoberto.
+
+### ETAPA 3 — a TABELA errada devolve zero e o zero refuta um achado VERDADEIRO
+
+**Ocorrências:** 4 (18/08, 08/09, 15/09, 16/09). Quarta origem do mesmo neutro-em-bloco.
+
+As três anteriores foram coluna inexistente (`role`), operador errado para o tipo (`ilike` em
+`uuid`) e coluna inexistente de novo (`starts_at`). A de 16/09 é a mais grosseira e por isso a
+mais fácil de repetir: **a tabela não se chama assim.** Todo o financeiro pessoal vive com prefixo
+`pf_` (`pf_bills`, `pf_transactions`) — não existe `public.transactions` nem `public.bills`.
+
+O custo foi um veredito invertido que atravessou uma sessão inteira. Procurando o que o turno da
+Rose (15/09 21:17) tinha criado, a consulta nas tabelas sem prefixo devolveu zero, e zero se lê
+como *"nada foi criado, o achado não procede"*. Procedia: o `pf_bills` guarda a linha `02d9e5af`,
+R$ 401,45, criada às **21:17:17 BRT** — no segundo seguinte à fala. O achado era verdadeiro e o
+neutro empurrou para refutá-lo.
+
+Reforça a regra de 15/09 com a quarta origem: **o zero de um filtro é hipótese, e quem desempata é
+o CONTROLE, não a releitura da query.** Nenhuma das quatro origens se denuncia na leitura — a query
+parece correta em todas. O controle barato aqui é um `select` sem filtro nenhum na tabela que você
+acha que existe: se ela não existir, o erro aparece na hora, antes de virar veredito.
+
+### ETAPA 5 — o teste de CONTRATO reprovou código que se comporta certo, e estava certo em reprovar
+
+**Ocorrência:** 1 (16/09). Classe nova: a diferença entre *fazer* e *ser verificável que faz*.
+
+O `confirmacao-le-a-fala.test.js` (nascido em 07/09) lê o próprio `engine.js` e exige que todo
+argumento de `detectUserConfirmation` venha de `stripReplyScaffold`. O cabeçalho dele já avisa que
+o predicado **checa derivação, não vocabulário** — a primeira versão procurava a palavra na linha
+da chamada e reprovava dois call sites corretos.
+
+Em 16/09 ele reprovou o call site novo do boleto, e o call site **estava comportamentalmente
+certo**: eu passava `_boletoUser`, derivado do strip. O que quebrou foi a forma da atribuição —
+`const _boletoUser = _boletoIntent ? stripReplyScaffold(...).userText : ''` — porque o regex de
+derivação (`/(?:const|let|var)\s+(\w+)\s*=\s*stripReplyScaffold\(/`) exige a chamada **colada** no
+`=`. O ternário escondeu a prova.
+
+A tentação, com a suíte vermelha e o comportamento certo, é alargar o regex do teste. **Seria
+errado:** um predicado de derivação que aceita expressão arbitrária à direita do `=` deixa de
+provar qualquer coisa — passa a aprovar `x ? strip(a) : textoCru`, que é exatamente o bug que ele
+existe pra impedir. O conserto certo foi do lado do código: tirar o ternário e deixar a atribuição
+direta. A guarda condicional já existia logo abaixo (`if (_boletoIntent && _boletoDec)`), então a
+única coisa que o ternário economizava era uma operação de string pura.
+
+🔑 **Quando um teste de contrato reprova código que se comporta bem, a pergunta não é "como afrouxo
+o predicado" e sim "por que meu código não é verificável".** Contrato compra garantia sobre a
+QUINTA ocorrência, a que ninguém vai revisar — e essa garantia é feita exatamente da rigidez que
+incomoda na primeira. Mude o código, nunca o detector. É a mesma regra já escrita em 09/09 para a
+fronteira das portas de honestidade (*"mude o detector, nunca o teste"*, na direção oposta e pelo
+mesmo motivo): o que não pode ceder é o que o instrumento prova.
