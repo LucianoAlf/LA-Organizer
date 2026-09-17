@@ -51,8 +51,34 @@ function mensagemDaUnidade({ unidadeNome, linhas, lote, fonteVelha = false }) {
   return linhasTxt.join('\n');
 }
 
+const barra = (pct) => { const c = Math.max(0, Math.min(10, Math.round(Number(pct) / 10))); return '▓'.repeat(c) + '░'.repeat(10 - c); };
+function ritmoNecessario({ faltam, hojeYmd, metaYmd = META_YMD }) {
+  const dias = Math.ceil((Date.parse(metaYmd + 'T00:00:00-03:00') - Date.parse(hojeYmd + 'T00:00:00-03:00')) / 86400000);
+  const semanas = Math.max(0, Math.ceil(dias / 7));
+  return { semanas, porSemana: semanas ? Math.ceil(faltam / semanas) : faltam };
+}
+function relatorioSemanal({ unidades, periodoBr, hojeYmd, alertaRitmo = false }) {
+  const us = unidades || [];
+  const total = us.reduce((s, u) => s + u.total, 0);
+  const migrados = us.reduce((s, u) => s + u.migrados, 0);
+  const pend = us.reduce((s, u) => s + (u.pendentesAutorizacao || 0), 0);
+  const pct = total ? Math.round((migrados / total) * 100) : 0;
+  const faltam = total - migrados;
+  const r = ritmoNecessario({ faltam, hojeYmd });
+  const linhas = [`💠 *PIX automático — semana de ${periodoBr}*`,
+    `Geral  ${barra(pct)}  ${pct}%  (${migrados} de ${total}) · meta ${METAS_BR}`];
+  for (const u of us) {
+    const p2 = u.total ? Math.round((u.migrados / u.total) * 100) : 0;
+    linhas.push(`${u.nome} ${barra(p2)} ${p2}% (${u.migrados}/${u.total}) — ${u.migradosNaSemana} nesta semana`);
+  }
+  if (pend) linhas.push(`🔵 Cadastrados sem cobrança: ${pend}`);
+  linhas.push(`Ritmo: faltam ${r.semanas} semanas e ${faltam} clientes → ${r.porSemana} por semana.`);
+  if (alertaRitmo) linhas.push('⚠️ Duas semanas seguidas abaixo do ritmo necessário.');
+  return linhas.join('\n');
+}
+
 module.exports = {
   FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
-  mensagemDaUnidade,
+  mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
 };

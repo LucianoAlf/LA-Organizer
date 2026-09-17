@@ -66,3 +66,48 @@ test('mensagem: fonte velha não publica número, avisa', () => {
   assert.match(txt, /não atualizou/i);
   assert.ok(!/\(\d+\)/.test(txt));
 });
+
+test('barra de progresso com 10 blocos', () => {
+  assert.strictEqual(p.barra(0), '░░░░░░░░░░');
+  assert.strictEqual(p.barra(58), '▓▓▓▓▓▓░░░░');
+  assert.strictEqual(p.barra(100), '▓▓▓▓▓▓▓▓▓▓');
+});
+
+test('ritmo necessário até a meta', () => {
+  const r = p.ritmoNecessario({ faltam: 142, hojeYmd: '2026-10-19', metaYmd: '2026-10-31' });
+  assert.strictEqual(r.semanas, 2);
+  assert.strictEqual(r.porSemana, 71);
+});
+
+test('ritmo não divide por zero quando a meta já passou', () => {
+  const r = p.ritmoNecessario({ faltam: 10, hojeYmd: '2026-11-05', metaYmd: '2026-10-31' });
+  assert.strictEqual(r.semanas, 0);
+  assert.strictEqual(r.porSemana, 10);
+});
+
+test('relatório semanal: geral, unidades, pendentes e ritmo', () => {
+  const txt = p.relatorioSemanal({
+    periodoBr: '13 a 19/10', hojeYmd: '2026-10-19',
+    unidades: [
+      { nome: 'Campo Grande', total: 226, migrados: 93, migradosNaSemana: 12, pendentesAutorizacao: 4 },
+      { nome: 'Recreio', total: 76, migrados: 58, migradosNaSemana: 9, pendentesAutorizacao: 3 },
+    ],
+  });
+  assert.match(txt, /💠 \*PIX automático — semana de 13 a 19\/10\*/);
+  assert.match(txt, /Geral\s+▓+░*\s+50%\s+\(151 de 302\)/);
+  assert.match(txt, /Campo Grande .*41% \(93\/226\) — 12 nesta semana/);
+  assert.match(txt, /🔵 Cadastrados sem cobrança: 7/);
+  assert.match(txt, /Ritmo: faltam 2 semanas e 151 clientes → 76 por semana/);
+  assert.ok(!/•/.test(txt), 'relatório semanal não lista nomes');
+});
+
+test('relatório semanal: alerta de ritmo aparece só quando alertaRitmo é true', () => {
+  const base = {
+    periodoBr: '13 a 19/10', hojeYmd: '2026-10-19',
+    unidades: [{ nome: 'Campo Grande', total: 226, migrados: 93, migradosNaSemana: 12, pendentesAutorizacao: 4 }],
+  };
+  const semAlerta = p.relatorioSemanal(base);
+  assert.ok(!semAlerta.includes('Duas semanas seguidas abaixo do ritmo necessário'));
+  const comAlerta = p.relatorioSemanal({ ...base, alertaRitmo: true });
+  assert.match(comAlerta, /⚠️ Duas semanas seguidas abaixo do ritmo necessário\.$/);
+});
