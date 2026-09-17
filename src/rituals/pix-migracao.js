@@ -91,6 +91,11 @@ function _dedupPorChave(linhas) {
 // Categorias que a pauta cobra (quem ainda falta migrar).
 const _naPauta = (l) => !!l && (l.categoria === 'migrar' || l.categoria === 'autorizacao_pendente');
 
+// M8 (revisão final): todo aviso que vai pra `motivo` acaba em marker_logs.reason (o dispatcher
+// grava `erro=<motivo>`). Título de filha é "PIX automático — <cliente> (<alunos>)" — nome de
+// cliente em marcador. Aviso cita só os 8 primeiros caracteres do id da tarefa.
+const _id8 = (id) => String(id == null ? '' : id).slice(0, 8);
+
 // ── contrato de deps (testável sem banco — nenhum teste deste arquivo toca o Supabase real) ───
 // deps.agora()                                -> number   (padrão Date.now())
 // deps.containersPix({ groupId })             -> [{ id, title, due_date,
@@ -377,17 +382,17 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     const aplicar = async (f, destino) => {
       if (destino === 'continua') {
         if (await fecharFilha(f.id, 'cancelled')) return true;
-        avisos.push(`não consegui cancelar a filha "${f.title}"`);
+        avisos.push(`não consegui cancelar a filha ${_id8(f.id)}`);
         return false;
       }
       if (destino === 'transicao' && !(await marcarTransicao({ taskId: f.id, hoje }))) {
         // A filha fecha mesmo assim (o cadastro aconteceu); só a carência dos próximos dias fica
         // sem registro — por isso o aviso.
-        avisos.push(`não consegui gravar a transição da filha "${f.title}"`);
+        avisos.push(`não consegui gravar a transição da filha ${_id8(f.id)}`);
       }
       const status = (destino === 'transicao' || destino === 'migrou' || destino === 'carencia') ? 'done' : 'cancelled';
       if (await fecharFilha(f.id, status)) { fechadas++; return true; }
-      avisos.push(`não consegui ${status === 'done' ? 'fechar' : 'cancelar'} a filha "${f.title}"`);
+      avisos.push(`não consegui ${status === 'done' ? 'fechar' : 'cancelar'} a filha ${_id8(f.id)}`);
       return false;
     };
 
@@ -410,7 +415,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
         else if (destino === 'continua') continuam.push(todasPorChave.get(f.pagador_chave));
       }
       if (desmontou && !(await fecharContainer(c.id, 'cancelled'))) {
-        avisos.push(`não consegui cancelar o pacote incompleto "${c.title}"`);
+        avisos.push(`não consegui cancelar o pacote incompleto ${_id8(c.id)}`);
         desmontou = false;
       }
       if (!desmontou) {
@@ -432,7 +437,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
           const destino = destinoDa(f);
           if ((await aplicar(f, destino)) && destino === 'continua') carregadasCount++;
         }
-        if (!(await fecharContainer(c.id, 'done'))) avisos.push(`não consegui fechar o pacote velho "${c.title}"`);
+        if (!(await fecharContainer(c.id, 'done'))) avisos.push(`não consegui fechar o pacote velho ${_id8(c.id)}`);
       }
       const loteBruto = [];
       for (const f of pacoteDeHoje.filhas || []) {
@@ -477,7 +482,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     const fecharAnteriores = async () => {
       for (const { f, destino } of planoAnterior) await aplicar(f, destino);
       for (const c of anteriores) {
-        if (!(await fecharContainer(c.id, 'done'))) avisos.push(`não consegui fechar o pacote velho "${c.title}"`);
+        if (!(await fecharContainer(c.id, 'done'))) avisos.push(`não consegui fechar o pacote velho ${_id8(c.id)}`);
       }
     };
 

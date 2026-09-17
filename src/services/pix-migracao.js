@@ -76,6 +76,12 @@ function mensagemDaUnidade({
   }
   if (resumo.length) linhasTxt.push(resumo.join(' · '));
   if (aguardando) linhasTxt.push(`⏳ Aguardando 1ª cobrança (${aguardando})`);
+  // M6 (revisão final): no grupo o TOM só lê mensagem em que é marcado — quem vê a lista precisa
+  // saber COMO avisar. Só quando a mensagem lista algum nome do lote (sem lote, não há o que avisar).
+  const chavesListaveis = new Set(todas.map((l) => l.pagador_chave));
+  if ((lote || []).some((l) => chavesListaveis.has(l.pagador_chave))) {
+    linhasTxt.push('_Cadastrou alguém? Me marca e escreve: cadastrei <nome> no automático._');
+  }
   return linhasTxt.join('\n');
 }
 
@@ -100,7 +106,10 @@ function relatorioSemanal({ unidades, periodoBr, hojeYmd, alertaRitmo = false })
     linhas.push(`${u.nome} ${barra(p2)} ${p2}% (${u.migrados}/${u.total}) — ${u.migradosNaSemana} nesta semana`);
   }
   if (pend) linhas.push(`🔵 Cadastrados sem cobrança: ${pend}`);
-  linhas.push(`Ritmo: faltam ${r.semanas} semanas e ${faltam} clientes → ${r.porSemana} por semana.`);
+  // M4 (revisão final): meta passou (0 semanas) — "faltam 0 semanas e N clientes → N por semana"
+  // não diz nada; o que importa é que a meta venceu e quantos ainda faltam.
+  if (r.semanas === 0) linhas.push(`Meta de ${METAS_BR} vencida — faltam ${faltam} clientes.`);
+  else linhas.push(`Ritmo: faltam ${r.semanas} semanas e ${faltam} clientes → ${r.porSemana} por semana.`);
   if (alertaRitmo) linhas.push('⚠️ Duas semanas seguidas abaixo do ritmo necessário.');
   return linhas.join('\n');
 }
@@ -194,23 +203,18 @@ function lerSemanaDoMotivo(reason) {
 // ── QUANDO A PAUTA DO PIX FALA EM CADA UNIDADE (Tarefa 5 do plano de migração) ─────────────────
 // Decisão PURA. Recebe os dados JÁ CALCULADOS pelo chamador (`loteUnico`, `horaAbertura`) e nunca
 // importa services/anamnese-pauta.js — esse acoplamento é do dispatcher (que já lê os dois
-// módulos pra costurar a fala da manhã), não desta função. `unidadeNome` e `diaSemana` chegam
-// pela mesma razão que em horaDeAberturaDaUnidade: são o contexto da decisão, ainda que o corpo
-// de hoje só precise do segundo pra barrar domingo — deixa a assinatura pronta pro dia em que a
-// regra precisar olhar o nome (ex.: uma quarta unidade com cadência própria) sem quebrar quem já
-// chama esta função.
+// módulos pra costurar a fala da manhã), não desta função. O corpo NÃO usa `unidadeNome`: ele só
+// faz parte da assinatura (o chamador já resolveu o lembrete e a abertura daquela unidade).
+// `diaSemana` só é usado pra barrar domingo (e valor que não seja inteiro).
 //
-// Unidade com lembrete ÚNICO no dia (Barra, Campo Grande — anamnese-pauta.js,
-// LEMBRETE_UNICO_POR_UNIDADE) publica NESSE horário, sempre — nunca no de abertura dela: são
-// unidades que já pediram uma cadência de "uma vez por dia", e a pauta do PIX segue a mesma.
-// Unidade sem lembrete único (Recreio) publica no horário de abertura, que é quando a equipe
-// chega e pode agir na lista.
-//
-// Domingo (`diaSemana === 0`) nunca publica, mesmo pra quem tem `loteUnico` fixo — a escola não
-// abre nas três unidades nesse dia (mesma fonte conferida em anamnese-pauta.js). É por isso que a
-// checagem de domingo vem PRIMEIRO e é incondicional: um `loteUnico` não pode furar essa regra.
-// Unidade sem horário de abertura conhecido (`horaAbertura` nulo) também não publica — não dá pra
-// inventar quando a equipe chega.
+// Ordem exata do código:
+//   1. `diaSemana` não inteiro, ou domingo (0) -> null. Vem PRIMEIRO e é incondicional: nem um
+//      `loteUnico` fixo fura o domingo (a escola não abre nas três unidades nesse dia).
+//   2. Tem `loteUnico` (lembrete ÚNICO no dia — Barra, Campo Grande, anamnese-pauta.js
+//      LEMBRETE_UNICO_POR_UNIDADE) -> publica NESSE horário, qualquer que seja a abertura (mesmo
+//      nula): são unidades que já pediram uma cadência de "uma vez por dia".
+//   3. Senão, `horaAbertura` (Recreio) -> publica na abertura, quando a equipe chega.
+//   4. Sem `loteUnico` E sem `horaAbertura` -> null (não dá pra inventar quando a equipe chega).
 function horaDaPautaPix(unidadeNome, diaSemana, { loteUnico, horaAbertura } = {}) {
   if (!Number.isInteger(diaSemana) || diaSemana === 0) return null;
   return loteUnico || horaAbertura || null;

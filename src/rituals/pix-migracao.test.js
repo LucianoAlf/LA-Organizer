@@ -280,7 +280,7 @@ test('ninguém a migrar, mas uma filha velha não fechou: o aviso aparece no mot
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
         due_date: '2026-09-15',
-        filhas: [filha('f-x', 'k-Zeca', 'PIX automático — Zeca')], // sumiu da fonte -> tenta cancelar (I4)
+        filhas: [filha('f0a1b2c3-0000-4000-8000-000000000001', 'k-Zeca', 'PIX automático — Zeca')], // sumiu da fonte -> tenta cancelar (I4)
       }],
       criarPacote: nuncaChama('criarPacote'),
       fecharFilha: async () => false, // falha de escrita
@@ -288,7 +288,8 @@ test('ninguém a migrar, mas uma filha velha não fechou: o aviso aparece no mot
     },
   });
   assert.strictEqual(out.criou, false);
-  assert.strictEqual(out.motivo, 'sem cliente a migrar; não consegui cancelar a filha "PIX automático — Zeca"');
+  // M8: o aviso cita os 8 primeiros caracteres do id da tarefa, nunca o título (nome do cliente).
+  assert.strictEqual(out.motivo, 'sem cliente a migrar; não consegui cancelar a filha f0a1b2c3');
   assert.strictEqual(out.semCliente, true, 'sem cliente a migrar continua semCliente mesmo com aviso de escrita junto');
   assert.strictEqual(out.fonteFalhou, false);
 });
@@ -1159,6 +1160,65 @@ test('I4: no pacote de HOJE vale a mesma regra — ja_migrou fecha done, inadimp
   });
   assert.deepStrictEqual(fechos, [['t-bia', 'done'], ['t-caio', 'cancelled']]);
   assert.deepStrictEqual(out.lote.map((l) => l.pagador_chave), ['k-Ana']);
+});
+
+// ── M8 (revisão final): nome de cliente nunca vai pro motivo (-> marker_logs.reason) ───────────
+test('M8: nenhum motivo de falha contém o nome do pagador nem o título da tarefa — só os 8 primeiros caracteres do id', async () => {
+  const NOMES = ['Zuleica Primeira', 'Yolanda Segunda', 'Xavier Terceiro', 'Wanda Quarta'];
+  const fonte = [
+    linha(NOMES[0], 'pix_avulso'), // continua -> cancelar (falha)
+    linha(NOMES[1], 'autorizacao_pendente'), // transição -> marcar (falha) + fechar (falha)
+    linha(NOMES[2], 'pix_avulso', { categoria: 'ja_migrou' }), // done (falha)
+    // NOMES[3] sumiu da RPC -> cancelar (falha)
+  ];
+  const id = (n) => `${n}aaaaaaa-1111-4222-8333-444444444444`;
+  const filhasVelhas = [
+    filhaOrig(id(1), `k-${NOMES[0]}`, `PIX automático — ${NOMES[0]}`, 'migrar'),
+    filhaOrig(id(2), `k-${NOMES[1]}`, `PIX automático — ${NOMES[1]}`, 'migrar'),
+    filhaOrig(id(3), `k-${NOMES[2]}`, `PIX automático — ${NOMES[2]}`, 'migrar'),
+    filhaOrig(id(4), `k-${NOMES[3]}`, `PIX automático — ${NOMES[3]}`, 'migrar'),
+  ];
+  const motivos = [];
+  // (a) pacote novo criado, todas as escritas do anterior falham
+  const a = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk(fonte),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{ id: id(9), title: `${r.PREFIXO_CONTAINER}15/09 ${NOMES[0]}`, due_date: '2026-09-15', filhas: filhasVelhas }],
+      criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
+      vincular: semVinculo,
+      marcarTransicao: async () => false,
+      fecharFilha: async () => false,
+      fecharContainer: async () => false,
+    },
+  });
+  motivos.push(a.motivo);
+  // (b) pacote de hoje incompleto que não desmonta
+  const b = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk(fonte),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{
+        id: id(8), title: `${r.PREFIXO_CONTAINER}16/09`, due_date: '2026-09-16',
+        filhas: [filha(id(7), null, `PIX automático — ${NOMES[3]}`), filhaOrig(id(6), `k-${NOMES[0]}`, `PIX automático — ${NOMES[0]}`, 'migrar')],
+      }],
+      criarPacote: nuncaChama('criarPacote'),
+      fecharFilha: async (fid) => fid === id(7),
+      fecharContainer: async () => false,
+    },
+  });
+  motivos.push(b.motivo);
+  assert.match(a.motivo, /1aaaaaaa/);
+  assert.match(a.motivo, /2aaaaaaa/);
+  assert.match(a.motivo, /9aaaaaaa/, 'pacote velho também pelo id');
+  assert.match(b.motivo, /6aaaaaaa/);
+  for (const m of motivos) {
+    assert.ok(m, 'cada cenário tem motivo');
+    for (const nome of NOMES) assert.ok(!m.includes(nome), `motivo não pode citar "${nome}": ${m}`);
+    assert.ok(!m.includes('PIX automático —'), `motivo não pode citar título de tarefa: ${m}`);
+  }
 });
 
 test('I4/M3: filha PENDENTE de cliente informado há 2 dias (marcador gravou, baixa falhou) continua na fonte em migrar — é carregada, nunca vira done', async () => {

@@ -149,6 +149,27 @@ test('I2: carência de 35 dias e soma de dias exportadas pra camada do ritual', 
   assert.strictEqual(p.somaDiasYmd('2026-09-16', -34), '2026-08-13');
 });
 
+// ── M6 (revisão final): a equipe precisa saber como avisar o TOM ──────────────────────────────
+const RODAPE_M6 = '_Cadastrou alguém? Me marca e escreve: cadastrei <nome> no automático._';
+
+test('M6: mensagem com lote listando nomes termina com a linha de como avisar o TOM', () => {
+  const linhas = [
+    { pagador_chave: 'a', pagador_nome: 'Ana Lima', alunos: ['Rafa'], categoria: 'migrar', fatia: 'pix_avulso' },
+    { pagador_chave: 'c', pagador_nome: 'Carla Dias', alunos: ['Tina'], categoria: 'migrar', fatia: 'cheque' },
+  ];
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: linhas.slice(0, 1), aguardandoCobranca: 2 });
+  const ultima = txt.split('\n').pop();
+  assert.strictEqual(ultima, RODAPE_M6);
+  assert.strictEqual(txt.split(RODAPE_M6).length - 1, 1, 'uma vez só');
+});
+
+test('M6: sem lote (nenhum nome listado) não tem a linha', () => {
+  const linhas = [{ pagador_chave: 'a', pagador_nome: 'Ana Lima', alunos: [], categoria: 'migrar', fatia: 'pix_avulso' }];
+  assert.ok(!p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: [] }).includes('Me marca'));
+  assert.ok(!p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [], lote: [] }).includes('Me marca'));
+  assert.ok(!p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [], lote: [], fonteVelha: true }).includes('Me marca'));
+});
+
 test('barra de progresso com 10 blocos', () => {
   assert.strictEqual(p.barra(0), '░░░░░░░░░░');
   assert.strictEqual(p.barra(58), '▓▓▓▓▓▓░░░░');
@@ -181,6 +202,25 @@ test('relatório semanal: geral, unidades, pendentes e ritmo', () => {
   assert.match(txt, /🔵 Cadastrados sem cobrança: 7/);
   assert.match(txt, /Ritmo: faltam 2 semanas e 151 clientes → 76 por semana/);
   assert.ok(!/•/.test(txt), 'relatório semanal não lista nomes');
+});
+
+test('M4: relatório semanal depois da meta — a linha de ritmo vira "Meta de 31/10 vencida — faltam N clientes."', () => {
+  const txt = p.relatorioSemanal({
+    periodoBr: '26/10 a 01/11', hojeYmd: '2026-11-02',
+    unidades: [{ nome: 'Barra', total: 100, migrados: 88, migradosNaSemana: 3, pendentesAutorizacao: 2 }],
+  });
+  assert.match(txt, /\nMeta de 31\/10 vencida — faltam 12 clientes\.$/);
+  assert.ok(!txt.includes('Ritmo:'), 'sem "faltam 0 semanas"');
+  assert.ok(!txt.includes('0 semanas'));
+});
+
+test('M4: antes da meta a linha de ritmo continua a mesma', () => {
+  const txt = p.relatorioSemanal({
+    periodoBr: '13 a 19/10', hojeYmd: '2026-10-19',
+    unidades: [{ nome: 'Barra', total: 100, migrados: 88, migradosNaSemana: 3, pendentesAutorizacao: 2 }],
+  });
+  assert.match(txt, /Ritmo: faltam 2 semanas e 12 clientes → 6 por semana\./);
+  assert.ok(!txt.includes('vencida'));
 });
 
 test('relatório semanal: alerta de ritmo aparece só quando alertaRitmo é true', () => {
