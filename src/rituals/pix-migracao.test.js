@@ -119,7 +119,7 @@ test('sem nenhum dado_atualizado_em recente entre as linhas: conta como fonte ve
 });
 
 // F4 ────────────────────────────────────────────────────────────────────────────────────────
-test('pacote de ontem: quem continua na fonte (por pagador_chave) é carregado (cancelled) pro topo do lote de hoje; quem saiu fecha (done); pacote antigo fecha', async () => {
+test('pacote de ontem: quem continua na fonte (por pagador_chave) é carregado (cancelled) pro topo do lote de hoje; quem sumiu da fonte é cancelado (I4); pacote antigo fecha', async () => {
   const fechos = [];
   const containersFechados = [];
   const criadas = [];
@@ -143,7 +143,7 @@ test('pacote de ontem: quem continua na fonte (por pagador_chave) é carregado (
       vincular: semVinculo,
     },
   });
-  assert.deepStrictEqual(fechos, [['f-ana', 'cancelled'], ['f-zeca', 'done']]);
+  assert.deepStrictEqual(fechos, [['f-ana', 'cancelled'], ['f-zeca', 'cancelled']]);
   assert.deepStrictEqual(containersFechados, ['cont-ontem']);
   assert.strictEqual(out.carregadas, 1);
   assert.strictEqual(out.fechadas, 1);
@@ -154,7 +154,7 @@ test('pacote de ontem: quem continua na fonte (por pagador_chave) é carregado (
 });
 
 // F5 ────────────────────────────────────────────────────────────────────────────────────────
-test('pacote de hoje já existe: não cria; fecha (done) só quem saiu da fonte (por pagador_chave); jaExistia true', async () => {
+test('pacote de hoje já existe: não cria; fecha só quem saiu da fonte (por pagador_chave — sumiu da RPC = cancelled, I4); jaExistia true', async () => {
   const fechos = [];
   const out = await r.pautaPixDaUnidade({
     ...base,
@@ -176,7 +176,7 @@ test('pacote de hoje já existe: não cria; fecha (done) só quem saiu da fonte 
       vincular: nuncaChama('vincular'),
     },
   });
-  assert.deepStrictEqual(fechos, [['t2', 'done']]);
+  assert.deepStrictEqual(fechos, [['t2', 'cancelled']]);
   assert.strictEqual(out.jaExistia, true);
   assert.strictEqual(out.criou, false);
   assert.strictEqual(out.fechadas, 1);
@@ -235,8 +235,8 @@ test('I1: TETO_FILHAS é trava dura — lote acima do teto NÃO cria pacote e de
         filhas: carregadosNomes.map((nome, i) => filha(`f${i}`, `k-${nome}`, `PIX automático — ${nome}`)),
       }],
       criarPacote: nuncaChama('criarPacote'),
-      fecharFilha: async () => true,
-      fecharContainer: async () => true,
+      fecharFilha: nuncaChama('fecharFilha'), // I3: sem pacote novo, o anterior fica intacto
+      fecharContainer: nuncaChama('fecharContainer'),
       vincular: nuncaChama('vincular'),
     },
   });
@@ -280,7 +280,7 @@ test('ninguém a migrar, mas uma filha velha não fechou: o aviso aparece no mot
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
         due_date: '2026-09-15',
-        filhas: [filha('f-x', 'k-Zeca', 'PIX automático — Zeca')], // não está na fonte -> tenta fechar 'done'
+        filhas: [filha('f-x', 'k-Zeca', 'PIX automático — Zeca')], // sumiu da fonte -> tenta cancelar (I4)
       }],
       criarPacote: nuncaChama('criarPacote'),
       fecharFilha: async () => false, // falha de escrita
@@ -288,30 +288,35 @@ test('ninguém a migrar, mas uma filha velha não fechou: o aviso aparece no mot
     },
   });
   assert.strictEqual(out.criou, false);
-  assert.strictEqual(out.motivo, 'sem cliente a migrar; não consegui fechar a filha "PIX automático — Zeca"');
+  assert.strictEqual(out.motivo, 'sem cliente a migrar; não consegui cancelar a filha "PIX automático — Zeca"');
   assert.strictEqual(out.semCliente, true, 'sem cliente a migrar continua semCliente mesmo com aviso de escrita junto');
   assert.strictEqual(out.fonteFalhou, false);
 });
 
-test('criarPacote lança: o(s) aviso(s) de fechamento acumulados até ali aparecem no motivo junto do erro', async () => {
+test('criarPacote lança (I3): o pacote ANTERIOR fica intacto (nenhuma filha nem o pacote tocados), os avisos já acumulados aparecem no motivo junto do erro', async () => {
   const out = await r.pautaPixDaUnidade({
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [],
+      informados: async () => { throw new Error('marker_logs fora'); }, // aviso acumulado antes da criação
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
         due_date: '2026-09-15',
-        filhas: [filha('f-zeca', 'k-Zeca', 'PIX automático — Zeca')], // saiu da fonte -> tenta fechar 'done'
+        filhas: [
+          filha('f-ana', 'k-Ana', 'PIX automático — Ana'), // continua na fonte -> seria carregada
+          filha('f-zeca', 'k-Zeca', 'PIX automático — Zeca'), // sumiu da fonte -> seria cancelada
+        ],
       }],
       criarPacote: async () => { throw new Error('falhou de propósito'); },
-      fecharFilha: async () => false, // falha de escrita ao fechar quem saiu
-      fecharContainer: async () => true,
+      fecharFilha: nuncaChama('fecharFilha'),
+      fecharContainer: nuncaChama('fecharContainer'),
+      vincular: nuncaChama('vincular'),
     },
   });
   assert.strictEqual(out.criou, false);
-  assert.match(out.motivo, /^não consegui criar o pacote: falhou de propósito; não consegui fechar a filha "PIX automático — Zeca"$/);
+  assert.match(out.motivo, /^não consegui criar o pacote: falhou de propósito; não consegui reconferir quem foi informado nos últimos dias: marker_logs fora$/);
   // fix round 1 (Critical): criarPacote lançou é falha de ESCRITA do painel — a fonte respondeu
   // bem (havia cliente pra migrar). Nem fonteFalhou nem semCliente.
   assert.strictEqual(out.fonteFalhou, false);
@@ -366,7 +371,7 @@ test('reproduz (a): alunos mudaram (título mudou), mas a chave continua igual �
   assert.strictEqual(out.semCliente, false);
 });
 
-test('reproduz (b): dois clientes com título idêntico no pacote de ontem — quem saiu fecha done, quem ficou é cancelado e carregado, sem inversão nem duplicação', async () => {
+test('reproduz (b): dois clientes com título idêntico no pacote de ontem — quem sumiu da fonte é cancelado, quem ficou é cancelado e carregado, sem inversão nem duplicação', async () => {
   const fechos = [];
   // Duas Anas com o MESMO texto gerado (mesmo nome, mesmos alunos), chaves diferentes. Só
   // k-Ana-ficou continua na fonte.
@@ -392,7 +397,8 @@ test('reproduz (b): dois clientes com título idêntico no pacote de ontem — q
       vincular: semVinculo,
     },
   });
-  assert.deepStrictEqual(fechos, [['f-saiu', 'done'], ['f-ficou', 'cancelled']]);
+  assert.deepStrictEqual(fechos, [['f-saiu', 'cancelled'], ['f-ficou', 'cancelled']]);
+  assert.strictEqual(out.fechadas, 1, 'só quem sumiu conta como fechada; quem ficou é carregada');
   assert.strictEqual(out.carregadas, 1, 'só um cliente foi carregado, não dois');
   assert.strictEqual(out.lote.length, 1);
   assert.strictEqual(out.lote[0].pagador_chave, 'k-Ana-ficou');
@@ -422,7 +428,7 @@ test('reproduz (c): pacote de hoje com dois títulos idênticos — quem saiu é
       vincular: nuncaChama('vincular'),
     },
   });
-  assert.deepStrictEqual(fechos, [['t-saiu', 'done']], 'quem saiu foi fechado — antes ficava aberto pra sempre');
+  assert.deepStrictEqual(fechos, [['t-saiu', 'cancelled']], 'quem saiu foi fechado — antes ficava aberto pra sempre');
   assert.strictEqual(out.jaExistia, true);
   assert.strictEqual(out.lote.length, 1, 'quem ficou aparece uma única vez, não duas');
   assert.strictEqual(out.lote[0].pagador_chave, 'k-Ana-ficou');
@@ -431,18 +437,46 @@ test('reproduz (c): pacote de hoje com dois títulos idênticos — quem saiu é
 });
 
 // Vínculo ──────────────────────────────────────────────────────────────────────────────────────
-test('vincular falhou: o pacote foi criado mesmo assim, mas o aviso aparece no motivo', async () => {
+test('vincular falhou (I3): é falha de painel — texto nulo, motivo com o vínculo, e o pacote ANTERIOR fica intacto', async () => {
   const out = await r.pautaPixDaUnidade({
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
       agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
-      containersPix: async () => [],
+      containersPix: async () => [{
+        id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
+        filhas: [filha('f-ana', 'k-Ana', 'PIX automático — Ana')],
+      }],
       criarPacote: async ({ input }) => ({ groupId: 'm6', childIds: input.subtasks.map((_, i) => `t${i}`) }),
       vincular: async () => false,
+      fecharFilha: nuncaChama('fecharFilha'),
+      fecharContainer: nuncaChama('fecharContainer'),
     },
   });
-  assert.strictEqual(out.criou, true, 'falha de vínculo não derruba o pacote já criado');
+  assert.strictEqual(out.texto, null, 'sem vínculo a filha nova não tem chave — nada a publicar como sucesso');
+  assert.strictEqual(out.criou, false);
+  assert.match(out.motivo, /vínculo/);
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
+});
+
+test('I3: criarPacote devolveu MENOS filhas que o lote — mesma falha do vínculo: texto nulo, anterior intacto', async () => {
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{
+        id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
+        filhas: [filha('f-ana', 'k-Ana', 'PIX automático — Ana')],
+      }],
+      criarPacote: async () => ({ groupId: 'm6', childIds: ['t0'] }), // 2 no lote, 1 filha
+      vincular: nuncaChama('vincular'),
+      fecharFilha: nuncaChama('fecharFilha'),
+      fecharContainer: nuncaChama('fecharContainer'),
+    },
+  });
+  assert.strictEqual(out.texto, null);
   assert.match(out.motivo, /vínculo/);
 });
 
@@ -829,4 +863,324 @@ test('I2: falha ao gravar a transição vira aviso no motivo (a filha ainda fech
   assert.deepStrictEqual(fechos, [['f-ana', 'done']]);
   assert.match(out.motivo, /transição/);
   assert.deepStrictEqual(out.lote.map((l) => l.pagador_chave), ['k-Bia']);
+});
+
+// ── I3 (revisão final) — falha parcial nunca vira "done" falso nem lista vazia publicada ─────────
+const quarenta = () => [...Array(40)].map((_, i) => linha('P' + String(i).padStart(2, '0'), 'pix_avulso'));
+
+test('I3: filha SEM vínculo num pacote velho nunca vira done — vira cancelled', async () => {
+  const fechos = [];
+  await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{
+        id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
+        filhas: [filha('f-sem', null, 'PIX automático — Alguém')],
+      }],
+      criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
+      fecharFilha: async (id, status) => { fechos.push([id, status]); return true; },
+      fecharContainer: async () => true,
+      vincular: semVinculo,
+    },
+  });
+  assert.deepStrictEqual(fechos, [['f-sem', 'cancelled']]);
+});
+
+test('I3 (repro C): pacote de HOJE com filhas sem vínculo (criação interrompida) — cancela as filhas e o pacote e RECONSTRÓI na mesma execução, nenhuma filha done', async () => {
+  const fechos = [];
+  const containers = [];
+  const vinculados = [];
+  let criadas = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk(quarenta()),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{
+        id: 'c-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16',
+        filhas: [0, 1, 2, 3].map((i) => filha(`p${i}`, null, 'x')),
+      }],
+      criarPacote: async ({ input }) => { criadas = input.subtasks; return { groupId: 'c-novo', childIds: input.subtasks.map((_, i) => `n${i}`) }; },
+      fecharFilha: async (id, status) => { fechos.push([id, status]); return true; },
+      fecharContainer: async (id, status) => { containers.push([id, status]); return true; },
+      vincular: async (vs) => { vinculados.push(...vs); return true; },
+    },
+  });
+  assert.deepStrictEqual(fechos, [['p0', 'cancelled'], ['p1', 'cancelled'], ['p2', 'cancelled'], ['p3', 'cancelled']]);
+  assert.deepStrictEqual(containers, [['c-hoje', 'cancelled']]);
+  assert.strictEqual(criadas.length, 10, 'reconstruiu o pacote na mesma execução');
+  assert.strictEqual(vinculados.length, 10);
+  assert.strictEqual(out.criou, true);
+  assert.strictEqual(out.lote.length, 10);
+  assert.ok(out.texto && out.texto.includes('• P00'), 'publica o lote reconstruído, não uma lista vazia');
+});
+
+test('I3: se não consegui desmontar o pacote de hoje incompleto, NÃO reconstrói (evita pacote duplicado) — texto nulo e motivo', async () => {
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk(quarenta()),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{
+        id: 'c-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16',
+        filhas: [filha('p0', null, 'x')],
+      }],
+      criarPacote: nuncaChama('criarPacote'),
+      fecharFilha: async () => false,
+      fecharContainer: nuncaChama('fecharContainer'),
+      vincular: nuncaChama('vincular'),
+    },
+  });
+  assert.strictEqual(out.texto, null);
+  assert.strictEqual(out.criou, false);
+  assert.match(out.motivo, /incompleto/);
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
+});
+
+// Painel falso COM ESTADO — pra provar o que sobra no banco entre duas execuções.
+function painelFalso() {
+  const tasks = new Map();
+  const vinculos = new Map();
+  let seq = 0;
+  let falharCriacaoDepoisDe = null;
+  const addTask = (t) => { tasks.set(t.id, { status: 'pending', ...t }); return t.id; };
+  return {
+    tasks,
+    vinculos,
+    addTask,
+    vincularDireto: (v) => vinculos.set(v.task_id, v),
+    falharProximaCriacaoDepoisDe: (n) => { falharCriacaoDepoisDe = n; },
+    deps: {
+      containersPix: async () => [...tasks.values()]
+        .filter((t) => t.isGroup && t.status === 'pending')
+        .map((c) => ({
+          id: c.id, title: c.title, due_date: c.due_date,
+          filhas: [...tasks.values()].filter((f) => f.parent === c.id && f.status === 'pending').map((f) => {
+            const v = vinculos.get(f.id);
+            return { id: f.id, title: f.title, pagador_chave: v ? v.pagador_chave : null, categoria_origem: v ? v.categoria_origem : null };
+          }),
+        })),
+      criarPacote: async ({ input }) => {
+        seq += 1;
+        const mae = addTask({ id: `mae${seq}`, isGroup: true, title: input.title, due_date: input.groupDueDate });
+        const childIds = [];
+        for (const [i, s] of input.subtasks.entries()) {
+          if (falharCriacaoDepoisDe !== null && i === falharCriacaoDepoisDe) {
+            falharCriacaoDepoisDe = null;
+            throw new Error('insert task: timeout');
+          }
+          childIds.push(addTask({ id: `${mae}-f${i}`, parent: mae, title: s.title, due_date: s.dueDate }));
+        }
+        return { groupId: mae, childIds };
+      },
+      fecharFilha: async (id, status) => {
+        const t = tasks.get(id);
+        if (!t || t.status !== 'pending') return false;
+        t.status = status;
+        return true;
+      },
+      fecharContainer: async (id, status = 'done') => { tasks.get(id).status = status; return true; },
+      vincular: async (vs) => { vs.forEach((v) => vinculos.set(v.task_id, v)); return true; },
+      marcarTransicao: async () => true,
+    },
+  };
+}
+
+test('I3 (repro C, duas execuções): criação lança no meio (mãe + 4 filhas sem vínculo) — anterior intacto; na execução seguinte o pacote é reconstruído, o anterior só fecha depois, nenhuma filha done', async () => {
+  const fonte = quarenta();
+  const painel = painelFalso();
+  painel.addTask({ id: 'c-ontem', isGroup: true, title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15' });
+  fonte.slice(0, 10).forEach((l, i) => {
+    painel.addTask({ id: `o${i}`, parent: 'c-ontem', title: pura.tituloDaFilha(l), due_date: '2026-09-15' });
+    painel.vincularDireto({ task_id: `o${i}`, pagador_chave: l.pagador_chave, unidade_id: 'u1', categoria_origem: 'migrar' });
+  });
+  const deps = { agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], ...painel.deps };
+
+  painel.falharProximaCriacaoDepoisDe(4);
+  const r1 = await r.pautaPixDaUnidade({ ...base, laReport: laReportOk(fonte), deps });
+  assert.strictEqual(r1.texto, null, '1ª execução: falha de painel, nada publicado');
+  assert.match(r1.motivo, /não consegui criar o pacote/);
+  assert.strictEqual(painel.tasks.get('c-ontem').status, 'pending', 'anterior intacto');
+  for (let i = 0; i < 10; i += 1) assert.strictEqual(painel.tasks.get(`o${i}`).status, 'pending', `filha o${i} do anterior intacta`);
+  assert.strictEqual([...painel.tasks.values()].filter((t) => t.parent === 'mae1').length, 4, 'sobrou o pacote parcial (4 filhas sem vínculo)');
+
+  const r2 = await r.pautaPixDaUnidade({ ...base, laReport: laReportOk(fonte), deps });
+  assert.strictEqual(r2.criou, true, '2ª execução: reconstruiu');
+  assert.strictEqual(r2.lote.length, 10);
+  assert.deepStrictEqual(r2.lote.map((l) => l.pagador_nome), fonte.slice(0, 10).map((l) => l.pagador_nome), 'os carregados do anterior continuam primeiro');
+  assert.ok(r2.texto && r2.texto.includes('• P00'));
+  assert.strictEqual(painel.tasks.get('mae1').status, 'cancelled', 'o pacote parcial foi cancelado');
+  assert.ok([...painel.tasks.values()].filter((t) => t.parent === 'mae1').every((t) => t.status === 'cancelled'));
+  assert.strictEqual(painel.tasks.get('c-ontem').status, 'done', 'o anterior fecha só depois do pacote novo');
+  for (let i = 0; i < 10; i += 1) assert.strictEqual(painel.tasks.get(`o${i}`).status, 'cancelled');
+  const novas = [...painel.tasks.values()].filter((t) => t.parent === 'mae2');
+  assert.strictEqual(novas.length, 10);
+  assert.ok(novas.every((t) => t.status === 'pending' && painel.vinculos.has(t.id)), 'pacote novo inteiro vinculado');
+  const filhasDone = [...painel.tasks.values()].filter((t) => !t.isGroup && t.status === 'done');
+  assert.deepStrictEqual(filhasDone, [], 'nenhuma filha virou done — ninguém saiu da fonte');
+
+  const r3 = await r.pautaPixDaUnidade({ ...base, laReport: laReportOk(fonte), deps });
+  assert.strictEqual(r3.jaExistia, true, '3ª execução no mesmo dia: não cria de novo');
+  assert.strictEqual(r3.lote.length, 10);
+});
+
+test('I3: lote vazio legítimo — todos informados há menos de 7 dias: não cria, mas PUBLICA o texto com as contagens (informação real)', async () => {
+  const informadoEm = new Date(AGORA - 2 * 86400000).toISOString();
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'cheque')]),
+    deps: {
+      agora: agoraFixo, transicoesRecentes: async () => [],
+      informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }, { pagador_chave: 'k-Bia', created_at: informadoEm }],
+      containersPix: async () => [],
+      criarPacote: nuncaChama('criarPacote'),
+      vincular: nuncaChama('vincular'),
+    },
+  });
+  assert.strictEqual(out.criou, false);
+  assert.strictEqual(out.semCliente, false);
+  assert.deepStrictEqual(out.lote, []);
+  assert.match(out.texto, /· faltam 2 ·/);
+  assert.match(out.texto, /🔴 Pix avulso \(1\) · 🟠 Cheque \(1\)/);
+  assert.strictEqual(pura.decisaoDaPublicacaoPix(out, { unidadeNome: 'Barra' }).result, 'executed');
+});
+
+test('I3: lote vazio legítimo — todos na carência da 1ª cobrança: publica o texto com ⏳ (fecha o pacote velho antes)', async () => {
+  const fechos = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'autorizacao_pendente')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{
+        id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
+        filhas: [filhaOrig('f-ana', 'k-Ana', 'PIX automático — Ana', 'migrar')],
+      }],
+      marcarTransicao: async () => true,
+      criarPacote: nuncaChama('criarPacote'),
+      fecharFilha: async (id, status) => { fechos.push([id, status]); return true; },
+      fecharContainer: async () => true,
+    },
+  });
+  assert.deepStrictEqual(fechos, [['f-ana', 'done']]);
+  assert.strictEqual(out.criou, false);
+  assert.strictEqual(out.semCliente, false);
+  assert.match(out.texto, /⏳ Aguardando 1ª cobrança \(1\)/);
+});
+
+test('I3: NENHUM caminho de falha devolve texto não nulo com lote vazio', async () => {
+  const fonte = quarenta();
+  const ontem = () => [{
+    id: 'c-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
+    filhas: fonte.slice(0, 16).map((l, i) => filha(`o${i}`, l.pagador_chave, 'x')),
+  }];
+  const casos = {
+    criacao_lanca: { criarPacote: async () => { throw new Error('boom'); } },
+    vinculo_falha: { vincular: async () => false },
+    painel_nao_le: { containersPix: async () => { throw new Error('leitura'); } },
+    teto: { containersPix: async () => ontem() },
+    desmontar_falha: {
+      containersPix: async () => [{ id: 'c-hoje', title: 'x', due_date: '2026-09-16', filhas: [filha('p0', null, 'x')] }],
+      fecharFilha: async () => false,
+    },
+  };
+  for (const [nome, extra] of Object.entries(casos)) {
+    const out = await r.pautaPixDaUnidade({
+      ...base,
+      laReport: laReportOk(fonte),
+      deps: {
+        agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+        containersPix: async () => [],
+        criarPacote: async ({ input }) => ({ groupId: 'm', childIds: input.subtasks.map((_, i) => `t${i}`) }),
+        fecharFilha: async () => true, fecharContainer: async () => true, vincular: semVinculo,
+        ...extra,
+      },
+    });
+    assert.strictEqual(out.texto, null, `${nome}: falha não pode publicar lista`);
+    assert.deepStrictEqual(out.lote, [], `${nome}: lote vazio`);
+    assert.ok(out.motivo, `${nome}: motivo explicando`);
+    assert.strictEqual(pura.decisaoDaPublicacaoPix(out, { unidadeNome: 'Barra' }).result, 'fallback', `${nome}: tenta de novo`);
+  }
+});
+
+// ── I4 (revisão final) — quem sai do lote: done SÓ se ja_migrou (ou transição); resto cancelled ──
+for (const [destino, linhaDaFonte, esperado] of [
+  ['ja_migrou', (nome) => linha(nome, 'pix_avulso', { categoria: 'ja_migrou' }), 'done'],
+  ['inadimplente', (nome) => linha(nome, 'pix_avulso', { categoria: 'inadimplente' }), 'cancelled'],
+  ['nao_pagante', (nome) => linha(nome, 'pix_avulso', { categoria: 'nao_pagante' }), 'cancelled'],
+  ['excecao', (nome) => linha(nome, 'pix_avulso', { categoria: 'excecao' }), 'cancelled'],
+  ['nao_mexe', (nome) => linha(nome, 'pix_avulso', { categoria: 'nao_mexe' }), 'cancelled'],
+  ['sumiu da RPC', () => null, 'cancelled'],
+]) {
+  test(`I4: cliente do pacote de ontem que foi pra "${destino}" fecha como ${esperado}`, async () => {
+    const fechos = [];
+    const fonte = [linha('Bia', 'pix_avulso'), linhaDaFonte('Zeca')].filter(Boolean);
+    await r.pautaPixDaUnidade({
+      ...base,
+      laReport: laReportOk(fonte),
+      deps: {
+        agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+        containersPix: async () => [{
+          id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
+          filhas: [filha('f-zeca', 'k-Zeca', 'PIX automático — Zeca')],
+        }],
+        criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
+        fecharFilha: async (id, status) => { fechos.push([id, status]); return true; },
+        fecharContainer: async () => true,
+        vincular: semVinculo,
+      },
+    });
+    assert.deepStrictEqual(fechos, [['f-zeca', esperado]]);
+  });
+}
+
+test('I4: no pacote de HOJE vale a mesma regra — ja_migrou fecha done, inadimplente fecha cancelled', async () => {
+  const fechos = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([
+      linha('Ana', 'pix_avulso'),
+      linha('Bia', 'pix_avulso', { categoria: 'ja_migrou' }),
+      linha('Caio', 'pix_avulso', { categoria: 'inadimplente' }),
+    ]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{
+        id: 'cont-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16',
+        filhas: [filha('t-ana', 'k-Ana', 'a'), filha('t-bia', 'k-Bia', 'b'), filha('t-caio', 'k-Caio', 'c')],
+      }],
+      criarPacote: nuncaChama('criarPacote'),
+      fecharFilha: async (id, status) => { fechos.push([id, status]); return true; },
+      fecharContainer: nuncaChama('fecharContainer'),
+    },
+  });
+  assert.deepStrictEqual(fechos, [['t-bia', 'done'], ['t-caio', 'cancelled']]);
+  assert.deepStrictEqual(out.lote.map((l) => l.pagador_chave), ['k-Ana']);
+});
+
+test('I4/M3: filha PENDENTE de cliente informado há 2 dias (marcador gravou, baixa falhou) continua na fonte em migrar — é carregada, nunca vira done', async () => {
+  const fechos = [];
+  const criadas = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, transicoesRecentes: async () => [],
+      informados: async () => [{ pagador_chave: 'k-Ana', created_at: new Date(AGORA - 2 * 86400000).toISOString() }],
+      containersPix: async () => [{
+        id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
+        filhas: [filha('f-ana', 'k-Ana', 'PIX automático — Ana')],
+      }],
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      fecharFilha: async (id, status) => { fechos.push([id, status]); return true; },
+      fecharContainer: async () => true,
+      vincular: semVinculo,
+    },
+  });
+  assert.deepStrictEqual(fechos, [['f-ana', 'cancelled']]);
+  assert.strictEqual(out.carregadas, 1);
+  assert.strictEqual(criadas[0].title, 'PIX automático — Ana (Ana filho)', 'a filha pendente mantém a cliente no lote');
 });

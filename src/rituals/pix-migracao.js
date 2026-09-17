@@ -24,9 +24,9 @@
 // é criada (ver `vincular` abaixo). O título segue existindo SÓ pra exibição (tituloDaFilha,
 // mensagemDaUnidade) — nunca mais pra casar filha com cliente.
 //
-// CORREÇÃO (fix round 1, achado 3, Critical — Tarefa 5): `texto: null` tem QUATRO causas
-// diferentes (RPC falhou, sem cliente a migrar, criarPacote lançou, containersPix lançou), e só a
-// primeira é "a fonte está fora do ar". O dispatcher da Tarefa 5 tratava as quatro como se fossem
+// CORREÇÃO (fix round 1, achado 3, Critical — Tarefa 5): `texto: null` tem várias causas
+// diferentes (RPC falhou, sem cliente a migrar, falha de leitura/escrita do painel), e só a
+// primeira é "a fonte está fora do ar". O dispatcher da Tarefa 5 tratava todas como se fossem
 // a mesma coisa e publicava "a fonte não atualizou hoje" no grupo REAL toda vez que a fila
 // esvaziava ou o painel tinha um bug — uma afirmação FALSA, recorrente, que escondia justamente o
 // defeito que merecia alarme. A correção mora em DOIS lugares: aqui, dois flags ESTRUTURADOS em
@@ -35,6 +35,21 @@
 // (decisaoDaPublicacaoPix), que lê só esses flags — nunca o texto de `motivo` — pra decidir o que
 // publicar. Nenhum consumidor deste ritual pode voltar a inferir "fonte caiu" de `texto === null`
 // sozinho: os dois flags são a única fonte de verdade sobre POR QUE não há texto.
+//
+// CORREÇÃO (revisão final da branch, I3 + I4) — ORDEM DAS ESCRITAS E DESTINO DE CADA FILHA:
+//   I4 — o destino de uma filha pendente sai de TODAS as linhas da RPC (não só das filtradas):
+//        `done` SOMENTE se a fonte mostra `ja_migrou` ou se houve a transição migrar ->
+//        autorizacao_pendente (I2, carência). Foi pra inadimplente, nao_pagante, excecao,
+//        nao_mexe, qualquer outra categoria, ou sumiu da RPC -> `cancelled`. Antes, "saiu da fonte"
+//        virava sempre `done` — o painel contava como feito o que ninguém fez.
+//   I3 — filha SEM vínculo nunca vira `done` (vira `cancelled`). Pacote de HOJE com filha sem
+//        vínculo é criação interrompida: cancela as filhas e o pacote e reconstrói na mesma
+//        execução (se não conseguir desmontar, NÃO reconstrói — evitaria pacote duplicado). O
+//        pacote ANTERIOR só é tocado (filhas carregadas `cancelled`, quem saiu fechado, pacote
+//        `done`) DEPOIS que o pacote novo foi criado E vinculado; se a criação ou o vínculo falhar,
+//        o anterior fica intacto e o retorno é falha de painel (`texto: null` -> fallback). Nenhum
+//        caminho de FALHA devolve texto com lote vazio; lote vazio com texto só quando todo cliente
+//        está excluído por carência (I2) ou por cadastro informado há menos de 7 dias.
 
 const pura = require('../services/pix-migracao');
 const { consultaComRetry } = require('../lib/consulta-com-retry');
@@ -66,20 +81,15 @@ function _fonteVelha(todasAsLinhas, agoraMs) {
   });
 }
 
-// Casa uma filha do painel com o cliente da fonte — SEMPRE por pagador_chave (nunca por título:
-// ver a correção no topo do arquivo). Filha sem vínculo (pagador_chave nulo — nunca foi gravado,
-// ou a gravação falhou) não casa com ninguém: cai no ramo "não está mais na fonte" só pra fins de
-// fechamento (vira `done`), nunca entra em carregadas/lote.
-function _acharCliente(f, porChave) {
-  return f.pagador_chave ? porChave.get(f.pagador_chave) : undefined;
-}
-
 // Um cliente aparece no máximo uma vez em carregadas/lote, mesmo que dois vínculos por acidente
 // apontem pro mesmo pagador_chave (duas filhas coladas no mesmo cliente).
 function _dedupPorChave(linhas) {
   const vistos = new Set();
   return (linhas || []).filter((l) => (vistos.has(l.pagador_chave) ? false : (vistos.add(l.pagador_chave), true)));
 }
+
+// Categorias que a pauta cobra (quem ainda falta migrar).
+const _naPauta = (l) => !!l && (l.categoria === 'migrar' || l.categoria === 'autorizacao_pendente');
 
 // ── contrato de deps (testável sem banco — nenhum teste deste arquivo toca o Supabase real) ───
 // deps.agora()                                -> number   (padrão Date.now())
@@ -91,8 +101,8 @@ function _dedupPorChave(linhas) {
 // deps.criarPacote({ supabase, groupId, createdBy, input }) -> { groupId, childIds }
 //   Padrão: require('../services/task-groups').createTaskGroup. childIds vem na MESMA ordem de
 //   input.subtasks (garantia do motor de criação, não deste ritual).
-// deps.fecharFilha(id, status)  -> boolean   status 'done' | 'cancelled'; nunca lança.
-// deps.fecharContainer(id)      -> boolean   nunca lança.
+// deps.fecharFilha(id, status)          -> boolean   status 'done' | 'cancelled'; nunca lança.
+// deps.fecharContainer(id, status)      -> boolean   status 'done' (padrão) | 'cancelled'; nunca lança.
 // deps.vincular([{ task_id, pagador_chave, unidade_id, categoria_origem }]) -> boolean   grava em
 //   pix_pauta_vinculo; nunca lança — erro de escrita vira aviso em `motivo`. `categoria_origem` é
 //   a categoria do cliente na fonte no momento da criação (I2).
@@ -157,18 +167,21 @@ async function _fecharFilhaPadrao(sb, id, status) {
   return true;
 }
 
-async function _fecharContainerPadrao(sb, id) {
-  const { data, error } = await sb.from('tasks')
-    .update({ status: 'done', completed_at: new Date().toISOString() })
-    .eq('id', id).select('id');
+// 'done' fecha o pacote anterior depois do pacote novo; 'cancelled' desmonta um pacote de hoje
+// que ficou incompleto (I3).
+async function _fecharContainerPadrao(sb, id, status = 'done') {
+  const payload = { status };
+  if (status === 'done') payload.completed_at = new Date().toISOString();
+  const { data, error } = await sb.from('tasks').update(payload).eq('id', id).select('id');
   if (error) { console.error(`[PixMigracao] fecharContainer falhou id=${id}: ${error.message}`); return false; }
   if (!(data || []).length) { console.error(`[PixMigracao] fecharContainer não achou id=${id}`); return false; }
   return true;
 }
 
-// Grava task_id -> pagador_chave logo depois de criar as filhas do pacote. Nunca lança — erro de
-// escrita vira `false` (o chamador registra em `motivo`); a filha já foi criada, perder o vínculo
-// não pode derrubar o pacote inteiro.
+// Grava task_id -> pagador_chave logo depois de criar as filhas do pacote (um único INSERT com
+// todas as linhas — ou grava tudo, ou nada). Nunca lança — erro de escrita vira `false`; o ritual
+// trata como falha do pacote novo (I3: o anterior fica intacto e o novo é refeito na próxima
+// execução, pelo caminho do "pacote de hoje incompleto").
 async function _vincularPadrao(sb, vinculos) {
   if (!vinculos || !vinculos.length) return true;
   const { error } = await sb.from('pix_pauta_vinculo').insert(vinculos);
@@ -216,7 +229,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   const criarPacote = deps.criarPacote
     || ((arg) => require('../services/task-groups').createTaskGroup(arg));
   const fecharFilha = deps.fecharFilha || ((id, status) => _fecharFilhaPadrao(supabase, id, status));
-  const fecharContainer = deps.fecharContainer || ((id) => _fecharContainerPadrao(supabase, id));
+  const fecharContainer = deps.fecharContainer || ((id, status) => _fecharContainerPadrao(supabase, id, status));
   const vincular = deps.vincular || ((vinculos) => _vincularPadrao(supabase, vinculos));
   const informados = deps.informados || ((arg) => _informadosPadrao(supabase, arg));
   const transicoesRecentes = deps.transicoesRecentes || ((arg) => _transicoesRecentesPadrao(supabase, arg));
@@ -224,7 +237,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
 
   // fonteFalhou/semCliente: false por padrão (fix round 1, Critical) — só os DOIS caminhos que os
   // marcam `true` explicitamente (abaixo) representam "fonte fora do ar" e "sem cliente a migrar
-  // hoje". Todo outro caminho de `texto: null` (criarPacote lançou, containersPix lançou) herda
+  // hoje". Todo outro caminho de `texto: null` (falha de leitura/escrita do painel, teto) herda
   // `false` nos dois daqui, e é assim que decisaoDaPublicacaoPix (services/pix-migracao.js)
   // distingue "a fonte está bem, o painel que falhou" de "a fonte caiu".
   const vazio = {
@@ -254,7 +267,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     };
   }
 
-  const linhas = todasAsLinhas.filter((l) => l && (l.categoria === 'migrar' || l.categoria === 'autorizacao_pendente'));
+  const linhas = todasAsLinhas.filter(_naPauta);
   const total = linhas.length;
 
   // ── RECONFERÊNCIA DE 7 DIAS (Tarefa 7 do plano de migração) ────────────────────────────────
@@ -268,8 +281,8 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   // exclusão é aplicada.
   const avisos = [];
   const agoraMs = agora();
-  let recentesSet = new Set();
-  let voltaramSet = new Set();
+  const recentesSet = new Set();
+  const voltaramSet = new Set();
   try {
     const desdeIso = new Date(agoraMs - 8 * 86400000).toISOString();
     const rows = await informados({ unidadeId, desdeIso });
@@ -286,11 +299,12 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   } catch (e) {
     avisos.push(`não consegui reconferir quem foi informado nos últimos dias: ${(e && e.message) || String(e)}`);
   }
-  // < 7 dias: some da fila (não entra no lote nem é carregado), mas continua contado em `total`
-  // e nas fatias de `mensagemDaUnidade` (usa `linhas`, nunca filtrada). >= 7 dias (até 8, janela
-  // da consulta) e ainda na fonte: volta a ser candidato normal. A seção "Voltaram pra lista"
-  // afirma "disseram que cadastrou, mas o Emusys ainda não mostra" — por isso só entra quem a
-  // fonte AINDA mostra em `migrar` (C1, revisão final). `autorizacao_pendente` é o contrário: o
+  // < 7 dias: não entra no lote NOVO (mas continua contado em `total` e nas fatias). Se a filha
+  // dele continua PENDENTE (o atalho gravou o marcador mas não conseguiu dar baixa), ela é
+  // carregada normalmente — o marcador sozinho não tira ninguém de um pacote. >= 7 dias (até 8,
+  // janela da consulta) e ainda na fonte: volta a ser candidato normal. A seção "Voltaram pra
+  // lista" afirma "disseram que cadastrou, mas o Emusys ainda não mostra" — por isso só entra quem
+  // a fonte AINDA mostra em `migrar` (C1, revisão final). `autorizacao_pendente` é o contrário: o
   // Emusys JÁ mostra o cadastro (só falta a 1ª cobrança) — listar ali seria afirmação falsa.
   const voltaram = linhas.filter((l) => voltaramSet.has(l.pagador_chave) && l.categoria === 'migrar');
   const informadosRecentes = recentesSet.size;
@@ -311,6 +325,12 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     avisos.push(`não consegui ler as transições recentes (carência da 1ª cobrança): ${(e && e.message) || String(e)}`);
   }
 
+  // Todo retorno depois daqui sai por este molde — os avisos acumulados SEMPRE entram no motivo.
+  const retorno = (campos) => ({ ...vazio, total, voltaram, informadosRecentes, ...campos });
+  const motivoCom = (principal) => [principal, ...avisos].filter(Boolean).join('; ') || null;
+
+  let fechadas = 0;
+  let carregadasCount = 0;
   try {
     const containers = await containersPix({ groupId });
 
@@ -332,103 +352,153 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     const naCarencia = (l) => l.categoria === 'autorizacao_pendente' && carenciaSet.has(l.pagador_chave);
     const aguardandoCobranca = linhas.filter(naCarencia).length;
     const linhasDaPauta = linhas.filter((l) => !naCarencia(l));
-    const linhasElegiveis = linhasDaPauta.filter((l) => !recentesSet.has(l.pagador_chave));
-    const porChave = new Map(linhasElegiveis.map((l) => [l.pagador_chave, l]));
+    const mensagem = (lote) => pura.mensagemDaUnidade({
+      unidadeNome, linhas: linhasDaPauta, lote, fonteVelha: false, voltaram, aguardandoCobranca,
+    });
 
-    let fechadas = 0;
-    // Transição: grava transicao_em = hoje no vínculo e fecha a filha `done` (progresso). Nunca
-    // carrega. Falha ao gravar vira aviso — a filha fecha mesmo assim (o cadastro aconteceu).
-    const fecharPorTransicao = async (f) => {
-      if (!(await marcarTransicao({ taskId: f.id, hoje }))) avisos.push(`não consegui gravar a transição da filha "${f.title}"`);
-      if (await fecharFilha(f.id, 'done')) fechadas++;
-      else avisos.push(`não consegui fechar a filha "${f.title}"`);
+    // Destino de UMA filha pendente — sempre pela chave, contra TODAS as linhas da RPC (I4).
+    //   'continua'    cliente ainda na pauta (migrar/autorizacao_pendente fora da carência) —
+    //                 fica no lote de hoje, ou é carregado (filha velha `cancelled`)
+    //   'transicao'   migrar -> autorizacao_pendente (I2): grava transicao_em, `done`
+    //   'migrou'      ja_migrou: `done`
+    //   'carencia'    já na carência por uma transição anterior: `done` (o cadastro foi feito)
+    //   'sem_vinculo' (I3) · 'sumiu' da RPC · 'saiu' pra outra categoria (I4): `cancelled`
+    const destinoDa = (f) => {
+      if (!f.pagador_chave) return 'sem_vinculo';
+      if (transicaoIds.has(f.id)) return 'transicao';
+      const naFonte = todasPorChave.get(f.pagador_chave);
+      if (!naFonte) return 'sumiu';
+      if (naFonte.categoria === 'ja_migrou') return 'migrou';
+      if (_naPauta(naFonte)) return naCarencia(naFonte) ? 'carencia' : 'continua';
+      return 'saiu';
     };
 
-    // 1) Pacotes anteriores (due_date < hoje) ainda abertos: quem continua na fonte (casado por
-    // pagador_chave, NUNCA por título) é CARREGADO pro lote de hoje — a filha velha vira
-    // `cancelled` (não `done`: ela não deixou de ser feita, só não coube ontem), e o cliente entra
-    // PRIMEIRO no lote de hoje. Quem saiu da fonte (ou nunca teve vínculo gravado) vira `done`
-    // (conta em `fechadas`). O pacote antigo sempre fecha no final.
+    // Escreve o destino de uma filha que NÃO fica no lote de hoje. Devolve true se a filha fechou.
+    const aplicar = async (f, destino) => {
+      if (destino === 'continua') {
+        if (await fecharFilha(f.id, 'cancelled')) return true;
+        avisos.push(`não consegui cancelar a filha "${f.title}"`);
+        return false;
+      }
+      if (destino === 'transicao' && !(await marcarTransicao({ taskId: f.id, hoje }))) {
+        // A filha fecha mesmo assim (o cadastro aconteceu); só a carência dos próximos dias fica
+        // sem registro — por isso o aviso.
+        avisos.push(`não consegui gravar a transição da filha "${f.title}"`);
+      }
+      const status = (destino === 'transicao' || destino === 'migrou' || destino === 'carencia') ? 'done' : 'cancelled';
+      if (await fecharFilha(f.id, status)) { fechadas++; return true; }
+      avisos.push(`não consegui ${status === 'done' ? 'fechar' : 'cancelar'} a filha "${f.title}"`);
+      return false;
+    };
+
+    const anteriores = containers.filter((c) => c.due_date < hoje);
+    const deHoje = containers.filter((c) => c.due_date === hoje);
+    const incompletos = deHoje.filter((c) => (c.filhas || []).some((f) => !f.pagador_chave));
+    const pacoteDeHoje = deHoje.find((c) => !incompletos.includes(c));
+
+    // 1) I3 — pacote de HOJE incompleto (alguma filha sem vínculo = a criação foi interrompida):
+    // desmonta (todas as filhas pendentes + o pacote) e segue pra reconstruir. Quem ainda está na
+    // pauta vira carregado do pacote reconstruído. Se QUALQUER escrita da desmontagem falhar, NÃO
+    // reconstrói: com o incompleto ainda aberto, um pacote novo seria um segundo pacote do dia.
     const carregadasBrutas = [];
-    for (const c of containers.filter((x) => x.due_date < hoje)) {
+    for (const c of incompletos) {
+      let desmontou = true;
+      const continuam = [];
       for (const f of c.filhas || []) {
-        if (transicaoIds.has(f.id)) { await fecharPorTransicao(f); continue; }
-        const linhaDaFonte = _acharCliente(f, porChave);
-        if (linhaDaFonte) {
-          if (!(await fecharFilha(f.id, 'cancelled'))) avisos.push(`não consegui cancelar a filha "${f.title}"`);
-          carregadasBrutas.push(linhaDaFonte);
-        } else if (await fecharFilha(f.id, 'done')) {
-          fechadas++;
-        } else {
-          avisos.push(`não consegui fechar a filha "${f.title}"`);
+        const destino = destinoDa(f);
+        if (!(await aplicar(f, destino))) desmontou = false;
+        else if (destino === 'continua') continuam.push(todasPorChave.get(f.pagador_chave));
+      }
+      if (desmontou && !(await fecharContainer(c.id, 'cancelled'))) {
+        avisos.push(`não consegui cancelar o pacote incompleto "${c.title}"`);
+        desmontou = false;
+      }
+      if (!desmontou) {
+        return retorno({
+          fechadas,
+          motivo: motivoCom('pacote de hoje incompleto (filha sem vínculo) e não consegui desmontá-lo — não reconstruí pra não duplicar'),
+        });
+      }
+      carregadasBrutas.push(...continuam);
+    }
+
+    // 2) Pacote de hoje já existe (e está inteiro): não cria nada. Fecha quem saiu (destino de
+    // cada filha, I4); o lote são os clientes cujas filhas de hoje continuam, deduplicado. Um
+    // pacote anterior ainda aberto (escrita que falhou num dia anterior) é fechado aqui — o novo
+    // já existe, então não há o que esperar.
+    if (pacoteDeHoje) {
+      for (const c of anteriores) {
+        for (const f of c.filhas || []) {
+          const destino = destinoDa(f);
+          if ((await aplicar(f, destino)) && destino === 'continua') carregadasCount++;
         }
+        if (!(await fecharContainer(c.id, 'done'))) avisos.push(`não consegui fechar o pacote velho "${c.title}"`);
       }
-      if (!(await fecharContainer(c.id))) avisos.push(`não consegui fechar o pacote velho "${c.title}"`);
-    }
-    // Ordena por prioridade e deduplica por pagador_chave — um cliente nunca aparece duas vezes
-    // em `carregadas`, mesmo que dois vínculos velhos apontem pra ele por acidente.
-    const carregadas = _dedupPorChave(pura.ordenarPorPrioridade(carregadasBrutas));
-
-    const containerHoje = containers.find((c) => c.due_date === hoje);
-
-    // 2) Pacote de hoje já existe: não cria nada. Só fecha (`done`) quem saiu da fonte (casado por
-    // pagador_chave); o lote devolvido são os clientes cujas filhas de hoje continuam pendentes,
-    // deduplicado (dois vínculos pro mesmo cliente nunca duplicam o lote nem o texto).
-    if (containerHoje) {
-      for (const f of containerHoje.filhas || []) {
-        if (transicaoIds.has(f.id)) { await fecharPorTransicao(f); continue; }
-        if (_acharCliente(f, porChave)) continue;
-        if (await fecharFilha(f.id, 'done')) fechadas++;
-        else avisos.push(`não consegui fechar a filha "${f.title}"`);
+      const loteBruto = [];
+      for (const f of pacoteDeHoje.filhas || []) {
+        const destino = destinoDa(f);
+        if (destino === 'continua') loteBruto.push(todasPorChave.get(f.pagador_chave));
+        else await aplicar(f, destino);
       }
-      const loteBruto = (containerHoje.filhas || []).map((f) => _acharCliente(f, porChave)).filter(Boolean);
       const lote = _dedupPorChave(loteBruto);
-      return {
-        criou: false, jaExistia: true, total, lote, fechadas, carregadas: carregadas.length,
-        texto: pura.mensagemDaUnidade({
-          unidadeNome, linhas: linhasDaPauta, lote, fonteVelha: false, voltaram, aguardandoCobranca,
-        }),
-        motivo: avisos.length ? avisos.join('; ') : null, fonteVelha: false,
-        fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
-      };
+      return retorno({
+        jaExistia: true, lote, fechadas, carregadas: carregadasCount, texto: mensagem(lote), motivo: motivoCom(null),
+      });
     }
 
-    // 3) Pacote de hoje não existe: lote = carregados (prioridade, sempre primeiro) + o lote do
-    // dia (loteDoDia, camada pura) dos demais clientes da fonte, só o que FALTA pra completar
-    // LOTE_DIARIO (I1, revisão final: antes o carry-over empilhava em cima de um lote cheio de 10 e
-    // o pacote crescia pra 15 todo dia que alguém sobrava). Deduplicado.
+    // 3) Sem pacote de hoje: PLANEJA sem escrever nada no anterior (I3). Carregados = filhas
+    // velhas cujo cliente continua na pauta (prioridade, sempre primeiro); o lote do dia só
+    // completa até LOTE_DIARIO (I1). Informados há menos de 7 dias não entram como novos.
+    const planoAnterior = [];
+    for (const c of anteriores) {
+      for (const f of c.filhas || []) {
+        const destino = destinoDa(f);
+        planoAnterior.push({ f, destino });
+        if (destino === 'continua') carregadasBrutas.push(todasPorChave.get(f.pagador_chave));
+      }
+    }
+    const carregadas = _dedupPorChave(pura.ordenarPorPrioridade(carregadasBrutas));
+    carregadasCount = carregadas.length;
     const chavesCarregadas = new Set(carregadas.map((l) => l.pagador_chave));
-    const demais = linhasElegiveis.filter((l) => !chavesCarregadas.has(l.pagador_chave));
+    const demais = linhasDaPauta.filter((l) => !recentesSet.has(l.pagador_chave) && !chavesCarregadas.has(l.pagador_chave));
     const resto = pura.loteDoDia(demais, { tamanho: Math.max(0, pura.LOTE_DIARIO - carregadas.length) });
     const lote = _dedupPorChave([...carregadas, ...resto]);
+
     // TETO_FILHAS é TRAVA DURA (spec: "acima disso, não cria e registra o motivo"): nunca corta o
     // lote em silêncio. Só dispara se o carry-over sozinho passar do teto (vários pacotes velhos
-    // abertos) — aí é defeito pra alguém olhar, não dia normal.
+    // abertos) — aí é defeito pra alguém olhar, não dia normal. Anterior intacto.
     if (lote.length > pura.TETO_FILHAS) {
-      return {
-        criou: false, jaExistia: false, total, lote: [], fechadas, carregadas: carregadas.length,
-        texto: null,
-        motivo: [`lote de ${lote.length} clientes passa do teto de ${pura.TETO_FILHAS} filhas — não criei o pacote`, ...avisos].join('; '),
-        fonteVelha: false, fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
-      };
+      return retorno({
+        carregadas: carregadasCount,
+        motivo: motivoCom(`lote de ${lote.length} clientes passa do teto de ${pura.TETO_FILHAS} filhas — não criei o pacote`),
+      });
     }
 
+    const fecharAnteriores = async () => {
+      for (const { f, destino } of planoAnterior) await aplicar(f, destino);
+      for (const c of anteriores) {
+        if (!(await fecharContainer(c.id, 'done'))) avisos.push(`não consegui fechar o pacote velho "${c.title}"`);
+      }
+    };
+
     if (!lote.length) {
-      // Fix round 1 (achado 2): os avisos já acumulados (ex.: falha ao fechar uma filha velha)
-      // não podem sumir só porque o resultado do dia é "ninguém a migrar". Único caminho que
-      // marca semCliente: true — sucesso (a fonte respondeu, o painel foi lido/escrito sem
-      // erro), só que não há ninguém a migrar hoje; decisaoDaPublicacaoPix lê este flag pra NÃO
-      // publicar o aviso de fonte velha aqui (fila vazia é notícia boa, não falha).
-      return {
-        criou: false, jaExistia: false, total, lote: [], fechadas, carregadas: carregadas.length,
-        texto: null, motivo: ['sem cliente a migrar', ...avisos].join('; '), fonteVelha: false,
-        fonteFalhou: false, semCliente: true, voltaram, informadosRecentes,
-      };
+      // Nada a criar, então não há pacote novo pra esperar: o anterior fecha já.
+      await fecharAnteriores();
+      if (!linhas.length) {
+        // Único caminho que marca semCliente: true — sucesso (a fonte respondeu, o painel foi
+        // lido/escrito), só que não há ninguém a migrar hoje; decisaoDaPublicacaoPix lê este flag
+        // pra NÃO publicar nada (fila vazia é notícia boa, não falha).
+        return retorno({ fechadas, semCliente: true, motivo: motivoCom('sem cliente a migrar') });
+      }
+      // Lote vazio LEGÍTIMO (I3): há clientes na pauta, mas todos estão na carência da 1ª cobrança
+      // ou foram informados há menos de 7 dias. É informação real — publica as contagens.
+      return retorno({ fechadas, texto: mensagem([]), motivo: motivoCom(null) });
     }
 
     // createTaskGroup (task-groups.js) insere linha a linha SEM transação: um insert que falhe no
     // meio deixa mãe+filhas parciais já commitadas e LANÇA. É por isso que só esta chamada, entre
-    // todas as escritas do ritual, tem try/catch dedicado — mesma lógica de montarPautaDaUnidade.
+    // todas as escritas do ritual, tem try/catch dedicado. O resto parcial é desmontado na
+    // próxima execução (passo 1). Anterior intacto.
     let criado;
     try {
       criado = await criarPacote({
@@ -439,52 +509,46 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
         },
       });
     } catch (e) {
-      // Fix round 1 (achado 2): idem — avisos anteriores entram no motivo também aqui. Falha de
-      // ESCRITA do painel (a fonte respondeu bem) — nem fonteFalhou nem semCliente: `texto: null`
-      // aqui significa "não consegui nem tentar mostrar o lote", não "não há nada a mostrar".
-      return {
-        criou: false, jaExistia: false, total, lote: [], fechadas, carregadas: carregadas.length,
-        texto: null,
-        motivo: [`não consegui criar o pacote: ${(e && e.message) || String(e)}`, ...avisos].join('; '),
-        fonteVelha: false, fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
-      };
+      // Falha de ESCRITA do painel (a fonte respondeu bem) — nem fonteFalhou nem semCliente:
+      // `texto: null` aqui significa "não consegui montar o lote", não "não há nada a mostrar".
+      return retorno({
+        carregadas: carregadasCount,
+        motivo: motivoCom(`não consegui criar o pacote: ${(e && e.message) || String(e)}`),
+      });
     }
 
-    // Grava o vínculo task_id -> pagador_chave pra cada filha recém-criada, na MESMA ordem de
-    // `lote` (createTaskGroup insere as filhas na ordem de `input.subtasks`, que veio de
-    // `lote.map(...)` acima — é essa ordem que garante o pareamento childIds[i] <-> lote[i]).
-    // Falha aqui não desfaz o pacote (a filha já existe): vira aviso, nunca exceção — a filha
-    // fica sem chave estável até a próxima pauta tentar de novo (ela vai cair no ramo "sem
-    // vínculo" de containersPix e ser fechada como se tivesse saído da fonte, o que é seguro:
-    // pior caso é recriar a filha no dia seguinte).
+    // Grava o vínculo task_id -> pagador_chave (+ categoria_origem) pra cada filha recém-criada,
+    // na MESMA ordem de `lote` (createTaskGroup insere as filhas na ordem de `input.subtasks`, que
+    // veio de `lote.map(...)` acima — é essa ordem que garante o pareamento childIds[i] <->
+    // lote[i]). Filha a menos que o lote, ou vínculo que não gravou: o pacote novo está
+    // incompleto — falha de painel, anterior intacto; a próxima execução desmonta e refaz.
     const childIds = (criado && criado.childIds) || [];
     const vinculos = lote
       .map((l, i) => ({
         task_id: childIds[i], pagador_chave: l.pagador_chave, unidade_id: unidadeId, categoria_origem: l.categoria,
       }))
       .filter((v) => v.task_id);
-    if (vinculos.length && !(await vincular(vinculos))) {
-      avisos.push('não consegui gravar o vínculo pagador-tarefa (a filha ficou sem chave estável)');
+    if (vinculos.length !== lote.length || !(await vincular(vinculos))) {
+      return retorno({
+        carregadas: carregadasCount,
+        motivo: motivoCom('não consegui gravar o vínculo pagador-tarefa do pacote novo — o anterior ficou intacto e o novo é refeito na próxima execução'),
+      });
     }
 
-    return {
-      criou: true, jaExistia: false, total, lote, fechadas, carregadas: carregadas.length,
-      texto: pura.mensagemDaUnidade({
-        unidadeNome, linhas: linhasDaPauta, lote, fonteVelha: false, voltaram, aguardandoCobranca,
-      }),
-      motivo: avisos.length ? avisos.join('; ') : null, fonteVelha: false,
-      fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
-    };
+    // Só agora, com o pacote novo criado E vinculado, o anterior é fechado (I3).
+    await fecharAnteriores();
+    return retorno({
+      criou: true, lote, fechadas, carregadas: carregadasCount, texto: mensagem(lote), motivo: motivoCom(null),
+    });
   } catch (e) {
     // Falha ao LER o painel (containersPix, que lança em erro do Supabase por não ter outro jeito
     // de sinalizar "não consegui nem checar o que já existe") cai aqui — nunca sobe pro chamador.
-    // Falha de LEITURA do painel (a fonte respondeu bem) — nem fonteFalhou nem semCliente, os dois
-    // já vêm `false` de `vazio`. Os avisos da reconferência de 7 dias (se algum já tinha
-    // acontecido) não podem sumir só porque o painel falhou depois.
-    return {
-      ...vazio, total, voltaram, informadosRecentes,
-      motivo: [`falha ao processar o painel do PIX: ${(e && e.message) || String(e)}`, ...avisos].join('; '),
-    };
+    // Nem fonteFalhou nem semCliente (os dois já vêm `false` de `vazio`). Os avisos já acumulados
+    // não podem sumir só porque o painel falhou depois.
+    return retorno({
+      fechadas, carregadas: carregadasCount,
+      motivo: motivoCom(`falha ao processar o painel do PIX: ${(e && e.message) || String(e)}`),
+    });
   }
 }
 
