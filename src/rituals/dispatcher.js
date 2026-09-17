@@ -3854,7 +3854,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh' && opts.force !== 'pauta_anamnese_fimdia' && opts.force !== 'pauta_anamnese_lembrete' && opts.force !== 'pauta_pix') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh' && opts.force !== 'pauta_anamnese_fimdia' && opts.force !== 'pauta_anamnese_lembrete' && opts.force !== 'pauta_pix' && opts.force !== 'pix_relatorio') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -4938,6 +4938,176 @@ async function run(opts = {}) {
         }
       }
     } catch (e) { console.error('[PautaPix] erro (fora do loop por unidade):', e.message); }
+  }
+
+  // ── RELATORIO SEMANAL DO PIX AUTOMATICO (Tarefa 6 do plano de migracao) ──────────────────────
+  // Toda SEGUNDA as 10h: le as tres unidades pela RPC do LA Report (uma chamada por unidade, SEM
+  // p_fatia -- quer TODAS as categorias, nao so quem falta migrar), monta o retrato da semana
+  // (barra de progresso, %, ritmo necessario ate a meta de 31/10 — services/pix-migracao.js) e
+  // publica UMA mensagem agregada no grupo "PIX AUTOMATICO L.A" (work_groups.slug =
+  // 'pix-automatico'). Marcador PROPRIO (PAUTA_PIX, chave pix_relatorio:<ymd>) -- mesma familia
+  // do bloco diario acima, chave diferente, idempotencia nunca cruza com ele.
+  //
+  // Esse bloco NAO e por unidade -- e um relatorio AGREGADO das tres, publicado uma vez so. Por
+  // isso e um IIFE com `return` (nao o padrao for+continue dos blocos por unidade acima): nao ha
+  // "unidade da vez" pra pular, so um caminho feliz e varios jeitos de desistir cedo.
+  //
+  // Se QUALQUER unidade falhar na consulta, o bloco INTEIRO desiste (marca fallback e tenta de
+  // novo no proximo tick) -- nunca publica um numero parcial de duas unidades fingindo que e o
+  // total das tres.
+  //
+  // O grupo hoje AINDA NAO existe em work_groups (nenhuma migracao criou o slug pix-automatico
+  // ainda) -- e por isso que a busca do grupo vem ANTES da consulta as tres unidades: sem grupo,
+  // nao vale a pena gastar tres chamadas no LA Report so pra jogar o resultado fora.
+  const _pixRelatorioSlot = timeToSlot('10:00');
+  if (opts.force === 'pix_relatorio' || (now.dow === 1 && _pixRelatorioSlot === slotNow)) {
+    await (async () => {
+      const _pixRelChave = `pix_relatorio:${now.ymd}`;
+      try {
+        const situAl = require('../services/situacao-aluno');
+        const { laReportClient } = require('../services/la-report-client');
+        const { consultaComRetry } = require('../lib/consulta-com-retry');
+
+        const { data: jaPublicou, error: erroJaPublicou } = await supabase.from('marker_logs')
+          .select('id').eq('marker_type', 'PAUTA_PIX').like('reason', `${_pixRelChave}%`)
+          .in('result', ['executed', 'skipped']).limit(1);
+        if (erroJaPublicou) {
+          // Falha-fechada: se nem consigo checar se ja publiquei hoje, nao arrisco publicar de
+          // novo -- nao roda, nem tenta gravar marcador (a propria leitura de marker_logs esta
+          // com problema).
+          console.error(`[PixRelatorio] checagem de idempotencia falhou: ${erroJaPublicou.message}`);
+          return;
+        }
+        if (jaPublicou && jaPublicou.length) return;
+
+        const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+          .select('id').eq('slug', 'pix-automatico').not('wa_group_jid', 'is', null).maybeSingle();
+        if (erroGrupo) {
+          console.error(`[PixRelatorio] busca do grupo pix-automatico falhou: ${erroGrupo.message}`);
+          const { error: erroMarkerGrupo } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_PIX', result: 'fallback',
+            reason: `${_pixRelChave} erro=busca do grupo pix-automatico: ${erroGrupo.message}`.slice(0, 300),
+          });
+          if (erroMarkerGrupo) console.error(`[PixRelatorio] marker_logs insert (fallback) tambem falhou: ${erroMarkerGrupo.message}`);
+          return;
+        }
+        if (!grupo) {
+          // Esperado hoje (17/09): o slug pix-automatico ainda nao existe em work_groups. Nao e
+          // silencio -- console.warn + marcador fallback, pra sobrar rastro de que o relatorio
+          // tentou e nao achou onde publicar.
+          console.warn('[PixRelatorio] nenhum grupo work_groups com slug pix-automatico e wa_group_jid -- nao publico');
+          const { error: erroMarkerSemGrupo } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_PIX', result: 'fallback',
+            reason: `${_pixRelChave} erro=sem grupo pix-automatico`.slice(0, 300),
+          });
+          if (erroMarkerSemGrupo) console.error(`[PixRelatorio] marker_logs insert (fallback) tambem falhou: ${erroMarkerSemGrupo.message}`);
+          return;
+        }
+
+        // Uma chamada por unidade, SEM p_fatia -- quer TODAS as categorias (ja_migrou, migrar,
+        // autorizacao_pendente) pra montar o retrato inteiro, nao so a fila de quem falta.
+        const unidades = [];
+        for (const unidadeId of situAl.UNIDADES_IDS) {
+          const nomeUnidade = situAl.nomeDaUnidade(unidadeId);
+          const { data, error } = await consultaComRetry(() => laReportClient.rpc('get_pix_migracao_v1',
+            { p_unidade_id: unidadeId, p_fatia: null }));
+          if (error) {
+            // QUALQUER unidade falhando desiste do relatorio inteiro -- o return abaixo vem antes
+            // do push no array unidades[] e antes do INSERT em group_chat_messages: nunca afirma
+            // numero parcial de duas unidades fingindo que e o total das tres.
+            console.error(`[PixRelatorio] consulta do LA Report falhou (${nomeUnidade}): ${error.message}`);
+            const { error: erroMarkerFonte } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_PIX', result: 'fallback',
+              reason: `${_pixRelChave} erro=consulta ${nomeUnidade} falhou: ${error.message}`.slice(0, 300),
+            });
+            if (erroMarkerFonte) console.error(`[PixRelatorio] marker_logs insert (fallback) tambem falhou: ${erroMarkerFonte.message}`);
+            return;
+          }
+          unidades.push(_pixPura.dadosDaUnidadeParaRelatorio(data || [], { nome: nomeUnidade, hojeYmd: now.ymd }));
+        }
+
+        // Semana anterior: le o ultimo marcador EXECUTED do relatorio anterior a hoje (BRT) pra
+        // decidir se o alerta de ritmo acende (duas semanas seguidas abaixo). Erro aqui NAO
+        // bloqueia o relatorio de hoje -- segue sem alerta, so avisa no log.
+        let semanaAnterior;
+        let ritmoAnterior;
+        try {
+          const hojeInicioISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+          const { data: marcadorAnterior, error: erroAnterior } = await supabase.from('marker_logs')
+            .select('reason').eq('marker_type', 'PAUTA_PIX').eq('result', 'executed')
+            .like('reason', 'pix_relatorio:%').lt('created_at', hojeInicioISO)
+            .order('created_at', { ascending: false }).limit(1);
+          if (erroAnterior) throw new Error(erroAnterior.message);
+          const linhaAnterior = (marcadorAnterior || [])[0];
+          const lido = linhaAnterior ? _pixPura.lerSemanaDoMotivo(linhaAnterior.reason) : null;
+          if (lido) { semanaAnterior = lido.semana; ritmoAnterior = lido.ritmo; }
+        } catch (eSemanaAnterior) {
+          console.warn(`[PixRelatorio] leitura da semana anterior falhou (segue sem alerta): ${eSemanaAnterior.message}`);
+        }
+
+        const semanaAtual = unidades.reduce((s, u) => s + u.migradosNaSemana, 0);
+        const totalGeral = unidades.reduce((s, u) => s + u.total, 0);
+        const migradosGeral = unidades.reduce((s, u) => s + u.migrados, 0);
+        const ritmoAtual = _pixPura.ritmoNecessario({ faltam: totalGeral - migradosGeral, hojeYmd: now.ymd }).porSemana;
+        const alertaRitmo = _pixPura.precisaAlertaRitmo({
+          semanaAtual, ritmoAtual, semanaAnterior, ritmoAnterior,
+        });
+
+        const texto = _pixPura.relatorioSemanal({
+          unidades, periodoBr: _pixPura.periodoDaSemanaBr(now.ymd), hojeYmd: now.ymd, alertaRitmo,
+        });
+
+        // Guarda de duplicata por cabecalho -- mesmo padrao do bloco diario acima.
+        const cabecalhoMsg = String(texto).split('\n')[0];
+        const hojeInicioISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+        const { data: jaEnviada, error: erroJaEnviada } = await supabase.from('group_chat_messages')
+          .select('id')
+          .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
+          .gte('created_at', hojeInicioISO)
+          .like('content', `${cabecalhoMsg}%`)
+          .limit(1);
+        if (erroJaEnviada) {
+          console.error(`[PixRelatorio] checagem de mensagem ja enviada falhou: ${erroJaEnviada.message}`);
+          const { error: erroMarkerChkFallback } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_PIX', result: 'fallback',
+            reason: `${_pixRelChave} checagem de duplicata falhou: ${erroJaEnviada.message}`.slice(0, 300),
+          });
+          if (erroMarkerChkFallback) console.error(`[PixRelatorio] marker_logs insert (fallback) tambem falhou: ${erroMarkerChkFallback.message}`);
+          return;
+        }
+        if (jaEnviada && jaEnviada.length) {
+          const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_PIX', result: 'skipped',
+            reason: `${_pixRelChave} mensagem ja enviada (achada por conteudo -- marcador de um tick anterior deve ter falhado)`.slice(0, 300),
+          });
+          if (erroMarkerSkip) console.error(`[PixRelatorio] marker_logs insert (skipped) falhou: ${erroMarkerSkip.message}`);
+          return;
+        }
+
+        const { error: erroMsg } = await supabase.from('group_chat_messages').insert({
+          group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: texto, channel: 'app',
+        });
+        if (erroMsg) {
+          console.error(`[PixRelatorio] envio da mensagem falhou: ${erroMsg.message}`);
+          const { error: erroMarkerFallback } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_PIX', result: 'fallback',
+            reason: `${_pixRelChave} envio falhou: ${erroMsg.message}`.slice(0, 300),
+          });
+          if (erroMarkerFallback) console.error(`[PixRelatorio] marker_logs insert (fallback) tambem falhou: ${erroMarkerFallback.message}`);
+          return;
+        }
+
+        const { error: erroMarker } = await supabase.from('marker_logs').insert({
+          marker_type: 'PAUTA_PIX', result: 'executed',
+          reason: _pixPura.motivoDoRelatorio({ ymd: now.ymd, migradosNaSemana: semanaAtual, porSemana: ritmoAtual }),
+        });
+        if (erroMarker) {
+          console.error(`[PixRelatorio] ATENCAO -- mensagem enviada mas marker_logs nao gravou, risco de reenvio no proximo tick: ${erroMarker.message}`);
+        }
+      } catch (e) {
+        console.error('[PixRelatorio] erro:', e.message);
+      }
+    })();
   }
 
   // 09:00-19:00, de HORA em HORA — o lembrete da PROXIMA hora no grupo da unidade.

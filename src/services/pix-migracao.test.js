@@ -208,3 +208,135 @@ test('decisaoDaPublicacaoPix: sucesso publica o texto do ritual tal como veio (e
   assert.strictEqual(d.texto, textoReal);
   assert.strictEqual(d.result, 'executed');
 });
+
+// ── dadosDaUnidadeParaRelatorio (Tarefa 6 — relatório semanal) ──────────────────────────────
+const lr = (categoria, extra = {}) => ({ categoria, ...extra });
+
+test('dadosDaUnidadeParaRelatorio: conta migrados, a migrar e autorização pendente; total soma só essas três', () => {
+  const linhas = [
+    lr('ja_migrou'), lr('ja_migrou'), lr('ja_migrou'),
+    lr('migrar'), lr('migrar'),
+    lr('autorizacao_pendente'),
+  ];
+  const d = p.dadosDaUnidadeParaRelatorio(linhas, { nome: 'Barra', hojeYmd: '2026-10-19' });
+  assert.deepStrictEqual(d, {
+    nome: 'Barra', total: 6, migrados: 3, migradosNaSemana: 0, pendentesAutorizacao: 1,
+  });
+});
+
+test('dadosDaUnidadeParaRelatorio: categoria desconhecida não entra em nenhuma contagem nem no total', () => {
+  const linhas = [lr('ja_migrou'), lr('cancelado'), lr('sem_historico')];
+  const d = p.dadosDaUnidadeParaRelatorio(linhas, { nome: 'Barra', hojeYmd: '2026-10-19' });
+  assert.strictEqual(d.total, 1);
+  assert.strictEqual(d.migrados, 1);
+});
+
+test('dadosDaUnidadeParaRelatorio: linha nula na lista não derruba a contagem', () => {
+  const linhas = [null, lr('ja_migrou'), undefined];
+  const d = p.dadosDaUnidadeParaRelatorio(linhas, { nome: 'Barra', hojeYmd: '2026-10-19' });
+  assert.strictEqual(d.total, 1);
+});
+
+test('dadosDaUnidadeParaRelatorio: migradosNaSemana conta migrou_em de hoje-7 até hoje-1, incluindo as duas pontas', () => {
+  const linhas = [
+    lr('ja_migrou', { migrou_em: '2026-10-12' }), // hoje-7 — inclusa (ponta de baixo)
+    lr('ja_migrou', { migrou_em: '2026-10-18' }), // hoje-1 — inclusa (ponta de cima)
+  ];
+  const d = p.dadosDaUnidadeParaRelatorio(linhas, { nome: 'Barra', hojeYmd: '2026-10-19' });
+  assert.strictEqual(d.migradosNaSemana, 2);
+  assert.strictEqual(d.migrados, 2);
+});
+
+test('dadosDaUnidadeParaRelatorio: migradosNaSemana NÃO conta migrou_em de hoje (fora da janela) nem de hoje-8 (um dia cedo demais)', () => {
+  const linhas = [
+    lr('ja_migrou', { migrou_em: '2026-10-19' }), // hoje — fora (a janela é hoje-7..hoje-1)
+    lr('ja_migrou', { migrou_em: '2026-10-11' }), // hoje-8 — fora, um dia cedo demais
+  ];
+  const d = p.dadosDaUnidadeParaRelatorio(linhas, { nome: 'Barra', hojeYmd: '2026-10-19' });
+  assert.strictEqual(d.migradosNaSemana, 0);
+  assert.strictEqual(d.migrados, 2, 'os dois ainda contam como migrados no total, só não entram na semana');
+});
+
+test('dadosDaUnidadeParaRelatorio: sem linhas devolve zeros', () => {
+  const d = p.dadosDaUnidadeParaRelatorio([], { nome: 'Recreio', hojeYmd: '2026-10-19' });
+  assert.deepStrictEqual(d, {
+    nome: 'Recreio', total: 0, migrados: 0, migradosNaSemana: 0, pendentesAutorizacao: 0,
+  });
+});
+
+// ── periodoDaSemanaBr (Tarefa 6) ─────────────────────────────────────────────────────────────
+test('periodoDaSemanaBr: mesmo mês vira "DD a DD/MM"', () => {
+  assert.strictEqual(p.periodoDaSemanaBr('2026-10-19'), '12 a 18/10');
+});
+
+test('periodoDaSemanaBr: meses diferentes leva "/MM" nas duas pontas (virada de mês)', () => {
+  assert.strictEqual(p.periodoDaSemanaBr('2026-10-05'), '28/09 a 04/10');
+});
+
+test('periodoDaSemanaBr: virada de ano também funciona (aritmética UTC, não getDay local)', () => {
+  assert.strictEqual(p.periodoDaSemanaBr('2027-01-04'), '28/12 a 03/01');
+});
+
+// ── precisaAlertaRitmo (Tarefa 6) ────────────────────────────────────────────────────────────
+test('precisaAlertaRitmo: só acende com as DUAS semanas abaixo do ritmo', () => {
+  assert.strictEqual(p.precisaAlertaRitmo({
+    semanaAtual: 10, ritmoAtual: 20, semanaAnterior: 5, ritmoAnterior: 15,
+  }), true);
+});
+
+test('precisaAlertaRitmo: só a semana atual abaixo não acende (falta a anterior confirmar a tendência)', () => {
+  assert.strictEqual(p.precisaAlertaRitmo({
+    semanaAtual: 10, ritmoAtual: 20, semanaAnterior: 30, ritmoAnterior: 15,
+  }), false);
+});
+
+test('precisaAlertaRitmo: só a semana anterior abaixo não acende (a atual já recuperou)', () => {
+  assert.strictEqual(p.precisaAlertaRitmo({
+    semanaAtual: 30, ritmoAtual: 20, semanaAnterior: 5, ritmoAnterior: 15,
+  }), false);
+});
+
+test('precisaAlertaRitmo: sem o dado da semana anterior (null/undefined), o alerta fica desligado', () => {
+  assert.strictEqual(p.precisaAlertaRitmo({
+    semanaAtual: 5, ritmoAtual: 20, semanaAnterior: null, ritmoAnterior: 15,
+  }), false);
+  assert.strictEqual(p.precisaAlertaRitmo({
+    semanaAtual: 5, ritmoAtual: 20, semanaAnterior: 5, ritmoAnterior: undefined,
+  }), false);
+  assert.strictEqual(p.precisaAlertaRitmo({ semanaAtual: 5, ritmoAtual: 20 }), false);
+});
+
+test('precisaAlertaRitmo: igual ao ritmo não é "abaixo" (comparação estrita)', () => {
+  assert.strictEqual(p.precisaAlertaRitmo({
+    semanaAtual: 20, ritmoAtual: 20, semanaAnterior: 15, ritmoAnterior: 15,
+  }), false);
+});
+
+// ── motivoDoRelatorio / lerSemanaDoMotivo — ida e volta (Tarefa 6) ──────────────────────────
+test('motivoDoRelatorio: formato exato pix_relatorio:<ymd> semana=<N> ritmo=<M>', () => {
+  assert.strictEqual(
+    p.motivoDoRelatorio({ ymd: '2026-10-19', migradosNaSemana: 21, porSemana: 76 }),
+    'pix_relatorio:2026-10-19 semana=21 ritmo=76',
+  );
+});
+
+test('lerSemanaDoMotivo: lê de volta o que motivoDoRelatorio escreveu (ida e volta)', () => {
+  for (const caso of [
+    { ymd: '2026-10-19', migradosNaSemana: 21, porSemana: 76 },
+    { ymd: '2026-10-26', migradosNaSemana: 0, porSemana: 0 },
+    { ymd: '2026-11-02', migradosNaSemana: 142, porSemana: 5 },
+  ]) {
+    const reason = p.motivoDoRelatorio(caso);
+    assert.deepStrictEqual(p.lerSemanaDoMotivo(reason), { semana: caso.migradosNaSemana, ritmo: caso.porSemana });
+  }
+});
+
+test('lerSemanaDoMotivo: texto sem o formato esperado (ou vazio) devolve null, nunca lança', () => {
+  assert.strictEqual(p.lerSemanaDoMotivo('lixo qualquer'), null);
+  assert.strictEqual(p.lerSemanaDoMotivo(''), null);
+  assert.strictEqual(p.lerSemanaDoMotivo(undefined), null);
+  assert.strictEqual(
+    p.lerSemanaDoMotivo('pauta_pix:u-barra:2026-10-19 total=5 lote=3'), null,
+    'motivo do bloco DIARIO nao tem semana=/ritmo=, nao pode casar por acidente',
+  );
+});

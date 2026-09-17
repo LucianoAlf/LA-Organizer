@@ -80,6 +80,92 @@ function relatorioSemanal({ unidades, periodoBr, hojeYmd, alertaRitmo = false })
   return linhas.join('\n');
 }
 
+// ── DATA (YYYY-MM-DD) EM ARITMÉTICA UTC (Tarefa 6) ──────────────────────────────────────────────
+// Nunca `new Date(ymd).getDay()` nem hora local: um Date.UTC(y, m-1, d) é sempre meia-noite UTC
+// daquele dia civil, e não escorrega pro dia anterior/seguinte por causa do fuso do processo que
+// roda o teste ou o dispatcher. Privadas — só servem às funções desta seção.
+function _parseYmdUTC(ymd) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+function _somaDiasYmd(ymd, dias) {
+  const dt = new Date(_parseYmdUTC(ymd) + dias * 86400000);
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// ── RELATÓRIO SEMANAL — DADOS POR UNIDADE (Tarefa 6 do plano de migração) ───────────────────────
+// Lê o retorno CRU da RPC get_pix_migracao_v1 (chamada SEM p_fatia — todas as categorias, não só
+// quem falta migrar) e agrega para UMA unidade. `total` conta só as três categorias do progresso
+// (migrados + a migrar + autorização pendente) — outra categoria que a fonte um dia devolver fica
+// de fora de propósito: este relatório é sobre o progresso da migração, não um censo de toda
+// linha que a fonte manda.
+function dadosDaUnidadeParaRelatorio(linhas, { nome, hojeYmd }) {
+  const desde = _somaDiasYmd(hojeYmd, -7);
+  const ate = _somaDiasYmd(hojeYmd, -1);
+  let migrados = 0;
+  let migradosNaSemana = 0;
+  let pendentesAutorizacao = 0;
+  let aMigrar = 0;
+  for (const l of linhas || []) {
+    if (!l) continue;
+    if (l.categoria === 'ja_migrou') {
+      migrados += 1;
+      if (l.migrou_em && l.migrou_em >= desde && l.migrou_em <= ate) migradosNaSemana += 1;
+    } else if (l.categoria === 'autorizacao_pendente') {
+      pendentesAutorizacao += 1;
+    } else if (l.categoria === 'migrar') {
+      aMigrar += 1;
+    }
+  }
+  return {
+    nome, total: migrados + aMigrar + pendentesAutorizacao, migrados, migradosNaSemana, pendentesAutorizacao,
+  };
+}
+
+// ── PERÍODO (BR) DA SEMANA ANTERIOR (Tarefa 6) ───────────────────────────────────────────────────
+// hoje-7 até hoje-1 — a MESMA janela de dadosDaUnidadeParaRelatorio, só que formatada pro
+// cabeçalho do relatório ("semana de 12 a 18/10"). Mesmo mês → só um "/mês" no fim; meses
+// diferentes → cada ponta leva o próprio "/mês" (virada de ano também funciona: Date.UTC rola o
+// ano sozinho, a formatação só olha mês e dia de cada ponta).
+function periodoDaSemanaBr(hojeYmd) {
+  const desde = _somaDiasYmd(hojeYmd, -7);
+  const ate = _somaDiasYmd(hojeYmd, -1);
+  const [, mDesde, dDesde] = desde.split('-');
+  const [, mAte, dAte] = ate.split('-');
+  return mDesde === mAte ? `${dDesde} a ${dAte}/${mAte}` : `${dDesde}/${mDesde} a ${dAte}/${mAte}`;
+}
+
+// ── ALERTA DE RITMO (Tarefa 6) ───────────────────────────────────────────────────────────────────
+// Só acende com DUAS semanas seguidas abaixo do ritmo necessário — uma semana fraca sozinha é
+// ruído (a fonte atualiza em lote; uma família que atrasa um dia pode zerar uma semana isolada
+// sem que o ritmo real tenha mudado). Sem o dado da semana anterior (relatório de estreia, ou
+// marcador anterior ilegível) o alerta fica DESLIGADO — nunca acende por falta de histórico.
+function precisaAlertaRitmo({
+  semanaAtual, ritmoAtual, semanaAnterior, ritmoAnterior,
+}) {
+  if (semanaAnterior === null || semanaAnterior === undefined
+    || ritmoAnterior === null || ritmoAnterior === undefined) {
+    return false;
+  }
+  return semanaAtual < ritmoAtual && semanaAnterior < ritmoAnterior;
+}
+
+// ── MOTIVO DO MARCADOR — IDA E VOLTA (Tarefa 6) ──────────────────────────────────────────────────
+// O marcador PAUTA_PIX do relatório grava semana+ritmo no PRÓPRIO reason (não há outro lugar pra
+// guardar isso entre segundas), e o próximo relatório lê de volta pra saber se a semana ANTERIOR
+// ficou abaixo do ritmo. lerSemanaDoMotivo tem que ser o inverso exato de motivoDoRelatorio — sem
+// isso o alerta de duas-semanas-seguidas nunca teria uma "semana anterior" pra comparar.
+function motivoDoRelatorio({ ymd, migradosNaSemana, porSemana }) {
+  return `pix_relatorio:${ymd} semana=${migradosNaSemana} ritmo=${porSemana}`;
+}
+function lerSemanaDoMotivo(reason) {
+  const m = /semana=(-?\d+)\s+ritmo=(-?\d+)/.exec(String(reason || ''));
+  return m ? { semana: Number(m[1]), ritmo: Number(m[2]) } : null;
+}
+
 // ── QUANDO A PAUTA DO PIX FALA EM CADA UNIDADE (Tarefa 5 do plano de migração) ─────────────────
 // Decisão PURA. Recebe os dados JÁ CALCULADOS pelo chamador (`loteUnico`, `horaAbertura`) e nunca
 // importa services/anamnese-pauta.js — esse acoplamento é do dispatcher (que já lê os dois
@@ -153,4 +239,6 @@ module.exports = {
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
   horaDaPautaPix, decisaoDaPublicacaoPix,
+  dadosDaUnidadeParaRelatorio, periodoDaSemanaBr, precisaAlertaRitmo,
+  motivoDoRelatorio, lerSemanaDoMotivo,
 };

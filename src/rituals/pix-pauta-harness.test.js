@@ -95,6 +95,38 @@ if (iInicioPix === -1 || iInicioLembrete === -1 || iInicioFalaTxt === -1 || iFim
 const TRECHO_FALA = FONTE.slice(iInicioFalaTxt, iInicioPix);
 const TRECHO_PIX = FONTE.slice(iInicioPix, iInicioLembrete);
 
+// ── RELATORIO SEMANAL DO PIX (Tarefa 6) — recorte SO do bloco novo, pra nao confundir uma
+// asserção específica dele com o bloco diário que já mora dentro de TRECHO_PIX (o relatório mora
+// DEPOIS do diário, mas ainda ANTES do lembrete — os dois cabem dentro de TRECHO_PIX).
+const iFimPixDiario = FONTE.indexOf("} catch (e) { console.error('[PautaPix] erro (fora do loop por unidade):', e.message); }");
+const iInicioRelatorio = FONTE.indexOf('RELATORIO SEMANAL DO PIX');
+if (iFimPixDiario === -1 || iInicioRelatorio === -1) {
+  throw new Error('[harness] alguma ancora do relatorio semanal sumiu do dispatcher.js');
+}
+if (!(iFimPixDiario < iInicioRelatorio && iInicioRelatorio < iInicioLembrete)) {
+  throw new Error('[harness] o relatorio semanal saiu do lugar: tem que ficar ENTRE o bloco diario do pix e o lembrete horario');
+}
+const TRECHO_RELATORIO = FONTE.slice(iInicioRelatorio, iInicioLembrete);
+
+// Gate do relatorio semanal — mesmo padrao do gate diario acima: recorta a linha do slot e a
+// condicao do `if`, verbatim, e roda os dois via `new Function` contra o `timeToSlot` REAL.
+const iSlotRelatorio = acharUnica((l) => l.trim() === "const _pixRelatorioSlot = timeToSlot('10:00');", 'slot do relatorio semanal (10:00)');
+const LINHA_SLOT_RELATORIO = LINHAS[iSlotRelatorio].trim();
+const iGateRelatorio = acharUnica((l) => l.trim().startsWith("if (opts.force === 'pix_relatorio' ||"), 'gate do relatorio semanal do pix');
+if (!LINHAS[iGateRelatorio].trim().endsWith('{')) {
+  throw new Error(`[harness] o gate do relatorio semanal mudou de forma e o recorte deixou de valer: ${LINHAS[iGateRelatorio]}`);
+}
+const CONDICAO_RELATORIO = LINHAS[iGateRelatorio].trim().slice('if ('.length, -') {'.length);
+
+// eslint-disable-next-line no-new-func
+const rodarRelatorio = new Function('opts', 'now', 'slotNow', `
+${fnTimeToSlot}
+${LINHA_SLOT_RELATORIO}
+return (${CONDICAO_RELATORIO});
+`);
+const slotRel = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + Math.floor(m / 15) * 15; };
+const tickRelatorio = (dow, hhmm, force = null) => rodarRelatorio({ force }, { dow }, slotRel(hhmm));
+
 const NOMES = { 'u-recreio': 'Recreio', 'u-barra': 'Barra', 'u-cg': 'Campo Grande' };
 const situAl = { nomeDaUnidade: (id) => NOMES[id] || id, UNIDADES_IDS: Object.keys(NOMES) };
 // O `require` que o trecho enxerga devolve os modulos puros REAIS — as tabelas sob teste sao as
@@ -231,4 +263,102 @@ test('pix no dispatcher: o harness nao toca o banco — nenhum node_modules foi 
   const deFora = Object.keys(require.cache).filter((k) => k.includes('node_modules'));
   assert.deepStrictEqual(deFora, [],
     `qualquer client aqui vira conexao com PRODUCAO a cada rodada de teste (${deFora.join(', ')})`);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// RELATORIO SEMANAL DO PIX (Tarefa 6 do plano de migracao) — segunda as 10h, grupo pix-automatico
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+test('relatorio semanal do pix: gatilho e segunda as 10h em ponto (BRT), no trecho REAL do dispatcher', () => {
+  assert.strictEqual(tickRelatorio(1, '10:00'), true, 'segunda as 10:00 tem que abrir');
+  assert.strictEqual(tickRelatorio(1, '10:15'), false, '10:15 ja e outro slot');
+  assert.strictEqual(tickRelatorio(1, '09:45'), false, '09:45 ainda nao e a hora');
+  for (const dow of [0, 2, 3, 4, 5, 6]) {
+    assert.strictEqual(tickRelatorio(dow, '10:00'), false, `dow=${dow} as 10h nao pode abrir — so segunda (dow 1)`);
+  }
+});
+
+test('relatorio semanal do pix: --force pix_relatorio abre em qualquer dia/hora', () => {
+  assert.strictEqual(tickRelatorio(3, '15:00', 'pix_relatorio'), true);
+  assert.strictEqual(tickRelatorio(0, '03:00', 'pix_relatorio'), true);
+});
+
+test("relatorio semanal do pix: busca o grupo pelo slug 'pix-automatico' (nao por la_report_unidade_id, como o bloco diario)", () => {
+  assert.ok(TRECHO_RELATORIO.includes("eq('slug', 'pix-automatico')"),
+    'a busca do grupo tem que filtrar por slug pix-automatico');
+  assert.ok(TRECHO_RELATORIO.includes(".not('wa_group_jid', 'is', null)"),
+    'so vale grupo com wa_group_jid preenchido');
+});
+
+test('relatorio semanal do pix: idempotencia usa marcador PAUTA_PIX com chave pix_relatorio:<ymd> (marcador PROPRIO, nunca cruza com pauta_pix:<unidade>:<ymd>)', () => {
+  assert.ok(TRECHO_RELATORIO.includes('const _pixRelChave = `pix_relatorio:${now.ymd}`;'),
+    'a chave da idempotencia do relatorio tem que ser pix_relatorio:<ymd>, sem unidade (e um relatorio agregado)');
+  assert.ok(TRECHO_RELATORIO.includes(".eq('marker_type', 'PAUTA_PIX')"),
+    'a checagem de idempotencia tem que ler marker_type PAUTA_PIX (mesma familia do bloco diario)');
+  assert.ok(TRECHO_RELATORIO.includes("marker_type: 'PAUTA_PIX'"),
+    'os inserts de marcador do relatorio tem que gravar marker_type PAUTA_PIX');
+});
+
+test('relatorio semanal do pix: publica por group_chat_messages, nunca por whatsapp.sendMessage', () => {
+  assert.ok(TRECHO_RELATORIO.includes(".from('group_chat_messages').insert("),
+    'o relatorio semanal precisa publicar pelo mesmo caminho da pauta diaria (group_chat_messages)');
+  assert.ok(!TRECHO_RELATORIO.includes('whatsapp.sendMessage'),
+    'envio cru no ritual quebra a trava de quiet gates');
+});
+
+test('relatorio semanal do pix: guarda de duplicata por cabecalho presente, igual aos blocos acima', () => {
+  assert.ok(TRECHO_RELATORIO.includes('const cabecalhoMsg = String(texto).split('),
+    'a chave da guarda tem que ser a primeira linha do texto publicado');
+  assert.ok(TRECHO_RELATORIO.includes("like('content', `${cabecalhoMsg}%`)"),
+    'a guarda de duplicata tem que casar por PREFIXO do conteudo, desde o inicio do dia');
+});
+
+test('relatorio semanal do pix: falha de QUALQUER unidade desiste do relatorio inteiro — o return do erro vem ANTES do push do resultado bom e ANTES do INSERT em group_chat_messages', () => {
+  const iLoop = TRECHO_RELATORIO.indexOf('for (const unidadeId of situAl.UNIDADES_IDS)');
+  const iErroUnidade = TRECHO_RELATORIO.indexOf('if (error) {', iLoop);
+  const iReturnUnidade = TRECHO_RELATORIO.indexOf('return;', iErroUnidade);
+  const iPush = TRECHO_RELATORIO.indexOf('unidades.push(', iLoop);
+  const iInsertRelatorio = TRECHO_RELATORIO.indexOf(".from('group_chat_messages').insert(");
+  assert.notStrictEqual(iLoop, -1, 'nao achei o loop por unidade (situAl.UNIDADES_IDS)');
+  assert.notStrictEqual(iErroUnidade, -1, 'nao achei o if(error) do fetch por unidade');
+  assert.notStrictEqual(iReturnUnidade, -1, 'o tratamento de erro por unidade tem que desistir (return) — senao publica com unidade faltando');
+  assert.notStrictEqual(iPush, -1, 'nao achei o push do resultado bom no array unidades[]');
+  assert.notStrictEqual(iInsertRelatorio, -1, 'nao achei o INSERT em group_chat_messages do relatorio');
+  assert.ok(iErroUnidade < iReturnUnidade, 'o return tem que estar DENTRO do if(error)');
+  assert.ok(iReturnUnidade < iPush,
+    'o return do erro tem que vir ANTES do push do resultado bom no array unidades[] — senao a unidade que falhou entra no relatorio como zero, mentindo');
+  assert.ok(iReturnUnidade < iInsertRelatorio,
+    'o return do erro tem que vir ANTES do INSERT — senao publica um relatorio parcial mesmo com uma unidade fora do ar');
+});
+
+test('relatorio semanal do pix: usa a RPC get_pix_migracao_v1 SEM p_fatia (quer todas as categorias) e via consultaComRetry', () => {
+  assert.ok(TRECHO_RELATORIO.includes("laReportClient.rpc('get_pix_migracao_v1',"),
+    'a fonte tem que ser a mesma RPC do bloco diario');
+  assert.ok(TRECHO_RELATORIO.includes('p_fatia: null'),
+    'sem p_fatia — o relatorio quer TODAS as categorias (ja_migrou, migrar, autorizacao_pendente), nao so quem falta migrar');
+  assert.ok(TRECHO_RELATORIO.includes('consultaComRetry('),
+    'a consulta por unidade tem que ir por consultaComRetry, igual ao resto do dispatcher');
+});
+
+test('relatorio semanal do pix: usa motivoDoRelatorio pra escrever o marcador final e lerSemanaDoMotivo pra ler a semana anterior', () => {
+  assert.ok(TRECHO_RELATORIO.includes('_pixPura.motivoDoRelatorio('),
+    'o marcador final tem que ser escrito com motivoDoRelatorio (a mesma funcao pura que o proximo relatorio vai ler de volta)');
+  assert.ok(TRECHO_RELATORIO.includes('_pixPura.lerSemanaDoMotivo('),
+    'a leitura da semana anterior tem que usar lerSemanaDoMotivo, nunca parsear o reason na mao de novo');
+  assert.ok(TRECHO_RELATORIO.includes('_pixPura.precisaAlertaRitmo('),
+    'o alerta de ritmo tem que vir da funcao pura precisaAlertaRitmo, nao de um if solto no bloco');
+  assert.ok(!TRECHO_RELATORIO.includes("require('../services/pix-migracao')"),
+    'o bloco do relatorio tem que REAPROVEITAR _pixPura (ja requerido antes, pro bloco diario), nunca re-requerer o modulo');
+});
+
+test("'pix_relatorio' entrou na whitelist do --force (senao --force pix_relatorio cai no caminho de ritual antigo)", () => {
+  const linhaWhitelist = LINHAS.find((l) => l.trim().startsWith("if (opts.force && opts.force !== 'aderencia'"));
+  assert.ok(linhaWhitelist, 'nao achei a linha da whitelist de --force');
+  assert.ok(linhaWhitelist.includes("opts.force !== 'pix_relatorio'"),
+    'pix_relatorio precisa estar na whitelist de forces aceitos');
+});
+
+test('relatorio semanal do pix: o bloco mora ENTRE o bloco diario do pix e o lembrete horario', () => {
+  assert.ok(iFimPixDiario < iInicioRelatorio, 'o relatorio tem que vir DEPOIS do bloco diario do pix');
+  assert.ok(iInicioRelatorio < iInicioLembrete, 'o relatorio tem que vir ANTES do lembrete horario');
 });
