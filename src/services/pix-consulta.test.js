@@ -190,6 +190,7 @@ test('400 itens: teto de 8 mensagens, e a última DIZ quantos ficaram de fora', 
   assert.strictEqual(mostrados, 360);
   assert.match(ms[7], /40 de fora/);
   assert.match(ms[7], /painel/);
+  assert.match(ms[0], /parte 1\/9/, 'o cabeçalho declara as 9 partes que a lista precisaria');
   assert.ok(!/de fora/.test(ms[0]), 'só a última fala do que ficou de fora');
 });
 
@@ -236,9 +237,13 @@ test('C2: o teto de mensagens é GLOBAL e nenhuma família fica muda — a últi
     'nenhuma família pode sair muda do pedido');
   // Reparte: 1 mensagem reservada por família (ninguém fica mudo), o resto na ordem de
   // prioridade -> PIX 4 partes (161 de 161), anamnese 3 (135 de 318), contrato 1 (45 de 104).
+  // O DENOMINADOR é de quantas partes a lista PRECISA: a anamnese precisa de 8 e recebeu 3, e o
+  // cabeçalho diz isso — "parte 1/1" numa lista cortada leria como lista completa.
   assert.match(ms[0], /PIX automático.*parte 1\/4/);
-  assert.match(ms[4], /Anamnese.*parte 1\/3/);
-  assert.match(ms[7], /Contrato.*parte 1\/1/);
+  assert.match(ms[3], /PIX automático.*parte 4\/4/);
+  assert.match(ms[4], /Anamnese.*parte 1\/8/);
+  assert.match(ms[6], /Anamnese.*parte 3\/8/);
+  assert.match(ms[7], /Contrato.*parte 1\/3/);
   const mostrados = ms.reduce((s, m) => s + (m.split('\n• ').length - 1), 0);
   assert.strictEqual(mostrados, 161 + 135 + 45);
   assert.match(ms[7], /242 de fora/);

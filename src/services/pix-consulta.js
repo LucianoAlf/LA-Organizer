@@ -155,6 +155,11 @@ function mensagensDeVariasListas({
     const itens = b.itens || [];
     const subst = b.substantivo || 'clientes';
     const partes = dadas[i];
+    // O DENOMINADOR e de quantas partes a lista PRECISA, nao de quantas couberam: uma familia
+    // cortada anunciando "parte 1/1" leria como lista completa — o mesmo "parece inteiro e nao
+    // e" que esta feature veio curar. Com 318 alunos e uma parte concedida, o cabecalho diz
+    // "parte 1/8" e o rodape diz quantos ficaram de fora.
+    const precisa = querem[i];
     const mostrados = Math.min(itens.length, partes * lim);
     fora += itens.length - mostrados;
     if (!partes) continue;
@@ -162,7 +167,7 @@ function mensagensDeVariasListas({
     for (let k = 0; k < partes; k++) {
       const fatia = itens.slice(k * lim, Math.min((k + 1) * lim, mostrados));
       const corpo = fatia.map((it) => `• ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`).join('\n');
-      out.push(`💠 *${b.titulo} — ${unidadeNome}* (${itens.length} ${subst}) — parte ${k + 1}/${partes}\n${corpo}`);
+      out.push(`💠 *${b.titulo} — ${unidadeNome}* (${itens.length} ${subst}) — parte ${k + 1}/${precisa}\n${corpo}`);
     }
   }
   const rodape = [];
