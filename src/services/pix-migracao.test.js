@@ -151,7 +151,10 @@ test('I2: carência de 35 dias e soma de dias exportadas pra camada do ritual', 
 });
 
 // ── M6 (revisão final): a equipe precisa saber como avisar o TOM ──────────────────────────────
-const RODAPE_M6 = '_Cadastrou alguém? Me marca e escreve: cadastrei <nome> no automático._';
+// 17/09: o rodapé passou a ensinar também a PEDIR A LISTA. Campo Grande pediu a lista
+// completa do PIX avulso e o TOM respondeu "consigo mandar só os que estão aparecendo aqui na
+// lista de hoje" — a equipe não tinha como saber que bastava pedir.
+const RODAPE_M6 = '_Cadastrou alguém? Me marca e escreve: cadastrei <nome> no automático. Quer a lista completa? Me marca e peça: lista completa do pix avulso._';
 
 test('M6: mensagem com lote listando nomes termina com a linha de como avisar o TOM', () => {
   const linhas = [
@@ -162,6 +165,8 @@ test('M6: mensagem com lote listando nomes termina com a linha de como avisar o 
   const ultima = txt.split('\n').pop();
   assert.strictEqual(ultima, RODAPE_M6);
   assert.strictEqual(txt.split(RODAPE_M6).length - 1, 1, 'uma vez só');
+  assert.match(ultima, /cadastrei <nome> no automático/, 'como avisar que cadastrou');
+  assert.match(ultima, /lista completa do pix avulso/, 'como pedir a lista inteira');
 });
 
 test('M6: sem lote (nenhum nome listado) não tem a linha', () => {

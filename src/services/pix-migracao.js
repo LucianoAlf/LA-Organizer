@@ -83,7 +83,10 @@ function mensagemDaUnidade({
   // saber COMO avisar. Só quando a mensagem lista algum nome do lote (sem lote, não há o que avisar).
   const chavesListaveis = new Set(todas.map((l) => l.pagador_chave));
   if ((lote || []).some((l) => chavesListaveis.has(l.pagador_chave))) {
-    linhasTxt.push('_Cadastrou alguém? Me marca e escreve: cadastrei <nome> no automático._');
+    // 17/09: além de ensinar a AVISAR, o rodapé ensina a PEDIR. Campo Grande pediu a lista
+    // completa do PIX avulso e o TOM respondeu que só tinha o lote do dia — a equipe não sabia
+    // que bastava pedir, e o TOM não sabia que podia responder (src/services/pix-consulta.js).
+    linhasTxt.push('_Cadastrou alguém? Me marca e escreve: cadastrei <nome> no automático. Quer a lista completa? Me marca e peça: lista completa do pix avulso._');
   }
   return linhasTxt.join('\n');
 }
