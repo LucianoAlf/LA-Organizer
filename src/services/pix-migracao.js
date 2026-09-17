@@ -39,11 +39,14 @@ function mensagemDaUnidade({
   const cab = `💠 *PIX automático — ${unidadeNome}*`;
   if (fonteVelha) return `${cab}\n_A fonte do LA Report não atualizou hoje — não vou cobrar número que não medi._`;
   const todas = linhas || [];
-  const noLote = new Set((lote || []).map((l) => l.pagador_chave));
+  // C1 (revisão final): quem está em `voltaram` é citado UMA vez só — na seção ↩️. Sai do conjunto
+  // "listável" das fatias (continua CONTADO no número da fatia, só não repete o nome).
+  const chavesVoltaram = new Set((voltaram || []).map((l) => l.pagador_chave));
+  const noLote = new Set((lote || []).map((l) => l.pagador_chave).filter((k) => !chavesVoltaram.has(k)));
   const cont = contagemPorFatia(todas);
   const linhasTxt = [`${cab} · faltam ${todas.length} · meta ${METAS_BR}`];
   // TAREFA 7 — reconferência de 7 dias: quem a equipe disse ter cadastrado, mas a fonte ainda
-  // mostra como não migrado depois do prazo de graça, ganha uma seção própria logo após o
+  // mostra como `migrar` depois do prazo de graça, ganha uma seção própria logo após o
   // cabeçalho — separada da lista normal pra não se confundir com "gente nova na fila".
   // `voltaram` vazio (padrão) mantém a mensagem IDÊNTICA à de antes desta tarefa.
   if ((voltaram || []).length) {

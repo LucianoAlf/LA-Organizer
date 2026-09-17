@@ -186,29 +186,64 @@ test('pacote de hoje já existe: não cria; fecha (done) só quem saiu da fonte 
 });
 
 // F6 ────────────────────────────────────────────────────────────────────────────────────────
-test('teto de sanidade: 12 carregados + 40 na fonte nunca cria mais que TETO_FILHAS filhas', async () => {
-  const muitos = [...Array(40)].map((_, i) => linha('N' + String(i).padStart(2, '0'), 'pix_avulso'));
-  const carregadosNomes = muitos.slice(0, 12).map((l) => l.pagador_nome);
-  let n = 0;
+// I1 (revisão final): o lote NÃO cresce com o carry-over. Carregados entram primeiro e o lote do
+// dia só completa até LOTE_DIARIO — 8 carregados + 20 na fonte = 10 filhas, nunca 15.
+test('I1: 8 carregados + 20 na fonte cria exatamente LOTE_DIARIO (10) filhas — carregados primeiro, o resto só completa', async () => {
+  const muitos = [...Array(20)].map((_, i) => linha('N' + String(i).padStart(2, '0'), 'pix_avulso'));
+  // Carregados = os 8 ÚLTIMOS por nome (N12..N19), pra provar que entram antes mesmo tendo
+  // prioridade alfabética pior que os novos.
+  const carregadosNomes = muitos.slice(12).map((l) => l.pagador_nome);
+  let criadas = [];
   const out = await r.pautaPixDaUnidade({
     ...base,
     laReport: laReportOk(muitos),
     deps: {
-      agora: agoraFixo, informados: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
         due_date: '2026-09-15',
         filhas: carregadosNomes.map((nome, i) => filha(`f${i}`, `k-${nome}`, `PIX automático — ${nome}`)),
       }],
-      criarPacote: async ({ input }) => { n = input.subtasks.length; return { groupId: 'm3', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      criarPacote: async ({ input }) => { criadas = input.subtasks; return { groupId: 'm3', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
       fecharFilha: async () => true,
       fecharContainer: async () => true,
       vincular: semVinculo,
     },
   });
-  assert.strictEqual(n, pura.TETO_FILHAS);
-  assert.strictEqual(out.carregadas, 12);
+  assert.strictEqual(criadas.length, pura.LOTE_DIARIO, 'o lote com carry-over continua com 10 filhas, não 15');
+  assert.strictEqual(out.lote.length, 10);
+  assert.strictEqual(out.carregadas, 8);
+  assert.deepStrictEqual(out.lote.slice(0, 8).map((l) => l.pagador_nome), carregadosNomes, 'os 8 carregados vêm primeiro');
+  assert.deepStrictEqual(out.lote.slice(8).map((l) => l.pagador_nome), ['N00', 'N01'], 'o resto só completa até 10');
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
+});
+
+test('I1: TETO_FILHAS é trava dura — lote acima do teto NÃO cria pacote e devolve o motivo', async () => {
+  const muitos = [...Array(20)].map((_, i) => linha('N' + String(i).padStart(2, '0'), 'pix_avulso'));
+  const carregadosNomes = muitos.slice(0, 16).map((l) => l.pagador_nome); // 16 > TETO_FILHAS (15)
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk(muitos),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      containersPix: async () => [{
+        id: 'cont-ontem',
+        title: r.PREFIXO_CONTAINER + '15/09',
+        due_date: '2026-09-15',
+        filhas: carregadosNomes.map((nome, i) => filha(`f${i}`, `k-${nome}`, `PIX automático — ${nome}`)),
+      }],
+      criarPacote: nuncaChama('criarPacote'),
+      fecharFilha: async () => true,
+      fecharContainer: async () => true,
+      vincular: nuncaChama('vincular'),
+    },
+  });
+  assert.strictEqual(out.criou, false);
+  assert.strictEqual(out.texto, null, 'sem pacote não há texto — decisaoDaPublicacaoPix vira fallback');
+  assert.match(out.motivo, /teto/);
+  assert.match(out.motivo, /16/);
   assert.strictEqual(out.fonteFalhou, false);
   assert.strictEqual(out.semCliente, false);
 });
@@ -217,7 +252,7 @@ test('teto de sanidade: 12 carregados + 40 na fonte nunca cria mais que TETO_FIL
 test('ninguém a migrar: não cria pacote', async () => {
   const out = await r.pautaPixDaUnidade({
     ...base,
-    laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrado' })]),
+    laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrou' })]),
     deps: {
       agora: agoraFixo, informados: async () => [],
       containersPix: async () => [],
@@ -238,7 +273,7 @@ test('ninguém a migrar: não cria pacote', async () => {
 test('ninguém a migrar, mas uma filha velha não fechou: o aviso aparece no motivo junto de "sem cliente a migrar"', async () => {
   const out = await r.pautaPixDaUnidade({
     ...base,
-    laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrado' })]), // ninguém em migrar/autorizacao_pendente
+    laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrou' })]), // ninguém em migrar/autorizacao_pendente
     deps: {
       agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
@@ -533,7 +568,7 @@ test('Tarefa 7: cliente informado que a fonte já confirma como migrado NÃO apa
   const informadoEm = new Date(AGORA - 7 * 86400000).toISOString();
   const out = await r.pautaPixDaUnidade({
     ...base,
-    laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrado' })]), // já não está mais em migrar/autorizacao_pendente
+    laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrou' })]), // já não está mais em migrar/autorizacao_pendente
     deps: {
       agora: agoraFixo,
       informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
@@ -561,4 +596,40 @@ test('Tarefa 7: erro ao reconferir quem foi informado segue SEM excluir ninguém
   assert.strictEqual(criadas.length, 1, 'falha-aberta: ninguém é excluído quando a reconferência falha');
   assert.match(out.motivo, /não consegui reconferir/);
   assert.strictEqual(out.voltaram.length, 0);
+});
+
+// ── C1 (revisão final) — "Voltaram pra lista" só pra quem a fonte AINDA mostra em `migrar` ─────
+test('C1: informado há 7 dias que a fonte já mostra em autorizacao_pendente (cadastrou!) NÃO entra em voltaram — afirmação falsa', async () => {
+  const informadoEm = new Date(AGORA - 7 * 86400000).toISOString();
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'autorizacao_pendente'), linha('Bia', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, transicoesRecentes: async () => [],
+      informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
+      vincular: semVinculo,
+    },
+  });
+  assert.deepStrictEqual(out.voltaram, [], 'autorização pendente não é "o Emusys ainda não mostra"');
+  assert.ok(!out.texto.includes('Voltaram pra lista'));
+});
+
+test('C1: quem voltou pra lista é citado UMA vez só no texto (não repete na seção da fatia)', async () => {
+  const informadoEm = new Date(AGORA - 7 * 86400000).toISOString();
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, transicoesRecentes: async () => [],
+      informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
+      vincular: semVinculo,
+    },
+  });
+  assert.strictEqual(out.voltaram.length, 1);
+  assert.strictEqual((out.texto.match(/Ana \(/g) || []).length, 1, 'Ana aparece só na seção ↩️');
+  assert.match(out.texto, /• Bia \(Bia filho\)/, 'quem não voltou segue listado na fatia normalmente');
 });

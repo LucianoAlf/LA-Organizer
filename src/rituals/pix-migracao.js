@@ -256,11 +256,12 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   }
   // < 7 dias: some da fila (não entra no lote nem é carregado), mas continua contado em `total`
   // e nas fatias de `mensagemDaUnidade` (usa `linhas`, nunca filtrada). >= 7 dias (até 8, janela
-  // da consulta) e ainda na fonte: volta a ser candidato normal — e ganha a seção "Voltaram pra
-  // lista" (voltaram é sempre um subconjunto de `linhas`, então só entra quem a fonte AINDA
-  // mostra como migrar/autorização pendente).
+  // da consulta) e ainda na fonte: volta a ser candidato normal. A seção "Voltaram pra lista"
+  // afirma "disseram que cadastrou, mas o Emusys ainda não mostra" — por isso só entra quem a
+  // fonte AINDA mostra em `migrar` (C1, revisão final). `autorizacao_pendente` é o contrário: o
+  // Emusys JÁ mostra o cadastro (só falta a 1ª cobrança) — listar ali seria afirmação falsa.
   const linhasElegiveis = linhas.filter((l) => !recentesSet.has(l.pagador_chave));
-  const voltaram = linhas.filter((l) => voltaramSet.has(l.pagador_chave));
+  const voltaram = linhas.filter((l) => voltaramSet.has(l.pagador_chave) && l.categoria === 'migrar');
   const porChave = new Map(linhasElegiveis.map((l) => [l.pagador_chave, l]));
   const informadosRecentes = recentesSet.size;
 
@@ -316,14 +317,24 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     }
 
     // 3) Pacote de hoje não existe: lote = carregados (prioridade, sempre primeiro) + o lote do
-    // dia (loteDoDia, camada pura) dos demais clientes da fonte, excluindo os carregados,
-    // deduplicado. Teto de sanidade por cima: nunca mais que TETO_FILHAS, mesmo quando o
-    // carry-over empilha em cima de um lote normal de 10.
+    // dia (loteDoDia, camada pura) dos demais clientes da fonte, só o que FALTA pra completar
+    // LOTE_DIARIO (I1, revisão final: antes o carry-over empilhava em cima de um lote cheio de 10 e
+    // o pacote crescia pra 15 todo dia que alguém sobrava). Deduplicado.
     const chavesCarregadas = new Set(carregadas.map((l) => l.pagador_chave));
     const demais = linhasElegiveis.filter((l) => !chavesCarregadas.has(l.pagador_chave));
-    const resto = pura.loteDoDia(demais);
-    let lote = _dedupPorChave([...carregadas, ...resto]);
-    if (lote.length > pura.TETO_FILHAS) lote = lote.slice(0, pura.TETO_FILHAS);
+    const resto = pura.loteDoDia(demais, { tamanho: Math.max(0, pura.LOTE_DIARIO - carregadas.length) });
+    const lote = _dedupPorChave([...carregadas, ...resto]);
+    // TETO_FILHAS é TRAVA DURA (spec: "acima disso, não cria e registra o motivo"): nunca corta o
+    // lote em silêncio. Só dispara se o carry-over sozinho passar do teto (vários pacotes velhos
+    // abertos) — aí é defeito pra alguém olhar, não dia normal.
+    if (lote.length > pura.TETO_FILHAS) {
+      return {
+        criou: false, jaExistia: false, total, lote: [], fechadas, carregadas: carregadas.length,
+        texto: null,
+        motivo: [`lote de ${lote.length} clientes passa do teto de ${pura.TETO_FILHAS} filhas — não criei o pacote`, ...avisos].join('; '),
+        fonteVelha: false, fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
+      };
+    }
 
     if (!lote.length) {
       // Fix round 1 (achado 2): os avisos já acumulados (ex.: falha ao fechar uma filha velha)

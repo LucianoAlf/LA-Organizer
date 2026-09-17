@@ -102,6 +102,14 @@ test('mensagem: com voltaram, mostra a seção ↩️ Voltaram pra lista logo ap
   assert.match(txt, /   • Zeca Souza \(Duda\)/);
 });
 
+test('C1: mensagem — cliente em voltaram que também está no lote aparece UMA vez só (não repete na fatia)', () => {
+  const zeca = { pagador_chave: 'z', pagador_nome: 'Zeca Souza', alunos: ['Duda'], categoria: 'migrar', fatia: 'boleto' };
+  const ana = { pagador_chave: 'a', pagador_nome: 'Ana Lima', alunos: ['Rafa'], categoria: 'migrar', fatia: 'boleto' };
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [zeca, ana], lote: [zeca, ana], voltaram: [zeca] });
+  assert.strictEqual((txt.match(/Zeca Souza/g) || []).length, 1);
+  assert.match(txt, /🟡 \*Boleto\* \(2\)\n {3}• Ana Lima \(Rafa\)$/m, 'a fatia continua contando os 2, mas só lista quem não está em voltaram');
+});
+
 test('mensagem: sem voltaram (padrão), texto idêntico ao de antes desta tarefa — zero regressão', () => {
   const linhas = [
     { pagador_chave: 'a', pagador_nome: 'Ana Lima', alunos: ['Rafa'], categoria: 'autorizacao_pendente', fatia: null },
