@@ -33,6 +33,25 @@ function _pagadorDoTitulo(title) {
   return (m ? m[1] : String(title || '')).trim();
 }
 
+// FIX ROUND 1 (Important, achado da revisão — REVOGA o "contém" do brief §C): substring pegava
+// "ana" dentro de "Mariana Costa"/"Joana"/"Diana" — com uma única filha pendente, isso dava
+// baixa no pagador ERRADO. Casa por PALAVRA INTEIRA agora: toda palavra do nome falado precisa
+// ser IGUAL a alguma palavra do nome do pagador (depois de tirar conectores dos dois lados).
+// "Ana" casa com "Ana Lima" e "Maria Ana Souza", nunca com "Mariana Costa". "Ana Lima" casa com
+// "Ana Paula Lima" (as duas palavras faladas estão lá, mesmo com "Paula" no meio).
+const CONECTORES = new Set(['de', 'da', 'do', 'dos', 'das', 'e']);
+
+function _palavrasDoNome(nomeNormalizado) {
+  return nomeNormalizado.split(' ').filter((p) => p && !CONECTORES.has(p));
+}
+
+function _casaPorPalavraInteira(nomeFalado, nomePagador) {
+  const palavrasFaladas = _palavrasDoNome(normalizarNome(nomeFalado));
+  if (!palavrasFaladas.length) return false;
+  const palavrasPagador = new Set(_palavrasDoNome(normalizarNome(nomePagador)));
+  return palavrasFaladas.every((p) => palavrasPagador.has(p));
+}
+
 // deps.filhasPix({ groupId }) -> [{ id, title, pagador_chave }]
 // Mesma regra do ritual (src/rituals/pix-migracao.js, _containersPixPadrao): pacotes 'pending'
 // do grupo cujo título começa com PREFIXO_CONTAINER, filhas 'pending' de cada um, com o
@@ -101,10 +120,9 @@ async function tratarCadastroInformadoNoGrupo({
     return { tratou: false };
   }
 
-  const alvo = normalizarNome(detectado.nome);
   const candidatas = (filhas || [])
     .filter((f) => f.pagador_chave) // sem vínculo não pode ser baixada — sem chave pra reconferir
-    .filter((f) => normalizarNome(_pagadorDoTitulo(f.title)).includes(alvo));
+    .filter((f) => _casaPorPalavraInteira(detectado.nome, _pagadorDoTitulo(f.title)));
 
   if (candidatas.length === 0) {
     return { tratou: true, texto: textoCadastroNaoAchado(detectado.nome) };

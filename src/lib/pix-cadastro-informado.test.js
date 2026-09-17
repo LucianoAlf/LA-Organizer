@@ -71,3 +71,16 @@ test('texto de ambiguidade lista os nomes achados separados por " · "', () => {
   assert.match(t, /Ana Lima · Ana Souza/);
   assert.match(t, /mais de um/);
 });
+
+// ── FIX ROUND 1 (revisão): negação e dúvida têm que refutar o reconhecimento ────────────────
+test('FIX ROUND 1 (Critical): não casa quando a fala nega a ação, em qualquer posição', () => {
+  assert.strictEqual(c.detectarCadastroInformado('não cadastrei a Ana no automático ainda'), null);
+  assert.strictEqual(c.detectarCadastroInformado('ainda não cadastrei a Ana no automático'), null);
+  assert.strictEqual(c.detectarCadastroInformado('não coloquei o Bruno no pix automático'), null);
+});
+
+test('FIX ROUND 1 (Important): não casa quando a fala é dúvida, pergunta ou promessa (hedge)', () => {
+  assert.strictEqual(c.detectarCadastroInformado('cadastrei a Ana no automático? não sei'), null);
+  assert.strictEqual(c.detectarCadastroInformado('cadastrei a Ana no automático, acho'), null);
+  assert.strictEqual(c.detectarCadastroInformado('será que cadastrei a Ana no automático'), null);
+});

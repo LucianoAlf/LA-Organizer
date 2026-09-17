@@ -99,3 +99,34 @@ test('texto sem casar detectarCadastroInformado: nem chama filhasPix', async () 
   });
   assert.strictEqual(out.tratou, false);
 });
+
+// ── FIX ROUND 1 (Important): casamento por PALAVRA INTEIRA, não substring ──────────────────
+test('FIX ROUND 1: "ana" não acha "Mariana Costa" por substring — responde não achei, sem escrita', async () => {
+  const out = await tratarCadastroInformadoNoGrupo({
+    groupId: 'g1', senderCollabId: 'c1', text: 'cadastrei a Ana no pix automático',
+    deps: {
+      filhasPix: async () => [filha('t1', 'PIX automático — Mariana Costa', 'u1:p1')],
+      fecharFilha: nuncaChama('fecharFilha'),
+      gravarMarcador: nuncaChama('gravarMarcador'),
+    },
+  });
+  assert.strictEqual(out.tratou, true);
+  assert.match(out.texto, /Não achei/);
+});
+
+test('FIX ROUND 1: "Ana Lima" casa com "Ana Paula Lima" (palavra do meio não atrapalha)', async () => {
+  const fechadas = [];
+  const marcadores = [];
+  const out = await tratarCadastroInformadoNoGrupo({
+    groupId: 'g1', senderCollabId: 'c1', text: 'cadastrei a Ana Lima no pix automático',
+    deps: {
+      filhasPix: async () => [filha('t1', 'PIX automático — Ana Paula Lima', 'u1:p1')],
+      fecharFilha: async (id) => { fechadas.push(id); return true; },
+      gravarMarcador: async (arg) => { marcadores.push(arg); },
+    },
+  });
+  assert.strictEqual(out.tratou, true);
+  assert.deepStrictEqual(fechadas, ['t1']);
+  assert.strictEqual(marcadores.length, 1);
+  assert.match(out.texto, /Ana Paula Lima/);
+});
