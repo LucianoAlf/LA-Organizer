@@ -131,3 +131,30 @@ test('relatório semanal: alerta de ritmo aparece só quando alertaRitmo é true
   const comAlerta = p.relatorioSemanal({ ...base, alertaRitmo: true });
   assert.match(comAlerta, /⚠️ Duas semanas seguidas abaixo do ritmo necessário\.$/);
 });
+
+// ── horaDaPautaPix (Tarefa 5) ────────────────────────────────────────────────────────────────
+test('horaDaPautaPix: Recreio (sem lembrete único) segue o horário de abertura', () => {
+  assert.strictEqual(p.horaDaPautaPix('Recreio', 3, { loteUnico: undefined, horaAbertura: '08:00' }), '08:00');
+  // Sábado: a abertura muda, e a decisão pura muda junto — não é um valor travado.
+  assert.strictEqual(p.horaDaPautaPix('Recreio', 6, { loteUnico: undefined, horaAbertura: '08:00' }), '08:00');
+});
+
+test('horaDaPautaPix: Barra tem lembrete único (09:00) e ignora a hora de abertura', () => {
+  // Sábado a Barra abre 08:00, mas o lembrete único dela continua 09:00 — o loteUnico vence.
+  assert.strictEqual(p.horaDaPautaPix('Barra', 6, { loteUnico: '09:00', horaAbertura: '08:00' }), '09:00');
+  assert.strictEqual(p.horaDaPautaPix('Barra', 3, { loteUnico: '09:00', horaAbertura: '09:00' }), '09:00');
+});
+
+test('horaDaPautaPix: Campo Grande tem lembrete único (13:00) e ignora a hora de abertura', () => {
+  assert.strictEqual(p.horaDaPautaPix('Campo Grande', 3, { loteUnico: '13:00', horaAbertura: '10:00' }), '13:00');
+});
+
+test('horaDaPautaPix: domingo nunca publica, mesmo com loteUnico fixo', () => {
+  assert.strictEqual(p.horaDaPautaPix('Barra', 0, { loteUnico: '09:00', horaAbertura: null }), null);
+  assert.strictEqual(p.horaDaPautaPix('Campo Grande', 0, { loteUnico: '13:00', horaAbertura: null }), null);
+  assert.strictEqual(p.horaDaPautaPix('Recreio', 0, { loteUnico: undefined, horaAbertura: null }), null);
+});
+
+test('horaDaPautaPix: unidade desconhecida sem horário de abertura devolve null', () => {
+  assert.strictEqual(p.horaDaPautaPix('Unidade Nova', 3, { loteUnico: undefined, horaAbertura: null }), null);
+});

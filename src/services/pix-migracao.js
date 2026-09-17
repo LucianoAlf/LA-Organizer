@@ -80,8 +80,34 @@ function relatorioSemanal({ unidades, periodoBr, hojeYmd, alertaRitmo = false })
   return linhas.join('\n');
 }
 
+// ── QUANDO A PAUTA DO PIX FALA EM CADA UNIDADE (Tarefa 5 do plano de migração) ─────────────────
+// Decisão PURA. Recebe os dados JÁ CALCULADOS pelo chamador (`loteUnico`, `horaAbertura`) e nunca
+// importa services/anamnese-pauta.js — esse acoplamento é do dispatcher (que já lê os dois
+// módulos pra costurar a fala da manhã), não desta função. `unidadeNome` e `diaSemana` chegam
+// pela mesma razão que em horaDeAberturaDaUnidade: são o contexto da decisão, ainda que o corpo
+// de hoje só precise do segundo pra barrar domingo — deixa a assinatura pronta pro dia em que a
+// regra precisar olhar o nome (ex.: uma quarta unidade com cadência própria) sem quebrar quem já
+// chama esta função.
+//
+// Unidade com lembrete ÚNICO no dia (Barra, Campo Grande — anamnese-pauta.js,
+// LEMBRETE_UNICO_POR_UNIDADE) publica NESSE horário, sempre — nunca no de abertura dela: são
+// unidades que já pediram uma cadência de "uma vez por dia", e a pauta do PIX segue a mesma.
+// Unidade sem lembrete único (Recreio) publica no horário de abertura, que é quando a equipe
+// chega e pode agir na lista.
+//
+// Domingo (`diaSemana === 0`) nunca publica, mesmo pra quem tem `loteUnico` fixo — a escola não
+// abre nas três unidades nesse dia (mesma fonte conferida em anamnese-pauta.js). É por isso que a
+// checagem de domingo vem PRIMEIRO e é incondicional: um `loteUnico` não pode furar essa regra.
+// Unidade sem horário de abertura conhecido (`horaAbertura` nulo) também não publica — não dá pra
+// inventar quando a equipe chega.
+function horaDaPautaPix(unidadeNome, diaSemana, { loteUnico, horaAbertura } = {}) {
+  if (!Number.isInteger(diaSemana) || diaSemana === 0) return null;
+  return loteUnico || horaAbertura || null;
+}
+
 module.exports = {
   FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
+  horaDaPautaPix,
 };

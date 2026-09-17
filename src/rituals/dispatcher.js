@@ -3854,7 +3854,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh' && opts.force !== 'pauta_anamnese_fimdia' && opts.force !== 'pauta_anamnese_lembrete') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'gov_agent' && opts.force !== 'la_educa_lembretes' && opts.force !== 'pauta_anamnese' && opts.force !== 'pauta_anamnese_fala' && opts.force !== 'pauta_anamnese_fecha' && opts.force !== 'pauta_anamnese_refresh' && opts.force !== 'pauta_anamnese_fimdia' && opts.force !== 'pauta_anamnese_lembrete' && opts.force !== 'pauta_pix') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -4782,6 +4782,156 @@ async function run(opts = {}) {
         }
       }
     } catch (e) { console.error('[Pauta] fala erro (fora do loop por unidade):', e.message); }
+  }
+
+  // ── PAUTA DO PIX AUTOMATICO (Tarefa 5 do plano de migracao) ──────────────────────────────────
+  // Mensagem PROPRIA no MESMO grupo da unidade, no MESMO padrao das pautas acima (idempotencia
+  // por marker_logs, guarda de duplicata por cabecalho, publicacao so por group_chat_messages) —
+  // mas com marcador PROPRIO (PAUTA_PIX), pra nao mexer no texto nem nas catracas da anamnese
+  // (decisao registrada: mensagem separada, nao dentro da fala da anamnese).
+  //
+  // O HORARIO de cada unidade e decisao PURA (services/pix-migracao.js:horaDaPautaPix): quem tem
+  // lembrete UNICO no dia (Barra 09:00, Campo Grande 13:00 — anamnese-pauta.js,
+  // LEMBRETE_UNICO_POR_UNIDADE) fala nesse MESMO horario; quem nao tem (Recreio) fala no horario
+  // de abertura dela. Domingo (ou unidade sem horario de abertura conhecido) nao publica —
+  // horaDeAberturaDaUnidade devolve null nesse caso, e a decisao pura devolve null junto.
+  //
+  // _pautaAbertura e _pautaDiaSemana ja foram lidos acima, pro bloco da fala — reaproveitados
+  // aqui pra ler o MESMO dia da semana sem recalcula-lo: o dispatcher so pode ter UM dono da
+  // conta de qual dia da semana e hoje.
+  const _pixPura = require('../services/pix-migracao');
+  const _pixNomesDeUnidade = Object.keys(_pautaAbertura.ABERTURA_DIA_UTIL);
+  const _pixHoraDaUnidadeNome = (nomeUnidade) => _pixPura.horaDaPautaPix(nomeUnidade, _pautaDiaSemana, {
+    loteUnico: _pautaAbertura.LEMBRETE_UNICO_POR_UNIDADE[nomeUnidade],
+    horaAbertura: _pautaAbertura.horaDeAberturaDaUnidade(nomeUnidade, _pautaDiaSemana),
+  });
+  const _pixHorasDoDia = [...new Set(_pixNomesDeUnidade.map(_pixHoraDaUnidadeNome).filter(Boolean))];
+  if (opts.force === 'pauta_pix' || _pixHorasDoDia.some((h) => timeToSlot(h) === slotNow)) {
+    try {
+      const situAl = require('../services/situacao-aluno');
+      const { laReportClient } = require('../services/la-report-client');
+      const { pautaPixDaUnidade } = require('./pix-migracao');
+      for (const unidadeId of situAl.UNIDADES_IDS) {
+        // Cada unidade publica na SUA hora — Barra e Campo Grande no lembrete unico delas,
+        // Recreio na abertura. O bloco abre quando QUALQUER uma bate o slot, entao aqui sai quem
+        // nao e a da vez agora.
+        const unidadeNome = situAl.nomeDaUnidade(unidadeId);
+        const horaDaPauta = _pixHoraDaUnidadeNome(unidadeNome);
+        if (!horaDaPauta) {
+          // null tem DOIS significados, igual na fala de abertura: domingo e rotina (a escola
+          // nao abre), unidade sem horario e coisa pra alguem olhar. Nunca caio no horario de dia
+          // util por descuido.
+          if (_pautaDiaSemana === 0) {
+            console.log(`[PautaPix] domingo nao tem aula (${unidadeNome}) -- nao publico`);
+          } else {
+            console.warn(`[PautaPix] unidade sem horario de abertura definido (${unidadeId}) -- nao vou publicar`);
+          }
+          continue;
+        }
+        if (opts.force !== 'pauta_pix' && timeToSlot(horaDaPauta) !== slotNow) continue;
+        // try/catch POR UNIDADE — mesmo padrao dos outros blocos da pauta: um dado ruim de uma
+        // unidade nao pode calar as outras duas no mesmo tick.
+        try {
+          const _pixChave = `pauta_pix:${unidadeId}:${now.ymd}`;
+          // Marcador PROPRIO (PAUTA_PIX): nunca le nem escreve o marcador da fala de abertura —
+          // os dois blocos tem que poder falhar ou repetir de forma independente, sem um travar
+          // o outro.
+          const { data: jaPublicou, error: erroJaPublicou } = await supabase.from('marker_logs')
+            .select('id').eq('marker_type', 'PAUTA_PIX').like('reason', `${_pixChave}%`)
+            .in('result', ['executed', 'skipped']).limit(1);
+          if (erroJaPublicou) {
+            console.error(`[PautaPix] checagem de idempotencia falhou (${unidadeNome}): ${erroJaPublicou.message}`);
+            continue;
+          }
+          if (jaPublicou && jaPublicou.length) continue;
+
+          const { data: grupo, error: erroGrupo } = await supabase.from('work_groups')
+            .select('id, leader_id').eq('la_report_unidade_id', unidadeId)
+            .not('wa_group_jid', 'is', null).maybeSingle();
+          if (erroGrupo) {
+            console.error(`[PautaPix] busca do grupo falhou (${unidadeNome}): ${erroGrupo.message}`);
+            continue;
+          }
+          if (!grupo) {
+            console.warn(`[PautaPix] nenhum grupo com wa_group_jid vinculado a unidade ${unidadeNome} -- pulando`);
+            continue;
+          }
+
+          const r = await pautaPixDaUnidade({
+            supabase, laReport: laReportClient, unidadeId, unidadeNome,
+            groupId: grupo.id, criadoPor: grupo.leader_id, hoje: now.ymd,
+          });
+          // r.texto nulo so acontece quando a RPC do LA Report falhou (ver pautaPixDaUnidade) — a
+          // fonte nao respondeu, e a regra sagrada vale aqui como em qualquer outro numero desta
+          // casa: nao cobrar o que nao foi medido. mensagemDaUnidade(fonteVelha:true) e o MESMO
+          // texto que a fonte velha usa: nos dois casos nao ha numero pra mostrar.
+          const rpcFalhou = r.texto === null;
+          const texto = rpcFalhou
+            ? _pixPura.mensagemDaUnidade({ unidadeNome, linhas: [], lote: [], fonteVelha: true })
+            : r.texto;
+
+          // GUARDA DE DUPLICATA POR CABECALHO — mesmo padrao da fala de abertura acima: primeira
+          // linha do texto como chave, `like('content', cabecalho%)`, desde o inicio do dia em
+          // BRT. E ela, e nao so o marcador, que impede reenvio no grupo REAL se o marker_logs
+          // falhar depois do insert ter ido.
+          const cabecalhoMsg = String(texto).split('\n')[0];
+          const hojeInicioISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
+          const { data: jaEnviada, error: erroJaEnviada } = await supabase.from('group_chat_messages')
+            .select('id')
+            .eq('group_id', grupo.id).eq('role', 'tom').eq('kind', 'text').eq('channel', 'app')
+            .gte('created_at', hojeInicioISO)
+            .like('content', `${cabecalhoMsg}%`)
+            .limit(1);
+          if (erroJaEnviada) {
+            console.error(`[PautaPix] checagem de mensagem ja enviada falhou (${unidadeNome}): ${erroJaEnviada.message}`);
+            const { error: erroMarkerChkFallback } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_PIX', result: 'fallback',
+              reason: `${_pixChave} checagem de duplicata falhou: ${erroJaEnviada.message}`.slice(0, 300),
+            });
+            if (erroMarkerChkFallback) console.error(`[PautaPix] marker_logs insert (fallback) tambem falhou (${unidadeNome}): ${erroMarkerChkFallback.message}`);
+            continue;
+          }
+          if (jaEnviada && jaEnviada.length) {
+            // Achou o artefato: um tick anterior ja publicou esta mensagem e so o marcador falhou.
+            const { error: erroMarkerSkip } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_PIX', result: 'skipped',
+              reason: `${_pixChave} mensagem ja enviada (achada por conteudo — marcador de um tick anterior deve ter falhado)`.slice(0, 300),
+            });
+            if (erroMarkerSkip) console.error(`[PautaPix] marker_logs insert (skipped) falhou (${unidadeNome}): ${erroMarkerSkip.message}`);
+            continue;
+          }
+
+          const { error: erroMsg } = await supabase.from('group_chat_messages').insert({
+            group_id: grupo.id, sender_id: null, role: 'tom', kind: 'text', content: texto, channel: 'app',
+          });
+          if (erroMsg) {
+            // A mensagem NAO saiu. 'fallback' deixa o proximo tick tentar de novo — so porque a
+            // consulta de idempotencia acima filtra result IN (executed, skipped), igual a fala.
+            console.error(`[PautaPix] envio da mensagem falhou (${unidadeNome}): ${erroMsg.message}`);
+            const { error: erroMarkerFallback } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_PIX', result: 'fallback',
+              reason: `${_pixChave} envio falhou: ${erroMsg.message}`.slice(0, 300),
+            });
+            if (erroMarkerFallback) console.error(`[PautaPix] marker_logs insert (fallback) tambem falhou (${unidadeNome}): ${erroMarkerFallback.message}`);
+            continue;
+          }
+          // 'fallback' quando a RPC falhou OU a fonte esta velha: os dois casos tem que tentar de
+          // novo no proximo tick, e a guarda de cabecalho acima impede repetir a MESMA mensagem de
+          // aviso ("fonte nao atualizou") se ela ja foi publicada. 'executed' so quando o numero
+          // publicado foi de fato medido hoje.
+          const resultado = (rpcFalhou || r.fonteVelha) ? 'fallback' : 'executed';
+          const reason = `${_pixChave} total=${r.total} lote=${r.lote.length} fech=${r.fechadas} carr=${r.carregadas}${r.motivo ? ' erro=' + r.motivo : ''}`.slice(0, 300);
+          const { error: erroMarker } = await supabase.from('marker_logs').insert({
+            marker_type: 'PAUTA_PIX', result: resultado, reason,
+          });
+          if (erroMarker) {
+            console.error(`[PautaPix] ATENCAO -- mensagem enviada mas marker_logs nao gravou (${unidadeNome}), risco de reenvio no proximo tick: ${erroMarker.message}`);
+          }
+        } catch (eUnidade) {
+          console.error(`[PautaPix] ${unidadeNome}: erro:`, eUnidade.message);
+        }
+      }
+    } catch (e) { console.error('[PautaPix] erro (fora do loop por unidade):', e.message); }
   }
 
   // 09:00-19:00, de HORA em HORA — o lembrete da PROXIMA hora no grupo da unidade.
