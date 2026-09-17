@@ -23,6 +23,13 @@ test('dentro da mesma fatia, ordena por nome', () => {
   assert.deepStrictEqual(ordem, ['Ana', 'Zeca']);
 });
 
+test('fatia desconhecida não fura a prioridade: cai depois de todas as fatias conhecidas', () => {
+  const ordem = p.ordenarPorPrioridade([
+    c('pix_recorrente_typo', 'Z'), c('autorizacao_pendente', 'A'), c('sem_historico', 'Y'),
+  ]).map((x) => x.pagador_nome);
+  assert.deepStrictEqual(ordem, ['A', 'Y', 'Z']);
+});
+
 test('o lote do dia respeita o tamanho e mantém a prioridade', () => {
   const linhas = [...Array(30)].map((_, i) => c(i < 3 ? 'autorizacao_pendente' : 'pix_avulso', `N${String(i).padStart(2, '0')}`));
   const lote = p.loteDoDia(linhas, { tamanho: p.LOTE_DIARIO });
@@ -59,6 +66,19 @@ test('mensagem: cabeçalho com total e meta, lote por extenso, resto contado', (
 test('mensagem: fatia sem ninguém não aparece', () => {
   const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [{ pagador_nome: 'X', alunos: [], categoria: 'migrar', fatia: 'pix_avulso', pagador_chave: 'x' }], lote: [] });
   assert.ok(!txt.includes('Cheque'));
+});
+
+test('mensagem: fatia desconhecida não fica escondida, aparece em Sem histórico', () => {
+  const linhas = [{ pagador_chave: 'z', pagador_nome: 'Zeca Typo', alunos: ['Bia'], categoria: 'migrar', fatia: 'pix_recorrente_typo' }];
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: linhas });
+  assert.match(txt, /⚪ \*Sem histórico\* \(1\)\n {3}• Zeca Typo \(Bia\)/);
+});
+
+test('mensagem: fatia desconhecida fora do lote ainda é contada (nada escondido)', () => {
+  const linhas = [{ pagador_chave: 'z', pagador_nome: 'Zeca Typo', alunos: [], categoria: 'migrar', fatia: 'pix_recorrente_typo' }];
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: [] });
+  assert.match(txt, /⚪ Sem histórico \(1\)/);
+  assert.ok(!txt.includes('Zeca Typo'));
 });
 
 test('mensagem: fonte velha não publica número, avisa', () => {

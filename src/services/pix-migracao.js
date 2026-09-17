@@ -16,7 +16,10 @@ const LOTE_DIARIO = 10;
 const TETO_FILHAS = 15;
 const META_YMD = '2026-10-31';
 
-const fatiaDoCliente = (l) => (l.categoria === 'autorizacao_pendente' ? 'autorizacao_pendente' : (l.fatia || 'sem_historico'));
+const fatiaDoCliente = (l) => {
+  if (l.categoria === 'autorizacao_pendente') return 'autorizacao_pendente';
+  return FATIAS.includes(l.fatia) ? l.fatia : 'sem_historico';
+};
 const ordenarPorPrioridade = (linhas) => [...(linhas || [])].sort((a, b) => {
   const d = FATIAS.indexOf(fatiaDoCliente(a)) - FATIAS.indexOf(fatiaDoCliente(b));
   return d !== 0 ? d : String(a.pagador_nome || '').localeCompare(String(b.pagador_nome || ''), 'pt-BR');
