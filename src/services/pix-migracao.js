@@ -105,9 +105,52 @@ function horaDaPautaPix(unidadeNome, diaSemana, { loteUnico, horaAbertura } = {}
   return loteUnico || horaAbertura || null;
 }
 
+// ── O QUE PUBLICAR NO GRUPO, A PARTIR DO RETORNO DO RITUAL (fix round 1 — Critical) ────────────
+// `pautaPixDaUnidade` devolve `texto: null` em QUATRO situações bem diferentes: a RPC do LA
+// Report falhou (`fonteFalhou`), não há cliente a migrar hoje (`semCliente` — sucesso, fila
+// vazia), o painel de tarefas falhou ao CRIAR o pacote (`criarPacote` lançou), ou falhou ao LER o
+// painel (`containersPix` lançou, catch externo do ritual). Só a PRIMEIRA é "a fonte está fora do
+// ar" — as outras três são o painel (nosso lado), não a fonte.
+//
+// O DEFEITO QUE ISTO CORRIGE: antes desta função, o dispatcher tratava QUALQUER `texto === null`
+// como "fonte fora do ar" e publicava "a fonte não atualizou hoje" no grupo REAL. Isso é uma
+// afirmação FALSA toda vez que a fila de uma unidade esvazia (destino do plano, não raro — vai
+// acontecer todo dia que a unidade zerar a migração) ou que o painel tem um bug de escrita/
+// leitura — e nos dois casos o aviso errado ESCONDE o problema real (fila vazia vira "a fonte não
+// respondeu"; um bug de escrita no painel também vira "a fonte não respondeu").
+//
+// Decisão PURA, testável sem tocar o ritual nem o dispatcher: dado o retorno de
+// `pautaPixDaUnidade` — LENDO SÓ OS FLAGS ESTRUTURADOS (`fonteFalhou`, `fonteVelha`,
+// `semCliente`), nunca inspecionando o texto de `motivo` — decide O QUE publicar (ou nada) e QUAL
+// resultado gravar no marcador de idempotência.
+//   fonteFalhou    -> publica o aviso de fonte velha (mesma regra: não cobrar número que não foi
+//                      medido) · result 'fallback' (tenta de novo no próximo tick)
+//   fonteVelha     -> publica o texto que o ritual já preparou (mesmo aviso, já pronto em r.texto)
+//                      · result 'fallback'
+//   semCliente     -> não publica nada — fila vazia é notícia boa, não aviso · result 'skipped'
+//   texto nulo,    -> falha de leitura/escrita do painel: não publica nada (não há o que mostrar,
+//   nenhum dos        e inventar um texto seria mentir) · result 'fallback' (tenta de novo)
+//   anteriores
+//   caso contrário -> publica r.texto tal como veio · result 'executed'
+function decisaoDaPublicacaoPix(r, { unidadeNome }) {
+  if (r.fonteFalhou) {
+    return { texto: mensagemDaUnidade({ unidadeNome, linhas: [], lote: [], fonteVelha: true }), result: 'fallback' };
+  }
+  if (r.fonteVelha) {
+    return { texto: r.texto, result: 'fallback' };
+  }
+  if (r.semCliente) {
+    return { texto: null, result: 'skipped' };
+  }
+  if (r.texto === null) {
+    return { texto: null, result: 'fallback' };
+  }
+  return { texto: r.texto, result: 'executed' };
+}
+
 module.exports = {
   FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
-  horaDaPautaPix,
+  horaDaPautaPix, decisaoDaPublicacaoPix,
 };

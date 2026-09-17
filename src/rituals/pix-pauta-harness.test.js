@@ -181,11 +181,24 @@ test('idempotencia do pix usa marcador PROPRIO (PAUTA_PIX) com a chave pauta_pix
     'o bloco da fala de abertura da anamnese nao pode saber que o pix existe');
 });
 
-test('pix no dispatcher: RPC falhou nunca fica em silencio — publica o aviso de fonte que nao respondeu, nunca um numero', () => {
-  assert.ok(TRECHO_PIX.includes('const rpcFalhou = r.texto === null;'),
-    'a decisao de "RPC falhou" tem que vir do texto nulo devolvido pelo ritual (pautaPixDaUnidade)');
-  assert.ok(TRECHO_PIX.includes('? _pixPura.mensagemDaUnidade({ unidadeNome, linhas: [], lote: [], fonteVelha: true })'),
-    'quando a RPC falha, o pix tem que publicar o MESMO aviso da fonte velha — nunca ficar quieto nem inventar numero');
+test('pix no dispatcher (fix round 1, Critical): a decisao do que publicar vem da funcao PURA decisaoDaPublicacaoPix — nunca mais um "r.texto === null" solto decidindo sozinho no bloco', () => {
+  assert.ok(TRECHO_PIX.includes('_pixPura.decisaoDaPublicacaoPix(r, { unidadeNome })'),
+    'o bloco tem que decidir o texto e o result via decisaoDaPublicacaoPix, nao reimplementar a logica');
+  assert.ok(!TRECHO_PIX.includes('r.texto === null'),
+    'checar "r.texto === null" direto no dispatcher foi o bug do round 1 (Critical): tratava RPC '
+    + 'caida, fila vazia e falha do painel como se fossem a mesma coisa — a decisao agora mora so '
+    + 'na funcao pura, que le fonteFalhou/fonteVelha/semCliente');
+});
+
+test('pix no dispatcher (fix round 1): quando a decisao pura nao devolve texto (fila vazia ou falha do painel), so grava o marcador — sem guarda de cabecalho, sem INSERT em group_chat_messages', () => {
+  const iDesvio = TRECHO_PIX.indexOf('if (texto === null) {');
+  const iGuarda = TRECHO_PIX.indexOf('const cabecalhoMsg = String(texto).split(');
+  const iInsertMsg = TRECHO_PIX.indexOf(".from('group_chat_messages').insert(");
+  assert.notStrictEqual(iDesvio, -1, 'tem que existir um desvio explicito pra quando nao ha texto pra publicar');
+  assert.notStrictEqual(iGuarda, -1);
+  assert.notStrictEqual(iInsertMsg, -1);
+  assert.ok(iDesvio < iGuarda, 'o desvio de texto nulo tem que vir ANTES da guarda de cabecalho');
+  assert.ok(iDesvio < iInsertMsg, 'o desvio de texto nulo tem que vir ANTES do insert em group_chat_messages');
 });
 
 test('pix no dispatcher: publica por group_chat_messages, nunca por whatsapp.sendMessage', () => {

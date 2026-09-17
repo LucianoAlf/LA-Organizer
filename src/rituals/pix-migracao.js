@@ -23,6 +23,18 @@
 // em `public.pix_pauta_vinculo` (task_id -> pagador_chave, unidade_id) no momento em que a filha
 // é criada (ver `vincular` abaixo). O título segue existindo SÓ pra exibição (tituloDaFilha,
 // mensagemDaUnidade) — nunca mais pra casar filha com cliente.
+//
+// CORREÇÃO (fix round 1, achado 3, Critical — Tarefa 5): `texto: null` tem QUATRO causas
+// diferentes (RPC falhou, sem cliente a migrar, criarPacote lançou, containersPix lançou), e só a
+// primeira é "a fonte está fora do ar". O dispatcher da Tarefa 5 tratava as quatro como se fossem
+// a mesma coisa e publicava "a fonte não atualizou hoje" no grupo REAL toda vez que a fila
+// esvaziava ou o painel tinha um bug — uma afirmação FALSA, recorrente, que escondia justamente o
+// defeito que merecia alarme. A correção mora em DOIS lugares: aqui, dois flags ESTRUTURADOS em
+// TODO caminho de retorno (`fonteFalhou`: true só quando a RPC falhou; `semCliente`: true só
+// quando não há cliente a migrar; false nos outros); e em services/pix-migracao.js
+// (decisaoDaPublicacaoPix), que lê só esses flags — nunca o texto de `motivo` — pra decidir o que
+// publicar. Nenhum consumidor deste ritual pode voltar a inferir "fonte caiu" de `texto === null`
+// sozinho: os dois flags são a única fonte de verdade sobre POR QUE não há texto.
 
 const pura = require('../services/pix-migracao');
 const { consultaComRetry } = require('../lib/consulta-com-retry');
@@ -159,9 +171,14 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   const fecharContainer = deps.fecharContainer || ((id) => _fecharContainerPadrao(supabase, id));
   const vincular = deps.vincular || ((vinculos) => _vincularPadrao(supabase, vinculos));
 
+  // fonteFalhou/semCliente: false por padrão (fix round 1, Critical) — só os DOIS caminhos que os
+  // marcam `true` explicitamente (abaixo) representam "fonte fora do ar" e "sem cliente a migrar
+  // hoje". Todo outro caminho de `texto: null` (criarPacote lançou, containersPix lançou) herda
+  // `false` nos dois daqui, e é assim que decisaoDaPublicacaoPix (services/pix-migracao.js)
+  // distingue "a fonte está bem, o painel que falhou" de "a fonte caiu".
   const vazio = {
     criou: false, jaExistia: false, total: 0, lote: [], fechadas: 0, carregadas: 0,
-    texto: null, motivo: null, fonteVelha: false,
+    texto: null, motivo: null, fonteVelha: false, fonteFalhou: false, semCliente: false,
   };
 
   // Sempre checar `error`: RPC com parâmetro errado devolve {data:null,error} e viraria "zero
@@ -169,7 +186,10 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   const { data, error } = await consultaComRetry(() => laReport.rpc('get_pix_migracao_v1',
     { p_unidade_id: unidadeId, p_fatia: null }));
   if (error) {
-    return { ...vazio, motivo: `consulta do LA Report falhou: ${error.message}` };
+    // Único caminho que marca fonteFalhou: true — é o único que significa "a RPC do LA Report não
+    // respondeu", ao contrário de fonte velha (respondeu, mas com dado requentado) ou de qualquer
+    // falha do painel (a RPC respondeu bem, o problema é nosso).
+    return { ...vazio, fonteFalhou: true, motivo: `consulta do LA Report falhou: ${error.message}` };
   }
 
   const todasAsLinhas = data || [];
@@ -232,6 +252,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
         criou: false, jaExistia: true, total, lote, fechadas, carregadas: carregadas.length,
         texto: pura.mensagemDaUnidade({ unidadeNome, linhas, lote, fonteVelha: false }),
         motivo: avisos.length ? avisos.join('; ') : null, fonteVelha: false,
+        fonteFalhou: false, semCliente: false,
       };
     }
 
@@ -247,10 +268,14 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
 
     if (!lote.length) {
       // Fix round 1 (achado 2): os avisos já acumulados (ex.: falha ao fechar uma filha velha)
-      // não podem sumir só porque o resultado do dia é "ninguém a migrar".
+      // não podem sumir só porque o resultado do dia é "ninguém a migrar". Único caminho que
+      // marca semCliente: true — sucesso (a fonte respondeu, o painel foi lido/escrito sem
+      // erro), só que não há ninguém a migrar hoje; decisaoDaPublicacaoPix lê este flag pra NÃO
+      // publicar o aviso de fonte velha aqui (fila vazia é notícia boa, não falha).
       return {
         criou: false, jaExistia: false, total, lote: [], fechadas, carregadas: carregadas.length,
         texto: null, motivo: ['sem cliente a migrar', ...avisos].join('; '), fonteVelha: false,
+        fonteFalhou: false, semCliente: true,
       };
     }
 
@@ -267,12 +292,14 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
         },
       });
     } catch (e) {
-      // Fix round 1 (achado 2): idem — avisos anteriores entram no motivo também aqui.
+      // Fix round 1 (achado 2): idem — avisos anteriores entram no motivo também aqui. Falha de
+      // ESCRITA do painel (a fonte respondeu bem) — nem fonteFalhou nem semCliente: `texto: null`
+      // aqui significa "não consegui nem tentar mostrar o lote", não "não há nada a mostrar".
       return {
         criou: false, jaExistia: false, total, lote: [], fechadas, carregadas: carregadas.length,
         texto: null,
         motivo: [`não consegui criar o pacote: ${(e && e.message) || String(e)}`, ...avisos].join('; '),
-        fonteVelha: false,
+        fonteVelha: false, fonteFalhou: false, semCliente: false,
       };
     }
 
@@ -295,10 +322,13 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       criou: true, jaExistia: false, total, lote, fechadas, carregadas: carregadas.length,
       texto: pura.mensagemDaUnidade({ unidadeNome, linhas, lote, fonteVelha: false }),
       motivo: avisos.length ? avisos.join('; ') : null, fonteVelha: false,
+      fonteFalhou: false, semCliente: false,
     };
   } catch (e) {
     // Falha ao LER o painel (containersPix, que lança em erro do Supabase por não ter outro jeito
     // de sinalizar "não consegui nem checar o que já existe") cai aqui — nunca sobe pro chamador.
+    // Falha de LEITURA do painel (a fonte respondeu bem) — nem fonteFalhou nem semCliente, os dois
+    // já vêm `false` de `vazio`.
     return { ...vazio, total, motivo: `falha ao processar o painel do PIX: ${(e && e.message) || String(e)}` };
   }
 }

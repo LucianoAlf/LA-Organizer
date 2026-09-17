@@ -56,6 +56,9 @@ test('monta o lote do dia: cria pacote com as filhas na ordem (autorização pen
   assert.match(out.texto, /💠 \*PIX automático — Barra\*/);
   assert.deepStrictEqual(vinculados.map((v) => v.pagador_chave), ['k-Bia', 'k-Ana']);
   assert.ok(vinculados.every((v) => v.unidade_id === 'u1' && v.task_id));
+  // fix round 1 (Critical): sucesso com texto não é nem fonte falhou nem sem cliente.
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
 });
 
 // F2 ────────────────────────────────────────────────────────────────────────────────────────
@@ -74,6 +77,11 @@ test('fonte falhou: não mexe no painel e devolve o motivo', async () => {
   assert.strictEqual(out.criou, false);
   assert.strictEqual(out.total, 0);
   assert.match(out.motivo, /LA Report/);
+  // fix round 1 (Critical): ÚNICO caminho que marca fonteFalhou — é o que decisaoDaPublicacaoPix
+  // usa pra saber que É a fonte que caiu, não o painel.
+  assert.strictEqual(out.fonteFalhou, true);
+  assert.strictEqual(out.semCliente, false);
+  assert.strictEqual(out.texto, null);
 });
 
 // F3 ────────────────────────────────────────────────────────────────────────────────────────
@@ -94,6 +102,9 @@ test('fonte velha (mais de 48h): não mexe no painel, avisa e não cria pacote',
   assert.strictEqual(out.fonteVelha, true);
   assert.strictEqual(out.criou, false);
   assert.match(out.texto, /não atualizou/i);
+  // fix round 1 (Critical): fonte velha é dado requentado, NÃO é fonte falhou.
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
 });
 
 test('sem nenhum dado_atualizado_em recente entre as linhas: conta como fonte velha (inclusive nulo)', async () => {
@@ -103,6 +114,8 @@ test('sem nenhum dado_atualizado_em recente entre as linhas: conta como fonte ve
     deps: { agora: agoraFixo, containersPix: nuncaChama('containersPix') },
   });
   assert.strictEqual(out.fonteVelha, true);
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
 });
 
 // F4 ────────────────────────────────────────────────────────────────────────────────────────
@@ -136,6 +149,8 @@ test('pacote de ontem: quem continua na fonte (por pagador_chave) é carregado (
   assert.strictEqual(out.fechadas, 1);
   assert.strictEqual(out.criou, true);
   assert.match(criadas[0].title, /^PIX automático — Ana/, 'carregada de ontem entra primeiro no lote de hoje');
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
 });
 
 // F5 ────────────────────────────────────────────────────────────────────────────────────────
@@ -166,6 +181,8 @@ test('pacote de hoje já existe: não cria; fecha (done) só quem saiu da fonte 
   assert.strictEqual(out.criou, false);
   assert.strictEqual(out.fechadas, 1);
   assert.strictEqual(out.lote.length, 1);
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
 });
 
 // F6 ────────────────────────────────────────────────────────────────────────────────────────
@@ -192,6 +209,8 @@ test('teto de sanidade: 12 carregados + 40 na fonte nunca cria mais que TETO_FIL
   });
   assert.strictEqual(n, pura.TETO_FILHAS);
   assert.strictEqual(out.carregadas, 12);
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
 });
 
 // F7 ────────────────────────────────────────────────────────────────────────────────────────
@@ -208,6 +227,11 @@ test('ninguém a migrar: não cria pacote', async () => {
   assert.strictEqual(out.criou, false);
   assert.strictEqual(out.total, 0);
   assert.strictEqual(out.motivo, 'sem cliente a migrar');
+  // fix round 1 (Critical): ÚNICO caminho que marca semCliente — sucesso, fila vazia, não é
+  // "fonte fora do ar".
+  assert.strictEqual(out.semCliente, true);
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.texto, null);
 });
 
 // Achado 2 (fix round 1) — avisos de escrita nunca somem do motivo ────────────────────────────
@@ -230,6 +254,8 @@ test('ninguém a migrar, mas uma filha velha não fechou: o aviso aparece no mot
   });
   assert.strictEqual(out.criou, false);
   assert.strictEqual(out.motivo, 'sem cliente a migrar; não consegui fechar a filha "PIX automático — Zeca"');
+  assert.strictEqual(out.semCliente, true, 'sem cliente a migrar continua semCliente mesmo com aviso de escrita junto');
+  assert.strictEqual(out.fonteFalhou, false);
 });
 
 test('criarPacote lança: o(s) aviso(s) de fechamento acumulados até ali aparecem no motivo junto do erro', async () => {
@@ -251,6 +277,28 @@ test('criarPacote lança: o(s) aviso(s) de fechamento acumulados até ali aparec
   });
   assert.strictEqual(out.criou, false);
   assert.match(out.motivo, /^não consegui criar o pacote: falhou de propósito; não consegui fechar a filha "PIX automático — Zeca"$/);
+  // fix round 1 (Critical): criarPacote lançou é falha de ESCRITA do painel — a fonte respondeu
+  // bem (havia cliente pra migrar). Nem fonteFalhou nem semCliente.
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
+  assert.strictEqual(out.texto, null);
+});
+
+// Achado 3 (fix round 1, Critical) — falha de LEITURA do painel também não é fonte falhou ──────
+test('containersPix lança (falha de leitura do painel): não é fonte falhou nem sem cliente — texto nulo, os dois flags false', async () => {
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo,
+      containersPix: async () => { throw new Error('conexão recusada'); },
+    },
+  });
+  assert.strictEqual(out.criou, false);
+  assert.strictEqual(out.texto, null);
+  assert.match(out.motivo, /falha ao processar o painel do PIX: conexão recusada/);
+  assert.strictEqual(out.fonteFalhou, false, 'a fonte respondeu bem — quem falhou foi a leitura do painel');
+  assert.strictEqual(out.semCliente, false);
 });
 
 // Achado 1 (fix round 1) — casar por pagador_chave, nunca por título ──────────────────────────
@@ -279,6 +327,8 @@ test('reproduz (a): alunos mudaram (título mudou), mas a chave continua igual �
   assert.deepStrictEqual(fechos, [['f-ana', 'cancelled']], 'casou pela chave, não pelo título — nunca virou done');
   assert.strictEqual(out.carregadas, 1);
   assert.strictEqual(out.lote[0].pagador_chave, 'k-Ana');
+  assert.strictEqual(out.fonteFalhou, false);
+  assert.strictEqual(out.semCliente, false);
 });
 
 test('reproduz (b): dois clientes com título idêntico no pacote de ontem — quem saiu fecha done, quem ficou é cancelado e carregado, sem inversão nem duplicação', async () => {

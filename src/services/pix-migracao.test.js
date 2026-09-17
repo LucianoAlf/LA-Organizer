@@ -158,3 +158,53 @@ test('horaDaPautaPix: domingo nunca publica, mesmo com loteUnico fixo', () => {
 test('horaDaPautaPix: unidade desconhecida sem horário de abertura devolve null', () => {
   assert.strictEqual(p.horaDaPautaPix('Unidade Nova', 3, { loteUnico: undefined, horaAbertura: null }), null);
 });
+
+// ── decisaoDaPublicacaoPix (fix round 1 — Critical) ─────────────────────────────────────────
+// `rBase` tem a MESMA forma que pautaPixDaUnidade devolve (src/rituals/pix-migracao.js): os dois
+// flags novos (fonteFalhou, semCliente) presentes e false por padrão, igual ao objeto `vazio` do
+// ritual — os testes abaixo só viram o que muda em cada caso, igual o ritual faria.
+const rBase = {
+  criou: false, jaExistia: false, total: 0, lote: [], fechadas: 0, carregadas: 0,
+  texto: null, motivo: null, fonteVelha: false, fonteFalhou: false, semCliente: false,
+};
+
+test('decisaoDaPublicacaoPix: fonteFalhou (RPC caiu) publica o aviso de fonte velha e tenta de novo (fallback)', () => {
+  const d = p.decisaoDaPublicacaoPix(
+    { ...rBase, fonteFalhou: true, motivo: 'consulta do LA Report falhou: timeout' },
+    { unidadeNome: 'Barra' },
+  );
+  assert.match(d.texto, /não atualizou/i);
+  assert.strictEqual(d.result, 'fallback');
+});
+
+test('decisaoDaPublicacaoPix: fonteVelha publica o texto que o ritual já preparou (fallback)', () => {
+  const textoPronto = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [], lote: [], fonteVelha: true });
+  const d = p.decisaoDaPublicacaoPix({ ...rBase, fonteVelha: true, texto: textoPronto }, { unidadeNome: 'Barra' });
+  assert.strictEqual(d.texto, textoPronto);
+  assert.strictEqual(d.result, 'fallback');
+});
+
+test('decisaoDaPublicacaoPix: semCliente (fila vazia) não publica nada — notícia boa, não aviso (skipped)', () => {
+  const d = p.decisaoDaPublicacaoPix(
+    { ...rBase, semCliente: true, motivo: 'sem cliente a migrar' },
+    { unidadeNome: 'Barra' },
+  );
+  assert.strictEqual(d.texto, null);
+  assert.strictEqual(d.result, 'skipped');
+});
+
+test('decisaoDaPublicacaoPix: falha do painel (texto nulo, nem fonteFalhou nem semCliente) não publica nada, tenta de novo (fallback)', () => {
+  const d = p.decisaoDaPublicacaoPix(
+    { ...rBase, motivo: 'não consegui criar o pacote: boom' },
+    { unidadeNome: 'Barra' },
+  );
+  assert.strictEqual(d.texto, null);
+  assert.strictEqual(d.result, 'fallback');
+});
+
+test('decisaoDaPublicacaoPix: sucesso publica o texto do ritual tal como veio (executed)', () => {
+  const textoReal = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [], lote: [] });
+  const d = p.decisaoDaPublicacaoPix({ ...rBase, criou: true, texto: textoReal }, { unidadeNome: 'Barra' });
+  assert.strictEqual(d.texto, textoReal);
+  assert.strictEqual(d.result, 'executed');
+});

@@ -4861,14 +4861,26 @@ async function run(opts = {}) {
             supabase, laReport: laReportClient, unidadeId, unidadeNome,
             groupId: grupo.id, criadoPor: grupo.leader_id, hoje: now.ymd,
           });
-          // r.texto nulo so acontece quando a RPC do LA Report falhou (ver pautaPixDaUnidade) — a
-          // fonte nao respondeu, e a regra sagrada vale aqui como em qualquer outro numero desta
-          // casa: nao cobrar o que nao foi medido. mensagemDaUnidade(fonteVelha:true) e o MESMO
-          // texto que a fonte velha usa: nos dois casos nao ha numero pra mostrar.
-          const rpcFalhou = r.texto === null;
-          const texto = rpcFalhou
-            ? _pixPura.mensagemDaUnidade({ unidadeNome, linhas: [], lote: [], fonteVelha: true })
-            : r.texto;
+          // A decisao do QUE publicar (e SE publica algo) e PURA e mora em pix-migracao.js —
+          // decisaoDaPublicacaoPix (fix round 1, Critical). r.texto nulo tem TRES causas bem
+          // diferentes (RPC do LA Report falhou, sem cliente a migrar hoje, ou o painel de
+          // tarefas falhou ao ler/escrever) e so a primeira e "fonte fora do ar": tratar as
+          // outras duas como fonte velha era o defeito — publicava um aviso FALSO no grupo real
+          // toda vez que a fila esvaziava ou o painel tinha um bug.
+          const { texto, result: resultadoPublicacao } = _pixPura.decisaoDaPublicacaoPix(r, { unidadeNome });
+          const reason = `${_pixChave} total=${r.total} lote=${r.lote.length} fech=${r.fechadas} carr=${r.carregadas}${r.motivo ? ' erro=' + r.motivo : ''}`.slice(0, 300);
+
+          if (texto === null) {
+            // Nada pra publicar: sem cliente a migrar hoje (skipped, silencio e saude) ou falha
+            // de leitura/escrita do painel (fallback, tenta de novo no proximo tick). So o
+            // marcador grava — sem guarda de cabecalho nem INSERT em group_chat_messages, porque
+            // nao ha texto nenhum pra publicar nem duplicar.
+            const { error: erroMarkerSemTexto } = await supabase.from('marker_logs').insert({
+              marker_type: 'PAUTA_PIX', result: resultadoPublicacao, reason,
+            });
+            if (erroMarkerSemTexto) console.error(`[PautaPix] marker_logs insert falhou (${unidadeNome}): ${erroMarkerSemTexto.message}`);
+            continue;
+          }
 
           // GUARDA DE DUPLICATA POR CABECALHO — mesmo padrao da fala de abertura acima: primeira
           // linha do texto como chave, `like('content', cabecalho%)`, desde o inicio do dia em
@@ -4915,14 +4927,8 @@ async function run(opts = {}) {
             if (erroMarkerFallback) console.error(`[PautaPix] marker_logs insert (fallback) tambem falhou (${unidadeNome}): ${erroMarkerFallback.message}`);
             continue;
           }
-          // 'fallback' quando a RPC falhou OU a fonte esta velha: os dois casos tem que tentar de
-          // novo no proximo tick, e a guarda de cabecalho acima impede repetir a MESMA mensagem de
-          // aviso ("fonte nao atualizou") se ela ja foi publicada. 'executed' so quando o numero
-          // publicado foi de fato medido hoje.
-          const resultado = (rpcFalhou || r.fonteVelha) ? 'fallback' : 'executed';
-          const reason = `${_pixChave} total=${r.total} lote=${r.lote.length} fech=${r.fechadas} carr=${r.carregadas}${r.motivo ? ' erro=' + r.motivo : ''}`.slice(0, 300);
           const { error: erroMarker } = await supabase.from('marker_logs').insert({
-            marker_type: 'PAUTA_PIX', result: resultado, reason,
+            marker_type: 'PAUTA_PIX', result: resultadoPublicacao, reason,
           });
           if (erroMarker) {
             console.error(`[PautaPix] ATENCAO -- mensagem enviada mas marker_logs nao gravou (${unidadeNome}), risco de reenvio no proximo tick: ${erroMarker.message}`);
