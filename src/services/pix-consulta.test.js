@@ -71,6 +71,34 @@ test('C1: sem token de assunto, marcador forte de lista também não intercepta'
   assert.strictEqual(c.detectarPedido('me manda a lista completa'), null);
 });
 
+// ── "migrar" também é assunto (follow-up do C1) ───────────────────────────────────────────────
+// O verbo é específico o bastante nestes grupos, mas SOZINHO é ambíguo ("vou migrar o cadastro
+// do aluno pro app"). Por isso ele vale como assunto, e a leitura da fonte só abre quando a fala
+// TAMBÉM pede lista ou quantidade — os outros portões do C1 continuam de pé.
+test('migrar: "quantos faltam pra migrar?" traz os números, sem interceptar', () => {
+  assert.deepStrictEqual(c.detectarPedido('quantos faltam pra migrar?'), { tipo: 'numeros', alvo: 'pix' });
+  assert.strictEqual(c.precisaDeNumeros('quantos faltam pra migrar?'), true);
+});
+
+test('migrar: "me manda a lista de quem falta migrar" intercepta como lista do PIX', () => {
+  assert.deepStrictEqual(c.detectarPedido('me manda a lista de quem falta migrar'), { tipo: 'lista', alvo: 'pix' });
+  assert.strictEqual(c.precisaDeNumeros('me manda a lista de quem falta migrar'), true);
+});
+
+test('migrar: uso do verbo em OUTRO assunto não intercepta e não lê a fonte', () => {
+  assert.strictEqual(c.detectarPedido('vou migrar o cadastro do aluno pro app'), null);
+  assert.strictEqual(c.precisaDeNumeros('vou migrar o cadastro do aluno pro app'), false);
+});
+
+test('migrar: as outras formas também valem, e "migração" (substantivo) segue forte sozinha', () => {
+  assert.strictEqual((c.detectarPedido('quantos ainda não migrado?') || {}).alvo, 'pix');
+  // "migrados" já era recorte de categoria e continua sendo — o token novo não atropela isso
+  assert.strictEqual((c.detectarPedido('quantos migrados?') || {}).alvo, 'ja_migrou');
+  // substantivo: abre a leitura mesmo sem marcador de quantidade/lista (fala de status)
+  assert.strictEqual(c.precisaDeNumeros('como tá a migração?'), true);
+  assert.strictEqual(c.precisaDeNumeros('a migração vai bem'), true);
+});
+
 // ── as falas legítimas continuam funcionando ──────────────────────────────────────────────────
 test('frase real do caso: "me manda a lista completa do pix avulso" -> lista de pix_avulso', () => {
   assert.deepStrictEqual(c.detectarPedido('me manda a lista completa do pix avulso'),

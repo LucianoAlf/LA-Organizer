@@ -39,10 +39,18 @@ function _norm(s) {
 // LLM, que tem a mensagem da pauta no histórico.
 // (Os tokens são testados sobre o texto JÁ NORMALIZADO — "píx"→"pix", "automático"→"automatico",
 // "migração"→"migracao" —, por isso não há problema de `\b` colado em vogal acentuada.)
-const TOKEN_PIX = /\b(pix|automatico|migracao)\b/;
+// FOLLOW-UP DO C1 (decisao do dono): o VERBO migrar tambem e assunto — "quantos faltam pra
+// migrar?" e "lista de quem falta migrar" sao as falas naturais do time. Mas o verbo sozinho e
+// ambiguo fora do PIX ("vou migrar o cadastro do aluno pro app"), entao ele entra como assunto
+// FRACO: vale pra escolher o alvo, e so abre a leitura da fonte quando a fala TAMBEM pede lista
+// ou quantidade (ver precisaDeNumeros). O substantivo "migracao" segue FORTE — quem diz "como ta
+// a migracao?" esta falando desta migracao e de mais nada.
+const TOKEN_PIX_FORTE = /\b(pix|automatico|migracao)\b/;
+const TOKEN_PIX_VERBO = /\b(migrar|migra|migrado|migrados)\b/;
 const TOKEN_ANAMNESE = /\banamneses?\b/;
 const TOKEN_CONTRATO = /\bcontratos?\b/;
-const temAssunto = (t) => TOKEN_PIX.test(t) || TOKEN_ANAMNESE.test(t) || TOKEN_CONTRATO.test(t);
+const TOKEN_PIX = { test: (t) => TOKEN_PIX_FORTE.test(t) || TOKEN_PIX_VERBO.test(t) };
+const temAssuntoForte = (t) => TOKEN_PIX_FORTE.test(t) || TOKEN_ANAMNESE.test(t) || TOKEN_CONTRATO.test(t);
 
 // FATIAS E CATEGORIAS — só refinam o alvo DENTRO da família PIX. `cartao_avulso` vem antes de
 // `pix_avulso` de propósito: "cartão avulso"/"maquininha" contém "avulso", e sem a precedência a
@@ -107,7 +115,11 @@ function precisaDeNumeros(texto) {
   // read" para "cadastrei o fulano no automático mas não achei o nome dele").
   if (pareceFalaDeCadastro(texto)) return false;
   const t = _norm(texto);
-  return !!t && temAssunto(t);
+  if (!t) return false;
+  if (temAssuntoForte(t)) return true;
+  // So o verbo "migrar": ambiguo por si ("vou migrar o cadastro do aluno pro app"). Abre a
+  // leitura apenas quando a fala pede lista ou quantidade — os portoes do C1 seguem de pe.
+  return TOKEN_PIX_VERBO.test(t) && (RE_LISTA.test(t) || RE_NUMEROS.test(t));
 }
 
 const TITULO_EXTRA = {

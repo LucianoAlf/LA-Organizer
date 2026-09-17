@@ -391,6 +391,41 @@ test('C2: em "tudo" com o PIX fora, anamnese e contrato ainda saem e a última m
   assert.match(p[p.length - 1], /não consegui ler/i);
 });
 
+// ── "migrar" como assunto, pelo orquestrador (leitura de fonte de verdade) ───────────────────
+test('migrar: "quantos faltam pra migrar?" LÊ a fonte e injeta os números, sem postar nada', async () => {
+  const [p, postar] = postados();
+  const r = await atender({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'quantos faltam pra migrar?',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, false);
+  assert.strictEqual(p.length, 0);
+  assert.match(r.numerosContext, /faltam migrar 4/);
+});
+
+test('migrar: "me manda a lista de quem falta migrar" INTERCEPTA com a lista do PIX', async () => {
+  const [p, postar] = postados();
+  const r = await atender({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'me manda a lista de quem falta migrar',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, true);
+  assert.strictEqual(p.length, 1);
+  assert.match(p[0], /PIX automático — quem falta migrar — Barra/);
+});
+
+test('migrar: verbo em outro assunto ("vou migrar o cadastro do aluno pro app") não lê a fonte', async () => {
+  const [p, postar] = postados();
+  const r = await atender({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'vou migrar o cadastro do aluno pro app',
+    hoje: '2026-09-17', postar,
+    deps: { rpcPix: async () => { throw new Error('leu a fonte à toa'); }, rpcSituacao: async () => { throw new Error('leu a fonte à toa'); }, retry: semRetry },
+  });
+  assert.strictEqual(r.tratou, false);
+  assert.strictEqual(r.numerosContext, '');
+  assert.strictEqual(p.length, 0);
+});
+
 test('GATE BARATO: mensagem sem nenhum dos assuntos NÃO lê a fonte', async () => {
   const [, postar] = postados();
   const r = await f.atenderPedidoNoGrupo({
