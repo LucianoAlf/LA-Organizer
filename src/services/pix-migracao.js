@@ -21,6 +21,9 @@ const META_YMD = '2026-10-31';
 // é PROGRESSO. Durante esta carência o cliente sai do lote e da seção 🔵 (fica só contado em ⏳);
 // passados 35 dias sem cobrança, volta a ser 🔵 "Cadastrados sem cobrança" normal.
 const CARENCIA_PRIMEIRA_COBRANCA_DIAS = 35;
+// R1 (re-revisão): a transição também é procurada nos vínculos `migrar` ainda sem transicao_em de
+// QUALQUER filha (inclusive a que o atalho já baixou) criados nesta janela.
+const JANELA_VINCULO_SEM_TRANSICAO_DIAS = 60;
 
 const fatiaDoCliente = (l) => {
   if (l.categoria === 'autorizacao_pendente') return 'autorizacao_pendente';
@@ -281,7 +284,7 @@ function decisaoDaPublicacaoPix(r, { unidadeNome }) {
 }
 
 module.exports = {
-  FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD, CARENCIA_PRIMEIRA_COBRANCA_DIAS,
+  FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD, CARENCIA_PRIMEIRA_COBRANCA_DIAS, JANELA_VINCULO_SEM_TRANSICAO_DIAS,
   somaDiasYmd: _somaDiasYmd,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,

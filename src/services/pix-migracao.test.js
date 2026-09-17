@@ -146,6 +146,7 @@ test('I2: mensagem — aguardandoCobranca > 0 vira a linha "⏳ Aguardando 1ª c
 
 test('I2: carência de 35 dias e soma de dias exportadas pra camada do ritual', () => {
   assert.strictEqual(p.CARENCIA_PRIMEIRA_COBRANCA_DIAS, 35);
+  assert.strictEqual(p.JANELA_VINCULO_SEM_TRANSICAO_DIAS, 60, 'R1: vínculos migrar sem transição criados nos últimos 60 dias');
   assert.strictEqual(p.somaDiasYmd('2026-09-16', -34), '2026-08-13');
 });
 

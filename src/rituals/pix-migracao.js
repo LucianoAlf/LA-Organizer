@@ -117,8 +117,12 @@ const _id8 = (id) => String(id == null ? '' : id).slice(0, 8);
 // deps.transicoesRecentes({ unidadeId, desdeYmd }) -> [{ pagador_chave, transicao_em }]   (I2)
 //   pix_pauta_vinculo com transicao_em >= desdeYmd. PODE lançar — erro vira aviso em `motivo` e
 //   NÃO exclui ninguém (falha-aberta, mesma regra dos informados).
-// deps.marcarTransicao({ taskId, hoje })      -> boolean   grava transicao_em = hoje no vínculo
-//   da filha (só se ainda estiver nulo); nunca lança.
+// deps.vinculosSemTransicao({ unidadeId, desdeYmd }) -> [{ task_id, pagador_chave }]   (R1)
+//   pix_pauta_vinculo da unidade com categoria_origem 'migrar', transicao_em nulo e created_at >=
+//   desdeYmd — de filha em QUALQUER status (inclusive a baixada pelo atalho). PODE lançar — erro
+//   vira aviso em `motivo` e a execução segue sem esta leitura (falha-aberta).
+// deps.marcarTransicao({ taskIds, hoje })     -> boolean   grava transicao_em = hoje nos vínculos
+//   dessas filhas (só onde ainda está nulo), num único UPDATE; nunca lança.
 
 // ── deps padrão (Supabase real) ──────────────────────────────────────────────────────────────
 // Todas fecham sobre `supabase` por closure — mesmo padrão de `criarPacote` em
@@ -218,12 +222,26 @@ async function _transicoesRecentesPadrao(sb, { unidadeId, desdeYmd }) {
   return data || [];
 }
 
-// I2: grava transicao_em no vínculo da filha — só se ainda estiver nulo (uma segunda tentativa não
-// empurra a data pra frente e não encurta a carência). Nunca lança: erro vira `false`.
-async function _marcarTransicaoPadrao(sb, { taskId, hoje }) {
+// R1: vínculos `migrar` ainda sem transição, de filha em QUALQUER status (o vínculo não tem status:
+// a filha baixada pelo atalho continua aqui). Lança em erro do Supabase (falha-aberta no chamador).
+async function _vinculosSemTransicaoPadrao(sb, { unidadeId, desdeYmd }) {
+  const { data, error } = await sb.from('pix_pauta_vinculo').select('task_id, pagador_chave')
+    .eq('unidade_id', unidadeId).eq('categoria_origem', 'migrar').is('transicao_em', null)
+    .gte('created_at', desdeYmd);
+  if (error) throw new Error(`vinculosSemTransicao: ${error.message}`);
+  return data || [];
+}
+
+// I2/R1: grava transicao_em nos vínculos das filhas — só onde ainda está nulo (uma segunda tentativa
+// não empurra a data pra frente e não estica a carência). Um único UPDATE por cliente: todos os
+// vínculos dele ganham a MESMA data, senão uma sobra regravada no dia seguinte esticaria a carência.
+// Nunca lança: erro vira `false`.
+async function _marcarTransicaoPadrao(sb, { taskIds, hoje }) {
+  const ids = (taskIds || []).filter(Boolean);
+  if (!ids.length) return true;
   const { error } = await sb.from('pix_pauta_vinculo').update({ transicao_em: hoje })
-    .eq('task_id', taskId).is('transicao_em', null);
-  if (error) { console.error(`[PixMigracao] marcarTransicao falhou id=${taskId}: ${error.message}`); return false; }
+    .in('task_id', ids).is('transicao_em', null);
+  if (error) { console.error(`[PixMigracao] marcarTransicao falhou ids=${ids.map(_id8).join(',')}: ${error.message}`); return false; }
   return true;
 }
 
@@ -239,6 +257,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   const informados = deps.informados || ((arg) => _informadosPadrao(supabase, arg));
   const transicoesRecentes = deps.transicoesRecentes || ((arg) => _transicoesRecentesPadrao(supabase, arg));
   const marcarTransicao = deps.marcarTransicao || ((arg) => _marcarTransicaoPadrao(supabase, arg));
+  const vinculosSemTransicao = deps.vinculosSemTransicao || ((arg) => _vinculosSemTransicaoPadrao(supabase, arg));
 
   // fonteFalhou/semCliente: false por padrão (fix round 1, Critical) — só os DOIS caminhos que os
   // marcam `true` explicitamente (abaixo) representam "fonte fora do ar" e "sem cliente a migrar
@@ -330,6 +349,41 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     avisos.push(`não consegui ler as transições recentes (carência da 1ª cobrança): ${(e && e.message) || String(e)}`);
   }
 
+  // ── TRANSIÇÃO DE QUEM JÁ NÃO TEM FILHA PENDENTE (R1, re-revisão) ───────────────────────────
+  // O caminho mais comum é o atalho: a equipe avisa no grupo, a filha fecha `done` NA HORA, e a
+  // fonte só muda pra autorizacao_pendente dias depois. Olhando só filha pendente, a transição nunca
+  // era gravada: dias 1–6 o cliente ficava fora como "informado", no dia 7 voltava como 🔵 no topo
+  // do lote e, a partir daí, a filha nova nascia com origem autorizacao_pendente (nunca mais
+  // "transição") e era carregada todo dia até a 1ª cobrança — travando o lote. Por isso, A CADA
+  // execução: vínculos `migrar` sem transicao_em (filha em qualquer status, criados nos últimos
+  // JANELA_VINCULO_SEM_TRANSICAO_DIAS dias) cujo cliente a fonte AGORA mostra em
+  // autorizacao_pendente -> grava transicao_em = hoje (todos os vínculos do cliente num único
+  // UPDATE) e o cliente já entra na carência nesta execução, mesmo que a gravação falhe (a próxima
+  // execução acha o mesmo vínculo ainda nulo e tenta de novo). Erro na leitura: falha-aberta.
+  const todasPorChave = new Map(todasAsLinhas.filter((l) => l && l.pagador_chave).map((l) => [l.pagador_chave, l]));
+  const tentouTransicao = new Set(); // task_ids cuja transição esta execução já tentou gravar
+  try {
+    const desdeVinculo = pura.somaDiasYmd(hoje, -pura.JANELA_VINCULO_SEM_TRANSICAO_DIAS);
+    const vinculosSemT = await vinculosSemTransicao({ unidadeId, desdeYmd: desdeVinculo });
+    const porCliente = new Map();
+    for (const v of vinculosSemT || []) {
+      if (!v || !v.task_id || !v.pagador_chave) continue;
+      const naFonte = todasPorChave.get(v.pagador_chave);
+      if (!naFonte || naFonte.categoria !== 'autorizacao_pendente') continue;
+      if (!porCliente.has(v.pagador_chave)) porCliente.set(v.pagador_chave, []);
+      porCliente.get(v.pagador_chave).push(v.task_id);
+    }
+    for (const [chave, taskIds] of porCliente) {
+      carenciaSet.add(chave);
+      taskIds.forEach((id) => tentouTransicao.add(id));
+      if (!(await marcarTransicao({ taskIds, hoje }))) {
+        avisos.push(`não consegui gravar a transição da(s) filha(s) ${taskIds.map(_id8).join(', ')}`);
+      }
+    }
+  } catch (e) {
+    avisos.push(`não consegui ler os vínculos sem transição: ${(e && e.message) || String(e)}`);
+  }
+
   // Todo retorno depois daqui sai por este molde — os avisos acumulados SEMPRE entram no motivo.
   const retorno = (campos) => ({ ...vazio, total, voltaram, informadosRecentes, ...campos });
   const motivoCom = (principal) => [principal, ...avisos].filter(Boolean).join('; ') || null;
@@ -339,10 +393,10 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   try {
     const containers = await containersPix({ groupId });
 
-    // Transições DESTA execução: filha pendente (de qualquer pacote) cujo cliente tinha
-    // categoria_origem 'migrar' e a fonte AGORA mostra em 'autorizacao_pendente' — foi cadastrado.
-    // O cliente já entra na carência hoje (antes mesmo de a gravação chegar ao banco).
-    const todasPorChave = new Map(todasAsLinhas.filter((l) => l && l.pagador_chave).map((l) => [l.pagador_chave, l]));
+    // Transições DESTA execução nas filhas PENDENTES (de qualquer pacote): cliente com
+    // categoria_origem 'migrar' que a fonte AGORA mostra em 'autorizacao_pendente' — foi
+    // cadastrado. Define o destino da filha (`done`); a gravação normalmente já foi feita acima
+    // (R1) — só é tentada de novo aqui se a leitura dos vínculos falhou.
     const transicaoIds = new Set();
     for (const c of containers) {
       for (const f of c.filhas || []) {
@@ -385,9 +439,10 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
         avisos.push(`não consegui cancelar a filha ${_id8(f.id)}`);
         return false;
       }
-      if (destino === 'transicao' && !(await marcarTransicao({ taskId: f.id, hoje }))) {
-        // A filha fecha mesmo assim (o cadastro aconteceu); só a carência dos próximos dias fica
-        // sem registro — por isso o aviso.
+      if (destino === 'transicao' && !tentouTransicao.has(f.id)
+        && !(await marcarTransicao({ taskIds: [f.id], hoje }))) {
+        // A filha fecha mesmo assim (o cadastro aconteceu). O vínculo fica com transicao_em nulo e
+        // a próxima execução regrava pelo caminho R1 (vínculo sem transição, qualquer status).
         avisos.push(`não consegui gravar a transição da filha ${_id8(f.id)}`);
       }
       const status = (destino === 'transicao' || destino === 'migrou' || destino === 'carencia') ? 'done' : 'cancelled';

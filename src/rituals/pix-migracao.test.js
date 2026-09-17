@@ -35,7 +35,7 @@ test('monta o lote do dia: cria pacote com as filhas na ordem (autorização pen
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'autorizacao_pendente')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [],
       criarPacote: async ({ input }) => {
         criadas.push(...input.subtasks);
@@ -91,7 +91,7 @@ test('fonte velha (mais de 48h): não mexe no painel, avisa e não cria pacote',
     ...base,
     laReport: laReportOk([velha]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: nuncaChama('containersPix'),
       criarPacote: nuncaChama('criarPacote'),
       fecharFilha: nuncaChama('fecharFilha'),
@@ -111,7 +111,7 @@ test('sem nenhum dado_atualizado_em recente entre as linhas: conta como fonte ve
   const out = await r.pautaPixDaUnidade({
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso', { dado_atualizado_em: null })]),
-    deps: { agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], containersPix: nuncaChama('containersPix') },
+    deps: { agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [], containersPix: nuncaChama('containersPix') },
   });
   assert.strictEqual(out.fonteVelha, true);
   assert.strictEqual(out.fonteFalhou, false);
@@ -127,7 +127,7 @@ test('pacote de ontem: quem continua na fonte (por pagador_chave) é carregado (
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Carlos', 'boleto')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -160,7 +160,7 @@ test('pacote de hoje já existe: não cria; fecha só quem saiu da fonte (por pa
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-hoje',
         title: r.PREFIXO_CONTAINER + '16/09',
@@ -198,7 +198,7 @@ test('I1: 8 carregados + 20 na fonte cria exatamente LOTE_DIARIO (10) filhas —
     ...base,
     laReport: laReportOk(muitos),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -227,7 +227,7 @@ test('I1: TETO_FILHAS é trava dura — lote acima do teto NÃO cria pacote e de
     ...base,
     laReport: laReportOk(muitos),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -254,7 +254,7 @@ test('ninguém a migrar: não cria pacote', async () => {
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrou' })]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [],
       criarPacote: nuncaChama('criarPacote'),
     },
@@ -275,7 +275,7 @@ test('ninguém a migrar, mas uma filha velha não fechou: o aviso aparece no mot
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrou' })]), // ninguém em migrar/autorizacao_pendente
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -299,7 +299,7 @@ test('criarPacote lança (I3): o pacote ANTERIOR fica intacto (nenhuma filha nem
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => { throw new Error('marker_logs fora'); }, // aviso acumulado antes da criação
       containersPix: async () => [{
         id: 'cont-ontem',
@@ -331,7 +331,7 @@ test('containersPix lança (falha de leitura do painel): não é fonte falhou ne
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => { throw new Error('conexão recusada'); },
     },
   });
@@ -352,7 +352,7 @@ test('reproduz (a): alunos mudaram (título mudou), mas a chave continua igual �
     ...base,
     laReport: laReportOk([anaHoje]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -382,7 +382,7 @@ test('reproduz (b): dois clientes com título idêntico no pacote de ontem — q
     ...base,
     laReport: laReportOk([anaQueFicou]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -413,7 +413,7 @@ test('reproduz (c): pacote de hoje com dois títulos idênticos — quem saiu é
     ...base,
     laReport: laReportOk([anaQueFicou]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-hoje',
         title: r.PREFIXO_CONTAINER + '16/09',
@@ -443,7 +443,7 @@ test('vincular falhou (I3): é falha de painel — texto nulo, motivo com o vín
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
         filhas: [filha('f-ana', 'k-Ana', 'PIX automático — Ana')],
@@ -466,7 +466,7 @@ test('I3: criarPacote devolveu MENOS filhas que o lote — mesma falha do víncu
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
         filhas: [filha('f-ana', 'k-Ana', 'PIX automático — Ana')],
@@ -487,7 +487,7 @@ test('dedup: dois vínculos apontando pro mesmo pagador_chave no pacote de ontem
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -512,7 +512,7 @@ test('dedup: dois vínculos apontando pro mesmo pagador_chave no pacote de hoje 
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-hoje',
         title: r.PREFIXO_CONTAINER + '16/09',
@@ -539,7 +539,7 @@ test('Tarefa 7: informado há 3 dias NÃO entra no lote nem é carregado, mas se
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async ({ unidadeId }) => {
         assert.strictEqual(unidadeId, 'u1');
         return [{ pagador_chave: 'k-Ana', created_at: informadoEm }];
@@ -565,7 +565,7 @@ test('Tarefa 7: informado há 7 dias e AINDA em migrar na fonte volta ao lote e 
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
       containersPix: async () => [],
       criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm2', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
@@ -588,7 +588,7 @@ test('Tarefa 7: informado há 8 dias (borda de cima da janela) ainda volta — n
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
       containersPix: async () => [],
       criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm3', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
@@ -605,7 +605,7 @@ test('Tarefa 7: cliente informado que a fonte já confirma como migrado NÃO apa
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrou' })]), // já não está mais em migrar/autorizacao_pendente
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
       containersPix: async () => [],
       criarPacote: nuncaChama('criarPacote'),
@@ -621,7 +621,7 @@ test('Tarefa 7: erro ao reconferir quem foi informado segue SEM excluir ninguém
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => { throw new Error('marker_logs indisponível'); },
       containersPix: async () => [],
       criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm4', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
@@ -640,7 +640,7 @@ test('C1: informado há 7 dias que a fonte já mostra em autorizacao_pendente (c
     ...base,
     laReport: laReportOk([linha('Ana', 'autorizacao_pendente'), linha('Bia', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
       containersPix: async () => [],
       criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
@@ -657,7 +657,7 @@ test('C1: quem voltou pra lista é citado UMA vez só no texto (não repete na s
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
       containersPix: async () => [],
       criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
@@ -678,7 +678,7 @@ test('I2: o vínculo grava categoria_origem = categoria do cliente na fonte no m
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'autorizacao_pendente')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [],
       criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
       vincular: async (vs) => { vinculados.push(...vs); return true; },
@@ -698,7 +698,7 @@ test('I2: filha pendente de ontem cujo cliente era migrar e AGORA está em autor
     ...base,
     laReport: laReportOk([linha('Ana', 'autorizacao_pendente'), linha('Bia', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
         filhas: [filhaOrig('f-ana', 'k-Ana', 'PIX automático — Ana (Ana filho)', 'migrar')],
@@ -710,7 +710,7 @@ test('I2: filha pendente de ontem cujo cliente era migrar e AGORA está em autor
       vincular: semVinculo,
     },
   });
-  assert.deepStrictEqual(transicoes, [{ taskId: 'f-ana', hoje: '2026-09-16' }]);
+  assert.deepStrictEqual(transicoes, [{ taskIds: ['f-ana'], hoje: '2026-09-16' }]);
   assert.deepStrictEqual(fechos, [['f-ana', 'done']], 'progresso: foi cadastrado — done, não cancelled nem carregado');
   assert.strictEqual(out.carregadas, 0);
   assert.deepStrictEqual(out.lote.map((l) => l.pagador_chave), ['k-Bia']);
@@ -728,7 +728,7 @@ test('I2: a mesma transição dentro do pacote de HOJE (já existe) também grav
     ...base,
     laReport: laReportOk([linha('Ana', 'autorizacao_pendente'), linha('Bia', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16',
         filhas: [
@@ -744,7 +744,7 @@ test('I2: a mesma transição dentro do pacote de HOJE (já existe) também grav
     },
   });
   assert.strictEqual(out.jaExistia, true);
-  assert.deepStrictEqual(transicoes, [{ taskId: 't-ana', hoje: '2026-09-16' }]);
+  assert.deepStrictEqual(transicoes, [{ taskIds: ['t-ana'], hoje: '2026-09-16' }]);
   assert.deepStrictEqual(fechos, [['t-ana', 'done']]);
   assert.deepStrictEqual(out.lote.map((l) => l.pagador_chave), ['k-Bia']);
   assert.match(out.texto, /⏳ Aguardando 1ª cobrança \(1\)/);
@@ -756,7 +756,7 @@ test('I2: quem JÁ estava em autorizacao_pendente quando a filha foi criada e co
     ...base,
     laReport: laReportOk([linha('Ana', 'autorizacao_pendente')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
         filhas: [filhaOrig('f-ana', 'k-Ana', 'PIX automático — Ana (Ana filho)', 'autorizacao_pendente')],
@@ -788,7 +788,7 @@ test('I2: carência de 35 dias — transição há 34 dias fica FORA do lote e d
       laReport: laReportOk([linha('Ana', 'autorizacao_pendente'), linha('Bia', 'pix_avulso')]),
       deps: {
         agora: agoraFixo, informados: async () => [],
-        transicoesRecentes: transicoesDoBanco([{ pagador_chave: 'k-Ana', transicao_em: transicaoEm }]),
+        transicoesRecentes: transicoesDoBanco([{ pagador_chave: 'k-Ana', transicao_em: transicaoEm }]), vinculosSemTransicao: async () => [],
         containersPix: async () => [],
         criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
         vincular: semVinculo,
@@ -815,7 +815,7 @@ test('I2: transição recente só vale pra quem ESTÁ em autorizacao_pendente �
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
       agora: agoraFixo, informados: async () => [],
-      transicoesRecentes: transicoesDoBanco([{ pagador_chave: 'k-Ana', transicao_em: '2026-09-10' }]),
+      transicoesRecentes: transicoesDoBanco([{ pagador_chave: 'k-Ana', transicao_em: '2026-09-10' }]), vinculosSemTransicao: async () => [],
       containersPix: async () => [],
       criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
       vincular: semVinculo,
@@ -832,7 +832,7 @@ test('I2: erro ao ler as transições recentes — aviso no motivo e segue SEM e
     laReport: laReportOk([linha('Ana', 'autorizacao_pendente')]),
     deps: {
       agora: agoraFixo, informados: async () => [],
-      transicoesRecentes: async () => { throw new Error('vínculo indisponível'); },
+      transicoesRecentes: async () => { throw new Error('vínculo indisponível'); }, vinculosSemTransicao: async () => [],
       containersPix: async () => [],
       criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
       vincular: semVinculo,
@@ -849,7 +849,7 @@ test('I2: falha ao gravar a transição vira aviso no motivo (a filha ainda fech
     ...base,
     laReport: laReportOk([linha('Ana', 'autorizacao_pendente'), linha('Bia', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
         filhas: [filhaOrig('f-ana', 'k-Ana', 'PIX automático — Ana (Ana filho)', 'migrar')],
@@ -875,7 +875,7 @@ test('I3: filha SEM vínculo num pacote velho nunca vira done — vira cancelled
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
         filhas: [filha('f-sem', null, 'PIX automático — Alguém')],
@@ -898,7 +898,7 @@ test('I3 (repro C): pacote de HOJE com filhas sem vínculo (criação interrompi
     ...base,
     laReport: laReportOk(quarenta()),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'c-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16',
         filhas: [0, 1, 2, 3].map((i) => filha(`p${i}`, null, 'x')),
@@ -923,7 +923,7 @@ test('I3: se não consegui desmontar o pacote de hoje incompleto, NÃO reconstr�
     ...base,
     laReport: laReportOk(quarenta()),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'c-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16',
         filhas: [filha('p0', null, 'x')],
@@ -998,7 +998,7 @@ test('I3 (repro C, duas execuções): criação lança no meio (mãe + 4 filhas 
     painel.addTask({ id: `o${i}`, parent: 'c-ontem', title: pura.tituloDaFilha(l), due_date: '2026-09-15' });
     painel.vincularDireto({ task_id: `o${i}`, pagador_chave: l.pagador_chave, unidade_id: 'u1', categoria_origem: 'migrar' });
   });
-  const deps = { agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], ...painel.deps };
+  const deps = { agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [], ...painel.deps };
 
   painel.falharProximaCriacaoDepoisDe(4);
   const r1 = await r.pautaPixDaUnidade({ ...base, laReport: laReportOk(fonte), deps });
@@ -1034,7 +1034,7 @@ test('I3: lote vazio legítimo — todos informados há menos de 7 dias: não cr
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'cheque')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }, { pagador_chave: 'k-Bia', created_at: informadoEm }],
       containersPix: async () => [],
       criarPacote: nuncaChama('criarPacote'),
@@ -1055,7 +1055,7 @@ test('I3: lote vazio legítimo — todos na carência da 1ª cobrança: publica 
     ...base,
     laReport: laReportOk([linha('Ana', 'autorizacao_pendente')]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
         filhas: [filhaOrig('f-ana', 'k-Ana', 'PIX automático — Ana', 'migrar')],
@@ -1093,7 +1093,7 @@ test('I3: NENHUM caminho de falha devolve texto não nulo com lote vazio', async
       ...base,
       laReport: laReportOk(fonte),
       deps: {
-        agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+        agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
         containersPix: async () => [],
         criarPacote: async ({ input }) => ({ groupId: 'm', childIds: input.subtasks.map((_, i) => `t${i}`) }),
         fecharFilha: async () => true, fecharContainer: async () => true, vincular: semVinculo,
@@ -1123,7 +1123,7 @@ for (const [destino, linhaDaFonte, esperado] of [
       ...base,
       laReport: laReportOk(fonte),
       deps: {
-        agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+        agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
         containersPix: async () => [{
           id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
           filhas: [filha('f-zeca', 'k-Zeca', 'PIX automático — Zeca')],
@@ -1148,7 +1148,7 @@ test('I4: no pacote de HOJE vale a mesma regra — ja_migrou fecha done, inadimp
       linha('Caio', 'pix_avulso', { categoria: 'inadimplente' }),
     ]),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: 'cont-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16',
         filhas: [filha('t-ana', 'k-Ana', 'a'), filha('t-bia', 'k-Bia', 'b'), filha('t-caio', 'k-Caio', 'c')],
@@ -1184,7 +1184,7 @@ test('M8: nenhum motivo de falha contém o nome do pagador nem o título da tare
     ...base,
     laReport: laReportOk(fonte),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{ id: id(9), title: `${r.PREFIXO_CONTAINER}15/09 ${NOMES[0]}`, due_date: '2026-09-15', filhas: filhasVelhas }],
       criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
       vincular: semVinculo,
@@ -1199,7 +1199,7 @@ test('M8: nenhum motivo de falha contém o nome do pagador nem o título da tare
     ...base,
     laReport: laReportOk(fonte),
     deps: {
-      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       containersPix: async () => [{
         id: id(8), title: `${r.PREFIXO_CONTAINER}16/09`, due_date: '2026-09-16',
         filhas: [filha(id(7), null, `PIX automático — ${NOMES[3]}`), filhaOrig(id(6), `k-${NOMES[0]}`, `PIX automático — ${NOMES[0]}`, 'migrar')],
@@ -1228,7 +1228,7 @@ test('I4/M3: filha PENDENTE de cliente informado há 2 dias (marcador gravou, ba
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo, transicoesRecentes: async () => [],
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
       informados: async () => [{ pagador_chave: 'k-Ana', created_at: new Date(AGORA - 2 * 86400000).toISOString() }],
       containersPix: async () => [{
         id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
@@ -1243,4 +1243,193 @@ test('I4/M3: filha PENDENTE de cliente informado há 2 dias (marcador gravou, ba
   assert.deepStrictEqual(fechos, [['f-ana', 'cancelled']]);
   assert.strictEqual(out.carregadas, 1);
   assert.strictEqual(criadas[0].title, 'PIX automático — Ana (Ana filho)', 'a filha pendente mantém a cliente no lote');
+});
+
+// ── R1 (re-revisão) — a carência vale para quem foi baixado pelo atalho ─────────────────────────
+// Tabela pix_pauta_vinculo falsa COM ESTADO: filtra como o banco (origem migrar, transicao_em nulo,
+// created_at na janela; transições por data) e grava transicao_em só onde ainda é nulo.
+function bancoDeVinculos(linhas) {
+  const vinculos = linhas.map((v) => ({ unidade_id: 'u1', transicao_em: null, created_at: '2026-09-16T12:00:00.000Z', ...v }));
+  let falhar = false;
+  const gravacoes = [];
+  return {
+    vinculos,
+    gravacoes,
+    falharGravacao: (b) => { falhar = b; },
+    deps: {
+      vinculosSemTransicao: async ({ unidadeId, desdeYmd }) => vinculos
+        .filter((v) => v.unidade_id === unidadeId && v.categoria_origem === 'migrar' && v.transicao_em === null && v.created_at >= desdeYmd)
+        .map((v) => ({ task_id: v.task_id, pagador_chave: v.pagador_chave })),
+      transicoesRecentes: async ({ unidadeId, desdeYmd }) => vinculos
+        .filter((v) => v.unidade_id === unidadeId && v.transicao_em && v.transicao_em >= desdeYmd)
+        .map((v) => ({ pagador_chave: v.pagador_chave, transicao_em: v.transicao_em })),
+      marcarTransicao: async ({ taskIds, hoje }) => {
+        gravacoes.push({ taskIds: [...taskIds], hoje });
+        if (falhar) return false;
+        vinculos.filter((v) => taskIds.includes(v.task_id) && v.transicao_em === null).forEach((v) => { v.transicao_em = hoje; });
+        return true;
+      },
+    },
+  };
+}
+const DIA = 86400000;
+const informadaNoDia0 = async () => [{ pagador_chave: 'k-Ana', created_at: new Date(AGORA).toISOString() }];
+
+test('R1 (trace do revisor): atalho baixou a filha no dia 0; no dia 7 a fonte mostra autorizacao_pendente — grava transicao_em (em TODOS os vínculos migrar dela, de qualquer status), fica FORA do lote e conta em ⏳', async () => {
+  const banco = bancoDeVinculos([
+    { task_id: 'f-ana-d0', pagador_chave: 'k-Ana', categoria_origem: 'migrar' }, // filha baixada pelo atalho (done)
+    { task_id: 'f-ana-velha', pagador_chave: 'k-Ana', categoria_origem: 'migrar', created_at: '2026-09-10T12:00:00.000Z' }, // carregada antes (cancelled)
+    { task_id: 'f-bia-d0', pagador_chave: 'k-Bia', categoria_origem: 'migrar' }, // Bia segue em migrar
+  ]);
+  const criadas = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base, hoje: '2026-09-23',
+    laReport: laReportOk([
+      linha('Ana', 'autorizacao_pendente', { dado_atualizado_em: new Date(AGORA + 7 * DIA - 3600e3).toISOString() }),
+      linha('Bia', 'pix_avulso', { dado_atualizado_em: new Date(AGORA + 7 * DIA - 3600e3).toISOString() }),
+    ]),
+    deps: {
+      agora: () => AGORA + 7 * DIA, informados: informadaNoDia0,
+      ...banco.deps,
+      containersPix: async () => [], // nenhuma filha pendente da Ana: o atalho já baixou
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      vincular: semVinculo,
+    },
+  });
+  assert.deepStrictEqual(banco.gravacoes, [{ taskIds: ['f-ana-d0', 'f-ana-velha'], hoje: '2026-09-23' }], 'uma gravação por cliente, com todos os vínculos dela');
+  assert.deepStrictEqual(banco.vinculos.map((v) => [v.task_id, v.transicao_em]), [['f-ana-d0', '2026-09-23'], ['f-ana-velha', '2026-09-23'], ['f-bia-d0', null]]);
+  assert.deepStrictEqual(criadas.map((s) => s.title), ['PIX automático — Bia (Bia filho)'], 'Ana NÃO volta ao lote como 🔵');
+  assert.match(out.texto, /⏳ Aguardando 1ª cobrança \(1\)/);
+  assert.ok(!out.texto.includes('🔵'));
+  assert.ok(!out.texto.includes('Ana'));
+  assert.ok(!out.texto.includes('Voltaram'), 'e C1 continua: autorização pendente não é "voltou"');
+  assert.strictEqual(out.motivo, null);
+
+  // Dia 8: a carência agora vem do BANCO — continua fora do lote, sem gravar de novo.
+  const criadasD8 = [];
+  const out8 = await r.pautaPixDaUnidade({
+    ...base, hoje: '2026-09-24',
+    laReport: laReportOk([
+      linha('Ana', 'autorizacao_pendente', { dado_atualizado_em: new Date(AGORA + 8 * DIA - 3600e3).toISOString() }),
+      linha('Bia', 'pix_avulso', { dado_atualizado_em: new Date(AGORA + 8 * DIA - 3600e3).toISOString() }),
+    ]),
+    deps: {
+      agora: () => AGORA + 8 * DIA, informados: informadaNoDia0,
+      ...banco.deps,
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => { criadasD8.push(...input.subtasks); return { groupId: 'm2', childIds: input.subtasks.map((_, i) => `u${i}`) }; },
+      vincular: semVinculo,
+    },
+  });
+  assert.strictEqual(banco.gravacoes.length, 1, 'dia 8 não regrava (a data da transição não anda pra frente)');
+  assert.deepStrictEqual(criadasD8.map((s) => s.title), ['PIX automático — Bia (Bia filho)']);
+  assert.match(out8.texto, /⏳ Aguardando 1ª cobrança \(1\)/);
+});
+
+test('R1: informada no dia 0 mas AINDA em migrar no dia 7 — volta pela seção ↩️ e entra no lote (C1 inalterado), sem gravar transição', async () => {
+  const banco = bancoDeVinculos([{ task_id: 'f-ana-d0', pagador_chave: 'k-Ana', categoria_origem: 'migrar' }]);
+  const criadas = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base, hoje: '2026-09-23',
+    laReport: laReportOk([linha('Ana', 'pix_avulso', { dado_atualizado_em: new Date(AGORA + 7 * DIA - 3600e3).toISOString() })]),
+    deps: {
+      agora: () => AGORA + 7 * DIA, informados: informadaNoDia0,
+      ...banco.deps,
+      marcarTransicao: nuncaChama('marcarTransicao'),
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      vincular: semVinculo,
+    },
+  });
+  assert.strictEqual(out.voltaram.length, 1);
+  assert.match(out.texto, /↩️ \*Voltaram pra lista\* \(1\)/);
+  assert.deepStrictEqual(criadas.map((s) => s.title), ['PIX automático — Ana (Ana filho)']);
+  assert.strictEqual(banco.vinculos[0].transicao_em, null);
+  assert.ok(!out.texto.includes('⏳'));
+});
+
+test('R1: gravação da transição falha numa filha pendente — a filha fecha done mesmo assim (progresso) e a execução SEGUINTE regrava pelo mesmo caminho (vínculo sem transição, qualquer status)', async () => {
+  const banco = bancoDeVinculos([{ task_id: 'f-ana', pagador_chave: 'k-Ana', categoria_origem: 'migrar' }]);
+  const fonte = (dia) => [
+    linha('Ana', 'autorizacao_pendente', { dado_atualizado_em: new Date(AGORA + dia * DIA - 3600e3).toISOString() }),
+    linha('Bia', 'pix_avulso', { dado_atualizado_em: new Date(AGORA + dia * DIA - 3600e3).toISOString() }),
+  ];
+  const fechos = [];
+  banco.falharGravacao(true);
+  const d1 = await r.pautaPixDaUnidade({
+    ...base, hoje: '2026-09-16',
+    laReport: laReportOk(fonte(0)),
+    deps: {
+      agora: agoraFixo, informados: async () => [],
+      ...banco.deps,
+      containersPix: async () => [{
+        id: 'cont-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15',
+        filhas: [filhaOrig('f-ana', 'k-Ana', 'PIX automático — Ana', 'migrar')],
+      }],
+      criarPacote: async ({ input }) => ({ groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }),
+      fecharFilha: async (id, status) => { fechos.push([id, status]); return true; },
+      fecharContainer: async () => true,
+      vincular: semVinculo,
+    },
+  });
+  assert.deepStrictEqual(fechos, [['f-ana', 'done']], 'progresso: fecha done mesmo sem gravar');
+  assert.deepStrictEqual(banco.gravacoes, [{ taskIds: ['f-ana'], hoje: '2026-09-16' }], 'tentou uma vez só nesta execução');
+  assert.match(d1.motivo, /transição/);
+  assert.deepStrictEqual(d1.lote.map((l) => l.pagador_chave), ['k-Bia'], 'na carência nesta execução mesmo sem gravar');
+  assert.strictEqual(banco.vinculos[0].transicao_em, null);
+
+  banco.falharGravacao(false);
+  const d2 = await r.pautaPixDaUnidade({
+    ...base, hoje: '2026-09-17',
+    laReport: laReportOk(fonte(1)),
+    deps: {
+      agora: () => AGORA + DIA, informados: async () => [],
+      ...banco.deps,
+      containersPix: async () => [], // a filha da Ana já está done: só o caminho "qualquer status" a acha
+      criarPacote: async ({ input }) => ({ groupId: 'm2', childIds: input.subtasks.map((_, i) => `u${i}`) }),
+      vincular: semVinculo,
+    },
+  });
+  assert.deepStrictEqual(banco.gravacoes[1], { taskIds: ['f-ana'], hoje: '2026-09-17' }, 'a execução seguinte regravou');
+  assert.strictEqual(banco.vinculos[0].transicao_em, '2026-09-17');
+  assert.deepStrictEqual(d2.lote.map((l) => l.pagador_chave), ['k-Bia']);
+  assert.match(d2.texto, /⏳ Aguardando 1ª cobrança \(1\)/);
+  assert.strictEqual(d2.motivo, null);
+});
+
+test('R1: vínculo migrar sem transição criado há mais de 60 dias fica fora da leitura', async () => {
+  const banco = bancoDeVinculos([{ task_id: 'f-ana-antiga', pagador_chave: 'k-Ana', categoria_origem: 'migrar', created_at: '2026-07-17T12:00:00.000Z' }]);
+  const criadas = [];
+  await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'autorizacao_pendente')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [],
+      ...banco.deps,
+      marcarTransicao: nuncaChama('marcarTransicao'),
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      vincular: semVinculo,
+    },
+  });
+  assert.strictEqual(criadas.length, 1, 'sem vínculo recente, Ana é 🔵 normal');
+});
+
+test('R1: erro ao ler os vínculos sem transição — aviso no motivo e segue sem ela (falha-aberta)', async () => {
+  const criadas = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'autorizacao_pendente')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [],
+      vinculosSemTransicao: async () => { throw new Error('leitura caiu'); },
+      marcarTransicao: nuncaChama('marcarTransicao'),
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      vincular: semVinculo,
+    },
+  });
+  assert.strictEqual(criadas.length, 1);
+  assert.match(out.motivo, /vínculos sem transição: leitura caiu/);
+  assert.ok(out.texto);
 });
