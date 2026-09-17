@@ -3,28 +3,94 @@
 // Caso real (Alf, 17/09): Campo Grande pediu no grupo a lista completa do PIX avulso e o TOM
 // respondeu "consigo mandar só os que estão aparecendo aqui na lista de hoje". Estes testes
 // prendem o contrário: a fala é reconhecida, o alvo é o certo, e a lista sai quebrada em partes.
+//
+// FIX ROUND 1 (C1/C3/I4/I5): interceptar exige TOKEN DE ASSUNTO explícito na fala; palavra de
+// fatia sozinha (cheque, boleto, maquininha…) nunca basta; fala com forma de aviso de cadastro
+// faz o interceptador se calar; anamnese/contrato declaram o recorte no bloco de números.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const c = require('./pix-consulta');
 
-// ── detectarPedido: frases reais ──────────────────────────────────────────────────────────────
+// ── C1: TOKEN DE ASSUNTO OBRIGATÓRIO ──────────────────────────────────────────────────────────
+// As três falas abaixo foram VERIFICADAS sequestrando o interceptador antes deste fix.
+test('C1 sequestro 1: "quem falta pagar o boleto da excursão" NÃO é pedido nosso', () => {
+  assert.strictEqual(c.detectarPedido('quem falta pagar o boleto da excursão da semana que vem?'), null);
+  assert.strictEqual(c.precisaDeNumeros('quem falta pagar o boleto da excursão da semana que vem?'), false);
+});
+
+test('C1 sequestro 2: "me passa os nomes de quem falta pagar o cheque da rifa" NÃO é pedido nosso', () => {
+  const fala = 'me passa os nomes de quem falta pagar o cheque da rifa do coral';
+  assert.strictEqual(c.detectarPedido(fala), null);
+  assert.strictEqual(c.precisaDeNumeros(fala), false);
+});
+
+test('C1 sequestro 3: fala com FORMA de aviso de cadastro cala o interceptador, mesmo refutada por negação', () => {
+  // Esta fala tem "automático" (token de assunto) E "nome" (marcador de lista) — sem a trava do
+  // atalho de cadastro ela postaria a lista inteira do PIX no meio de um aviso da equipe.
+  assert.strictEqual(c.detectarPedido('cadastrei o fulano no automático mas não achei o nome dele'), null);
+});
+
+test('C1: fala de cadastro reconhecida pelo atalho também cala o interceptador', () => {
+  assert.strictEqual(c.detectarPedido('cadastrei a Ana Lima no pix automático'), null);
+  assert.strictEqual(c.detectarPedido('coloquei o Bruno no automático'), null);
+});
+
+test('I5: quase-cadastros (dúvida/negação) não viram pedido de lista nem leitura de fonte', () => {
+  // Todas têm token de assunto E marcador de lista ("nome"/"lista") — sem a trava do atalho de
+  // cadastro, cada uma destas postaria a lista inteira do PIX por cima do aviso da equipe.
+  for (const fala of [
+    'acho que cadastrei a Ana no automático, confere o nome dela?',
+    'não cadastrei a Carla no automático, o nome não aparece',
+    'será que passei o Davi no automático? o nome sumiu da lista',
+    'migrei a Elisa no automático mas não achei a lista dela',
+  ]) {
+    assert.strictEqual(c.detectarPedido(fala), null, fala);
+  }
+});
+
+test('C1: a trava do cadastro tem a MESMA fronteira do atalho — frase longa volta a ser pedido', () => {
+  // O atalho de cadastro só olha fala curta (≤12 palavras); acima disso é conversa, e ele próprio
+  // se recusa. A trava tem que respeitar a mesma fronteira, senão um pedido explícito de lista
+  // com um "cadastrei" no meio ficaria sem resposta — o defeito que esta feature veio curar.
+  const longa = 'cadastrei a Ana no automático ontem de manhã e agora quero a lista completa do pix avulso pra conferir';
+  assert.ok(longa.split(/\s+/).length > 12);
+  assert.deepStrictEqual(c.detectarPedido(longa), { tipo: 'lista', alvo: 'pix_avulso' });
+});
+
+test('C1: palavra de FATIA sozinha nunca basta — só escolhe a fatia quando há token de assunto', () => {
+  assert.strictEqual(c.detectarPedido('quantos clientes de cheque a gente tem?'), null);
+  assert.strictEqual(c.detectarPedido('me manda a lista de quem paga em dinheiro'), null);
+  assert.strictEqual(c.detectarPedido('lista completa da maquininha'), null);
+  // com o assunto na fala, a MESMA fatia volta a valer
+  assert.deepStrictEqual(c.detectarPedido('quantos clientes de cheque tem no pix?'), { tipo: 'numeros', alvo: 'cheque' });
+});
+
+test('C1: sem token de assunto, marcador forte de lista também não intercepta', () => {
+  assert.strictEqual(c.detectarPedido('manda o resto dos nomes'), null);
+  assert.strictEqual(c.detectarPedido('quem falta?'), null);
+  assert.strictEqual(c.detectarPedido('me manda a lista completa'), null);
+});
+
+// ── as falas legítimas continuam funcionando ──────────────────────────────────────────────────
 test('frase real do caso: "me manda a lista completa do pix avulso" -> lista de pix_avulso', () => {
   assert.deepStrictEqual(c.detectarPedido('me manda a lista completa do pix avulso'),
     { tipo: 'lista', alvo: 'pix_avulso' });
 });
 
+test('"lista do pix de cheque" -> lista da fatia cheque', () => {
+  assert.deepStrictEqual(c.detectarPedido('lista do pix de cheque'), { tipo: 'lista', alvo: 'cheque' });
+});
+
+test('"manda o resto dos nomes do pix" -> lista do pix', () => {
+  assert.deepStrictEqual(c.detectarPedido('manda o resto dos nomes do pix'), { tipo: 'lista', alvo: 'pix' });
+});
+
+test('"lista da anamnese" -> lista de anamnese', () => {
+  assert.deepStrictEqual(c.detectarPedido('lista da anamnese'), { tipo: 'lista', alvo: 'anamnese' });
+});
+
 test('"quantos faltam de contrato?" -> números de contrato', () => {
-  assert.deepStrictEqual(c.detectarPedido('quantos faltam de contrato?'),
-    { tipo: 'numeros', alvo: 'contrato' });
-});
-
-test('"manda o resto dos nomes" (sem assunto) -> lista, alvo padrão pix', () => {
-  assert.deepStrictEqual(c.detectarPedido('manda o resto dos nomes'), { tipo: 'lista', alvo: 'pix' });
-});
-
-test('"quantos clientes de cheque a gente tem?" -> números de cheque', () => {
-  assert.deepStrictEqual(c.detectarPedido('quantos clientes de cheque a gente tem?'),
-    { tipo: 'numeros', alvo: 'cheque' });
+  assert.deepStrictEqual(c.detectarPedido('quantos faltam de contrato?'), { tipo: 'numeros', alvo: 'contrato' });
 });
 
 test('"bom dia" -> null (o LLM atende normal)', () => {
@@ -33,31 +99,22 @@ test('"bom dia" -> null (o LLM atende normal)', () => {
   assert.strictEqual(c.detectarPedido(null), null);
 });
 
-test('assunto de outra natureza não vira pedido: "quem falta assinar o ponto hoje de manhã?" -> null', () => {
-  assert.strictEqual(c.detectarPedido('quem falta assinar o ponto hoje de manha?'), null);
-});
-
-test('"quem falta?" curto e seco -> lista do pix (é a lista que o TOM publica no grupo)', () => {
-  assert.deepStrictEqual(c.detectarPedido('quem falta?'), { tipo: 'lista', alvo: 'pix' });
-});
-
 test('citar o assunto sem pedir nada não vira pedido: "o pix automático tá indo bem" -> null', () => {
   assert.strictEqual(c.detectarPedido('o pix automatico ta indo bem'), null);
 });
 
-test('cada fatia tem o seu alvo, e "maquininha" não vira pix_avulso', () => {
+test('cada fatia tem o seu alvo quando o assunto está na fala, e "maquininha" não vira pix_avulso', () => {
   const alvo = (t) => (c.detectarPedido(t) || {}).alvo;
-  assert.strictEqual(alvo('quantos de boleto?'), 'boleto');
-  assert.strictEqual(alvo('quantos pagam em dinheiro?'), 'dinheiro');
-  assert.strictEqual(alvo('lista completa de cartão falhando'), 'cartao_com_falha');
-  assert.strictEqual(alvo('lista completa da maquininha'), 'cartao_avulso');
-  // "cartão avulso" contém "avulso": sem a precedência, a mesma fala casaria pix_avulso também
-  // e o alvo desandava pra 'pix' (lista errada no grupo).
-  assert.strictEqual(alvo('lista completa de cartão avulso'), 'cartao_avulso');
-  assert.strictEqual(alvo('quantos sem histórico?'), 'sem_historico');
-  assert.strictEqual(alvo('quantos cadastrados sem cobrança?'), 'autorizacao_pendente');
-  assert.strictEqual(alvo('quantos já migraram?'), 'ja_migrou');
-  assert.strictEqual(alvo('quantos faltam de anamnese?'), 'anamnese');
+  assert.strictEqual(alvo('quantos de boleto no pix?'), 'boleto');
+  assert.strictEqual(alvo('quantos pagam em dinheiro no pix?'), 'dinheiro');
+  assert.strictEqual(alvo('lista do pix de cartão falhando'), 'cartao_com_falha');
+  assert.strictEqual(alvo('lista do pix da maquininha'), 'cartao_avulso');
+  // "cartão avulso" contém "avulso": sem a precedência, casaria pix_avulso também e o alvo
+  // desandava pra 'pix' (lista errada no grupo).
+  assert.strictEqual(alvo('lista do pix de cartão avulso'), 'cartao_avulso');
+  assert.strictEqual(alvo('quantos sem histórico no pix?'), 'sem_historico');
+  assert.strictEqual(alvo('quantos cadastrados sem cobrança no pix?'), 'autorizacao_pendente');
+  assert.strictEqual(alvo('quantos já migraram no pix automático?'), 'ja_migrou');
   assert.strictEqual(alvo('me manda a lista de quem falta no pix'), 'pix');
 });
 
@@ -69,15 +126,20 @@ test('fala que pede NOME e QUANTIDADE ao mesmo tempo vira lista (mandar os nomes
 test('assuntos de famílias diferentes na mesma fala -> tudo', () => {
   assert.deepStrictEqual(c.detectarPedido('quantos faltam de anamnese e de contrato?'),
     { tipo: 'numeros', alvo: 'tudo' });
+  assert.deepStrictEqual(c.detectarPedido('me manda a lista de tudo: pix, anamnese e contrato'),
+    { tipo: 'lista', alvo: 'tudo' });
 });
 
-// ── precisaDeNumeros: gate barato (não lê a fonte em toda mensagem) ───────────────────────────
-test('precisaDeNumeros só liga quando a fala cita os assuntos ou quantidade', () => {
-  assert.strictEqual(c.precisaDeNumeros('quantos faltam?'), true);
-  assert.strictEqual(c.precisaDeNumeros('e a anamnese, como tá?'), true);
-  assert.strictEqual(c.precisaDeNumeros('o contrato da Ana já voltou'), true);
+// ── I4: gate de números também exige token de assunto ─────────────────────────────────────────
+test('I4: precisaDeNumeros só liga com token de assunto — "quantos"/"falta" sozinhos não bastam', () => {
+  assert.strictEqual(c.precisaDeNumeros('quantos faltam?'), false);
+  assert.strictEqual(c.precisaDeNumeros('quem falta entregar o relatório?'), false);
   assert.strictEqual(c.precisaDeNumeros('bom dia, time'), false);
   assert.strictEqual(c.precisaDeNumeros('cria uma tarefa pra Rose amanhã'), false);
+  assert.strictEqual(c.precisaDeNumeros('quantos faltam no pix?'), true);
+  assert.strictEqual(c.precisaDeNumeros('e a anamnese, como tá?'), true);
+  assert.strictEqual(c.precisaDeNumeros('o contrato da Ana já voltou'), true);
+  assert.strictEqual(c.precisaDeNumeros('como tá a migração?'), true);
 });
 
 // ── mensagensDaLista: quebra em partes ────────────────────────────────────────────────────────
@@ -95,6 +157,12 @@ test('1 item: uma mensagem, cabeçalho com unidade e contagem, item no formato �
   const ms = c.mensagensDaLista({ ...base, itens: [{ pagador: 'Ana Lima', alunos: ['Rafa', 'Bia'] }] });
   assert.strictEqual(ms.length, 1);
   assert.strictEqual(ms[0], '💠 *Pix avulso — Campo Grande* (1 clientes) — parte 1/1\n• Ana Lima — Rafa, Bia');
+});
+
+test('I5: lista de anamnese/contrato conta ALUNOS, não clientes', () => {
+  const ms = c.mensagensDaLista({ unidadeNome: 'Barra', titulo: 'Anamnese — quem falta preencher', substantivo: 'alunos', itens: itens(3) });
+  assert.match(ms[0], /\(3 alunos\)/);
+  assert.ok(!/clientes/.test(ms[0]));
 });
 
 test('item sem aluno não deixa travessão solto', () => {
@@ -135,6 +203,56 @@ test('limitePorMensagem é injetável (o teste não depende do default)', () => 
   assert.match(ms[2], /parte 3\/3/);
 });
 
+// ── C2: várias listas no mesmo pedido (alvo 'tudo') ───────────────────────────────────────────
+test('C2: cada família tem TÍTULO próprio e NUMERAÇÃO DE PARTES própria', () => {
+  const ms = c.mensagensDeVariasListas({
+    unidadeNome: 'Barra',
+    blocos: [
+      { titulo: 'PIX automático — quem falta migrar', substantivo: 'clientes', itens: itens(50) },
+      { titulo: 'Anamnese — quem falta preencher', substantivo: 'alunos', itens: itens(10) },
+      { titulo: 'Contrato — quem falta assinar', substantivo: 'alunos', itens: itens(3) },
+    ],
+  });
+  assert.strictEqual(ms.length, 4); // 2 do PIX + 1 + 1
+  assert.match(ms[0], /PIX automático — quem falta migrar — Barra\* \(50 clientes\) — parte 1\/2/);
+  assert.match(ms[1], /parte 2\/2/);
+  assert.match(ms[2], /Anamnese — quem falta preencher — Barra\* \(10 alunos\) — parte 1\/1/);
+  assert.match(ms[3], /Contrato — quem falta assinar — Barra\* \(3 alunos\) — parte 1\/1/);
+  assert.ok(!/de fora/.test(ms.join('\n')));
+});
+
+test('C2: o teto de mensagens é GLOBAL e nenhuma família fica muda — a última diz o total que sobrou', () => {
+  const ms = c.mensagensDeVariasListas({
+    unidadeNome: 'Campo Grande',
+    blocos: [
+      { titulo: 'PIX automático — quem falta migrar', substantivo: 'clientes', itens: itens(161) },
+      { titulo: 'Anamnese — quem falta preencher', substantivo: 'alunos', itens: itens(318) },
+      { titulo: 'Contrato — quem falta assinar', substantivo: 'alunos', itens: itens(104) },
+    ],
+  });
+  assert.strictEqual(ms.length, 8, 'o teto vale para o pedido inteiro, não por família');
+  const txt = ms.join('\n');
+  assert.ok(/PIX automático/.test(txt) && /Anamnese/.test(txt) && /Contrato/.test(txt),
+    'nenhuma família pode sair muda do pedido');
+  // Reparte: 1 mensagem reservada por família (ninguém fica mudo), o resto na ordem de
+  // prioridade -> PIX 4 partes (161 de 161), anamnese 3 (135 de 318), contrato 1 (45 de 104).
+  assert.match(ms[0], /PIX automático.*parte 1\/4/);
+  assert.match(ms[4], /Anamnese.*parte 1\/3/);
+  assert.match(ms[7], /Contrato.*parte 1\/1/);
+  const mostrados = ms.reduce((s, m) => s + (m.split('\n• ').length - 1), 0);
+  assert.strictEqual(mostrados, 161 + 135 + 45);
+  assert.match(ms[7], /242 de fora/);
+});
+
+test('C2: aviso extra (fonte de uma família fora) sai colado na última mensagem', () => {
+  const ms = c.mensagensDeVariasListas({
+    unidadeNome: 'Barra',
+    blocos: [{ titulo: 'Anamnese — quem falta preencher', substantivo: 'alunos', itens: itens(2) }],
+    avisos: ['A lista do PIX eu não consegui ler agora.'],
+  });
+  assert.match(ms[ms.length - 1], /A lista do PIX eu não consegui ler agora\./);
+});
+
 // ── blocoDeNumeros ────────────────────────────────────────────────────────────────────────────
 const PIX_ZERO = {
   total: 0, migrar: 0, autorizacao_pendente: 0, ja_migrou: 0, aguardando_cobranca: 0,
@@ -151,13 +269,32 @@ test('bloco com ZERO em tudo: todos os assuntos aparecem com 0, nada some', () =
   assert.match(b, /Barra/);
   assert.match(b, /PIX autom[áa]tico: 0 clientes/);
   assert.match(b, /faltam migrar 0/);
-  assert.match(b, /Anamnese: 0 pendentes de 0/);
-  assert.match(b, /Contrato: 0 pendentes de 0/);
   // Fatia com zero NÃO entra na linha: "🟡 Boleto 0 · 🟡 Dinheiro 0 · …" é ruído que empurra o
   // bloco pra fora do teto de linhas e esconde a fatia que tem gente.
   assert.match(b, /Fatias de quem falta: nenhuma/);
   assert.ok(b.split('\n').filter((l) => l.trim()).length <= 12, 'no máximo ~12 linhas');
   assert.match(b, /Nunca estime/);
+});
+
+// ── C3: o recorte de anamnese/contrato tem que estar DECLARADO ────────────────────────────────
+// A pauta diária conta só quem tem aula hoje (~25 em CG); estes números são de TODOS os alunos
+// ativos (318). Sem o rótulo, o TOM afirmaria 318 como se fosse a pauta do dia.
+test('C3: anamnese e contrato declaram o recorte, palavra por palavra', () => {
+  const b = c.blocoDeNumeros({
+    unidadeNome: 'Campo Grande', pix: PIX_ZERO,
+    anamnese: { pendentes: 318, base: 399 }, contrato: { pendentes: 104, base: 399 },
+    dadoEm: '2026-09-17T09:00:00Z',
+  });
+  assert.ok(b.includes('Anamnese (TODOS os alunos ativos da unidade, NÃO é a pauta de hoje): 318 pendentes de 399'), b);
+  assert.ok(b.includes('Contrato (TODOS os alunos ativos da unidade, NÃO é a pauta de hoje): 104 pendentes de 399'), b);
+});
+
+test('C3: a instrução manda SEMPRE dizer que é o total da unidade, não a pauta de hoje', () => {
+  const b = c.blocoDeNumeros({
+    unidadeNome: 'Barra', pix: PIX_ZERO,
+    anamnese: { pendentes: 1, base: 2 }, contrato: { pendentes: 1, base: 2 }, dadoEm: null,
+  });
+  assert.ok(b.includes('Ao dar número de anamnese ou contrato, diga sempre que é o total da unidade e não a pauta de hoje.'), b);
 });
 
 test('bloco com números reais traz TODAS as fatias com gente, em ordem de prioridade', () => {
@@ -170,8 +307,6 @@ test('bloco com números reais traz TODAS as fatias com gente, em ordem de prior
   });
   assert.match(b, /faltam migrar 231/);
   assert.match(b, /Pix avulso 161/);
-  assert.match(b, /Anamnese: 40 pendentes de 344/);
-  assert.match(b, /Contrato: 12 pendentes de 344/);
   const fatiasLinha = b.split('\n').find((l) => l.startsWith('Fatias'));
   assert.ok(fatiasLinha.indexOf('Pix avulso') < fatiasLinha.indexOf('Cheque'), 'ordem de prioridade das FATIAS');
   assert.ok(!/Boleto 0|Dinheiro 0/.test(fatiasLinha), 'fatia zerada não entra na linha');
@@ -185,25 +320,32 @@ test('fonte do PIX fora: o bloco DIZ que não leu e proíbe número — nunca in
   });
   assert.match(b, /não consegui ler/i);
   assert.ok(!/faltam migrar/.test(b), 'sem número de PIX inventado');
-  assert.match(b, /Anamnese: 3 pendentes de 10/);
+  assert.match(b, /Anamnese \(TODOS os alunos ativos da unidade, NÃO é a pauta de hoje\): 3 pendentes de 10/);
 });
 
 test('situação dos alunos fora: anamnese e contrato dizem que não leram', () => {
   const b = c.blocoDeNumeros({ unidadeNome: 'Barra', pix: PIX_ZERO, anamnese: null, contrato: null, dadoEm: null });
-  assert.ok(!/Anamnese: \d/.test(b));
-  assert.ok(!/Contrato: \d/.test(b));
+  assert.ok(!/Anamnese \(/.test(b));
+  assert.ok(!/Contrato \(/.test(b));
   assert.match(b, /não consegui ler/i);
 });
 
-// ── tituloDoAlvo ──────────────────────────────────────────────────────────────────────────────
-test('tituloDoAlvo usa o rótulo já existente de cada fatia', () => {
+// ── tituloDoAlvo / substantivoDoAlvo ──────────────────────────────────────────────────────────
+test('C2: cada família tem o seu título', () => {
   assert.strictEqual(c.tituloDoAlvo('pix_avulso'), 'Pix avulso');
   assert.strictEqual(c.tituloDoAlvo('cartao_avulso'), 'Maquininha');
-  assert.strictEqual(c.tituloDoAlvo('anamnese'), 'Anamnese pendente');
-  assert.strictEqual(c.tituloDoAlvo('contrato'), 'Contrato pendente');
+  assert.strictEqual(c.tituloDoAlvo('anamnese'), 'Anamnese — quem falta preencher');
+  assert.strictEqual(c.tituloDoAlvo('contrato'), 'Contrato — quem falta assinar');
   assert.strictEqual(c.tituloDoAlvo('ja_migrou'), 'Já migraram');
   assert.match(c.tituloDoAlvo('pix'), /PIX autom/);
   assert.match(c.tituloDoAlvo('tudo'), /PIX autom/);
+});
+
+test('I5: substantivo do cabeçalho — cliente no PIX, aluno na anamnese e no contrato', () => {
+  assert.strictEqual(c.substantivoDoAlvo('pix'), 'clientes');
+  assert.strictEqual(c.substantivoDoAlvo('cheque'), 'clientes');
+  assert.strictEqual(c.substantivoDoAlvo('anamnese'), 'alunos');
+  assert.strictEqual(c.substantivoDoAlvo('contrato'), 'alunos');
 });
 
 test('textos fixos existem e não são vazios (o TOM nunca responde com silêncio)', () => {

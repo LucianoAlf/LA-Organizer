@@ -5,21 +5,19 @@
 // avulso. O TOM só conhecia o lote de 10 da mensagem do dia e respondeu "consigo mandar só os que
 // estão aparecendo aqui na lista de hoje… pra te mandar mais 20 sem chutar, preciso do card/lista
 // completa". Isso trava a equipe: a fonte (get_pix_migracao_v1 / get_situacao_alunos_v1) SEMPRE
-// teve tudo — quem não tinha era o prompt. Ordem do dono: o TOM não pode travar informação; se
-// perguntarem quantos faltam (PIX, anamnese, contrato) ou a lista inteira, ele responde, detalhado,
-// por fatia, SEM CHUTAR.
+// teve tudo — quem não tinha era o prompt. Ordem do dono: o TOM não pode travar informação.
 //
 // Este arquivo só decide e formata. Quem lê a fonte é src/services/pix-consulta-fontes.js; quem
 // liga no turno do grupo é src/services/group-chat-engine.js.
 
 const { FATIAS, ROTULO } = require('./pix-migracao');
+const { pareceFalaDeCadastro } = require('../lib/pix-cadastro-informado');
 
 // Teto por mensagem: 45 linhas "• Nome — Alunos" cabem numa mensagem de WhatsApp sem virar
 // parede ilegível (a pauta diária já manda ~48 e é o limite do que o time lê de uma vez).
 const LIMITE_POR_MENSAGEM = 45;
-// Teto de mensagens do mesmo pedido. 8 × 45 = 360 nomes — acima do maior caso medido hoje
-// (Campo Grande, 231 a migrar). Acima disso a última mensagem DIZ quantos ficaram de fora em vez
-// de o grupo receber uma rajada sem fim.
+// Teto de mensagens do MESMO PEDIDO — vale para o pedido inteiro, não por família: um "manda tudo"
+// não pode virar rajada de 20 mensagens no grupo.
 const TETO_MENSAGENS = 8;
 
 const TEXTO_SEM_UNIDADE = 'Esse grupo não está amarrado a uma unidade, então eu não sei de qual lista você está falando. Me diz a unidade (Recreio, Barra ou Campo Grande) que eu puxo a lista completa na hora.';
@@ -30,11 +28,26 @@ function _norm(s) {
     .toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// ── ASSUNTOS ──────────────────────────────────────────────────────────────────────────────────
-// Ordem importa só para leitura; o casamento é acumulativo (ver _alvoDoTexto). `cartao_avulso`
-// vem ANTES de `pix_avulso` de propósito: "cartão avulso"/"maquininha" contém "avulso" e sem essa
-// precedência a mesma fala casaria as duas fatias.
-const ASSUNTOS = [
+// ── C1 (fix round 1): TOKEN DE ASSUNTO OBRIGATÓRIO ────────────────────────────────────────────
+// A revisão mediu três sequestros REAIS do interceptador, todos por palavra genérica:
+//   "quem falta pagar o boleto da excursão…"            (marcador de lista + palavra de fatia)
+//   "me passa os nomes de quem falta pagar o cheque…"   (idem)
+//   "cadastrei o fulano no automático mas não achei o nome dele"  (aviso de cadastro, não pedido)
+// Regra nova: só interceptamos (e só lemos a fonte) quando a fala traz um TOKEN DE ASSUNTO
+// explícito. Palavra de FATIA sozinha — cheque, boleto, dinheiro, maquininha, cartão — nunca
+// basta: ela só ESCOLHE a fatia quando o assunto já está na fala. Sem assunto, quem responde é o
+// LLM, que tem a mensagem da pauta no histórico.
+// (Os tokens são testados sobre o texto JÁ NORMALIZADO — "píx"→"pix", "automático"→"automatico",
+// "migração"→"migracao" —, por isso não há problema de `\b` colado em vogal acentuada.)
+const TOKEN_PIX = /\b(pix|automatico|migracao)\b/;
+const TOKEN_ANAMNESE = /\banamneses?\b/;
+const TOKEN_CONTRATO = /\bcontratos?\b/;
+const temAssunto = (t) => TOKEN_PIX.test(t) || TOKEN_ANAMNESE.test(t) || TOKEN_CONTRATO.test(t);
+
+// FATIAS E CATEGORIAS — só refinam o alvo DENTRO da família PIX. `cartao_avulso` vem antes de
+// `pix_avulso` de propósito: "cartão avulso"/"maquininha" contém "avulso", e sem a precedência a
+// mesma fala casaria as duas fatias e o alvo desandava pra 'pix' (lista errada no grupo).
+const RECORTES_PIX = [
   ['cartao_avulso', /\bmaquininha\b|\bcartao avulso\b/],
   ['pix_avulso', /\bpix avulso\b|\bavulso\b/],
   ['cartao_com_falha', /\bcartao (com )?falha\b|\bcartao falhando\b|\bfalha no cartao\b|\bcartao recusado\b/],
@@ -44,103 +57,127 @@ const ASSUNTOS = [
   ['cheque', /\bcheques?\b/],
   ['boleto', /\bboletos?\b/],
   ['dinheiro', /\bdinheiro\b|\bespecie\b/],
-  ['anamnese', /\banamneses?\b/],
-  ['contrato', /\bcontratos?\b/],
 ];
-const FAMILIA = { anamnese: 'anamnese', contrato: 'contrato' };
-const familiaDoAlvo = (a) => FAMILIA[a] || 'pix';
-
-const RE_PIX = /\bpix\b|\bautomatico\b|\bmigra(r|cao|ram|ndo|m)?\b/;
 const RE_TUDO = /\bde tudo\b|\btudo\b/;
 
-// LISTA FORTE — pede NOMES e já diz QUAL lista, mesmo sem citar o assunto ("manda o resto dos
-// nomes" é a fala do caso real). Dispensa assunto: cai no padrão `pix`, que é a única lista de
-// nomes que o TOM publica no grupo da unidade.
-const RE_LISTA_FORTE = /\blista (completa|inteira|toda|cheia)\b|\btod[oa]s os (nomes|clientes)\b|\b(resto|restante)( d[aoe]s?)? ?(nomes?|clientes?|lista)\b|\bmais nomes\b|\boutros nomes\b|\blista de nomes\b/;
-// LISTA FRACA — pede nomes, mas só vale com assunto na mesma fala ("manda a lista do pix").
-const RE_LISTA_FRACA = /\blista\b|\bnomes?\b|\brelacao\b|\bquem (ainda )?falta\b/;
-// "quem falta?" seco é pedido de lista; "quem falta assinar o ponto hoje de manhã?" não é. O que
-// separa os dois é o resto da frase — por isso o corte por tamanho, e não uma lista de exceções.
-const RE_QUEM_FALTA = /\bquem (ainda )?(falta|esta faltando|nao)\b/;
-const TETO_PALAVRAS_QUEM_FALTA = 5;
-
+// Marcadores de pedido de NOMES. Com o token de assunto já obrigatório, não é mais preciso
+// separar marcador "forte" de "fraco": qualquer um deles, junto do assunto, é pedido de lista.
+const RE_LISTA = /\blista\b|\bnomes?\b|\brelacao\b|\bquem (ainda )?(falta|esta faltando)\b|\b(resto|restante)\b|\btod[oa]s os (clientes|alunos)\b/;
 const RE_NUMEROS = /\bquant[oa]s?\b|\bquanto falta\b|\btotal\b|\bnumeros?\b|\bquantidade\b/;
-// Gate barato do turno (não lê a fonte em toda mensagem do grupo): a fala precisa citar um dos
-// assuntos OU falar de quantidade/falta.
-const RE_GATE_NUMEROS = /\bpix\b|\bautomatico\b|\bmigra(r|cao|ram|ndo|m)?\b|\banamneses?\b|\bcontratos?\b|\bquant[oa]s?\b|\bfalta(m|ndo)?\b/;
 
 function _alvoDoTexto(t) {
+  const pix = TOKEN_PIX.test(t);
+  const ana = TOKEN_ANAMNESE.test(t);
+  const con = TOKEN_CONTRATO.test(t);
+  if (!pix && !ana && !con) return null;
+  if ([pix, ana, con].filter(Boolean).length > 1) return 'tudo';
+  if (ana) return 'anamnese';
+  if (con) return 'contrato';
+  // família PIX: a fatia/categoria citada refina o alvo; "tudo" pede o panorama inteiro.
   let achados = [];
-  for (const [nome, re] of ASSUNTOS) if (re.test(t)) achados.push(nome);
-  // "cartão avulso"/"maquininha" também casa /\bavulso\b/ — a fatia mais específica ganha.
+  for (const [nome, re] of RECORTES_PIX) if (re.test(t)) achados.push(nome);
   if (achados.includes('cartao_avulso')) achados = achados.filter((a) => a !== 'pix_avulso');
-  const familias = new Set(achados.map(familiaDoAlvo));
-  if (familias.size > 1) return 'tudo';
-  if (RE_TUDO.test(t) && (achados.length || RE_PIX.test(t))) return 'tudo';
-  if (achados.length > 1) return 'pix'; // várias fatias na mesma fala -> panorama do PIX
-  if (achados.length === 1) return achados[0];
-  if (RE_PIX.test(t)) return 'pix';
-  return null;
+  if (RE_TUDO.test(t)) return 'tudo';
+  return achados.length === 1 ? achados[0] : 'pix';
 }
 
 // detectarPedido(texto) -> { tipo: 'lista' | 'numeros', alvo } | null
 // `lista` ganha de `numeros` quando as duas casam ("me manda a lista e quantos são"): mandar os
 // nomes já responde a quantidade, o contrário não.
 function detectarPedido(texto) {
+  // C1: fala com FORMA de aviso de cadastro é assunto do atalho determinístico
+  // (src/services/pix-cadastro-grupo.js), não pedido de lista — inclusive quando negação ou
+  // dúvida refutam o reconhecimento ("cadastrei o fulano no automático mas não achei o nome
+  // dele"). Sem esta trava, um aviso da equipe virava lista inteira do PIX no grupo.
+  if (pareceFalaDeCadastro(texto)) return null;
   const t = _norm(texto);
   if (!t) return null;
   const alvo = _alvoDoTexto(t);
-  const curto = t.split(' ').filter(Boolean).length <= TETO_PALAVRAS_QUEM_FALTA;
-  const forte = RE_LISTA_FORTE.test(t) || (RE_QUEM_FALTA.test(t) && curto);
-  if (alvo) {
-    if (forte || RE_LISTA_FRACA.test(t)) return { tipo: 'lista', alvo };
-    if (RE_NUMEROS.test(t)) return { tipo: 'numeros', alvo };
-    return null; // citar o assunto sem pedir nada não é pergunta
-  }
-  if (forte) return { tipo: 'lista', alvo: 'pix' };
-  return null;
+  if (!alvo) return null;
+  if (RE_LISTA.test(t)) return { tipo: 'lista', alvo };
+  if (RE_NUMEROS.test(t)) return { tipo: 'numeros', alvo };
+  return null; // citar o assunto sem pedir nada não é pergunta
 }
 
+// I4 (fix round 1): o gate dos números exige o MESMO token de assunto. Antes bastava "quantos" ou
+// "falta" — palavras de conversa de trabalho —, e cada uma custava duas RPCs ao LA Report.
 function precisaDeNumeros(texto) {
+  // C1: a mesma trava do interceptador vale aqui — fala com forma de aviso de cadastro é assunto
+  // do atalho determinístico e NÃO custa leitura de fonte nenhuma (a revisão exigiu "no source
+  // read" para "cadastrei o fulano no automático mas não achei o nome dele").
+  if (pareceFalaDeCadastro(texto)) return false;
   const t = _norm(texto);
-  return !!t && RE_GATE_NUMEROS.test(t);
+  return !!t && temAssunto(t);
 }
 
 const TITULO_EXTRA = {
   pix: 'PIX automático — quem falta migrar',
   tudo: 'PIX automático — quem falta migrar',
   ja_migrou: 'Já migraram',
-  anamnese: 'Anamnese pendente',
-  contrato: 'Contrato pendente',
+  anamnese: 'Anamnese — quem falta preencher',
+  contrato: 'Contrato — quem falta assinar',
 };
 function tituloDoAlvo(alvo) {
   if (TITULO_EXTRA[alvo]) return TITULO_EXTRA[alvo];
   return (ROTULO[alvo] && ROTULO[alvo].nome) || TITULO_EXTRA.pix;
 }
+// I5: no PIX quem aparece é o CLIENTE (pagador); na anamnese e no contrato é o ALUNO.
+function substantivoDoAlvo(alvo) {
+  return (alvo === 'anamnese' || alvo === 'contrato') ? 'alunos' : 'clientes';
+}
 
 // ── LISTA DE NOMES, QUEBRADA EM MENSAGENS DE WHATSAPP ─────────────────────────────────────────
-// Lista vazia NÃO devolve array vazio: um pedido respondido com silêncio é exatamente o que este
-// arquivo existe pra acabar. Devolve UMA mensagem dizendo que não há ninguém.
-function mensagensDaLista({ unidadeNome, titulo, itens, limitePorMensagem = LIMITE_POR_MENSAGEM }) {
-  const lista = itens || [];
+// C2: um pedido pode ter mais de uma família (alvo 'tudo' = PIX, anamnese, contrato). Cada
+// família tem TÍTULO e NUMERAÇÃO DE PARTES próprios; o teto de mensagens é do PEDIDO INTEIRO.
+// REPARTIÇÃO: uma mensagem reservada por família antes de qualquer distribuição — uma família
+// que sai MUDA é exatamente a doença que esta feature existe pra curar. O que sobra do teto vai
+// pras famílias na ordem em que foram pedidas. O que não coube é DITO na última mensagem.
+function mensagensDeVariasListas({
+  unidadeNome, blocos, avisos = [], limitePorMensagem = LIMITE_POR_MENSAGEM, tetoMensagens = TETO_MENSAGENS,
+}) {
+  const lista = (blocos || []).filter(Boolean);
   const lim = Math.max(1, Number(limitePorMensagem) || LIMITE_POR_MENSAGEM);
-  const n = lista.length;
-  const cab = (i, y) => `💠 *${titulo} — ${unidadeNome}* (${n} clientes) — parte ${i}/${y}`;
-  if (!n) return [`${cab(1, 1)}\nNinguém nesta lista agora.`];
-  const partes = Math.min(TETO_MENSAGENS, Math.ceil(n / lim));
-  const mostrados = Math.min(n, partes * lim);
-  const fora = n - mostrados;
-  const out = [];
-  for (let i = 0; i < partes; i++) {
-    const fatia = lista.slice(i * lim, Math.min((i + 1) * lim, mostrados));
-    const corpo = fatia.map((it) => `• ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`).join('\n');
-    let txt = `${cab(i + 1, partes)}\n${corpo}`;
-    if (i === partes - 1 && fora > 0) {
-      txt += `\n_Ficaram ${fora} de fora desta lista — o resto sai pelo painel do LA Report._`;
-    }
-    out.push(txt);
+  const teto = Math.max(1, Number(tetoMensagens) || TETO_MENSAGENS);
+  const querem = lista.map((b) => Math.max(1, Math.ceil(((b.itens || []).length) / lim)));
+  const dadas = lista.map(() => 0);
+  let restante = teto;
+  for (let i = 0; i < lista.length && restante > 0; i++) { dadas[i] = 1; restante -= 1; }
+  for (let i = 0; i < lista.length && restante > 0; i++) {
+    const d = Math.min(Math.max(0, querem[i] - dadas[i]), restante);
+    dadas[i] += d;
+    restante -= d;
   }
+
+  const out = [];
+  let fora = 0;
+  for (let i = 0; i < lista.length; i++) {
+    const b = lista[i];
+    const itens = b.itens || [];
+    const subst = b.substantivo || 'clientes';
+    const partes = dadas[i];
+    const mostrados = Math.min(itens.length, partes * lim);
+    fora += itens.length - mostrados;
+    if (!partes) continue;
+    if (!itens.length) { out.push(`💠 *${b.titulo} — ${unidadeNome}* (0 ${subst}) — parte 1/1\nNinguém nesta lista agora.`); continue; }
+    for (let k = 0; k < partes; k++) {
+      const fatia = itens.slice(k * lim, Math.min((k + 1) * lim, mostrados));
+      const corpo = fatia.map((it) => `• ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`).join('\n');
+      out.push(`💠 *${b.titulo} — ${unidadeNome}* (${itens.length} ${subst}) — parte ${k + 1}/${partes}\n${corpo}`);
+    }
+  }
+  const rodape = [];
+  if (fora > 0) rodape.push(`_Ficaram ${fora} de fora desta lista — o resto sai pelo painel do LA Report._`);
+  for (const a of avisos || []) if (a) rodape.push(`_${a}_`);
+  if (rodape.length && out.length) out[out.length - 1] += `\n${rodape.join('\n')}`;
   return out;
+}
+
+// Atalho de UMA família só (o caso comum). Lista vazia NÃO devolve array vazio: um pedido
+// respondido com silêncio é exatamente o que este arquivo existe pra acabar.
+function mensagensDaLista({ unidadeNome, titulo, itens, substantivo = 'clientes', limitePorMensagem = LIMITE_POR_MENSAGEM }) {
+  return mensagensDeVariasListas({
+    unidadeNome, blocos: [{ titulo, substantivo, itens }], limitePorMensagem,
+  });
 }
 
 // ── BLOCO DE NÚMEROS PRO PROMPT DO LLM ────────────────────────────────────────────────────────
@@ -148,6 +185,10 @@ function mensagensDaLista({ unidadeNome, titulo, itens, limitePorMensagem = LIMI
 // intercepta nada: qualquer forma de perguntar quantidade passa a ser respondida com o número
 // CERTO, na voz do TOM. Fonte que não respondeu vira uma linha DIZENDO isso — nunca um número.
 const NOMES_FORA = [['nao_mexe', 'não mexe'], ['inadimplente', 'inadimplente'], ['nao_pagante', 'não pagante'], ['excecao', 'exceção'], ['outras', 'outras']];
+// C3 (fix round 1): a pauta diária de anamnese/contrato conta só quem tem AULA HOJE (~25 em Campo
+// Grande); estes números são de TODOS os alunos ativos da unidade (318). Sem o recorte escrito no
+// próprio número, o TOM afirmaria 318 como se fosse a pauta do dia. O rótulo é literal.
+const RECORTE_ALUNOS = '(TODOS os alunos ativos da unidade, NÃO é a pauta de hoje)';
 
 function _dataBr(iso) {
   if (!iso) return null;
@@ -171,17 +212,19 @@ function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHo
   } else {
     L.push('PIX automático: NÃO CONSEGUI LER a fonte agora — não afirme nenhum número de PIX nesta resposta.');
   }
-  if (anamnese) L.push(`Anamnese: ${anamnese.pendentes} pendentes de ${anamnese.base} alunos`);
-  if (contrato) L.push(`Contrato: ${contrato.pendentes} pendentes de ${contrato.base} alunos`);
+  if (anamnese) L.push(`Anamnese ${RECORTE_ALUNOS}: ${anamnese.pendentes} pendentes de ${anamnese.base}`);
+  if (contrato) L.push(`Contrato ${RECORTE_ALUNOS}: ${contrato.pendentes} pendentes de ${contrato.base}`);
   if (!anamnese || !contrato) L.push('Anamnese/contrato: NÃO CONSEGUI LER a fonte agora — não afirme número de anamnese nem de contrato nesta resposta.');
   const quando = _dataBr(dadoEm);
   if (quando) L.push(`Dado do LA Report atualizado em ${quando}${dadoDeHoje === false ? ' (NÃO é de hoje — diga isso se for cobrar alguém)' : ''}.`);
   if (motivo) L.push(`(falha de leitura: ${motivo})`);
   L.push('Estes números vêm da fonte agora. Use SOMENTE eles para falar de quantidade; se a pessoa pedir a lista de nomes, diga que é só pedir "lista completa do <assunto>". Nunca estime.');
+  L.push('Ao dar número de anamnese ou contrato, diga sempre que é o total da unidade e não a pauta de hoje.');
   return L.join('\n');
 }
 
 module.exports = {
-  LIMITE_POR_MENSAGEM, TETO_MENSAGENS, TEXTO_SEM_UNIDADE, TEXTO_FONTE_FORA,
-  detectarPedido, precisaDeNumeros, tituloDoAlvo, mensagensDaLista, blocoDeNumeros,
+  LIMITE_POR_MENSAGEM, TETO_MENSAGENS, TEXTO_SEM_UNIDADE, TEXTO_FONTE_FORA, RECORTE_ALUNOS,
+  detectarPedido, precisaDeNumeros, tituloDoAlvo, substantivoDoAlvo,
+  mensagensDaLista, mensagensDeVariasListas, blocoDeNumeros,
 };
