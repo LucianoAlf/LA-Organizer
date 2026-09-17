@@ -13,6 +13,16 @@
 //        • transitório (overload/timeout/...) → só PAGE se persistir (>= TRANSIENT_MIN); msg leve.
 //        • ok         → se havia incidente aberto, fecha e avisa que VOLTOU.
 //
+// C4 (17/09, débito real): o alerta de auth saiu 16/09 20:40, se perdeu no meio de outras
+// mensagens, e o TOM ficou ~21h degradado no Codex sem ninguém perceber — o "debounce" (avisa
+// uma vez e cala pra sempre enquanto o incidente segue aberto) É o defeito. Agora, enquanto o
+// incidente de AUTH continua ABERTO (sem recovered_at), a sentinela INSISTE a cada 3h — mas só
+// em horário comercial (09h–18h América/São_Paulo; nunca de madrugada/noite, pra não acordar
+// ninguém por um problema que já está sinalizado). `alerted_at` passa a guardar o ÚLTIMO alerta
+// (reaproveitado — não criamos coluna nova; nada mais no repo lia esse campo com o sentido antigo
+// de "primeiro alerta", e a recuperação continua pagando no máximo uma vez porque ela só olha se
+// `alerted_at` é truthy, não o VALOR).
+//
 // O dispatcher é processo EFÊMERO do cron (sem memória entre ticks), então o estado
 // (incidente aberto / já alertado) mora no banco: tabela tom_provider_incidents.
 //
@@ -23,10 +33,15 @@
 // Kinds de erro do claude.js (via classify-claude-exit) que significam LOGIN MORTO.
 const AUTH_KINDS = new Set(['exit_auth']);
 
+// C4: janela de re-page — nunca de madrugada/noite. [INÍCIO, FIM) em hora LOCAL São Paulo.
+const JANELA_REPAGE_INICIO_H = 9;
+const JANELA_REPAGE_FIM_H = 18;
+
 const DEFAULTS = {
   ownerPhone: '5521981278047',   // Alf (dono) — override por TOM_OWNER_ALERT_PHONE
   lookbackMin: 12,               // janela p/ "houve sucesso real do Claude?"
   transientMin: 30,              // só paga instabilidade se durar isso
+  repageMin: 180,                // C4: de quanto em quanto tempo a sentinela INSISTE no auth aberto
   reloginCmd: 'ssh -t tom "bash /opt/LA-Organizer/scripts/tom-relogin.sh"',
 };
 
@@ -36,15 +51,40 @@ function _cfg(env = {}) {
     ownerPhone: env.TOM_OWNER_ALERT_PHONE || DEFAULTS.ownerPhone,
     lookbackMin: Number(env.TOM_SENTINEL_LOOKBACK_MIN) || DEFAULTS.lookbackMin,
     transientMin: Number(env.TOM_SENTINEL_TRANSIENT_MIN) || DEFAULTS.transientMin,
+    repageMin: Number(env.TOM_SENTINEL_REPAGE_MIN) || DEFAULTS.repageMin,
     reloginCmd: env.TOM_SENTINEL_RELOGIN_CMD || DEFAULTS.reloginCmd,
   };
 }
 
 // ─── DECISÃO (pura) ──────────────────────────────────────────────────────────
+// C4: hora local em São Paulo (UTC-3 o ano inteiro — Brasil não tem mais horário de verão desde
+// 2019, então não existe salto de DST pra tratar aqui). Determinístico a partir de nowMs: mesmo
+// argumento, mesma saída — continua sendo função pura, ainda que use Intl por baixo (mesmo
+// espírito de `_hhmm`, mais abaixo, que já faz o mesmo pra formatar a mensagem).
+function _horaEmSaoPaulo(nowMs) {
+  const h = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', hour: 'numeric', hour12: false }).format(new Date(nowMs));
+  return Number(h) % 24; // meia-noite pode vir como "24" dependendo do ICU — normaliza pra 0
+}
+function _dentroDaJanelaDeRepage(nowMs) {
+  const h = _horaEmSaoPaulo(nowMs);
+  return h >= JANELA_REPAGE_INICIO_H && h < JANELA_REPAGE_FIM_H;
+}
+// C4: pode insistir quando (a) está dentro da janela comercial E (b) já passou `repageMs` desde
+// o ÚLTIMO alerta (`alerted_at`, reaproveitado como "último", não "primeiro"). Sem `repageMs`
+// configurado, FALHA PRA SEGURANÇA (nunca insiste) — melhor calar de menos do que virar spam por
+// um caller que esqueceu de configurar o intervalo.
+function _podeRepaginar({ openIncident, nowMs, repageMs }) {
+  if (!Number.isFinite(repageMs) || repageMs <= 0) return false;
+  if (!_dentroDaJanelaDeRepage(nowMs)) return false;
+  if (!openIncident.alerted_at) return true; // defensivo: auth aberto mas nunca alertado
+  const desdeUltimoMs = nowMs - Date.parse(openIncident.alerted_at);
+  return Number.isFinite(desdeUltimoMs) && desdeUltimoMs >= repageMs;
+}
+
 // probe         : { ok:true } | { ok:false, kind:'exit_auth'|'exit_overloaded'|... }
 // openIncident  : null | { id, kind:'auth'|'transient', started_at, alerted_at }
-// → { action:'noop'|'open'|'escalate'|'page_transient'|'recover', incidentKind?, page, pageType? }
-function decideSentinel({ probe, openIncident, nowMs, transientMs } = {}) {
+// → { action:'noop'|'open'|'escalate'|'page_transient'|'repage'|'recover', incidentKind?, page, pageType? }
+function decideSentinel({ probe, openIncident, nowMs, transientMs, repageMs } = {}) {
   if (!probe) return { action: 'noop', page: false }; // sem sinal → não age (não inventa queda)
   const ok = !!(probe && probe.ok);
   const kind = probe && probe.kind;
@@ -55,7 +95,9 @@ function decideSentinel({ probe, openIncident, nowMs, transientMs } = {}) {
   if (ok) {
     if (openIncident) {
       // Só anuncia "voltou" se a queda chegou a ser ALERTADA (blip transitório
-      // que abriu+fechou sem page não vira spam de recuperação).
+      // que abriu+fechou sem page não vira spam de recuperação). `alerted_at` pode ter sido
+      // reescrito várias vezes pelo re-page (C4) — a checagem é de PRESENÇA, não de valor, então
+      // a recuperação continua pagando no máximo uma vez.
       return { action: 'recover', page: !!openIncident.alerted_at, pageType: 'recover' };
     }
     return { action: 'noop', page: false };
@@ -65,7 +107,11 @@ function decideSentinel({ probe, openIncident, nowMs, transientMs } = {}) {
   if (isAuth) {
     if (!openIncident) return { action: 'open', incidentKind: 'auth', page: true, pageType: 'auth' };
     if (openIncident.kind === 'transient') return { action: 'escalate', incidentKind: 'auth', page: true, pageType: 'auth' };
-    return { action: 'noop', page: false }; // auth já aberto e alertado → debounce
+    // C4: auth já aberto — em vez de calar pra sempre, insiste a cada `repageMs`, só em horário
+    // comercial. Fora da janela ou ainda dentro do prazo → noop (debounce continua existindo,
+    // só não é mais eterno).
+    if (_podeRepaginar({ openIncident, nowMs, repageMs })) return { action: 'repage', page: true, pageType: 'auth' };
+    return { action: 'noop', page: false };
   }
 
   // Transitório (overload/timeout/5xx/...): se cura sozinho → page só se persistir.
@@ -91,11 +137,22 @@ function _hhmm(iso) {
   } catch (_) { return '??:??'; }
 }
 
-function buildSentinelMessage({ pageType, sinceIso, reloginCmd } = {}) {
+// C4: quantas horas inteiras já se passaram entre sinceIso e nowIso — null se não der pra medir
+// (falta um dos dois, ou data inválida). Usado pra dizer "já se vão Xh" na mensagem de auth.
+function _horasDesde(sinceIso, nowIso) {
+  if (!sinceIso || !nowIso) return null;
+  const ms = new Date(nowIso).getTime() - new Date(sinceIso).getTime();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return Math.floor(ms / 3600000);
+}
+
+function buildSentinelMessage({ pageType, sinceIso, reloginCmd, nowIso } = {}) {
   if (pageType === 'auth') {
+    const h = _horasDesde(sinceIso, nowIso);
+    const duracao = h ? ` (já se vão ${h}h)` : '';
     return [
       '🔴 *TOM — Claude caiu (login)*',
-      `Desde ~${_hhmm(sinceIso)} o Claude tá recusando autenticação. O TOM continua respondendo, mas *degradado no Codex* (fallback).`,
+      `Desde ~${_hhmm(sinceIso)}${duracao} o Claude tá recusando autenticação. O TOM continua respondendo, mas *degradado no Codex* (fallback).`,
       '',
       'Pra voltar ao normal é só re-logar (o script faz backup + verifica sozinho):',
       reloginCmd || DEFAULTS.reloginCmd,
@@ -162,7 +219,7 @@ async function runClaudeSentinel({ supabase, claudeChat, sendMessage, now = new 
   }
 
   // 4) Decisão pura.
-  const decision = decideSentinel({ probe, openIncident, nowMs, transientMs: cfg.transientMin * 60000 });
+  const decision = decideSentinel({ probe, openIncident, nowMs, transientMs: cfg.transientMin * 60000, repageMs: cfg.repageMin * 60000 });
 
   // 5) Efeitos (banco + WhatsApp). Isolados — falha aqui só loga.
   try {
@@ -172,22 +229,28 @@ async function runClaudeSentinel({ supabase, claudeChat, sendMessage, now = new 
         started_at: nowIso, alerted_at: decision.page ? nowIso : null,
         last_probe_kind: probe.kind || null,
       });
-      if (decision.page) await _page(sendMessage, cfg, { pageType: decision.pageType, sinceIso: nowIso });
+      if (decision.page) await _page(sendMessage, cfg, { pageType: decision.pageType, sinceIso: nowIso, nowIso });
     } else if (decision.action === 'escalate') {
       await supabase.from('tom_provider_incidents')
         .update({ kind: 'auth', alerted_at: nowIso, last_probe_kind: probe.kind || null })
         .eq('id', openIncident.id);
-      await _page(sendMessage, cfg, { pageType: 'auth', sinceIso: openIncident.started_at });
+      await _page(sendMessage, cfg, { pageType: 'auth', sinceIso: openIncident.started_at, nowIso });
     } else if (decision.action === 'page_transient') {
       await supabase.from('tom_provider_incidents')
         .update({ alerted_at: nowIso, last_probe_kind: probe.kind || null })
         .eq('id', openIncident.id);
-      await _page(sendMessage, cfg, { pageType: 'transient', sinceIso: openIncident.started_at });
+      await _page(sendMessage, cfg, { pageType: 'transient', sinceIso: openIncident.started_at, nowIso });
+    } else if (decision.action === 'repage') {
+      // C4: insiste — reaproveita `alerted_at` como "último alerta" (não abre coluna nova).
+      await supabase.from('tom_provider_incidents')
+        .update({ alerted_at: nowIso, last_probe_kind: probe.kind || null })
+        .eq('id', openIncident.id);
+      await _page(sendMessage, cfg, { pageType: 'auth', sinceIso: openIncident.started_at, nowIso });
     } else if (decision.action === 'recover') {
       await supabase.from('tom_provider_incidents')
         .update({ recovered_at: nowIso, recovery_alerted_at: decision.page ? nowIso : null })
         .eq('id', openIncident.id);
-      if (decision.page) await _page(sendMessage, cfg, { pageType: 'recover', sinceIso: nowIso });
+      if (decision.page) await _page(sendMessage, cfg, { pageType: 'recover', sinceIso: nowIso, nowIso });
     }
   } catch (e) {
     console.error('[Sentinel] aplicar decisão falhou:', e.message);
@@ -197,8 +260,8 @@ async function runClaudeSentinel({ supabase, claudeChat, sendMessage, now = new 
   return { probe, decision };
 }
 
-async function _page(sendMessage, cfg, { pageType, sinceIso }) {
-  const msg = buildSentinelMessage({ pageType, sinceIso, reloginCmd: cfg.reloginCmd });
+async function _page(sendMessage, cfg, { pageType, sinceIso, nowIso }) {
+  const msg = buildSentinelMessage({ pageType, sinceIso, reloginCmd: cfg.reloginCmd, nowIso });
   try { await sendMessage(cfg.ownerPhone, msg); }
   catch (e) { console.error('[Sentinel] envio do alerta falhou:', e.message); }
 }
