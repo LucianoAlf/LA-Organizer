@@ -959,6 +959,7 @@ function painelFalso() {
         .filter((t) => t.isGroup && t.status === 'pending')
         .map((c) => ({
           id: c.id, title: c.title, due_date: c.due_date,
+          totalFilhas: [...tasks.values()].filter((f) => f.parent === c.id).length,
           filhas: [...tasks.values()].filter((f) => f.parent === c.id && f.status === 'pending').map((f) => {
             const v = vinculos.get(f.id);
             return { id: f.id, title: f.title, pagador_chave: v ? v.pagador_chave : null, categoria_origem: v ? v.categoria_origem : null };
@@ -1026,6 +1027,114 @@ test('I3 (repro C, duas execuções): criação lança no meio (mãe + 4 filhas 
   const r3 = await r.pautaPixDaUnidade({ ...base, laReport: laReportOk(fonte), deps });
   assert.strictEqual(r3.jaExistia, true, '3ª execução no mesmo dia: não cria de novo');
   assert.strictEqual(r3.lote.length, 10);
+});
+
+// ── R2 (re-revisão) — pacote de hoje SEM filha nenhuma também é incompleto ──────────────────────
+test('R2: pacote de HOJE com ZERO filhas (criação caiu na 1ª filha / resposta perdida) — cancela o pacote vazio, reconstrói, e só DEPOIS mexe nas carregadas e no anterior', async () => {
+  const eventos = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso'), linha('Caio', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
+      containersPix: async () => [
+        { id: 'c-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15', totalFilhas: 2,
+          filhas: [filha('f-ana', 'k-Ana', 'a'), filha('f-bia', 'k-Bia', 'b')] },
+        { id: 'c-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16', totalFilhas: 0, filhas: [] },
+      ],
+      criarPacote: async ({ input }) => { eventos.push(`criar:${input.subtasks.length}`); return { groupId: 'c-novo', childIds: input.subtasks.map((_, i) => `n${i}`) }; },
+      vincular: async (vs) => { eventos.push(`vincular:${vs.length}`); return true; },
+      fecharFilha: async (id, status) => { eventos.push(`filha:${id}:${status}`); return true; },
+      fecharContainer: async (id, status) => { eventos.push(`pacote:${id}:${status}`); return true; },
+    },
+  });
+  assert.deepStrictEqual(eventos, [
+    'pacote:c-hoje:cancelled', 'criar:3', 'vincular:3',
+    'filha:f-ana:cancelled', 'filha:f-bia:cancelled', 'pacote:c-ontem:done',
+  ]);
+  assert.strictEqual(out.criou, true);
+  assert.strictEqual(out.jaExistia, false);
+  assert.deepStrictEqual(out.lote.map((l) => l.pagador_chave), ['k-Ana', 'k-Bia', 'k-Caio']);
+  assert.strictEqual(out.carregadas, 2);
+  assert.ok(out.texto.includes('• Ana'), 'publica o lote reconstruído, não uma lista vazia');
+  assert.strictEqual(pura.decisaoDaPublicacaoPix(out, { unidadeNome: 'Barra' }).result, 'executed');
+});
+
+test('R2: pacote de hoje com ZERO filhas e a reconstrução falha — falha de painel (texto nulo, fallback), anterior e carregadas intactos', async () => {
+  const eventos = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
+      containersPix: async () => [
+        { id: 'c-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15', totalFilhas: 1, filhas: [filha('f-ana', 'k-Ana', 'a')] },
+        { id: 'c-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16', totalFilhas: 0, filhas: [] },
+      ],
+      criarPacote: async () => { throw new Error('insert task: timeout'); },
+      vincular: nuncaChama('vincular'),
+      fecharFilha: nuncaChama('fecharFilha'),
+      fecharContainer: async (id, status) => { eventos.push(`pacote:${id}:${status}`); return true; },
+    },
+  });
+  assert.deepStrictEqual(eventos, ['pacote:c-hoje:cancelled'], 'só o pacote vazio foi cancelado');
+  assert.strictEqual(out.texto, null);
+  assert.deepStrictEqual(out.lote, []);
+  assert.strictEqual(pura.decisaoDaPublicacaoPix(out, { unidadeNome: 'Barra' }).result, 'fallback');
+});
+
+test('R2: pacote de hoje cujas filhas foram TODAS fechadas hoje (atalho) NÃO é incompleto — não cancela nem reconstrói', async () => {
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
+      informados: async () => [
+        { pagador_chave: 'k-Ana', created_at: new Date(AGORA - 3600e3).toISOString() },
+        { pagador_chave: 'k-Bia', created_at: new Date(AGORA - 3600e3).toISOString() },
+      ],
+      containersPix: async () => [
+        { id: 'c-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16', totalFilhas: 2, filhas: [] },
+      ],
+      criarPacote: nuncaChama('criarPacote'),
+      vincular: nuncaChama('vincular'),
+      fecharFilha: nuncaChama('fecharFilha'),
+      fecharContainer: nuncaChama('fecharContainer'),
+    },
+  });
+  assert.strictEqual(out.jaExistia, true);
+  assert.strictEqual(out.criou, false);
+  assert.deepStrictEqual(out.lote, []);
+  assert.match(out.texto, /· faltam 2 ·/, 'publica as contagens reais do dia');
+});
+
+test('R2 (duas execuções, painel com estado): a criação cai na 1ª filha e deixa a mãe SEM filha — a execução seguinte cancela a mãe vazia e reconstrói; anterior só fecha depois', async () => {
+  const fonte = quarenta();
+  const painel = painelFalso();
+  painel.addTask({ id: 'c-ontem', isGroup: true, title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15' });
+  fonte.slice(0, 3).forEach((l, i) => {
+    painel.addTask({ id: `o${i}`, parent: 'c-ontem', title: pura.tituloDaFilha(l), due_date: '2026-09-15' });
+    painel.vincularDireto({ task_id: `o${i}`, pagador_chave: l.pagador_chave, unidade_id: 'u1', categoria_origem: 'migrar' });
+  });
+  const deps = { agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [], ...painel.deps };
+
+  painel.falharProximaCriacaoDepoisDe(0);
+  const r1 = await r.pautaPixDaUnidade({ ...base, laReport: laReportOk(fonte), deps });
+  assert.strictEqual(r1.texto, null);
+  assert.strictEqual(painel.tasks.get('mae1').status, 'pending', 'sobrou a mãe sem filha nenhuma');
+  assert.strictEqual([...painel.tasks.values()].filter((t) => t.parent === 'mae1').length, 0);
+  assert.strictEqual(painel.tasks.get('c-ontem').status, 'pending');
+
+  const r2 = await r.pautaPixDaUnidade({ ...base, laReport: laReportOk(fonte), deps });
+  assert.strictEqual(r2.jaExistia, false, 'a mãe vazia não pode passar por "pacote de hoje já existe"');
+  assert.strictEqual(r2.criou, true);
+  assert.strictEqual(r2.lote.length, 10);
+  assert.strictEqual(r2.carregadas, 3);
+  assert.ok(r2.texto.includes('• P00'));
+  assert.strictEqual(painel.tasks.get('mae1').status, 'cancelled');
+  assert.strictEqual(painel.tasks.get('c-ontem').status, 'done');
+  assert.ok(['o0', 'o1', 'o2'].every((id) => painel.tasks.get(id).status === 'cancelled'));
+  assert.deepStrictEqual([...painel.tasks.values()].filter((t) => !t.isGroup && t.status === 'done'), []);
 });
 
 test('I3: lote vazio legítimo — todos informados há menos de 7 dias: não cria, mas PUBLICA o texto com as contagens (informação real)', async () => {

@@ -98,11 +98,12 @@ const _id8 = (id) => String(id == null ? '' : id).slice(0, 8);
 
 // ── contrato de deps (testável sem banco — nenhum teste deste arquivo toca o Supabase real) ───
 // deps.agora()                                -> number   (padrão Date.now())
-// deps.containersPix({ groupId })             -> [{ id, title, due_date,
+// deps.containersPix({ groupId })             -> [{ id, title, due_date, totalFilhas,
 //                                                    filhas: [{ id, title, pagador_chave, categoria_origem }] }]
 //   Só pacotes PIX (título começa com PREFIXO_CONTAINER) com status 'pending', e só filhas
-//   'pending'. `pagador_chave`/`categoria_origem` vêm de public.pix_pauta_vinculo; filha sem
-//   vínculo devolve pagador_chave: null (e categoria_origem: null).
+//   'pending'. `totalFilhas` conta as filhas em QUALQUER status (R2: distingue "nunca teve filha"
+//   de "todas já fechadas"); ausente, vale filhas.length. `pagador_chave`/`categoria_origem` vêm de
+//   public.pix_pauta_vinculo; filha sem vínculo devolve pagador_chave: null (e categoria_origem: null).
 // deps.criarPacote({ supabase, groupId, createdBy, input }) -> { groupId, childIds }
 //   Padrão: require('../services/task-groups').createTaskGroup. childIds vem na MESMA ordem de
 //   input.subtasks (garantia do motor de criação, não deste ritual).
@@ -136,10 +137,13 @@ async function _containersPixPadrao(sb, { groupId }) {
   if (error) throw new Error(`containersPix: ${error.message}`);
   const containers = [];
   for (const c of data || []) {
-    const { data: filhas, error: erroFilhas } = await sb.from('tasks').select('id, title')
-      .eq('parent_task_id', c.id).eq('status', 'pending');
+    // Filhas em QUALQUER status (R2): `totalFilhas` separa a mãe que nunca teve filha (criação
+    // interrompida) do pacote cujas filhas foram todas fechadas hoje. Só as pendentes seguem adiante.
+    const { data: todasFilhas, error: erroFilhas } = await sb.from('tasks').select('id, title, status')
+      .eq('parent_task_id', c.id);
     if (erroFilhas) throw new Error(`containersPix (filhas de ${c.id}): ${erroFilhas.message}`);
-    const ids = (filhas || []).map((f) => f.id);
+    const filhas = (todasFilhas || []).filter((f) => f.status === 'pending');
+    const ids = filhas.map((f) => f.id);
     let porTask = new Map();
     if (ids.length) {
       const { data: vinculos, error: erroVinculo } = await sb.from('pix_pauta_vinculo')
@@ -151,7 +155,8 @@ async function _containersPixPadrao(sb, { groupId }) {
       id: c.id,
       title: c.title,
       due_date: c.due_date,
-      filhas: (filhas || []).map((f) => {
+      totalFilhas: (todasFilhas || []).length,
+      filhas: filhas.map((f) => {
         const v = porTask.get(f.id);
         return {
           id: f.id, title: f.title,
@@ -453,13 +458,19 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
 
     const anteriores = containers.filter((c) => c.due_date < hoje);
     const deHoje = containers.filter((c) => c.due_date === hoje);
-    const incompletos = deHoje.filter((c) => (c.filhas || []).some((f) => !f.pagador_chave));
+    // Pacote de HOJE incompleto = a criação foi interrompida: (a) a mãe NUNCA teve filha (o insert
+    // caiu na 1ª filha, ou a mãe gravou e a resposta se perdeu — R2) ou (b) alguma filha pendente
+    // sem vínculo (I3). "Nunca teve filha" é `totalFilhas === 0` (filhas em qualquer status): um
+    // pacote cujas filhas foram TODAS fechadas hoje (ex.: todas baixadas pelo atalho) está inteiro.
+    const nuncaTeveFilha = (c) => (Number.isInteger(c.totalFilhas) ? c.totalFilhas : (c.filhas || []).length) === 0;
+    const incompletos = deHoje.filter((c) => nuncaTeveFilha(c) || (c.filhas || []).some((f) => !f.pagador_chave));
     const pacoteDeHoje = deHoje.find((c) => !incompletos.includes(c));
 
-    // 1) I3 — pacote de HOJE incompleto (alguma filha sem vínculo = a criação foi interrompida):
-    // desmonta (todas as filhas pendentes + o pacote) e segue pra reconstruir. Quem ainda está na
-    // pauta vira carregado do pacote reconstruído. Se QUALQUER escrita da desmontagem falhar, NÃO
-    // reconstrói: com o incompleto ainda aberto, um pacote novo seria um segundo pacote do dia.
+    // 1) I3/R2 — pacote de HOJE incompleto: desmonta (as filhas pendentes que houver + o pacote) e
+    // segue pra reconstruir. Quem ainda está na pauta vira carregado do pacote reconstruído. Se
+    // QUALQUER escrita da desmontagem falhar, NÃO reconstrói: com o incompleto ainda aberto, um
+    // pacote novo seria um segundo pacote do dia. Sem essa checagem, a mãe sem filha caía em
+    // "pacote de hoje já existe": carregadas canceladas, anterior fechado, lote 0 e texto publicado.
     const carregadasBrutas = [];
     for (const c of incompletos) {
       let desmontou = true;
@@ -476,7 +487,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       if (!desmontou) {
         return retorno({
           fechadas,
-          motivo: motivoCom('pacote de hoje incompleto (filha sem vínculo) e não consegui desmontá-lo — não reconstruí pra não duplicar'),
+          motivo: motivoCom('pacote de hoje incompleto (sem filha ou com filha sem vínculo) e não consegui desmontá-lo — não reconstruí pra não duplicar'),
         });
       }
       carregadasBrutas.push(...continuam);
