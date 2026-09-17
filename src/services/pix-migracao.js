@@ -243,6 +243,23 @@ function horaDaPautaPix(unidadeNome, diaSemana, { loteUnico, horaAbertura } = {}
 //   nenhum dos        e inventar um texto seria mentir) · result 'fallback' (tenta de novo)
 //   anteriores
 //   caso contrário -> publica r.texto tal como veio · result 'executed'
+// ── CHAVE DA GUARDA DE DUPLICATA DO DISPATCHER (M1, revisão final) ─────────────────────────────
+// O dispatcher bloqueia reenvio procurando, desde o início do dia, mensagem do TOM no grupo cujo
+// conteúdo COMEÇA com esta chave (`like('content', chave%)`). A primeira linha crua não serve: ela
+// carrega "faltam N", e a mesma pauta com outro número (fonte atualizou entre dois ticks, ou
+// retry depois de marcador que falhou) passava pela guarda e saía DE NOVO.
+//   mensagem normal     -> prefixo fixo "💠 *PIX automático — <Unidade>* · faltam" (sem o número):
+//                          a normal nunca sai duas vezes no dia.
+//   aviso de fonte velha -> a primeira linha inteira ("💠 *PIX automático — <Unidade>*"): o aviso
+//                          não repete, e a mensagem normal de recuperação (que não começa com
+//                          "...*\n_A fonte") ainda sai depois dele.
+const SUFIXO_GUARDA_NORMAL = ' · faltam';
+function prefixoDaGuardaPix(texto) {
+  const primeira = String(texto == null ? '' : texto).split('\n')[0];
+  const i = primeira.indexOf(SUFIXO_GUARDA_NORMAL);
+  return i === -1 ? primeira : primeira.slice(0, i + SUFIXO_GUARDA_NORMAL.length);
+}
+
 function decisaoDaPublicacaoPix(r, { unidadeNome }) {
   if (r.fonteFalhou) {
     return { texto: mensagemDaUnidade({ unidadeNome, linhas: [], lote: [], fonteVelha: true }), result: 'fallback' };
@@ -264,7 +281,7 @@ module.exports = {
   somaDiasYmd: _somaDiasYmd,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
-  horaDaPautaPix, decisaoDaPublicacaoPix,
+  horaDaPautaPix, decisaoDaPublicacaoPix, prefixoDaGuardaPix,
   dadosDaUnidadeParaRelatorio, periodoDaSemanaBr, precisaAlertaRitmo,
   motivoDoRelatorio, lerSemanaDoMotivo,
 };

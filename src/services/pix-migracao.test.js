@@ -271,6 +271,29 @@ test('decisaoDaPublicacaoPix: sucesso publica o texto do ritual tal como veio (e
   assert.strictEqual(d.result, 'executed');
 });
 
+// ── prefixoDaGuardaPix (M1, revisão final) ──────────────────────────────────────────────────
+test('M1: prefixoDaGuardaPix — mensagem normal usa o prefixo fixo até "· faltam" (sem o número)', () => {
+  const linhas = [{ pagador_chave: 'a', pagador_nome: 'Ana', alunos: [], categoria: 'migrar', fatia: 'pix_avulso' }];
+  const texto = p.mensagemDaUnidade({ unidadeNome: 'Campo Grande', linhas, lote: linhas });
+  assert.strictEqual(p.prefixoDaGuardaPix(texto), '💠 *PIX automático — Campo Grande* · faltam');
+});
+
+test('M1: prefixoDaGuardaPix — aviso de fonte velha usa a primeira linha inteira', () => {
+  const texto = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [], lote: [], fonteVelha: true });
+  assert.strictEqual(p.prefixoDaGuardaPix(texto), '💠 *PIX automático — Barra*');
+});
+
+test('M1: a normal nunca sai duas vezes (mesmo com "faltam" diferente); a de recuperação sai depois da de fonte velha', () => {
+  const linha = (n) => ({ pagador_chave: `k${n}`, pagador_nome: `N${n}`, alunos: [], categoria: 'migrar', fatia: 'pix_avulso' });
+  const normalManha = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [linha(1), linha(2)], lote: [] });
+  const normalTarde = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [linha(1)], lote: [] });
+  const fonteVelha = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [], lote: [], fonteVelha: true });
+  // `like(content, prefixo%)` = startsWith.
+  assert.ok(normalManha.startsWith(p.prefixoDaGuardaPix(normalTarde)), 'faltam 2 de manhã bloqueia a normal com faltam 1 à tarde');
+  assert.ok(!fonteVelha.startsWith(p.prefixoDaGuardaPix(normalTarde)), 'aviso de fonte velha publicado antes não bloqueia a recuperação');
+  assert.ok(fonteVelha.startsWith(p.prefixoDaGuardaPix(fonteVelha)), 'o aviso de fonte velha não sai duas vezes');
+});
+
 // ── dadosDaUnidadeParaRelatorio (Tarefa 6 — relatório semanal) ──────────────────────────────
 const lr = (categoria, extra = {}) => ({ categoria, ...extra });
 

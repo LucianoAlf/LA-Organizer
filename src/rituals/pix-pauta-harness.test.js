@@ -107,6 +107,11 @@ if (!(iFimPixDiario < iInicioRelatorio && iInicioRelatorio < iInicioLembrete)) {
   throw new Error('[harness] o relatorio semanal saiu do lugar: tem que ficar ENTRE o bloco diario do pix e o lembrete horario');
 }
 const TRECHO_RELATORIO = FONTE.slice(iInicioRelatorio, iInicioLembrete);
+// So o bloco DIARIO (sem o relatorio semanal, que tem guarda propria por primeira linha).
+const TRECHO_PIX_DIARIO = FONTE.slice(iInicioPix, iFimPixDiario);
+// M1: a linha da chave da guarda do bloco diario, verbatim e unica no dispatcher.
+const iGuardaPix = acharUnica((l) => l.trim() === 'const cabecalhoMsg = _pixPura.prefixoDaGuardaPix(texto);', 'chave da guarda de duplicata do pix (prefixoDaGuardaPix)');
+const LINHA_GUARDA_PIX = LINHAS[iGuardaPix].trim();
 
 // Gate do relatorio semanal — mesmo padrao do gate diario acima: recorta a linha do slot e a
 // condicao do `if`, verbatim, e roda os dois via `new Function` contra o `timeToSlot` REAL.
@@ -223,9 +228,9 @@ test('pix no dispatcher (fix round 1, Critical): a decisao do que publicar vem d
 });
 
 test('pix no dispatcher (fix round 1): quando a decisao pura nao devolve texto (fila vazia ou falha do painel), so grava o marcador — sem guarda de cabecalho, sem INSERT em group_chat_messages', () => {
-  const iDesvio = TRECHO_PIX.indexOf('if (texto === null) {');
-  const iGuarda = TRECHO_PIX.indexOf('const cabecalhoMsg = String(texto).split(');
-  const iInsertMsg = TRECHO_PIX.indexOf(".from('group_chat_messages').insert(");
+  const iDesvio = TRECHO_PIX_DIARIO.indexOf('if (texto === null) {');
+  const iGuarda = TRECHO_PIX_DIARIO.indexOf(LINHA_GUARDA_PIX);
+  const iInsertMsg = TRECHO_PIX_DIARIO.indexOf(".from('group_chat_messages').insert(");
   assert.notStrictEqual(iDesvio, -1, 'tem que existir um desvio explicito pra quando nao ha texto pra publicar');
   assert.notStrictEqual(iGuarda, -1);
   assert.notStrictEqual(iInsertMsg, -1);
@@ -240,11 +245,20 @@ test('pix no dispatcher: publica por group_chat_messages, nunca por whatsapp.sen
     'envio cru no ritual quebra a trava de quiet gates');
 });
 
-test('pix no dispatcher: guarda de duplicata por cabecalho presente, igual a fala de abertura', () => {
-  assert.ok(TRECHO_PIX.includes('const cabecalhoMsg = String(texto).split('),
-    'a chave da guarda tem que ser a primeira linha do texto publicado');
-  assert.ok(TRECHO_PIX.includes("like('content', `${cabecalhoMsg}%`)"),
+test('pix no dispatcher (M1): guarda de duplicata do bloco DIARIO usa a funcao pura prefixoDaGuardaPix — nunca a primeira linha crua (que muda com o "faltam N")', () => {
+  assert.ok(TRECHO_PIX_DIARIO.includes("like('content', `${cabecalhoMsg}%`)"),
     'a guarda de duplicata tem que casar por PREFIXO do conteudo, desde o inicio do dia');
+  assert.ok(!TRECHO_PIX_DIARIO.includes('String(texto).split('),
+    'M1: a primeira linha crua carrega "faltam N" — a mesma mensagem com outro numero passava pela guarda');
+  // Roda a linha VERBATIM do dispatcher contra o modulo puro REAL.
+  // eslint-disable-next-line no-new-func
+  const chaveDoDispatcher = new Function('_pixPura', 'texto', `${LINHA_GUARDA_PIX}\nreturn cabecalhoMsg;`);
+  const pura = require('../services/pix-migracao');
+  const linhas = [{ pagador_chave: 'a', pagador_nome: 'Ana', alunos: [], categoria: 'migrar', fatia: 'pix_avulso' }];
+  const normal = pura.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: linhas });
+  const velha = pura.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [], lote: [], fonteVelha: true });
+  assert.strictEqual(chaveDoDispatcher(pura, normal), '💠 *PIX automático — Barra* · faltam');
+  assert.strictEqual(chaveDoDispatcher(pura, velha), '💠 *PIX automático — Barra*');
 });
 
 test("'pauta_pix' entrou na whitelist do --force (senao --force pauta_pix cai no caminho de ritual antigo)", () => {

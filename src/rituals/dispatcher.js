@@ -4882,11 +4882,13 @@ async function run(opts = {}) {
             continue;
           }
 
-          // GUARDA DE DUPLICATA POR CABECALHO — mesmo padrao da fala de abertura acima: primeira
-          // linha do texto como chave, `like('content', cabecalho%)`, desde o inicio do dia em
+          // GUARDA DE DUPLICATA POR CABECALHO — `like('content', chave%)` desde o inicio do dia em
           // BRT. E ela, e nao so o marcador, que impede reenvio no grupo REAL se o marker_logs
-          // falhar depois do insert ter ido.
-          const cabecalhoMsg = String(texto).split('\n')[0];
+          // falhar depois do insert ter ido. A chave vem da funcao PURA prefixoDaGuardaPix (M1):
+          // a primeira linha crua carrega "faltam N" e deixava a mesma pauta sair de novo com
+          // outro numero; a normal usa o prefixo fixo ate "· faltam", o aviso de fonte velha a
+          // primeira linha inteira.
+          const cabecalhoMsg = _pixPura.prefixoDaGuardaPix(texto);
           const hojeInicioISO = new Date(`${now.ymd}T00:00:00-03:00`).toISOString();
           const { data: jaEnviada, error: erroJaEnviada } = await supabase.from('group_chat_messages')
             .select('id')
