@@ -33,13 +33,23 @@ function contagemPorFatia(linhas) {
 const tituloDaFilha = (l) => `PIX automático — ${l.pagador_nome}${(l.alunos || []).length ? ` (${l.alunos.join(', ')})` : ''}`;
 
 const METAS_BR = META_YMD.slice(8, 10) + '/' + META_YMD.slice(5, 7);
-function mensagemDaUnidade({ unidadeNome, linhas, lote, fonteVelha = false }) {
+function mensagemDaUnidade({
+  unidadeNome, linhas, lote, fonteVelha = false, voltaram = [],
+}) {
   const cab = `💠 *PIX automático — ${unidadeNome}*`;
   if (fonteVelha) return `${cab}\n_A fonte do LA Report não atualizou hoje — não vou cobrar número que não medi._`;
   const todas = linhas || [];
   const noLote = new Set((lote || []).map((l) => l.pagador_chave));
   const cont = contagemPorFatia(todas);
   const linhasTxt = [`${cab} · faltam ${todas.length} · meta ${METAS_BR}`];
+  // TAREFA 7 — reconferência de 7 dias: quem a equipe disse ter cadastrado, mas a fonte ainda
+  // mostra como não migrado depois do prazo de graça, ganha uma seção própria logo após o
+  // cabeçalho — separada da lista normal pra não se confundir com "gente nova na fila".
+  // `voltaram` vazio (padrão) mantém a mensagem IDÊNTICA à de antes desta tarefa.
+  if ((voltaram || []).length) {
+    linhasTxt.push(`↩️ *Voltaram pra lista* (${voltaram.length}) — disseram que cadastrou, mas o Emusys ainda não mostra:\n`
+      + voltaram.map((l) => `   • ${l.pagador_nome}${(l.alunos || []).length ? ` (${l.alunos.join(', ')})` : ''}`).join('\n'));
+  }
   const resumo = [];
   for (const f of FATIAS) {
     const n = cont.get(f) || 0;

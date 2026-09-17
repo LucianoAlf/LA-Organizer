@@ -87,6 +87,32 @@ test('mensagem: fonte velha não publica número, avisa', () => {
   assert.ok(!/\(\d+\)/.test(txt));
 });
 
+// ── voltaram (Tarefa 7 — reconferência de 7 dias) ───────────────────────────────────────────
+test('mensagem: com voltaram, mostra a seção ↩️ Voltaram pra lista logo após o cabeçalho', () => {
+  const linhas = [
+    { pagador_chave: 'a', pagador_nome: 'Ana Lima', alunos: ['Rafa'], categoria: 'migrar', fatia: 'pix_avulso' },
+  ];
+  const voltaram = [
+    { pagador_chave: 'z', pagador_nome: 'Zeca Souza', alunos: ['Duda'], categoria: 'migrar', fatia: 'boleto' },
+  ];
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: linhas, voltaram });
+  const linhasDoTexto = txt.split('\n');
+  assert.match(linhasDoTexto[0], /^💠 \*PIX automático — Barra\*/);
+  assert.strictEqual(linhasDoTexto[1], '↩️ *Voltaram pra lista* (1) — disseram que cadastrou, mas o Emusys ainda não mostra:');
+  assert.match(txt, /   • Zeca Souza \(Duda\)/);
+});
+
+test('mensagem: sem voltaram (padrão), texto idêntico ao de antes desta tarefa — zero regressão', () => {
+  const linhas = [
+    { pagador_chave: 'a', pagador_nome: 'Ana Lima', alunos: ['Rafa'], categoria: 'autorizacao_pendente', fatia: null },
+    { pagador_chave: 'b', pagador_nome: 'Bruno Sá', alunos: ['Léo'], categoria: 'migrar', fatia: 'pix_avulso' },
+  ];
+  const semParametro = p.mensagemDaUnidade({ unidadeNome: 'Campo Grande', linhas, lote: linhas.slice(0, 1) });
+  const comVazio = p.mensagemDaUnidade({ unidadeNome: 'Campo Grande', linhas, lote: linhas.slice(0, 1), voltaram: [] });
+  assert.strictEqual(comVazio, semParametro);
+  assert.ok(!semParametro.includes('Voltaram pra lista'));
+});
+
 test('barra de progresso com 10 blocos', () => {
   assert.strictEqual(p.barra(0), '░░░░░░░░░░');
   assert.strictEqual(p.barra(58), '▓▓▓▓▓▓░░░░');

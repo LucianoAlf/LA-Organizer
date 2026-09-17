@@ -95,6 +95,9 @@ function _dedupPorChave(linhas) {
 // deps.fecharContainer(id)      -> boolean   nunca lança.
 // deps.vincular([{ task_id, pagador_chave, unidade_id }]) -> boolean   grava em
 //   pix_pauta_vinculo; nunca lança — erro de escrita vira aviso em `motivo`.
+// deps.informados({ unidadeId, desdeIso })    -> [{ pagador_chave, created_at }]   (Tarefa 7)
+//   marker_logs PIX_CADASTRO/executed com reason 'informado:<unidadeId>:%' desde desdeIso. PODE
+//   lançar — erro vira aviso em `motivo` e NÃO exclui ninguém do lote (falha-aberta).
 
 // ── deps padrão (Supabase real) ──────────────────────────────────────────────────────────────
 // Todas fecham sobre `supabase` por closure — mesmo padrão de `criarPacote` em
@@ -161,6 +164,21 @@ async function _vincularPadrao(sb, vinculos) {
   return true;
 }
 
+// Lê marker_logs (PIX_CADASTRO, result='executed') gravados pelo atalho de baixa informada no
+// grupo (src/services/pix-cadastro-grupo.js) desde `desdeIso`, casando pelo prefixo do reason
+// ('informado:<unidadeId>:'). Lança em erro do Supabase — quem chama (pautaPixDaUnidade) decide o
+// que fazer: aqui é falha-aberta, então NENHUMA exclusão acontece quando esta consulta falha.
+async function _informadosPadrao(sb, { unidadeId, desdeIso }) {
+  const { data, error } = await sb.from('marker_logs').select('reason, created_at')
+    .eq('marker_type', 'PIX_CADASTRO').eq('result', 'executed')
+    .like('reason', `informado:${unidadeId}:%`).gte('created_at', desdeIso);
+  if (error) throw new Error(`informados: ${error.message}`);
+  return (data || []).map((row) => ({
+    pagador_chave: String(row.reason || '').slice('informado:'.length),
+    created_at: row.created_at,
+  }));
+}
+
 // ── ritual ────────────────────────────────────────────────────────────────────────────────────
 async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, groupId, criadoPor, hoje, deps = {} }) {
   const agora = deps.agora || (() => Date.now());
@@ -170,6 +188,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   const fecharFilha = deps.fecharFilha || ((id, status) => _fecharFilhaPadrao(supabase, id, status));
   const fecharContainer = deps.fecharContainer || ((id) => _fecharContainerPadrao(supabase, id));
   const vincular = deps.vincular || ((vinculos) => _vincularPadrao(supabase, vinculos));
+  const informados = deps.informados || ((arg) => _informadosPadrao(supabase, arg));
 
   // fonteFalhou/semCliente: false por padrão (fix round 1, Critical) — só os DOIS caminhos que os
   // marcam `true` explicitamente (abaixo) representam "fonte fora do ar" e "sem cliente a migrar
@@ -179,6 +198,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   const vazio = {
     criou: false, jaExistia: false, total: 0, lote: [], fechadas: 0, carregadas: 0,
     texto: null, motivo: null, fonteVelha: false, fonteFalhou: false, semCliente: false,
+    voltaram: [], informadosRecentes: 0,
   };
 
   // Sempre checar `error`: RPC com parâmetro errado devolve {data:null,error} e viraria "zero
@@ -204,9 +224,46 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
 
   const linhas = todasAsLinhas.filter((l) => l && (l.categoria === 'migrar' || l.categoria === 'autorizacao_pendente'));
   const total = linhas.length;
-  const porChave = new Map(linhas.map((l) => [l.pagador_chave, l]));
 
+  // ── RECONFERÊNCIA DE 7 DIAS (Tarefa 7 do plano de migração) ────────────────────────────────
+  // A equipe deu baixa informada no grupo (src/services/pix-cadastro-grupo.js), que já fechou a
+  // filha na hora — mas a FONTE (Emusys, via LA Report) pode levar alguns dias pra refletir o
+  // cadastro. Sem esta reconferência, o cliente reaparece amanhã como "migrar" e o ritual cria
+  // OUTRA filha pra ele — pedindo de novo o que a equipe acabou de dizer que já fez. `informados`
+  // lê marker_logs (PIX_CADASTRO/executed) dos últimos ~8 dias pra saber, POR CLIENTE, há quantos
+  // dias a equipe avisou. Erro na leitura é FALHA-ABERTA de propósito (melhor repetir um nome já
+  // resolvido do que esconder um cliente de verdade da pauta): vira aviso em `motivo`, nenhuma
+  // exclusão é aplicada.
   const avisos = [];
+  const agoraMs = agora();
+  let recentesSet = new Set();
+  let voltaramSet = new Set();
+  try {
+    const desdeIso = new Date(agoraMs - 8 * 86400000).toISOString();
+    const rows = await informados({ unidadeId, desdeIso });
+    const diasPorChave = new Map();
+    for (const row of rows || []) {
+      const dias = Math.floor((agoraMs - Date.parse(row && row.created_at)) / 86400000);
+      if (!Number.isFinite(dias)) continue;
+      const atual = diasPorChave.get(row.pagador_chave);
+      if (atual === undefined || dias < atual) diasPorChave.set(row.pagador_chave, dias);
+    }
+    for (const [chave, dias] of diasPorChave) {
+      if (dias < 7) recentesSet.add(chave); else voltaramSet.add(chave);
+    }
+  } catch (e) {
+    avisos.push(`não consegui reconferir quem foi informado nos últimos dias: ${(e && e.message) || String(e)}`);
+  }
+  // < 7 dias: some da fila (não entra no lote nem é carregado), mas continua contado em `total`
+  // e nas fatias de `mensagemDaUnidade` (usa `linhas`, nunca filtrada). >= 7 dias (até 8, janela
+  // da consulta) e ainda na fonte: volta a ser candidato normal — e ganha a seção "Voltaram pra
+  // lista" (voltaram é sempre um subconjunto de `linhas`, então só entra quem a fonte AINDA
+  // mostra como migrar/autorização pendente).
+  const linhasElegiveis = linhas.filter((l) => !recentesSet.has(l.pagador_chave));
+  const voltaram = linhas.filter((l) => voltaramSet.has(l.pagador_chave));
+  const porChave = new Map(linhasElegiveis.map((l) => [l.pagador_chave, l]));
+  const informadosRecentes = recentesSet.size;
+
   try {
     const containers = await containersPix({ groupId });
 
@@ -250,9 +307,11 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       const lote = _dedupPorChave(loteBruto);
       return {
         criou: false, jaExistia: true, total, lote, fechadas, carregadas: carregadas.length,
-        texto: pura.mensagemDaUnidade({ unidadeNome, linhas, lote, fonteVelha: false }),
+        texto: pura.mensagemDaUnidade({
+          unidadeNome, linhas, lote, fonteVelha: false, voltaram,
+        }),
         motivo: avisos.length ? avisos.join('; ') : null, fonteVelha: false,
-        fonteFalhou: false, semCliente: false,
+        fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
       };
     }
 
@@ -261,7 +320,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     // deduplicado. Teto de sanidade por cima: nunca mais que TETO_FILHAS, mesmo quando o
     // carry-over empilha em cima de um lote normal de 10.
     const chavesCarregadas = new Set(carregadas.map((l) => l.pagador_chave));
-    const demais = linhas.filter((l) => !chavesCarregadas.has(l.pagador_chave));
+    const demais = linhasElegiveis.filter((l) => !chavesCarregadas.has(l.pagador_chave));
     const resto = pura.loteDoDia(demais);
     let lote = _dedupPorChave([...carregadas, ...resto]);
     if (lote.length > pura.TETO_FILHAS) lote = lote.slice(0, pura.TETO_FILHAS);
@@ -275,7 +334,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       return {
         criou: false, jaExistia: false, total, lote: [], fechadas, carregadas: carregadas.length,
         texto: null, motivo: ['sem cliente a migrar', ...avisos].join('; '), fonteVelha: false,
-        fonteFalhou: false, semCliente: true,
+        fonteFalhou: false, semCliente: true, voltaram, informadosRecentes,
       };
     }
 
@@ -299,7 +358,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
         criou: false, jaExistia: false, total, lote: [], fechadas, carregadas: carregadas.length,
         texto: null,
         motivo: [`não consegui criar o pacote: ${(e && e.message) || String(e)}`, ...avisos].join('; '),
-        fonteVelha: false, fonteFalhou: false, semCliente: false,
+        fonteVelha: false, fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
       };
     }
 
@@ -320,16 +379,22 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
 
     return {
       criou: true, jaExistia: false, total, lote, fechadas, carregadas: carregadas.length,
-      texto: pura.mensagemDaUnidade({ unidadeNome, linhas, lote, fonteVelha: false }),
+      texto: pura.mensagemDaUnidade({
+        unidadeNome, linhas, lote, fonteVelha: false, voltaram,
+      }),
       motivo: avisos.length ? avisos.join('; ') : null, fonteVelha: false,
-      fonteFalhou: false, semCliente: false,
+      fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
     };
   } catch (e) {
     // Falha ao LER o painel (containersPix, que lança em erro do Supabase por não ter outro jeito
     // de sinalizar "não consegui nem checar o que já existe") cai aqui — nunca sobe pro chamador.
     // Falha de LEITURA do painel (a fonte respondeu bem) — nem fonteFalhou nem semCliente, os dois
-    // já vêm `false` de `vazio`.
-    return { ...vazio, total, motivo: `falha ao processar o painel do PIX: ${(e && e.message) || String(e)}` };
+    // já vêm `false` de `vazio`. Os avisos da reconferência de 7 dias (se algum já tinha
+    // acontecido) não podem sumir só porque o painel falhou depois.
+    return {
+      ...vazio, total, voltaram, informadosRecentes,
+      motivo: [`falha ao processar o painel do PIX: ${(e && e.message) || String(e)}`, ...avisos].join('; '),
+    };
   }
 }
 

@@ -415,6 +415,20 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     }
   } catch (e) { console.error('[GroupChat] pré-passo confirm:', e.message); }
 
+  // ── PRÉ-PASSO: "cadastrei o fulano no PIX automático" (roda ANTES do LLM, Tarefa 7) ────────
+  // A equipe dá baixa informada num pagador da pauta do PIX diretamente no grupo — determinístico,
+  // sem LLM, mesmo espírito do pré-passo de confirmação logo acima. Mesma porta de escrita
+  // (GROUPCHAT-SENDER-NULL, ver o chokepoint mais abaixo neste arquivo): sem remetente conhecido
+  // (`!podeExecutar`) não intercepta — o turno segue pro fluxo normal, que já avisa que não
+  // reconheceu quem falou.
+  if (podeExecutar) {
+    try {
+      const pixCadastroGrupo = require('./pix-cadastro-grupo');
+      const rPix = await pixCadastroGrupo.tratarCadastroInformadoNoGrupo({ supabase, groupId, senderCollabId, text });
+      if (rPix && rPix.tratou) return await postTomText(supabase, groupId, rPix.texto);
+    } catch (e) { console.error('[GroupChat] pré-passo cadastro informado PIX:', e.message); }
+  }
+
   const ctx = await loadContext(supabase, groupId, senderCollabId);
   if (!ctx.group) { console.warn(`[GroupChat] grupo ${groupId} não encontrado`); return null; }
 

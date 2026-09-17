@@ -35,7 +35,7 @@ test('monta o lote do dia: cria pacote com as filhas na ordem (autorização pen
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'autorizacao_pendente')]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [],
       criarPacote: async ({ input }) => {
         criadas.push(...input.subtasks);
@@ -91,7 +91,7 @@ test('fonte velha (mais de 48h): não mexe no painel, avisa e não cria pacote',
     ...base,
     laReport: laReportOk([velha]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: nuncaChama('containersPix'),
       criarPacote: nuncaChama('criarPacote'),
       fecharFilha: nuncaChama('fecharFilha'),
@@ -111,7 +111,7 @@ test('sem nenhum dado_atualizado_em recente entre as linhas: conta como fonte ve
   const out = await r.pautaPixDaUnidade({
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso', { dado_atualizado_em: null })]),
-    deps: { agora: agoraFixo, containersPix: nuncaChama('containersPix') },
+    deps: { agora: agoraFixo, informados: async () => [], containersPix: nuncaChama('containersPix') },
   });
   assert.strictEqual(out.fonteVelha, true);
   assert.strictEqual(out.fonteFalhou, false);
@@ -127,7 +127,7 @@ test('pacote de ontem: quem continua na fonte (por pagador_chave) é carregado (
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Carlos', 'boleto')]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -160,7 +160,7 @@ test('pacote de hoje já existe: não cria; fecha (done) só quem saiu da fonte 
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-hoje',
         title: r.PREFIXO_CONTAINER + '16/09',
@@ -194,7 +194,7 @@ test('teto de sanidade: 12 carregados + 40 na fonte nunca cria mais que TETO_FIL
     ...base,
     laReport: laReportOk(muitos),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -219,7 +219,7 @@ test('ninguém a migrar: não cria pacote', async () => {
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrado' })]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [],
       criarPacote: nuncaChama('criarPacote'),
     },
@@ -240,7 +240,7 @@ test('ninguém a migrar, mas uma filha velha não fechou: o aviso aparece no mot
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrado' })]), // ninguém em migrar/autorizacao_pendente
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -263,7 +263,7 @@ test('criarPacote lança: o(s) aviso(s) de fechamento acumulados até ali aparec
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -290,7 +290,7 @@ test('containersPix lança (falha de leitura do painel): não é fonte falhou ne
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => { throw new Error('conexão recusada'); },
     },
   });
@@ -311,7 +311,7 @@ test('reproduz (a): alunos mudaram (título mudou), mas a chave continua igual �
     ...base,
     laReport: laReportOk([anaHoje]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -341,7 +341,7 @@ test('reproduz (b): dois clientes com título idêntico no pacote de ontem — q
     ...base,
     laReport: laReportOk([anaQueFicou]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -371,7 +371,7 @@ test('reproduz (c): pacote de hoje com dois títulos idênticos — quem saiu é
     ...base,
     laReport: laReportOk([anaQueFicou]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-hoje',
         title: r.PREFIXO_CONTAINER + '16/09',
@@ -401,7 +401,7 @@ test('vincular falhou: o pacote foi criado mesmo assim, mas o aviso aparece no m
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [],
       criarPacote: async ({ input }) => ({ groupId: 'm6', childIds: input.subtasks.map((_, i) => `t${i}`) }),
       vincular: async () => false,
@@ -417,7 +417,7 @@ test('dedup: dois vínculos apontando pro mesmo pagador_chave no pacote de ontem
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-ontem',
         title: r.PREFIXO_CONTAINER + '15/09',
@@ -442,7 +442,7 @@ test('dedup: dois vínculos apontando pro mesmo pagador_chave no pacote de hoje 
     ...base,
     laReport: laReportOk([linha('Ana', 'pix_avulso')]),
     deps: {
-      agora: agoraFixo,
+      agora: agoraFixo, informados: async () => [],
       containersPix: async () => [{
         id: 'cont-hoje',
         title: r.PREFIXO_CONTAINER + '16/09',
@@ -459,4 +459,106 @@ test('dedup: dois vínculos apontando pro mesmo pagador_chave no pacote de hoje 
     },
   });
   assert.strictEqual(out.lote.length, 1, 'a mesma chave duas vezes no painel não duplica o lote de hoje');
+});
+
+// ── Tarefa 7 — reconferência de 7 dias (deps.informados + voltaram + informadosRecentes) ───────
+test('Tarefa 7: informado há 3 dias NÃO entra no lote nem é carregado, mas segue contado no total', async () => {
+  const criadas = [];
+  const informadoEm = new Date(AGORA - 3 * 86400000).toISOString();
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo,
+      informados: async ({ unidadeId }) => {
+        assert.strictEqual(unidadeId, 'u1');
+        return [{ pagador_chave: 'k-Ana', created_at: informadoEm }];
+      },
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm1', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      vincular: semVinculo,
+      fecharFilha: nuncaChama('fecharFilha'),
+      fecharContainer: nuncaChama('fecharContainer'),
+    },
+  });
+  assert.strictEqual(out.total, 2, 'total continua contando os dois clientes');
+  assert.strictEqual(criadas.length, 1, 'só a Bia entra no pacote — a Ana está em carência');
+  assert.match(criadas[0].title, /^PIX automático — Bia/);
+  assert.strictEqual(out.informadosRecentes, 1);
+  assert.deepStrictEqual(out.voltaram, []);
+});
+
+test('Tarefa 7: informado há 7 dias e AINDA em migrar na fonte volta ao lote e ganha a seção ↩️ Voltaram pra lista', async () => {
+  const criadas = [];
+  const informadoEm = new Date(AGORA - 7 * 86400000).toISOString();
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo,
+      informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm2', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      vincular: semVinculo,
+      fecharFilha: nuncaChama('fecharFilha'),
+      fecharContainer: nuncaChama('fecharContainer'),
+    },
+  });
+  assert.strictEqual(criadas.length, 1, 'a Ana volta pro pacote normalmente, 7 dias depois');
+  assert.strictEqual(out.informadosRecentes, 0);
+  assert.strictEqual(out.voltaram.length, 1);
+  assert.strictEqual(out.voltaram[0].pagador_chave, 'k-Ana');
+  assert.match(out.texto, /↩️ \*Voltaram pra lista\* \(1\)/);
+});
+
+test('Tarefa 7: informado há 8 dias (borda de cima da janela) ainda volta — não fica excluído por engano', async () => {
+  const criadas = [];
+  const informadoEm = new Date(AGORA - 8 * 86400000).toISOString();
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo,
+      informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm3', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      vincular: semVinculo,
+    },
+  });
+  assert.strictEqual(criadas.length, 1, 'informado há 8 dias não pode ser excluído do lote');
+  assert.strictEqual(out.voltaram.length, 1);
+});
+
+test('Tarefa 7: cliente informado que a fonte já confirma como migrado NÃO aparece em voltaram', async () => {
+  const informadoEm = new Date(AGORA - 7 * 86400000).toISOString();
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso', { categoria: 'ja_migrado' })]), // já não está mais em migrar/autorizacao_pendente
+    deps: {
+      agora: agoraFixo,
+      informados: async () => [{ pagador_chave: 'k-Ana', created_at: informadoEm }],
+      containersPix: async () => [],
+      criarPacote: nuncaChama('criarPacote'),
+    },
+  });
+  assert.deepStrictEqual(out.voltaram, []);
+  assert.strictEqual(out.semCliente, true);
+});
+
+test('Tarefa 7: erro ao reconferir quem foi informado segue SEM excluir ninguém, com aviso no motivo (falha-aberta)', async () => {
+  const criadas = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo,
+      informados: async () => { throw new Error('marker_logs indisponível'); },
+      containersPix: async () => [],
+      criarPacote: async ({ input }) => { criadas.push(...input.subtasks); return { groupId: 'm4', childIds: input.subtasks.map((_, i) => `t${i}`) }; },
+      vincular: semVinculo,
+    },
+  });
+  assert.strictEqual(criadas.length, 1, 'falha-aberta: ninguém é excluído quando a reconferência falha');
+  assert.match(out.motivo, /não consegui reconferir/);
+  assert.strictEqual(out.voltaram.length, 0);
 });
