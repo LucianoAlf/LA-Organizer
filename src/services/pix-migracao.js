@@ -15,6 +15,12 @@ const ROTULO = {
 const LOTE_DIARIO = 10;
 const TETO_FILHAS = 15;
 const META_YMD = '2026-10-31';
+// I2 (revisão final): a RPC do LA Report põe em `autorizacao_pendente` todo cliente com PIX
+// automático CADASTRADO que ainda não teve a 1ª cobrança com tarifa — e a 1ª cobrança leva até um
+// ciclo (~30 dias). Quem passou de `migrar` pra `autorizacao_pendente` foi cadastrado pela equipe:
+// é PROGRESSO. Durante esta carência o cliente sai do lote e da seção 🔵 (fica só contado em ⏳);
+// passados 35 dias sem cobrança, volta a ser 🔵 "Cadastrados sem cobrança" normal.
+const CARENCIA_PRIMEIRA_COBRANCA_DIAS = 35;
 
 const fatiaDoCliente = (l) => {
   if (l.categoria === 'autorizacao_pendente') return 'autorizacao_pendente';
@@ -33,18 +39,23 @@ function contagemPorFatia(linhas) {
 const tituloDaFilha = (l) => `PIX automático — ${l.pagador_nome}${(l.alunos || []).length ? ` (${l.alunos.join(', ')})` : ''}`;
 
 const METAS_BR = META_YMD.slice(8, 10) + '/' + META_YMD.slice(5, 7);
+// `aguardandoCobranca` (I2): quantos clientes estão na carência da 1ª cobrança. Eles NÃO vêm em
+// `linhas` (saem da seção 🔵 e do lote), mas continuam no "faltam" — ainda não migraram de fato —
+// e ganham a linha própria "⏳ Aguardando 1ª cobrança (N)" no fim do resumo. 0 (padrão) mantém o
+// texto idêntico.
 function mensagemDaUnidade({
-  unidadeNome, linhas, lote, fonteVelha = false, voltaram = [],
+  unidadeNome, linhas, lote, fonteVelha = false, voltaram = [], aguardandoCobranca = 0,
 }) {
   const cab = `💠 *PIX automático — ${unidadeNome}*`;
   if (fonteVelha) return `${cab}\n_A fonte do LA Report não atualizou hoje — não vou cobrar número que não medi._`;
   const todas = linhas || [];
+  const aguardando = Math.max(0, Number(aguardandoCobranca) || 0);
   // C1 (revisão final): quem está em `voltaram` é citado UMA vez só — na seção ↩️. Sai do conjunto
   // "listável" das fatias (continua CONTADO no número da fatia, só não repete o nome).
   const chavesVoltaram = new Set((voltaram || []).map((l) => l.pagador_chave));
   const noLote = new Set((lote || []).map((l) => l.pagador_chave).filter((k) => !chavesVoltaram.has(k)));
   const cont = contagemPorFatia(todas);
-  const linhasTxt = [`${cab} · faltam ${todas.length} · meta ${METAS_BR}`];
+  const linhasTxt = [`${cab} · faltam ${todas.length + aguardando} · meta ${METAS_BR}`];
   // TAREFA 7 — reconferência de 7 dias: quem a equipe disse ter cadastrado, mas a fonte ainda
   // mostra como `migrar` depois do prazo de graça, ganha uma seção própria logo após o
   // cabeçalho — separada da lista normal pra não se confundir com "gente nova na fila".
@@ -64,6 +75,7 @@ function mensagemDaUnidade({
       + doLote.map((l) => `   • ${l.pagador_nome}${(l.alunos || []).length ? ` (${l.alunos.join(', ')})` : ''}`).join('\n'));
   }
   if (resumo.length) linhasTxt.push(resumo.join(' · '));
+  if (aguardando) linhasTxt.push(`⏳ Aguardando 1ª cobrança (${aguardando})`);
   return linhasTxt.join('\n');
 }
 
@@ -248,7 +260,8 @@ function decisaoDaPublicacaoPix(r, { unidadeNome }) {
 }
 
 module.exports = {
-  FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD,
+  FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD, CARENCIA_PRIMEIRA_COBRANCA_DIAS,
+  somaDiasYmd: _somaDiasYmd,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
   horaDaPautaPix, decisaoDaPublicacaoPix,

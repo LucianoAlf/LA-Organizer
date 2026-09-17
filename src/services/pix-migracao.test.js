@@ -121,6 +121,34 @@ test('mensagem: sem voltaram (padrão), texto idêntico ao de antes desta tarefa
   assert.ok(!semParametro.includes('Voltaram pra lista'));
 });
 
+// ── aguardandoCobranca (I2, revisão final — carência da 1ª cobrança) ─────────────────────────
+test('I2: mensagem — sem aguardandoCobranca (padrão) o texto é idêntico ao de aguardandoCobranca: 0', () => {
+  const linhas = [
+    { pagador_chave: 'a', pagador_nome: 'Ana Lima', alunos: ['Rafa'], categoria: 'autorizacao_pendente', fatia: null },
+    { pagador_chave: 'b', pagador_nome: 'Bruno Sá', alunos: ['Léo'], categoria: 'migrar', fatia: 'pix_avulso' },
+    { pagador_chave: 'c', pagador_nome: 'Carla Dias', alunos: ['Tina'], categoria: 'migrar', fatia: 'cheque' },
+  ];
+  const semParametro = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: linhas.slice(0, 1) });
+  const comZero = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: linhas.slice(0, 1), aguardandoCobranca: 0 });
+  assert.strictEqual(comZero, semParametro);
+  assert.ok(!semParametro.includes('⏳'));
+});
+
+test('I2: mensagem — aguardandoCobranca > 0 vira a linha "⏳ Aguardando 1ª cobrança (N)" no resumo e soma no faltam', () => {
+  const linhas = [
+    { pagador_chave: 'b', pagador_nome: 'Bruno Sá', alunos: ['Léo'], categoria: 'migrar', fatia: 'pix_avulso' },
+    { pagador_chave: 'c', pagador_nome: 'Carla Dias', alunos: ['Tina'], categoria: 'migrar', fatia: 'cheque' },
+  ];
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas, lote: [], aguardandoCobranca: 3 });
+  assert.match(txt, /^💠 \*PIX automático — Barra\* · faltam 5 · meta 31\/10$/m);
+  assert.match(txt, /\n🔴 Pix avulso \(1\) · 🟠 Cheque \(1\)\n⏳ Aguardando 1ª cobrança \(3\)$/);
+});
+
+test('I2: carência de 35 dias e soma de dias exportadas pra camada do ritual', () => {
+  assert.strictEqual(p.CARENCIA_PRIMEIRA_COBRANCA_DIAS, 35);
+  assert.strictEqual(p.somaDiasYmd('2026-09-16', -34), '2026-08-13');
+});
+
 test('barra de progresso com 10 blocos', () => {
   assert.strictEqual(p.barra(0), '░░░░░░░░░░');
   assert.strictEqual(p.barra(58), '▓▓▓▓▓▓░░░░');

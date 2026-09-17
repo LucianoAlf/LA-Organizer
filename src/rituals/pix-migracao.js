@@ -84,20 +84,26 @@ function _dedupPorChave(linhas) {
 // ── contrato de deps (testável sem banco — nenhum teste deste arquivo toca o Supabase real) ───
 // deps.agora()                                -> number   (padrão Date.now())
 // deps.containersPix({ groupId })             -> [{ id, title, due_date,
-//                                                    filhas: [{ id, title, pagador_chave }] }]
+//                                                    filhas: [{ id, title, pagador_chave, categoria_origem }] }]
 //   Só pacotes PIX (título começa com PREFIXO_CONTAINER) com status 'pending', e só filhas
-//   'pending'. `pagador_chave` vem de public.pix_pauta_vinculo (task_id -> pagador_chave); filha
-//   sem vínculo devolve pagador_chave: null.
+//   'pending'. `pagador_chave`/`categoria_origem` vêm de public.pix_pauta_vinculo; filha sem
+//   vínculo devolve pagador_chave: null (e categoria_origem: null).
 // deps.criarPacote({ supabase, groupId, createdBy, input }) -> { groupId, childIds }
 //   Padrão: require('../services/task-groups').createTaskGroup. childIds vem na MESMA ordem de
 //   input.subtasks (garantia do motor de criação, não deste ritual).
 // deps.fecharFilha(id, status)  -> boolean   status 'done' | 'cancelled'; nunca lança.
 // deps.fecharContainer(id)      -> boolean   nunca lança.
-// deps.vincular([{ task_id, pagador_chave, unidade_id }]) -> boolean   grava em
-//   pix_pauta_vinculo; nunca lança — erro de escrita vira aviso em `motivo`.
+// deps.vincular([{ task_id, pagador_chave, unidade_id, categoria_origem }]) -> boolean   grava em
+//   pix_pauta_vinculo; nunca lança — erro de escrita vira aviso em `motivo`. `categoria_origem` é
+//   a categoria do cliente na fonte no momento da criação (I2).
 // deps.informados({ unidadeId, desdeIso })    -> [{ pagador_chave, created_at }]   (Tarefa 7)
 //   marker_logs PIX_CADASTRO/executed com reason 'informado:<unidadeId>:%' desde desdeIso. PODE
 //   lançar — erro vira aviso em `motivo` e NÃO exclui ninguém do lote (falha-aberta).
+// deps.transicoesRecentes({ unidadeId, desdeYmd }) -> [{ pagador_chave, transicao_em }]   (I2)
+//   pix_pauta_vinculo com transicao_em >= desdeYmd. PODE lançar — erro vira aviso em `motivo` e
+//   NÃO exclui ninguém (falha-aberta, mesma regra dos informados).
+// deps.marcarTransicao({ taskId, hoje })      -> boolean   grava transicao_em = hoje no vínculo
+//   da filha (só se ainda estiver nulo); nunca lança.
 
 // ── deps padrão (Supabase real) ──────────────────────────────────────────────────────────────
 // Todas fecham sobre `supabase` por closure — mesmo padrão de `criarPacote` em
@@ -118,15 +124,21 @@ async function _containersPixPadrao(sb, { groupId }) {
     let porTask = new Map();
     if (ids.length) {
       const { data: vinculos, error: erroVinculo } = await sb.from('pix_pauta_vinculo')
-        .select('task_id, pagador_chave').in('task_id', ids);
+        .select('task_id, pagador_chave, categoria_origem').in('task_id', ids);
       if (erroVinculo) throw new Error(`containersPix (vínculo de ${c.id}): ${erroVinculo.message}`);
-      porTask = new Map((vinculos || []).map((v) => [v.task_id, v.pagador_chave]));
+      porTask = new Map((vinculos || []).map((v) => [v.task_id, v]));
     }
     containers.push({
       id: c.id,
       title: c.title,
       due_date: c.due_date,
-      filhas: (filhas || []).map((f) => ({ id: f.id, title: f.title, pagador_chave: porTask.get(f.id) || null })),
+      filhas: (filhas || []).map((f) => {
+        const v = porTask.get(f.id);
+        return {
+          id: f.id, title: f.title,
+          pagador_chave: (v && v.pagador_chave) || null, categoria_origem: (v && v.categoria_origem) || null,
+        };
+      }),
     });
   }
   return containers;
@@ -179,6 +191,24 @@ async function _informadosPadrao(sb, { unidadeId, desdeIso }) {
   }));
 }
 
+// I2: clientes da unidade com transição migrar -> autorizacao_pendente registrada desde
+// `desdeYmd`. Lança em erro do Supabase (quem chama trata como falha-aberta).
+async function _transicoesRecentesPadrao(sb, { unidadeId, desdeYmd }) {
+  const { data, error } = await sb.from('pix_pauta_vinculo').select('pagador_chave, transicao_em')
+    .eq('unidade_id', unidadeId).gte('transicao_em', desdeYmd);
+  if (error) throw new Error(`transicoesRecentes: ${error.message}`);
+  return data || [];
+}
+
+// I2: grava transicao_em no vínculo da filha — só se ainda estiver nulo (uma segunda tentativa não
+// empurra a data pra frente e não encurta a carência). Nunca lança: erro vira `false`.
+async function _marcarTransicaoPadrao(sb, { taskId, hoje }) {
+  const { error } = await sb.from('pix_pauta_vinculo').update({ transicao_em: hoje })
+    .eq('task_id', taskId).is('transicao_em', null);
+  if (error) { console.error(`[PixMigracao] marcarTransicao falhou id=${taskId}: ${error.message}`); return false; }
+  return true;
+}
+
 // ── ritual ────────────────────────────────────────────────────────────────────────────────────
 async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, groupId, criadoPor, hoje, deps = {} }) {
   const agora = deps.agora || (() => Date.now());
@@ -189,6 +219,8 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   const fecharContainer = deps.fecharContainer || ((id) => _fecharContainerPadrao(supabase, id));
   const vincular = deps.vincular || ((vinculos) => _vincularPadrao(supabase, vinculos));
   const informados = deps.informados || ((arg) => _informadosPadrao(supabase, arg));
+  const transicoesRecentes = deps.transicoesRecentes || ((arg) => _transicoesRecentesPadrao(supabase, arg));
+  const marcarTransicao = deps.marcarTransicao || ((arg) => _marcarTransicaoPadrao(supabase, arg));
 
   // fonteFalhou/semCliente: false por padrão (fix round 1, Critical) — só os DOIS caminhos que os
   // marcam `true` explicitamente (abaixo) representam "fonte fora do ar" e "sem cliente a migrar
@@ -260,23 +292,67 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   // afirma "disseram que cadastrou, mas o Emusys ainda não mostra" — por isso só entra quem a
   // fonte AINDA mostra em `migrar` (C1, revisão final). `autorizacao_pendente` é o contrário: o
   // Emusys JÁ mostra o cadastro (só falta a 1ª cobrança) — listar ali seria afirmação falsa.
-  const linhasElegiveis = linhas.filter((l) => !recentesSet.has(l.pagador_chave));
   const voltaram = linhas.filter((l) => voltaramSet.has(l.pagador_chave) && l.categoria === 'migrar');
-  const porChave = new Map(linhasElegiveis.map((l) => [l.pagador_chave, l]));
   const informadosRecentes = recentesSet.size;
+
+  // ── CARÊNCIA DA 1ª COBRANÇA (I2, revisão final) ────────────────────────────────────────────
+  // Quem a equipe cadastrou passa de `migrar` pra `autorizacao_pendente` e fica assim até a 1ª
+  // cobrança (até um ciclo, ~30 dias). Sem esta carência o cliente virava 🔵 "resolver primeiro" e
+  // TRAVAVA o topo do lote justamente depois que a equipe fez o trabalho. A transição é gravada
+  // no vínculo (transicao_em); aqui lemos as dos últimos CARENCIA_PRIMEIRA_COBRANCA_DIAS dias
+  // (hoje incluso). Erro na leitura é FALHA-ABERTA (mesma regra dos informados): aviso no
+  // `motivo`, ninguém excluído.
+  const carenciaSet = new Set();
+  try {
+    const desdeYmd = pura.somaDiasYmd(hoje, -(pura.CARENCIA_PRIMEIRA_COBRANCA_DIAS - 1));
+    const rows = await transicoesRecentes({ unidadeId, desdeYmd });
+    for (const row of rows || []) if (row && row.pagador_chave) carenciaSet.add(row.pagador_chave);
+  } catch (e) {
+    avisos.push(`não consegui ler as transições recentes (carência da 1ª cobrança): ${(e && e.message) || String(e)}`);
+  }
 
   try {
     const containers = await containersPix({ groupId });
+
+    // Transições DESTA execução: filha pendente (de qualquer pacote) cujo cliente tinha
+    // categoria_origem 'migrar' e a fonte AGORA mostra em 'autorizacao_pendente' — foi cadastrado.
+    // O cliente já entra na carência hoje (antes mesmo de a gravação chegar ao banco).
+    const todasPorChave = new Map(todasAsLinhas.filter((l) => l && l.pagador_chave).map((l) => [l.pagador_chave, l]));
+    const transicaoIds = new Set();
+    for (const c of containers) {
+      for (const f of c.filhas || []) {
+        const naFonte = f.pagador_chave ? todasPorChave.get(f.pagador_chave) : undefined;
+        if (naFonte && naFonte.categoria === 'autorizacao_pendente' && f.categoria_origem === 'migrar') {
+          transicaoIds.add(f.id);
+          carenciaSet.add(f.pagador_chave);
+        }
+      }
+    }
+    // Na carência: só quem ESTÁ em autorizacao_pendente (se voltou pra migrar, volta pro lote).
+    const naCarencia = (l) => l.categoria === 'autorizacao_pendente' && carenciaSet.has(l.pagador_chave);
+    const aguardandoCobranca = linhas.filter(naCarencia).length;
+    const linhasDaPauta = linhas.filter((l) => !naCarencia(l));
+    const linhasElegiveis = linhasDaPauta.filter((l) => !recentesSet.has(l.pagador_chave));
+    const porChave = new Map(linhasElegiveis.map((l) => [l.pagador_chave, l]));
+
+    let fechadas = 0;
+    // Transição: grava transicao_em = hoje no vínculo e fecha a filha `done` (progresso). Nunca
+    // carrega. Falha ao gravar vira aviso — a filha fecha mesmo assim (o cadastro aconteceu).
+    const fecharPorTransicao = async (f) => {
+      if (!(await marcarTransicao({ taskId: f.id, hoje }))) avisos.push(`não consegui gravar a transição da filha "${f.title}"`);
+      if (await fecharFilha(f.id, 'done')) fechadas++;
+      else avisos.push(`não consegui fechar a filha "${f.title}"`);
+    };
 
     // 1) Pacotes anteriores (due_date < hoje) ainda abertos: quem continua na fonte (casado por
     // pagador_chave, NUNCA por título) é CARREGADO pro lote de hoje — a filha velha vira
     // `cancelled` (não `done`: ela não deixou de ser feita, só não coube ontem), e o cliente entra
     // PRIMEIRO no lote de hoje. Quem saiu da fonte (ou nunca teve vínculo gravado) vira `done`
     // (conta em `fechadas`). O pacote antigo sempre fecha no final.
-    let fechadas = 0;
     const carregadasBrutas = [];
     for (const c of containers.filter((x) => x.due_date < hoje)) {
       for (const f of c.filhas || []) {
+        if (transicaoIds.has(f.id)) { await fecharPorTransicao(f); continue; }
         const linhaDaFonte = _acharCliente(f, porChave);
         if (linhaDaFonte) {
           if (!(await fecharFilha(f.id, 'cancelled'))) avisos.push(`não consegui cancelar a filha "${f.title}"`);
@@ -300,6 +376,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     // deduplicado (dois vínculos pro mesmo cliente nunca duplicam o lote nem o texto).
     if (containerHoje) {
       for (const f of containerHoje.filhas || []) {
+        if (transicaoIds.has(f.id)) { await fecharPorTransicao(f); continue; }
         if (_acharCliente(f, porChave)) continue;
         if (await fecharFilha(f.id, 'done')) fechadas++;
         else avisos.push(`não consegui fechar a filha "${f.title}"`);
@@ -309,7 +386,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       return {
         criou: false, jaExistia: true, total, lote, fechadas, carregadas: carregadas.length,
         texto: pura.mensagemDaUnidade({
-          unidadeNome, linhas, lote, fonteVelha: false, voltaram,
+          unidadeNome, linhas: linhasDaPauta, lote, fonteVelha: false, voltaram, aguardandoCobranca,
         }),
         motivo: avisos.length ? avisos.join('; ') : null, fonteVelha: false,
         fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
@@ -382,7 +459,9 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     // pior caso é recriar a filha no dia seguinte).
     const childIds = (criado && criado.childIds) || [];
     const vinculos = lote
-      .map((l, i) => ({ task_id: childIds[i], pagador_chave: l.pagador_chave, unidade_id: unidadeId }))
+      .map((l, i) => ({
+        task_id: childIds[i], pagador_chave: l.pagador_chave, unidade_id: unidadeId, categoria_origem: l.categoria,
+      }))
       .filter((v) => v.task_id);
     if (vinculos.length && !(await vincular(vinculos))) {
       avisos.push('não consegui gravar o vínculo pagador-tarefa (a filha ficou sem chave estável)');
@@ -391,7 +470,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     return {
       criou: true, jaExistia: false, total, lote, fechadas, carregadas: carregadas.length,
       texto: pura.mensagemDaUnidade({
-        unidadeNome, linhas, lote, fonteVelha: false, voltaram,
+        unidadeNome, linhas: linhasDaPauta, lote, fonteVelha: false, voltaram, aguardandoCobranca,
       }),
       motivo: avisos.length ? avisos.join('; ') : null, fonteVelha: false,
       fonteFalhou: false, semCliente: false, voltaram, informadosRecentes,
