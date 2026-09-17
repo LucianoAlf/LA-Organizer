@@ -14,7 +14,7 @@
 
 const pura = require('./pix-consulta');
 const { ordenarPorPrioridade, fatiaDoCliente, FATIAS } = require('./pix-migracao');
-const { filtrarPorRecorte } = require('./situacao-aluno');
+const { filtrarPorRecorte, nomeDaUnidade, resolverUnidade } = require('./situacao-aluno');
 const { consultaComRetry } = require('../lib/consulta-com-retry');
 
 // Categorias que a fonte devolve hoje (medidas em 17/09 nas três unidades). Categoria NOVA que a
@@ -24,6 +24,11 @@ const CATEGORIAS = ['migrar', 'autorizacao_pendente', 'ja_migrou', 'aguardando_c
   'nao_mexe', 'inadimplente', 'nao_pagante', 'excecao'];
 const NA_PAUTA = (l) => !!l && (l.categoria === 'migrar' || l.categoria === 'autorizacao_pendente');
 const FAMILIA_ALUNO = new Set(['anamnese', 'contrato']);
+
+// C4: ordem fixa de exibição quando nem o grupo nem a fala amarram uma unidade — Campo Grande,
+// Recreio, Barra (decisão do dono, 17/09). Ids saem de resolverUnidade (situacao-aluno.js):
+// fonte única, nenhum UUID duplicado neste arquivo.
+const ORDEM_UNIDADES = ['campo grande', 'recreio', 'barra'].map((apelido) => resolverUnidade(apelido));
 
 function _rpcs({ laReport, unidadeId, deps }) {
   const retry = deps.retry || ((c) => consultaComRetry(c, { esperaMs: deps.esperaMs, sleep: deps.sleep }));
@@ -162,6 +167,42 @@ async function blocosDaLista({ laReport, unidadeId, alvo, deps = {} }) {
   return { blocos, falhas };
 }
 
+// ── C4: as TRÊS unidades juntas (grupo sem unidade E fala sem unidade citada) ───────────────────
+// Mesma leitura de sempre (numerosDaUnidade / blocosDaLista), uma vez por unidade, na ORDEM fixa
+// de ORDEM_UNIDADES. `deps` é o MESMO objeto pras três chamadas: em produção (sem overrides) cada
+// `laReport.rpc(...)` fecha sobre o `unidadeId` certo da iteração; em teste, quem quiser dado
+// DIFERENTE por unidade injeta um `laReport.rpc` que olha `p_unidade_id`.
+async function numerosDeTodasUnidades({ laReport, hoje, deps = {} }) {
+  const porUnidade = [];
+  for (const unidadeId of ORDEM_UNIDADES) {
+    const unidadeNome = nomeDaUnidade(unidadeId);
+    // eslint-disable-next-line no-await-in-loop -- ordem importa (CG, Recreio, Barra), igual ao resto do arquivo
+    const n = await (deps.numerosDaUnidade || numerosDaUnidade)({ laReport, unidadeId, unidadeNome, hoje, deps });
+    porUnidade.push({ ...n, unidadeNome });
+  }
+  return porUnidade;
+}
+
+// Uma unidade fora não cala as outras — mesmo espírito de blocosDaLista com 'tudo': o que deu
+// sai, o que faltou vira aviso na última mensagem. Só lança se NENHUMA unidade respondeu.
+async function blocosDeTodasUnidades({ laReport, alvo, deps = {} }) {
+  const blocos = [];
+  const falhas = [];
+  for (const unidadeId of ORDEM_UNIDADES) {
+    const unidadeNome = nomeDaUnidade(unidadeId);
+    try {
+      // eslint-disable-next-line no-await-in-loop -- ordem importa (CG, Recreio, Barra)
+      const { blocos: bs } = await (deps.blocosDaLista || blocosDaLista)({ laReport, unidadeId, alvo, deps });
+      for (const b of bs) blocos.push({ ...b, titulo: `${b.titulo} — ${unidadeNome}` });
+    } catch (e) {
+      console.warn(`[PixConsulta] bloco ${alvo} unidade=${unidadeNome}: ${e.message}`);
+      falhas.push(`A lista de ${pura.tituloDoAlvo(alvo)} de ${unidadeNome} eu não consegui ler agora.`);
+    }
+  }
+  if (!blocos.length) throw new Error(`nenhuma fonte respondeu em nenhuma unidade (${falhas.length} falha(s))`);
+  return { blocos, falhas };
+}
+
 // ── ORQUESTRAÇÃO DO TURNO DO GRUPO ────────────────────────────────────────────────────────────
 // Chamada por src/services/group-chat-engine.js, ANTES do LLM. Dois caminhos bem diferentes:
 //   LISTA   -> INTERCEPTA: posta as mensagens prontas e o turno acaba (o LLM não é chamado; ele
@@ -169,32 +210,68 @@ async function blocosDaLista({ laReport, unidadeId, alvo, deps = {} }) {
 //   NÚMEROS -> NÃO intercepta: devolve `numerosContext` pro prompt, e o TOM responde na voz dele,
 //              com o número certo, seja qual for a forma de perguntar.
 // O gate barato mora aqui: sem token de assunto na fala (C1/I4), nenhuma RPC é disparada.
+//
+// C4 (17/09): a unidade da CONSULTA continua saindo do GRUPO por padrão (`unidadeId`, resolvido
+// em group-chat-engine.js a partir de `la_report_unidade_id` — isso NÃO muda, ver o ancora test).
+// O que muda é o que acontece quando NÃO há unidade do grupo, ou quando a fala CITA outra unidade
+// explicitamente: `unidadeCitada` (pura.detectarUnidade) VENCE a do grupo — permite "lista do
+// recreio" dentro do grupo da Barra (dizendo qual unidade é), e dá capacidade PLENA ao grupo "PIX
+// AUTOMÁTICO L.A." (sem unidade amarrada), que antes só sabia responder "me diz a unidade".
 async function atenderPedidoNoGrupo({ laReport, unidadeId, unidadeNome, text, hoje, postar, deps = {} }) {
   const pedido = pura.detectarPedido(text);
   const nada = { tratou: false, ultimo: null, numerosContext: '' };
 
+  const unidadeCitada = (deps.detectarUnidade || pura.detectarUnidade)(text);
+  const efetivoId = unidadeCitada || unidadeId;
+  const efetivoNome = unidadeCitada ? nomeDaUnidade(unidadeCitada) : unidadeNome;
+
   if (pedido && pedido.tipo === 'lista') {
-    if (!unidadeId) return { tratou: true, ultimo: await postar(pura.TEXTO_SEM_UNIDADE), numerosContext: '' };
+    if (!efetivoId) {
+      // Nem o grupo nem a fala amarram uma unidade: as três, em sequência (Campo Grande, Recreio,
+      // Barra), com o MESMO teto de mensagens do pedido inteiro — ver blocosDeTodasUnidades.
+      let blocos;
+      let falhas;
+      try {
+        ({ blocos, falhas } = await (deps.blocosDeTodasUnidades || blocosDeTodasUnidades)({ laReport, alvo: pedido.alvo, deps }));
+      } catch (e) {
+        console.warn(`[PixConsulta] lista ${pedido.alvo} TODAS unidades: ${e.message}`);
+        return { tratou: true, ultimo: await postar(pura.TEXTO_FONTE_FORA), numerosContext: '' };
+      }
+      const msgs = pura.mensagensDeVariasListas({ unidadeNome: null, blocos, avisos: falhas });
+      let ultimo = null;
+      for (const m of msgs) ultimo = await postar(m); // uma por vez, em ordem
+      console.log(`[PixConsulta] lista ${pedido.alvo} TODAS unidades: ${msgs.length} mensagem(ns)`);
+      return { tratou: true, ultimo, numerosContext: '' };
+    }
     let blocos;
     let falhas;
     try {
-      ({ blocos, falhas } = await (deps.blocosDaLista || blocosDaLista)({ laReport, unidadeId, alvo: pedido.alvo, deps }));
+      ({ blocos, falhas } = await (deps.blocosDaLista || blocosDaLista)({ laReport, unidadeId: efetivoId, alvo: pedido.alvo, deps }));
     } catch (e) {
-      console.warn(`[PixConsulta] lista ${pedido.alvo} unidade=${unidadeId}: ${e.message}`);
+      console.warn(`[PixConsulta] lista ${pedido.alvo} unidade=${efetivoId}: ${e.message}`);
       return { tratou: true, ultimo: await postar(pura.TEXTO_FONTE_FORA), numerosContext: '' };
     }
-    const msgs = pura.mensagensDeVariasListas({ unidadeNome, blocos, avisos: falhas });
+    const msgs = pura.mensagensDeVariasListas({ unidadeNome: efetivoNome, blocos, avisos: falhas });
     let ultimo = null;
     for (const m of msgs) ultimo = await postar(m); // uma por vez, em ordem
     const total = blocos.reduce((s, b) => s + (b.itens || []).length, 0);
-    console.log(`[PixConsulta] lista ${pedido.alvo} unidade=${unidadeId}: ${total} nomes em ${msgs.length} mensagem(ns)`);
+    console.log(`[PixConsulta] lista ${pedido.alvo} unidade=${efetivoId}: ${total} nomes em ${msgs.length} mensagem(ns)`);
     return { tratou: true, ultimo, numerosContext: '' };
   }
 
-  if (!unidadeId) return nada;
+  // GATE BARATO: sem token de assunto/quantidade na fala, nenhuma RPC é disparada — nem aqui, nem
+  // no caminho das três unidades.
   if (!pedido && !pura.precisaDeNumeros(text)) return nada;
-  const n = await (deps.numerosDaUnidade || numerosDaUnidade)({ laReport, unidadeId, unidadeNome, hoje, deps });
-  return { tratou: false, ultimo: null, numerosContext: pura.blocoDeNumeros({ ...n, unidadeNome }) };
+  if (!efetivoId) {
+    // Nem o grupo nem a fala amarram uma unidade: as três + TOTAL — nunca mais "me diz a unidade".
+    const porUnidade = await (deps.numerosDeTodasUnidades || numerosDeTodasUnidades)({ laReport, hoje, deps });
+    return { tratou: false, ultimo: null, numerosContext: pura.blocoDeNumerosTodasUnidades({ unidades: porUnidade }) };
+  }
+  const n = await (deps.numerosDaUnidade || numerosDaUnidade)({ laReport, unidadeId: efetivoId, unidadeNome: efetivoNome, hoje, deps });
+  return { tratou: false, ultimo: null, numerosContext: pura.blocoDeNumeros({ ...n, unidadeNome: efetivoNome }) };
 }
 
-module.exports = { numerosDaUnidade, itensDaLista, blocosDaLista, atenderPedidoNoGrupo };
+module.exports = {
+  numerosDaUnidade, itensDaLista, blocosDaLista, atenderPedidoNoGrupo,
+  numerosDeTodasUnidades, blocosDeTodasUnidades,
+};

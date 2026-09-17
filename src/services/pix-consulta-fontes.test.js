@@ -1,6 +1,11 @@
 'use strict';
 // pix-consulta-fontes.test.js — leitura das fontes (get_pix_migracao_v1 / get_situacao_alunos_v1)
 // e orquestração do turno do grupo. Nenhum teste aqui toca banco: tudo por `deps`.
+//
+// C4 (17/09): o grupo "PIX AUTOMÁTICO L.A." não tem unidade amarrada e travava em "me diz a
+// unidade" mesmo com token de assunto na fala. Agora, sem unidade do grupo E sem unidade citada
+// na fala, o orquestrador lê as TRÊS (Campo Grande, Recreio, Barra) — e quando a fala CITA uma
+// unidade (com ou sem unidade do grupo), essa unidade vence.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const f = require('./pix-consulta-fontes');
@@ -285,18 +290,6 @@ test('as partes saem UMA POR VEZ, na ordem — mesmo com a parte 1 demorando mai
   assert.deepStrictEqual(p.map((l) => /parte (\d)\/3/.exec(l)[1]), ['1', '2', '3']);
 });
 
-test('pedido de LISTA num grupo SEM unidade: pergunta a unidade e não lê fonte nenhuma', async () => {
-  const [p, postar] = postados();
-  const r = await f.atenderPedidoNoGrupo({
-    unidadeId: null, unidadeNome: null, text: 'me manda a lista completa do pix avulso',
-    hoje: '2026-09-17', postar,
-    deps: { rpcPix: async () => { throw new Error('não deveria ler a fonte'); }, rpcSituacao: async () => { throw new Error('não deveria ler a fonte'); }, retry: semRetry },
-  });
-  assert.strictEqual(r.tratou, true);
-  assert.strictEqual(p.length, 1);
-  assert.match(p[0], /unidade/i);
-});
-
 test('pedido de LISTA com a fonte fora: uma linha honesta, nunca lista vazia nem silêncio', async () => {
   const [p, postar] = postados();
   const r = await f.atenderPedidoNoGrupo({
@@ -436,16 +429,6 @@ test('GATE BARATO: mensagem sem nenhum dos assuntos NÃO lê a fonte', async () 
   assert.strictEqual(r.numerosContext, '');
 });
 
-test('GATE DE UNIDADE nos números: grupo sem unidade não lê fonte e não injeta nada', async () => {
-  const [, postar] = postados();
-  const r = await f.atenderPedidoNoGrupo({
-    unidadeId: null, unidadeNome: null, text: 'quantos faltam de contrato?', hoje: '2026-09-17', postar,
-    deps: { rpcPix: async () => { throw new Error('leu a fonte sem unidade'); }, rpcSituacao: async () => { throw new Error('leu a fonte sem unidade'); }, retry: semRetry },
-  });
-  assert.strictEqual(r.tratou, false);
-  assert.strictEqual(r.numerosContext, '');
-});
-
 test('fonte fora no pedido de NÚMEROS: injeta o bloco DIZENDO que não leu (nunca número inventado)', async () => {
   const [, postar] = postados();
   const r = await f.atenderPedidoNoGrupo({
@@ -455,4 +438,140 @@ test('fonte fora no pedido de NÚMEROS: injeta o bloco DIZENDO que não leu (nun
   assert.strictEqual(r.tratou, false);
   assert.match(r.numerosContext, /NÃO CONSEGUI LER/);
   assert.ok(!/faltam migrar \d/.test(r.numerosContext));
+});
+
+// ── C4 (17/09): grupo SEM unidade amarrada ganha capacidade PLENA ───────────────────────────────
+test('C4: grupo SEM unidade, fala SEM unidade citada, GATE BARATO ainda vale — nenhuma RPC', async () => {
+  const [, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: null, unidadeNome: null, text: 'bom dia, time!', hoje: '2026-09-17', postar,
+    deps: { rpcPix: async () => { throw new Error('leu a fonte à toa'); }, rpcSituacao: async () => { throw new Error('leu a fonte à toa'); }, retry: semRetry },
+  });
+  assert.strictEqual(r.tratou, false);
+  assert.strictEqual(r.numerosContext, '');
+});
+
+test('C4: pedido de LISTA num grupo SEM unidade e SEM unidade citada: manda as TRÊS, em sequência', async () => {
+  const [p, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: null, unidadeNome: null, text: 'me manda a lista completa do pix avulso',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, true);
+  assert.strictEqual(r.numerosContext, '');
+  assert.strictEqual(p.length, 3, 'uma mensagem por unidade (Campo Grande, Recreio, Barra)');
+  assert.match(p[0], /Pix avulso — Campo Grande/);
+  assert.match(p[1], /Pix avulso — Recreio/);
+  assert.match(p[2], /Pix avulso — Barra/);
+});
+
+test('C4: pedido de LISTA num grupo SEM unidade MAS citando uma unidade na fala: só aquela unidade', async () => {
+  const [p, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: null, unidadeNome: null, text: 'me manda a lista completa do pix avulso do recreio',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, true);
+  assert.strictEqual(p.length, 1);
+  assert.match(p[0], /Pix avulso — Recreio/);
+});
+
+test('C4: grupo COM unidade (Barra) mas a fala CITA OUTRA (Recreio): responde pela citada, dizendo qual é', async () => {
+  const [p, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'lista do pix avulso do recreio',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, true);
+  assert.strictEqual(p.length, 1);
+  assert.match(p[0], /Pix avulso — Recreio/);
+  assert.ok(!/Barra/.test(p[0]), 'a unidade do grupo não aparece — quem fala é a unidade citada');
+});
+
+test('C4: grupo COM unidade e a fala NÃO cita nenhuma outra: comportamento INALTERADO', async () => {
+  const [p, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'me manda a lista completa do pix avulso',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, true);
+  assert.match(p[0], /Pix avulso — Barra/);
+});
+
+test('C4: NÚMEROS num grupo SEM unidade e SEM unidade citada: as TRÊS + TOTAL, sem interceptar', async () => {
+  const [p, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: null, unidadeNome: null, text: 'quantos faltam de contrato?', hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, false);
+  assert.strictEqual(p.length, 0, 'números nunca postam — quem fala é o LLM');
+  assert.match(r.numerosContext, /Campo Grande — Contrato/);
+  assert.match(r.numerosContext, /Recreio — Contrato/);
+  assert.match(r.numerosContext, /Barra — Contrato/);
+  assert.match(r.numerosContext, /TOTAL — Contrato/);
+  assert.match(r.numerosContext, /Nunca estime/);
+});
+
+test('C4: NÚMEROS num grupo SEM unidade MAS citando uma unidade: só ela responde, com o nome certo no cabeçalho', async () => {
+  const [, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: null, unidadeNome: null, text: 'quantos faltam de contrato na barra?', hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, false);
+  assert.match(r.numerosContext, /NÚMEROS DA FONTE AGORA — Barra/);
+});
+
+test('C4: grupo COM unidade mas a fala CITA OUTRA: números da unidade citada, com o nome certo', async () => {
+  const [, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'quantos faltam de contrato na campo grande?',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, false);
+  assert.match(r.numerosContext, /NÚMEROS DA FONTE AGORA — Campo Grande/);
+});
+
+test('C4: a fonte fora nas TRÊS unidades (lista) ainda posta a linha honesta, nunca lança pro grupo', async () => {
+  const [p, postar] = postados();
+  const r = await f.atenderPedidoNoGrupo({
+    unidadeId: null, unidadeNome: null, text: 'me manda a lista completa do pix avulso',
+    hoje: '2026-09-17', postar, deps: { ...depsFeliz, rpcPix: erro('LA Report fora') },
+  });
+  assert.strictEqual(r.tratou, true);
+  assert.strictEqual(p.length, 1);
+  assert.match(p[0], /LA Report/);
+});
+
+// C4: as duas provas abaixo checam o ID de verdade que chega na camada de I/O — não só o RÓTULO
+// da mensagem. `efetivoNome` (o texto exibido) é calculado direto de `unidadeCitada`, então um
+// mutante que quebrasse só `efetivoId` (ex.: `unidadeId || unidadeCitada` em vez de
+// `unidadeCitada || unidadeId`) passaria batido pelos testes que só olham o texto — a fonte seria
+// lida pela unidade ERRADA (a do grupo) enquanto a MENSAGEM diria o nome certo. Achado pelos
+// mutantes (mutantes-pix.js, mutante 5).
+test('C4: grupo COM unidade mas a fala CITA OUTRA — a LEITURA usa o id REAL da unidade citada, não o id do grupo', async () => {
+  const [, postar] = postados();
+  const chamadas = [];
+  const espiao = {
+    ...depsFeliz,
+    blocosDaLista: async (arg) => { chamadas.push(arg.unidadeId); return { blocos: [{ titulo: 'Pix avulso', substantivo: 'clientes', itens: [] }], falhas: [] }; },
+  };
+  await f.atenderPedidoNoGrupo({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'lista do pix avulso do recreio',
+    hoje: '2026-09-17', postar, deps: espiao,
+  });
+  assert.strictEqual(chamadas[0], '95553e96-971b-4590-a6eb-0201d013c14d', 'tem que ler pelo id REAL do Recreio, não pelo id fake do grupo (u1)');
+});
+
+test('C4: NÚMEROS num grupo COM unidade mas a fala CITA OUTRA — a LEITURA usa o id REAL da unidade citada', async () => {
+  const [, postar] = postados();
+  const chamadas = [];
+  const espiao = {
+    ...depsFeliz,
+    numerosDaUnidade: async (arg) => { chamadas.push(arg.unidadeId); return { pix: null, anamnese: null, contrato: null, dadoEm: null, motivo: null }; },
+  };
+  await f.atenderPedidoNoGrupo({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'quantos faltam de contrato na campo grande?',
+    hoje: '2026-09-17', postar, deps: espiao,
+  });
+  assert.strictEqual(chamadas[0], '2ec861f6-023f-4d7b-9927-3960ad8c2a92', 'tem que ler pelo id REAL de Campo Grande, não pelo id fake do grupo (u1)');
 });

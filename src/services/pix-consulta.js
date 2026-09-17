@@ -9,9 +9,16 @@
 //
 // Este arquivo só decide e formata. Quem lê a fonte é src/services/pix-consulta-fontes.js; quem
 // liga no turno do grupo é src/services/group-chat-engine.js.
+//
+// C4 (17/09): o grupo "PIX AUTOMÁTICO L.A." não tem unidade amarrada (`la_report_unidade_id`
+// nulo) e respondia sempre "me diz a unidade" — travando informação de novo, agora por falta de
+// unidade em vez de falta de lote. `detectarUnidade` acha uma unidade CITADA dentro da fala
+// (Campo Grande/CG, Recreio, Barra); sem citação, o orquestrador (pix-consulta-fontes.js) manda
+// as três. `blocoDeNumerosTodasUnidades` formata o bloco de números das três juntas + TOTAL.
 
 const { FATIAS, ROTULO } = require('./pix-migracao');
 const { pareceFalaDeCadastro } = require('../lib/pix-cadastro-informado');
+const situ = require('./situacao-aluno');
 
 // Teto por mensagem: 45 linhas "• Nome — Alunos" cabem numa mensagem de WhatsApp sem virar
 // parede ilegível (a pauta diária já manda ~48 e é o limite do que o time lê de uma vez).
@@ -122,6 +129,22 @@ function precisaDeNumeros(texto) {
   return TOKEN_PIX_VERBO.test(t) && (RE_LISTA.test(t) || RE_NUMEROS.test(t));
 }
 
+// ── C4: detectarUnidade — acha uma unidade CITADA dentro de uma fala qualquer ──────────────────
+// Diferente de situacao-aluno.resolverUnidade (que espera a fala INTEIRA ser só o nome/apelido,
+// como vem do marker do LLM): aqui a unidade é UMA PALAVRA dentro de uma frase livre do grupo.
+// Mesmos ids/apelidos de situacao-aluno.js — fonte única, nenhum UUID duplicado aqui. `\b` nos
+// dois lados garante que "barra" só casa como PALAVRA (não em "barragem"/"embarra") e que "cg"
+// só casa sozinho (não dentro de "cgestao" ou qualquer coisa colada).
+function detectarUnidade(texto) {
+  const t = _norm(texto);
+  if (!t) return null;
+  for (const apelido of Object.keys(situ.UNIDADES)) {
+    const re = new RegExp(`\\b${apelido.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    if (re.test(t)) return situ.UNIDADES[apelido];
+  }
+  return null;
+}
+
 const TITULO_EXTRA = {
   pix: 'PIX automático — quem falta migrar',
   tudo: 'PIX automático — quem falta migrar',
@@ -144,12 +167,16 @@ function substantivoDoAlvo(alvo) {
 // REPARTIÇÃO: uma mensagem reservada por família antes de qualquer distribuição — uma família
 // que sai MUDA é exatamente a doença que esta feature existe pra curar. O que sobra do teto vai
 // pras famílias na ordem em que foram pedidas. O que não coube é DITO na última mensagem.
+// C4: `unidadeNome` pode vir null/vazio quando quem chama já montou o TÍTULO INTEIRO por bloco
+// (caso das três unidades juntas — cada bloco já traz "… — Campo Grande" etc. no próprio título,
+// e colar outra unidade em cima duplicaria/erraria o rótulo).
 function mensagensDeVariasListas({
   unidadeNome, blocos, avisos = [], limitePorMensagem = LIMITE_POR_MENSAGEM, tetoMensagens = TETO_MENSAGENS,
 }) {
   const lista = (blocos || []).filter(Boolean);
   const lim = Math.max(1, Number(limitePorMensagem) || LIMITE_POR_MENSAGEM);
   const teto = Math.max(1, Number(tetoMensagens) || TETO_MENSAGENS);
+  const rotulo = unidadeNome ? (titulo) => `${titulo} — ${unidadeNome}` : (titulo) => titulo;
   const querem = lista.map((b) => Math.max(1, Math.ceil(((b.itens || []).length) / lim)));
   const dadas = lista.map(() => 0);
   let restante = teto;
@@ -175,11 +202,11 @@ function mensagensDeVariasListas({
     const mostrados = Math.min(itens.length, partes * lim);
     fora += itens.length - mostrados;
     if (!partes) continue;
-    if (!itens.length) { out.push(`💠 *${b.titulo} — ${unidadeNome}* (0 ${subst}) — parte 1/1\nNinguém nesta lista agora.`); continue; }
+    if (!itens.length) { out.push(`💠 *${rotulo(b.titulo)}* (0 ${subst}) — parte 1/1\nNinguém nesta lista agora.`); continue; }
     for (let k = 0; k < partes; k++) {
       const fatia = itens.slice(k * lim, Math.min((k + 1) * lim, mostrados));
       const corpo = fatia.map((it) => `• ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`).join('\n');
-      out.push(`💠 *${b.titulo} — ${unidadeNome}* (${itens.length} ${subst}) — parte ${k + 1}/${precisa}\n${corpo}`);
+      out.push(`💠 *${rotulo(b.titulo)}* (${itens.length} ${subst}) — parte ${k + 1}/${precisa}\n${corpo}`);
     }
   }
   const rodape = [];
@@ -240,8 +267,63 @@ function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHo
   return L.join('\n');
 }
 
+// ── C4: números das TRÊS unidades juntas (grupo sem unidade e SEM unidade citada na fala) ──────
+// `unidades`: [{ unidadeNome, pix, anamnese, contrato, motivo }, ...] já na ORDEM de exibição
+// (decidida por quem orquestra — pix-consulta-fontes.js — não aqui). Cada unidade fala por si
+// (mesmos rótulos honestos de blocoDeNumeros) e o TOTAL só soma o que TODAS as unidades
+// conseguiram ler — uma unidade fora não pode virar zero silencioso dentro da soma (mesmo motivo
+// de numerosDaUnidade nunca inventar zero por falha: "zero por falha sai idêntico a zero por
+// saúde, e é assim que um laudo vira mentira").
+function blocoDeNumerosTodasUnidades({ unidades }) {
+  const L = ['## NÚMEROS DA FONTE AGORA — as três unidades (leia ANTES de falar qualquer quantidade)'];
+  let pixOk = true; let totalClientes = 0; let totalFaltam = 0;
+  let anaOk = true; let totalAnaPend = 0; let totalAnaBase = 0;
+  let conOk = true; let totalConPend = 0; let totalConBase = 0;
+
+  for (const u of (unidades || [])) {
+    if (u.pix) {
+      L.push(`${u.unidadeNome} — PIX automático: ${u.pix.total} clientes na fonte · já migraram ${u.pix.ja_migrou} · faltam migrar ${u.pix.faltam}`);
+      totalClientes += u.pix.total;
+      totalFaltam += u.pix.faltam;
+    } else {
+      L.push(`${u.unidadeNome} — PIX automático: NÃO CONSEGUI LER a fonte agora.`);
+      pixOk = false;
+    }
+    if (u.anamnese) {
+      L.push(`${u.unidadeNome} — Anamnese ${RECORTE_ALUNOS}: ${u.anamnese.pendentes} pendentes de ${u.anamnese.base}`);
+      totalAnaPend += u.anamnese.pendentes;
+      totalAnaBase += u.anamnese.base;
+    } else {
+      L.push(`${u.unidadeNome} — Anamnese: NÃO CONSEGUI LER a fonte agora.`);
+      anaOk = false;
+    }
+    if (u.contrato) {
+      L.push(`${u.unidadeNome} — Contrato ${RECORTE_ALUNOS}: ${u.contrato.pendentes} pendentes de ${u.contrato.base}`);
+      totalConPend += u.contrato.pendentes;
+      totalConBase += u.contrato.base;
+    } else {
+      L.push(`${u.unidadeNome} — Contrato: NÃO CONSEGUI LER a fonte agora.`);
+      conOk = false;
+    }
+    if (u.motivo) L.push(`(${u.unidadeNome} — falha de leitura: ${u.motivo})`);
+  }
+
+  L.push(pixOk
+    ? `TOTAL — PIX automático: ${totalClientes} clientes na fonte · faltam migrar ${totalFaltam}`
+    : 'TOTAL — PIX automático: não dá pra somar agora — pelo menos uma unidade não respondeu.');
+  L.push(anaOk
+    ? `TOTAL — Anamnese ${RECORTE_ALUNOS}: ${totalAnaPend} pendentes de ${totalAnaBase}`
+    : 'TOTAL — Anamnese: não dá pra somar agora — pelo menos uma unidade não respondeu.');
+  L.push(conOk
+    ? `TOTAL — Contrato ${RECORTE_ALUNOS}: ${totalConPend} pendentes de ${totalConBase}`
+    : 'TOTAL — Contrato: não dá pra somar agora — pelo menos uma unidade não respondeu.');
+  L.push('Estes números vêm da fonte agora. Use SOMENTE eles para falar de quantidade; se a pessoa pedir a lista de nomes, diga que é só pedir "lista completa do <assunto>" (pode citar a unidade). Nunca estime.');
+  L.push('Ao dar número de anamnese ou contrato, diga sempre que é o total da unidade e não a pauta de hoje.');
+  return L.join('\n');
+}
+
 module.exports = {
   LIMITE_POR_MENSAGEM, TETO_MENSAGENS, TEXTO_SEM_UNIDADE, TEXTO_FONTE_FORA, RECORTE_ALUNOS,
-  detectarPedido, precisaDeNumeros, tituloDoAlvo, substantivoDoAlvo,
-  mensagensDaLista, mensagensDeVariasListas, blocoDeNumeros,
+  detectarPedido, precisaDeNumeros, detectarUnidade, tituloDoAlvo, substantivoDoAlvo,
+  mensagensDaLista, mensagensDeVariasListas, blocoDeNumeros, blocoDeNumerosTodasUnidades,
 };

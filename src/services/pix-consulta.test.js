@@ -7,6 +7,10 @@
 // FIX ROUND 1 (C1/C3/I4/I5): interceptar exige TOKEN DE ASSUNTO explícito na fala; palavra de
 // fatia sozinha (cheque, boleto, maquininha…) nunca basta; fala com forma de aviso de cadastro
 // faz o interceptador se calar; anamnese/contrato declaram o recorte no bloco de números.
+//
+// C4 (17/09): grupo sem unidade amarrada ("PIX AUTOMÁTICO L.A.") ganha capacidade plena —
+// `detectarUnidade` acha uma unidade citada na fala, e `blocoDeNumerosTodasUnidades` fala das
+// três juntas + TOTAL quando nenhuma unidade é citada.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const c = require('./pix-consulta');
@@ -170,6 +174,32 @@ test('I4: precisaDeNumeros só liga com token de assunto — "quantos"/"falta" s
   assert.strictEqual(c.precisaDeNumeros('como tá a migração?'), true);
 });
 
+// ── C4: detectarUnidade — acha uma unidade CITADA dentro de uma fala qualquer ───────────────────
+const ID_CG = '2ec861f6-023f-4d7b-9927-3960ad8c2a92';
+const ID_RECREIO = '95553e96-971b-4590-a6eb-0201d013c14d';
+const ID_BARRA = '368d47f5-2d88-4475-bc14-ba084a9a348e';
+
+test('C4: detectarUnidade reconhece Campo Grande, CG, Recreio e Barra (acento/maiúscula não importam)', () => {
+  assert.strictEqual(c.detectarUnidade('quantos faltam em Campo Grande?'), ID_CG);
+  assert.strictEqual(c.detectarUnidade('lista do pix da CG'), ID_CG);
+  assert.strictEqual(c.detectarUnidade('o recreio tá com pix pendente'), ID_RECREIO);
+  assert.strictEqual(c.detectarUnidade('lista da Barra, por favor'), ID_BARRA);
+  assert.strictEqual(c.detectarUnidade('RECREIO'), ID_RECREIO);
+});
+
+test('C4: detectarUnidade só casa "barra"/"cg" como PALAVRA, nunca dentro de outra palavra', () => {
+  assert.strictEqual(c.detectarUnidade('vamos içar a barragem'), null);
+  assert.strictEqual(c.detectarUnidade('ele embarra tudo quando se atrasa'), null);
+  assert.strictEqual(c.detectarUnidade('cgestao de horario mudou'), null); // "cg" colado, não é a sigla sozinha
+});
+
+test('C4: detectarUnidade sem nenhuma unidade citada -> null', () => {
+  assert.strictEqual(c.detectarUnidade('quantos faltam migrar?'), null);
+  assert.strictEqual(c.detectarUnidade('bom dia, time!'), null);
+  assert.strictEqual(c.detectarUnidade(''), null);
+  assert.strictEqual(c.detectarUnidade(null), null);
+});
+
 // ── mensagensDaLista: quebra em partes ────────────────────────────────────────────────────────
 const itens = (n) => Array.from({ length: n }, (_, i) => ({ pagador: `Pagador ${i + 1}`, alunos: [`Aluno ${i + 1}`] }));
 const base = { unidadeNome: 'Campo Grande', titulo: 'Pix avulso' };
@@ -286,6 +316,21 @@ test('C2: aviso extra (fonte de uma família fora) sai colado na última mensage
   assert.match(ms[ms.length - 1], /A lista do PIX eu não consegui ler agora\./);
 });
 
+// ── C4: mensagensDeVariasListas com unidadeNome nulo (as três unidades juntas) ──────────────────
+test('C4: unidadeNome nulo usa o título JÁ PRONTO do bloco, sem duplicar/inventar unidade', () => {
+  const ms = c.mensagensDeVariasListas({
+    unidadeNome: null,
+    blocos: [
+      { titulo: 'Pix avulso — Campo Grande', substantivo: 'clientes', itens: itens(2) },
+      { titulo: 'Pix avulso — Recreio', substantivo: 'clientes', itens: [] },
+    ],
+  });
+  assert.strictEqual(ms.length, 2);
+  assert.match(ms[0], /^💠 \*Pix avulso — Campo Grande\* \(2 clientes\) — parte 1\/1/);
+  assert.match(ms[1], /^💠 \*Pix avulso — Recreio\* \(0 clientes\) — parte 1\/1/);
+  assert.ok(!/Campo Grande — undefined|— null/.test(ms.join('\n')));
+});
+
 // ── blocoDeNumeros ────────────────────────────────────────────────────────────────────────────
 const PIX_ZERO = {
   total: 0, migrar: 0, autorizacao_pendente: 0, ja_migrou: 0, aguardando_cobranca: 0,
@@ -361,6 +406,34 @@ test('situação dos alunos fora: anamnese e contrato dizem que não leram', () 
   assert.ok(!/Anamnese \(/.test(b));
   assert.ok(!/Contrato \(/.test(b));
   assert.match(b, /não consegui ler/i);
+});
+
+// ── C4: blocoDeNumerosTodasUnidades — as três juntas + TOTAL ────────────────────────────────────
+test('C4: cada unidade fala por si e o TOTAL soma as três', () => {
+  const un = (nome, faltam) => ({
+    unidadeNome: nome,
+    pix: { ...PIX_ZERO, total: faltam + 10, ja_migrou: 10, faltam },
+    anamnese: { pendentes: 1, base: 10 },
+    contrato: { pendentes: 2, base: 10 },
+    motivo: null,
+  });
+  const b = c.blocoDeNumerosTodasUnidades({ unidades: [un('Campo Grande', 5), un('Recreio', 3), un('Barra', 2)] });
+  assert.match(b, /Campo Grande — PIX autom[áa]tico:.*faltam migrar 5/);
+  assert.match(b, /Recreio — PIX autom[áa]tico:.*faltam migrar 3/);
+  assert.match(b, /Barra — PIX autom[áa]tico:.*faltam migrar 2/);
+  assert.match(b, /TOTAL — PIX autom[áa]tico:.*faltam migrar 10/);
+  assert.match(b, /TOTAL — Anamnese.*3 pendentes de 30/);
+  assert.match(b, /TOTAL — Contrato.*6 pendentes de 30/);
+  assert.match(b, /Nunca estime/);
+});
+
+test('C4: uma unidade sem PIX faz o TOTAL de PIX dizer que não dá pra somar — nunca soma zero', () => {
+  const un = (nome, faltam) => ({ unidadeNome: nome, pix: { ...PIX_ZERO, total: faltam, faltam }, anamnese: { pendentes: 1, base: 10 }, contrato: { pendentes: 1, base: 10 } });
+  const semPix = { unidadeNome: 'Recreio', pix: null, anamnese: { pendentes: 1, base: 10 }, contrato: { pendentes: 1, base: 10 }, motivo: 'PIX: timeout' };
+  const b = c.blocoDeNumerosTodasUnidades({ unidades: [un('Campo Grande', 5), semPix, un('Barra', 2)] });
+  assert.match(b, /Recreio — PIX autom[áa]tico: N[ÃA]O CONSEGUI LER/);
+  assert.match(b, /TOTAL — PIX autom[áa]tico: n[ãa]o d[áa] pra somar/);
+  assert.match(b, /TOTAL — Anamnese.*3 pendentes de 30/, 'anamnese das três leu OK, soma normal mesmo com o PIX fora');
 });
 
 // ── tituloDoAlvo / substantivoDoAlvo ──────────────────────────────────────────────────────────
