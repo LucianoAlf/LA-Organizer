@@ -17,6 +17,9 @@ const groupNotes = require('./group-notes');
 const { buildBrtDateAnchor } = require('../utils/dates');
 const opsAgent = require('./ops-agent');
 const { paraWhatsApp, dividirParaWhatsApp } = require('../utils/wa-format');
+const { atenderPedidoNoGrupo } = require('./pix-consulta-fontes');
+const { laReportClient } = require('./la-report-client');
+const { nomeDaUnidade } = require('./situacao-aluno');
 
 const HISTORY_LIMIT = 30;
 // GROUPCHAT-POOL-TRUNCADO-VIRA-AUSENCIA (auditoria 04/09, 10:36) — o TOM afirmou que três
@@ -459,13 +462,11 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   // quando a fala casa. Tudo em try/catch: falha de leitura vira log, e o turno segue normal.
   let numerosCtx = '';
   try {
-    const { atenderPedidoNoGrupo } = require('./pix-consulta-fontes');
-    const { laReportClient } = require('./la-report-client');
     const unidadeId = ctx.group.la_report_unidade_id || null;
     const rConsulta = await atenderPedidoNoGrupo({
       laReport: laReportClient,
       unidadeId,
-      unidadeNome: require('./situacao-aluno').nomeDaUnidade(unidadeId) || ctx.group.name,
+      unidadeNome: nomeDaUnidade(unidadeId) || ctx.group.name,
       text,
       hoje: ctx.poolToday,
       postar: (txt) => postTomText(supabase, groupId, txt),
