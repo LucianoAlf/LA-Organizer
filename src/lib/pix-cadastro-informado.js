@@ -58,10 +58,22 @@ const HEDGES = [
   'se não me engano', 'depois', 'amanhã', 'amanha', 'vou', 'preciso', 'falta', 'faltou', 'tentei',
 ];
 
+// FIX ROUND 1 (17/09, C1): o interceptador de lista (src/services/pix-consulta.js) precisa saber
+// que a fala TEM FORMA de aviso de cadastro mesmo quando negação ou dúvida a refutam. Medido:
+// "cadastrei o fulano no automático mas não achei o nome dele" traz "automático" (assunto) e
+// "nome" (marcador de lista) — sem esta trava o TOM despejava a lista inteira do PIX por cima do
+// aviso da equipe. Aqui só a ESTRUTURA importa: negação/dúvida seguem sendo problema de
+// detectarCadastroInformado, que é quem decide se há baixa a dar.
+function pareceFalaDeCadastro(texto) {
+  const t = String(texto == null ? '' : texto).trim();
+  if (!t) return false;
+  if (t.split(/\s+/).length > TETO_PALAVRAS) return false;
+  return RE_CADASTRO.test(t);
+}
+
 function detectarCadastroInformado(texto) {
   const t = String(texto == null ? '' : texto).trim();
-  if (!t) return null;
-  if (t.split(/\s+/).length > TETO_PALAVRAS) return null;
+  if (!pareceFalaDeCadastro(t)) return null;
   if (_temAlgumToken(t, NEGACOES)) return null;
   if (t.includes('?') || _temAlgumToken(t, HEDGES)) return null;
   const m = RE_CADASTRO.exec(t);
@@ -102,6 +114,7 @@ function textoCadastroAmbiguo(nomes) {
 
 module.exports = {
   detectarCadastroInformado,
+  pareceFalaDeCadastro,
   normalizarNome,
   textoCadastroInformado,
   textoCadastroNaoAchado,
