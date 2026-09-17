@@ -11,8 +11,20 @@
 // Mesmo padrão de deps injetáveis do ritual irmão (src/rituals/pix-migracao.js): nenhum teste
 // deste arquivo toca o Supabase real. Toda LEITURA que falhar (erro do Supabase, ou a própria
 // chamada lançando) faz este módulo NÃO interceptar — devolve `{ tratou: false }`, com um
-// console.warn, e o turno segue pro fluxo normal (LLM). Uma pergunta ("não achei, confere o
-// nome?") não é falha: conta como tratado, sem nenhuma escrita.
+// console.warn, e o turno segue pro fluxo normal (LLM). Uma resposta sem escrita ("não está na
+// pauta de hoje", "achei mais de um") não é falha: conta como tratado.
+//
+// I5 (revisão final): grupo SEM pacote PIX aberto não tem pauta do PIX — o atalho NÃO intercepta
+// (`tratou: false`) e o LLM atende normalmente. Antes respondia "não achei na pauta do PIX" em
+// qualquer grupo onde alguém falasse "cadastrei fulano no automático".
+//
+// M3 (revisão final) — ORDEM DE ESCRITA: grava o marcador PIX_CADASTRO ANTES de fechar a filha.
+// Marcador falhou -> não fecha a filha e responde "Não consegui registrar agora" (tratou). Marcador
+// gravou mas a baixa da filha falhou -> mesma resposta. Nesse segundo caso o marcador sozinho NÃO
+// tira o cliente do lote: a filha continua `pending`, e o ritual (src/rituals/pix-migracao.js)
+// carrega toda filha pendente cujo cliente segue em migrar/autorizacao_pendente na fonte,
+// informado ou não — o marcador só impede que ele entre como NOVO num lote. A equipe repete o
+// aviso e a baixa acontece; nada fica prometido sem ter sido feito.
 //
 // Filha sem `pagador_chave` (vínculo nunca gravado, ou a gravação falhou na pauta) NÃO é
 // candidata a baixa — sem chave não há como reconferir em 7 dias se a fonte confirmou. Trata
@@ -20,7 +32,7 @@
 
 const {
   detectarCadastroInformado, normalizarNome,
-  textoCadastroInformado, textoCadastroNaoAchado, textoCadastroAmbiguo,
+  textoCadastroInformado, textoCadastroNaoAchado, textoCadastroNaoRegistrado, textoCadastroAmbiguo,
 } = require('../lib/pix-cadastro-informado');
 const { PREFIXO_CONTAINER } = require('../rituals/pix-migracao');
 
@@ -52,11 +64,11 @@ function _casaPorPalavraInteira(nomeFalado, nomePagador) {
   return palavrasFaladas.every((p) => palavrasPagador.has(p));
 }
 
-// deps.filhasPix({ groupId }) -> [{ id, title, pagador_chave }]
+// deps.filhasPix({ groupId }) -> { pacotes, filhas: [{ id, title, pagador_chave }] }
 // Mesma regra do ritual (src/rituals/pix-migracao.js, _containersPixPadrao): pacotes 'pending'
-// do grupo cujo título começa com PREFIXO_CONTAINER, filhas 'pending' de cada um, com o
-// pagador_chave já resolvido via pix_pauta_vinculo (null se nunca foi gravado). Lança em erro do
-// Supabase — quem chama decide (aqui: não intercepta).
+// do grupo cujo título começa com PREFIXO_CONTAINER (`pacotes` = quantos), filhas 'pending' de
+// cada um, com o pagador_chave já resolvido via pix_pauta_vinculo (null se nunca foi gravado).
+// Lança em erro do Supabase — quem chama decide (aqui: não intercepta).
 async function _filhasPixPadrao(sb, { groupId }) {
   const { data: containers, error } = await sb.from('tasks').select('id, title')
     .eq('assigned_group_id', groupId).eq('is_group', true).eq('status', 'pending')
@@ -77,7 +89,7 @@ async function _filhasPixPadrao(sb, { groupId }) {
     }
     for (const f of fs || []) filhas.push({ id: f.id, title: f.title, pagador_chave: porTask.get(f.id) || null });
   }
-  return filhas;
+  return { pacotes: (containers || []).length, filhas };
 }
 
 // Só fecha se ainda está 'pending' (evita corrida com quem já fechou por fora). Nunca lança —
@@ -91,15 +103,15 @@ async function _fecharFilhaPadrao(sb, id) {
   return true;
 }
 
-// Nunca lança — falha ao gravar o marcador não pode derrubar a baixa que já aconteceu; vira só
-// um console.error (a reconferência de 7 dias fica sem esse registro, igual a qualquer outra
-// falha de escrita neste código-base).
+// Nunca lança — erro de escrita vira `false`. Roda ANTES da baixa da filha (M3): sem marcador, a
+// baixa não acontece (a reconferência de 7 dias depende dele).
 async function _gravarMarcadorPadrao(sb, { collaboratorId, pagadorChave }) {
   const { error } = await sb.from('marker_logs').insert({
     collaborator_id: collaboratorId, marker_type: 'PIX_CADASTRO', result: 'executed',
     reason: `informado:${pagadorChave}`,
   });
-  if (error) console.error(`[PixCadastroGrupo] marker_logs insert falhou: ${error.message}`);
+  if (error) { console.error(`[PixCadastroGrupo] marker_logs insert falhou: ${error.message}`); return false; }
+  return true;
 }
 
 async function tratarCadastroInformadoNoGrupo({
@@ -112,15 +124,18 @@ async function tratarCadastroInformadoNoGrupo({
   const fecharFilha = deps.fecharFilha || ((id) => _fecharFilhaPadrao(supabase, id));
   const gravarMarcador = deps.gravarMarcador || ((arg) => _gravarMarcadorPadrao(supabase, arg));
 
-  let filhas;
+  let pauta;
   try {
-    filhas = await filhasPix({ groupId });
+    pauta = await filhasPix({ groupId });
   } catch (e) {
     console.warn(`[PixCadastroGrupo] busca de filhas falhou, não intercepto: ${e.message}`);
     return { tratou: false };
   }
+  // I5: sem pacote PIX aberto neste grupo, não há pauta do PIX aqui — segue o fluxo normal.
+  if (!pauta || !(pauta.pacotes > 0)) return { tratou: false };
+  const filhas = pauta.filhas || [];
 
-  const candidatas = (filhas || [])
+  const candidatas = filhas
     .filter((f) => f.pagador_chave) // sem vínculo não pode ser baixada — sem chave pra reconferir
     .filter((f) => _casaPorPalavraInteira(detectado.nome, _pagadorDoTitulo(f.title)));
 
@@ -132,12 +147,24 @@ async function tratarCadastroInformadoNoGrupo({
   }
 
   const [filha] = candidatas;
+  // M3: marcador PRIMEIRO. Lançar conta como falha (nunca derruba o turno).
+  let marcou = false;
+  try {
+    marcou = await gravarMarcador({ collaboratorId: senderCollabId, pagadorChave: filha.pagador_chave });
+  } catch (e) {
+    console.error(`[PixCadastroGrupo] gravarMarcador lançou (id=${filha.id}): ${(e && e.message) || String(e)}`);
+    marcou = false;
+  }
+  if (!marcou) {
+    console.warn(`[PixCadastroGrupo] marcador não gravou (id=${filha.id}) — não dou baixa`);
+    return { tratou: true, texto: textoCadastroNaoRegistrado() };
+  }
   const fechou = await fecharFilha(filha.id);
   if (!fechou) {
-    console.warn(`[PixCadastroGrupo] achei a filha mas não consegui dar baixa (id=${filha.id}), não intercepto`);
-    return { tratou: false };
+    // O marcador ficou, mas a filha continua pendente — o ritual a carrega (ver o topo do arquivo).
+    console.warn(`[PixCadastroGrupo] marcador gravou mas a baixa falhou (id=${filha.id})`);
+    return { tratou: true, texto: textoCadastroNaoRegistrado() };
   }
-  await gravarMarcador({ collaboratorId: senderCollabId, pagadorChave: filha.pagador_chave });
   return { tratou: true, texto: textoCadastroInformado(_pagadorDoTitulo(filha.title)) };
 }
 

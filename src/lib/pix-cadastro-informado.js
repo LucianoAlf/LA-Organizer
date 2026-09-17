@@ -84,8 +84,16 @@ function textoCadastroInformado(nome) {
   return `✅ Anotei *${nome}* no PIX automático. Tirei da pauta e confiro no Emusys — se em 7 dias não aparecer lá, volta pra lista.`;
 }
 
+// I5 (revisão final): o grupo TEM pauta do PIX aberta, mas o nome falado não está nela. Não pede
+// pra "conferir o nome" — quem cadastrou alguém fora do lote de hoje não precisa fazer nada: a
+// fonte (Emusys) confirma sozinha e o cliente sai da lista.
 function textoCadastroNaoAchado(nome) {
-  return `Não achei *${nome}* na pauta do PIX deste grupo. Confere o nome como está na lista?`;
+  return `*${nome}* não está na pauta do PIX de hoje deste grupo. Se já cadastrou, o Emusys confirma amanhã e sai da lista sozinho.`;
+}
+
+// M3 (revisão final): o registro (marcador e/ou baixa da filha) falhou — nada foi prometido.
+function textoCadastroNaoRegistrado() {
+  return 'Não consegui registrar agora — tenta de novo daqui a pouco.';
 }
 
 function textoCadastroAmbiguo(nomes) {
@@ -97,5 +105,6 @@ module.exports = {
   normalizarNome,
   textoCadastroInformado,
   textoCadastroNaoAchado,
+  textoCadastroNaoRegistrado,
   textoCadastroAmbiguo,
 };

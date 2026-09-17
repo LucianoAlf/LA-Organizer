@@ -60,10 +60,15 @@ test('o texto avisa que a confirmação vem da fonte', () => {
   assert.match(t, /7 dias/);
 });
 
-test('texto de não achado pede pra conferir o nome', () => {
-  const t = c.textoCadastroNaoAchado('Ana Lima');
-  assert.match(t, /Ana Lima/);
-  assert.match(t, /[Nn]ão achei/);
+test('I5: texto de nome fora da pauta diz que não está na pauta de hoje e que o Emusys confirma sozinho', () => {
+  assert.strictEqual(
+    c.textoCadastroNaoAchado('Ana Lima'),
+    '*Ana Lima* não está na pauta do PIX de hoje deste grupo. Se já cadastrou, o Emusys confirma amanhã e sai da lista sozinho.',
+  );
+});
+
+test('M3: texto de falha ao registrar', () => {
+  assert.strictEqual(c.textoCadastroNaoRegistrado(), 'Não consegui registrar agora — tenta de novo daqui a pouco.');
 });
 
 test('texto de ambiguidade lista os nomes achados separados por " · "', () => {
