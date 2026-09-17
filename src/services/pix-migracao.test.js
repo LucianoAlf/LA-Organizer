@@ -41,3 +41,28 @@ test('título da filha leva o pagador e os alunos, sem telefone nem valor', () =
   assert.strictEqual(t, 'PIX automático — Maria (João, Ana)');
   assert.ok(!/\d{4}/.test(t));
 });
+
+test('mensagem: cabeçalho com total e meta, lote por extenso, resto contado', () => {
+  const linhas = [
+    { pagador_chave: 'a', pagador_nome: 'Ana Lima', alunos: ['Rafa'], categoria: 'autorizacao_pendente', fatia: null },
+    { pagador_chave: 'b', pagador_nome: 'Bruno Sá', alunos: ['Léo'], categoria: 'migrar', fatia: 'pix_avulso' },
+    { pagador_chave: 'c', pagador_nome: 'Carla Dias', alunos: ['Tina'], categoria: 'migrar', fatia: 'cheque' },
+  ];
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Campo Grande', linhas, lote: linhas.slice(0, 2) });
+  assert.match(txt, /^💠 \*PIX automático — Campo Grande\* · faltam 3 · meta 31\/10$/m);
+  assert.match(txt, /🔵 \*Cadastrados sem cobrança\* \(1\) — resolver primeiro\n {3}• Ana Lima \(Rafa\)/);
+  assert.match(txt, /🔴 \*Pix avulso\* \(1\)\n {3}• Bruno Sá \(Léo\)/);
+  assert.match(txt, /🟠 Cheque \(1\)/, 'fatia fora do lote aparece contada');
+  assert.ok(!txt.includes('Carla Dias'), 'quem não está no lote não é citado');
+});
+
+test('mensagem: fatia sem ninguém não aparece', () => {
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [{ pagador_nome: 'X', alunos: [], categoria: 'migrar', fatia: 'pix_avulso', pagador_chave: 'x' }], lote: [] });
+  assert.ok(!txt.includes('Cheque'));
+});
+
+test('mensagem: fonte velha não publica número, avisa', () => {
+  const txt = p.mensagemDaUnidade({ unidadeNome: 'Barra', linhas: [], lote: [], fonteVelha: true });
+  assert.match(txt, /não atualizou/i);
+  assert.ok(!/\(\d+\)/.test(txt));
+});

@@ -29,4 +29,30 @@ function contagemPorFatia(linhas) {
 }
 const tituloDaFilha = (l) => `PIX automático — ${l.pagador_nome}${(l.alunos || []).length ? ` (${l.alunos.join(', ')})` : ''}`;
 
-module.exports = { FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD, fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha };
+const METAS_BR = META_YMD.slice(8, 10) + '/' + META_YMD.slice(5, 7);
+function mensagemDaUnidade({ unidadeNome, linhas, lote, fonteVelha = false }) {
+  const cab = `💠 *PIX automático — ${unidadeNome}*`;
+  if (fonteVelha) return `${cab}\n_A fonte do LA Report não atualizou hoje — não vou cobrar número que não medi._`;
+  const todas = linhas || [];
+  const noLote = new Set((lote || []).map((l) => l.pagador_chave));
+  const cont = contagemPorFatia(todas);
+  const linhasTxt = [`${cab} · faltam ${todas.length} · meta ${METAS_BR}`];
+  const resumo = [];
+  for (const f of FATIAS) {
+    const n = cont.get(f) || 0;
+    if (!n) continue;
+    const doLote = ordenarPorPrioridade(todas.filter((l) => fatiaDoCliente(l) === f && noLote.has(l.pagador_chave)));
+    if (!doLote.length) { resumo.push(`${ROTULO[f].emoji} ${ROTULO[f].nome} (${n})`); continue; }
+    const extra = f === 'autorizacao_pendente' ? ' — resolver primeiro' : '';
+    linhasTxt.push(`${ROTULO[f].emoji} *${ROTULO[f].nome}* (${n})${extra}\n`
+      + doLote.map((l) => `   • ${l.pagador_nome}${(l.alunos || []).length ? ` (${l.alunos.join(', ')})` : ''}`).join('\n'));
+  }
+  if (resumo.length) linhasTxt.push(resumo.join(' · '));
+  return linhasTxt.join('\n');
+}
+
+module.exports = {
+  FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD,
+  fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
+  mensagemDaUnidade,
+};
