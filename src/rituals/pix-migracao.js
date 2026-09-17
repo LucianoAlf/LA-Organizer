@@ -394,7 +394,6 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
   const motivoCom = (principal) => [principal, ...avisos].filter(Boolean).join('; ') || null;
 
   let fechadas = 0;
-  let carregadasCount = 0;
   try {
     const containers = await containersPix({ groupId });
 
@@ -501,7 +500,9 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       for (const c of anteriores) {
         for (const f of c.filhas || []) {
           const destino = destinoDa(f);
-          if ((await aplicar(f, destino)) && destino === 'continua') carregadasCount++;
+          // Carregada de um pacote velho com o pacote de hoje JÁ criado: é cancelada, mas não entra
+          // em lote nenhum — por isso não conta em `carregadas` (que conta só quem entrou num lote).
+          await aplicar(f, destino);
         }
         if (!(await fecharContainer(c.id, 'done'))) avisos.push(`não consegui fechar o pacote velho ${_id8(c.id)}`);
       }
@@ -513,7 +514,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       }
       const lote = _dedupPorChave(loteBruto);
       return retorno({
-        jaExistia: true, lote, fechadas, carregadas: carregadasCount, texto: mensagem(lote), motivo: motivoCom(null),
+        jaExistia: true, lote, fechadas, texto: mensagem(lote), motivo: motivoCom(null),
       });
     }
 
@@ -529,7 +530,6 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       }
     }
     const carregadas = _dedupPorChave(pura.ordenarPorPrioridade(carregadasBrutas));
-    carregadasCount = carregadas.length;
     const chavesCarregadas = new Set(carregadas.map((l) => l.pagador_chave));
     const demais = linhasDaPauta.filter((l) => !recentesSet.has(l.pagador_chave) && !chavesCarregadas.has(l.pagador_chave));
     const resto = pura.loteDoDia(demais, { tamanho: Math.max(0, pura.LOTE_DIARIO - carregadas.length) });
@@ -540,7 +540,6 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     // abertos) — aí é defeito pra alguém olhar, não dia normal. Anterior intacto.
     if (lote.length > pura.TETO_FILHAS) {
       return retorno({
-        carregadas: carregadasCount,
         motivo: motivoCom(`lote de ${lote.length} clientes passa do teto de ${pura.TETO_FILHAS} filhas — não criei o pacote`),
       });
     }
@@ -583,7 +582,6 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       // Falha de ESCRITA do painel (a fonte respondeu bem) — nem fonteFalhou nem semCliente:
       // `texto: null` aqui significa "não consegui montar o lote", não "não há nada a mostrar".
       return retorno({
-        carregadas: carregadasCount,
         motivo: motivoCom(`não consegui criar o pacote: ${(e && e.message) || String(e)}`),
       });
     }
@@ -601,7 +599,6 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
       .filter((v) => v.task_id);
     if (vinculos.length !== lote.length || !(await vincular(vinculos))) {
       return retorno({
-        carregadas: carregadasCount,
         motivo: motivoCom('não consegui gravar o vínculo pagador-tarefa do pacote novo — o anterior ficou intacto e o novo é refeito na próxima execução'),
       });
     }
@@ -609,7 +606,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     // Só agora, com o pacote novo criado E vinculado, o anterior é fechado (I3).
     await fecharAnteriores();
     return retorno({
-      criou: true, lote, fechadas, carregadas: carregadasCount, texto: mensagem(lote), motivo: motivoCom(null),
+      criou: true, lote, fechadas, carregadas: carregadas.length, texto: mensagem(lote), motivo: motivoCom(null),
     });
   } catch (e) {
     // Falha ao LER o painel (containersPix, que lança em erro do Supabase por não ter outro jeito
@@ -617,7 +614,7 @@ async function pautaPixDaUnidade({ supabase, laReport, unidadeId, unidadeNome, g
     // Nem fonteFalhou nem semCliente (os dois já vêm `false` de `vazio`). Os avisos já acumulados
     // não podem sumir só porque o painel falhou depois.
     return retorno({
-      fechadas, carregadas: carregadasCount,
+      fechadas,
       motivo: motivoCom(`falha ao processar o painel do PIX: ${(e && e.message) || String(e)}`),
     });
   }

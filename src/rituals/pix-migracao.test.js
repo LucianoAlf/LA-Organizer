@@ -1080,7 +1080,48 @@ test('R2: pacote de hoje com ZERO filhas e a reconstrução falha — falha de p
   assert.deepStrictEqual(eventos, ['pacote:c-hoje:cancelled'], 'só o pacote vazio foi cancelado');
   assert.strictEqual(out.texto, null);
   assert.deepStrictEqual(out.lote, []);
+  assert.strictEqual(out.carregadas, 0, 'nada foi colocado em lote nenhum');
   assert.strictEqual(pura.decisaoDaPublicacaoPix(out, { unidadeNome: 'Barra' }).result, 'fallback');
+});
+
+// ── carregadas conta SÓ quem entrou num lote (item adiado da revisão) ───────────────────────────
+test('carregadas: pacote de hoje já existe e um pacote velho ainda aberto — a filha velha é cancelada mas NÃO entra em lote nenhum, então carregadas = 0', async () => {
+  const fechos = [];
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso'), linha('Bia', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
+      containersPix: async () => [
+        { id: 'c-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15', filhas: [filha('f-bia', 'k-Bia', 'b')] },
+        { id: 'c-hoje', title: r.PREFIXO_CONTAINER + '16/09', due_date: '2026-09-16', filhas: [filha('t-ana', 'k-Ana', 'a')] },
+      ],
+      criarPacote: nuncaChama('criarPacote'),
+      fecharFilha: async (id, status) => { fechos.push([id, status]); return true; },
+      fecharContainer: async () => true,
+    },
+  });
+  assert.deepStrictEqual(fechos, [['f-bia', 'cancelled']]);
+  assert.strictEqual(out.jaExistia, true);
+  assert.strictEqual(out.carregadas, 0);
+});
+
+test('carregadas: criação do pacote falha — ninguém foi colocado em lote, carregadas = 0', async () => {
+  const out = await r.pautaPixDaUnidade({
+    ...base,
+    laReport: laReportOk([linha('Ana', 'pix_avulso')]),
+    deps: {
+      agora: agoraFixo, informados: async () => [], transicoesRecentes: async () => [], vinculosSemTransicao: async () => [],
+      containersPix: async () => [
+        { id: 'c-ontem', title: r.PREFIXO_CONTAINER + '15/09', due_date: '2026-09-15', filhas: [filha('f-ana', 'k-Ana', 'a')] },
+      ],
+      criarPacote: async () => { throw new Error('boom'); },
+      fecharFilha: nuncaChama('fecharFilha'),
+      fecharContainer: nuncaChama('fecharContainer'),
+    },
+  });
+  assert.strictEqual(out.texto, null);
+  assert.strictEqual(out.carregadas, 0);
 });
 
 test('R2: pacote de hoje cujas filhas foram TODAS fechadas hoje (atalho) NÃO é incompleto — não cancela nem reconstrói', async () => {

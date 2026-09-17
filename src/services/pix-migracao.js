@@ -223,33 +223,6 @@ function horaDaPautaPix(unidadeNome, diaSemana, { loteUnico, horaAbertura } = {}
   return loteUnico || horaAbertura || null;
 }
 
-// ── O QUE PUBLICAR NO GRUPO, A PARTIR DO RETORNO DO RITUAL (fix round 1 — Critical) ────────────
-// `pautaPixDaUnidade` devolve `texto: null` em QUATRO situações bem diferentes: a RPC do LA
-// Report falhou (`fonteFalhou`), não há cliente a migrar hoje (`semCliente` — sucesso, fila
-// vazia), o painel de tarefas falhou ao CRIAR o pacote (`criarPacote` lançou), ou falhou ao LER o
-// painel (`containersPix` lançou, catch externo do ritual). Só a PRIMEIRA é "a fonte está fora do
-// ar" — as outras três são o painel (nosso lado), não a fonte.
-//
-// O DEFEITO QUE ISTO CORRIGE: antes desta função, o dispatcher tratava QUALQUER `texto === null`
-// como "fonte fora do ar" e publicava "a fonte não atualizou hoje" no grupo REAL. Isso é uma
-// afirmação FALSA toda vez que a fila de uma unidade esvazia (destino do plano, não raro — vai
-// acontecer todo dia que a unidade zerar a migração) ou que o painel tem um bug de escrita/
-// leitura — e nos dois casos o aviso errado ESCONDE o problema real (fila vazia vira "a fonte não
-// respondeu"; um bug de escrita no painel também vira "a fonte não respondeu").
-//
-// Decisão PURA, testável sem tocar o ritual nem o dispatcher: dado o retorno de
-// `pautaPixDaUnidade` — LENDO SÓ OS FLAGS ESTRUTURADOS (`fonteFalhou`, `fonteVelha`,
-// `semCliente`), nunca inspecionando o texto de `motivo` — decide O QUE publicar (ou nada) e QUAL
-// resultado gravar no marcador de idempotência.
-//   fonteFalhou    -> publica o aviso de fonte velha (mesma regra: não cobrar número que não foi
-//                      medido) · result 'fallback' (tenta de novo no próximo tick)
-//   fonteVelha     -> publica o texto que o ritual já preparou (mesmo aviso, já pronto em r.texto)
-//                      · result 'fallback'
-//   semCliente     -> não publica nada — fila vazia é notícia boa, não aviso · result 'skipped'
-//   texto nulo,    -> falha de leitura/escrita do painel: não publica nada (não há o que mostrar,
-//   nenhum dos        e inventar um texto seria mentir) · result 'fallback' (tenta de novo)
-//   anteriores
-//   caso contrário -> publica r.texto tal como veio · result 'executed'
 // ── CHAVE DA GUARDA DE DUPLICATA DO DISPATCHER (M1, revisão final) ─────────────────────────────
 // O dispatcher bloqueia reenvio procurando, desde o início do dia, mensagem do TOM no grupo cujo
 // conteúdo COMEÇA com esta chave (`like('content', chave%)`). A primeira linha crua não serve: ela
@@ -267,6 +240,37 @@ function prefixoDaGuardaPix(texto) {
   return i === -1 ? primeira : primeira.slice(0, i + SUFIXO_GUARDA_NORMAL.length);
 }
 
+// ── O QUE PUBLICAR NO GRUPO, A PARTIR DO RETORNO DO RITUAL (fix round 1 — Critical) ────────────
+// `pautaPixDaUnidade` devolve `texto: null` em várias situações bem diferentes:
+//   - a RPC do LA Report falhou (`fonteFalhou`) — a ÚNICA que é "a fonte está fora do ar";
+//   - não há cliente nenhum a migrar (`semCliente` — sucesso, fila vazia);
+//   - o painel de tarefas falhou: ao LER (`containersPix` lançou), ao CRIAR o pacote (`criarPacote`
+//     lançou), ao gravar o vínculo das filhas novas (ou vieram filhas a menos), ao desmontar um
+//     pacote de hoje incompleto (sem filha ou com filha sem vínculo), ou o lote passou do teto
+//     (`TETO_FILHAS`, trava dura). Todas são o nosso lado, não a fonte.
+// Lote vazio COM texto (todos na carência da 1ª cobrança ou informados há menos de 7 dias) não
+// é falha: chega aqui como texto normal e é publicado.
+//
+// O DEFEITO QUE ISTO CORRIGE: antes desta função, o dispatcher tratava QUALQUER `texto === null`
+// como "fonte fora do ar" e publicava "a fonte não atualizou hoje" no grupo REAL. Isso é uma
+// afirmação FALSA toda vez que a fila de uma unidade esvazia (destino do plano, não raro — vai
+// acontecer todo dia que a unidade zerar a migração) ou que o painel tem um bug de escrita/
+// leitura — e nos dois casos o aviso errado ESCONDE o problema real (fila vazia vira "a fonte não
+// respondeu"; um bug de escrita no painel também vira "a fonte não respondeu").
+//
+// Decisão PURA, testável sem tocar o ritual nem o dispatcher: dado o retorno de
+// `pautaPixDaUnidade` — LENDO SÓ OS FLAGS ESTRUTURADOS (`fonteFalhou`, `fonteVelha`,
+// `semCliente`), nunca inspecionando o texto de `motivo` — decide O QUE publicar (ou nada) e QUAL
+// resultado gravar no marcador de idempotência.
+//   fonteFalhou    -> publica o aviso de fonte velha (mesma regra: não cobrar número que não foi
+//                      medido) · result 'fallback' (tenta de novo no próximo tick)
+//   fonteVelha     -> publica o texto que o ritual já preparou (mesmo aviso, já pronto em r.texto)
+//                      · result 'fallback'
+//   semCliente     -> não publica nada — fila vazia é notícia boa, não aviso · result 'skipped'
+//   texto nulo,    -> falha do painel (leitura, escrita, vínculo, desmontagem ou teto): não publica
+//   nenhum dos        nada (não há o que mostrar, e inventar um texto seria mentir) · result
+//   anteriores        'fallback' (tenta de novo)
+//   caso contrário -> publica r.texto tal como veio · result 'executed'
 function decisaoDaPublicacaoPix(r, { unidadeNome }) {
   if (r.fonteFalhou) {
     return { texto: mensagemDaUnidade({ unidadeNome, linhas: [], lote: [], fonteVelha: true }), result: 'fallback' };
