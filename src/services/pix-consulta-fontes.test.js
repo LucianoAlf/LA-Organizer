@@ -30,10 +30,10 @@ const PIX = [
   linha({ categoria: 'categoria_nova_da_fonte', fatia: null, pagador_nome: 'Lia' }),
 ];
 const ALUNOS = [
-  { nome: 'Aluno 1', anamnese_preenchida: false, contrato_assinatura_status: 'nao_assinado', contrato_dado_fresco: true },
-  { nome: 'Aluno 2', anamnese_preenchida: true, contrato_assinatura_status: 'assinado', contrato_dado_fresco: true },
-  { nome: 'Aluno 3', anamnese_preenchida: false, contrato_assinatura_status: 'sem_contrato', contrato_dado_fresco: true },
-  { nome: 'Aluno 4', anamnese_preenchida: true, contrato_assinatura_status: 'nao_verificado', contrato_dado_fresco: false },
+  { nome: 'Aluno 1', responsavel_nome: 'Resp Um', tem_responsavel: true, anamnese_preenchida: false, contrato_assinatura_status: 'nao_assinado', contrato_dado_fresco: true },
+  { nome: 'Aluno 2', responsavel_nome: 'Resp Dois', tem_responsavel: true, anamnese_preenchida: true, contrato_assinatura_status: 'assinado', contrato_dado_fresco: true },
+  { nome: 'Aluno 3', responsavel_nome: null, tem_responsavel: false, anamnese_preenchida: false, contrato_assinatura_status: 'sem_contrato', contrato_dado_fresco: true },
+  { nome: 'Aluno 4', responsavel_nome: 'Resp Quatro', tem_responsavel: true, anamnese_preenchida: true, contrato_assinatura_status: 'nao_verificado', contrato_dado_fresco: false },
 ];
 const depsFeliz = { rpcPix: ok(PIX), rpcSituacao: ok(ALUNOS), retry: semRetry };
 
@@ -150,9 +150,75 @@ test('alvo ja_migrou e autorizacao_pendente leem CATEGORIA, não fatia', async (
   assert.deepStrictEqual((await f.itensDaLista({ unidadeId: 'u1', alvo: 'autorizacao_pendente', deps: depsFeliz })).map((i) => i.pagador), ['Dora']);
 });
 
-test('alvo anamnese/contrato lê a situação dos alunos, não o PIX', async () => {
-  assert.deepStrictEqual((await f.itensDaLista({ unidadeId: 'u1', alvo: 'anamnese', deps: depsFeliz })).map((i) => i.pagador), ['Aluno 1', 'Aluno 3']);
-  assert.deepStrictEqual((await f.itensDaLista({ unidadeId: 'u1', alvo: 'contrato', deps: depsFeliz })).map((i) => i.pagador), ['Aluno 1', 'Aluno 3']);
+// C2 (fix round 1): antes, alvo anamnese/contrato era servido com DADO DO PIX e título do PIX —
+// os alunos de verdade sumiam calados. Agora sai de get_situacao_alunos_v1, com o responsável na
+// frente (é quem a escola cobra) e o aluno ao lado.
+test('C2: alvo anamnese lê a situação dos alunos — responsável na frente, aluno ao lado', async () => {
+  const itens = await f.itensDaLista({ unidadeId: 'u1', alvo: 'anamnese', deps: depsFeliz });
+  assert.deepStrictEqual(itens, [
+    { pagador: 'Aluno 3', alunos: ['Aluno 3'] },
+    { pagador: 'Resp Um', alunos: ['Aluno 1'] },
+  ]);
+});
+
+test('C2: alvo contrato usa a MESMA fonte e a regra de cobrança de situacao-aluno', async () => {
+  const itens = await f.itensDaLista({ unidadeId: 'u1', alvo: 'contrato', deps: depsFeliz });
+  assert.deepStrictEqual(itens.map((i) => i.alunos[0]), ['Aluno 3', 'Aluno 1']);
+});
+
+test('C2: anamnese/contrato NÃO podem vir do PIX — a fonte do PIX nem é consultada', async () => {
+  const itens = await f.itensDaLista({
+    unidadeId: 'u1', alvo: 'anamnese',
+    deps: { ...depsFeliz, rpcPix: async () => { throw new Error('leu o PIX pra responder anamnese'); } },
+  });
+  assert.strictEqual(itens.length, 2);
+  assert.ok(!itens.some((i) => ['Ana', 'Bia', 'Caio', 'Dora'].includes(i.pagador)), 'nenhum pagador do PIX');
+});
+
+test('C2: falha da situação dos alunos LANÇA no pedido de anamnese', async () => {
+  await assert.rejects(
+    () => f.itensDaLista({ unidadeId: 'u1', alvo: 'anamnese', deps: { ...depsFeliz, rpcSituacao: erro('caiu a situacao') } }),
+    /caiu a situacao/,
+  );
+});
+
+// ── C2: blocosDaLista ('tudo' = PIX, depois anamnese, depois contrato) ──────────────────────
+test('C2: alvo tudo devolve TRÊS blocos, cada um com o seu título e o seu substantivo', async () => {
+  const { blocos, falhas } = await f.blocosDaLista({ unidadeId: 'u1', alvo: 'tudo', deps: depsFeliz });
+  assert.deepStrictEqual(falhas, []);
+  assert.strictEqual(blocos.length, 3);
+  assert.match(blocos[0].titulo, /PIX autom/);
+  assert.strictEqual(blocos[0].substantivo, 'clientes');
+  assert.deepStrictEqual(blocos[0].itens.map((i) => i.pagador), ['Dora', 'Ana', 'Bia', 'Caio']);
+  assert.strictEqual(blocos[1].titulo, 'Anamnese — quem falta preencher');
+  assert.strictEqual(blocos[1].substantivo, 'alunos');
+  assert.strictEqual(blocos[1].itens.length, 2);
+  assert.strictEqual(blocos[2].titulo, 'Contrato — quem falta assinar');
+  assert.strictEqual(blocos[2].itens.length, 2);
+});
+
+test('C2: alvo de uma família só devolve UM bloco, com o título daquela família', async () => {
+  const { blocos } = await f.blocosDaLista({ unidadeId: 'u1', alvo: 'anamnese', deps: depsFeliz });
+  assert.strictEqual(blocos.length, 1);
+  assert.strictEqual(blocos[0].titulo, 'Anamnese — quem falta preencher');
+  const b2 = await f.blocosDaLista({ unidadeId: 'u1', alvo: 'pix_avulso', deps: depsFeliz });
+  assert.strictEqual(b2.blocos.length, 1);
+  assert.strictEqual(b2.blocos[0].titulo, 'Pix avulso');
+});
+
+test('C2: em "tudo", uma fonte fora não cala a outra — sai o que deu, com o aviso do que faltou', async () => {
+  const { blocos, falhas } = await f.blocosDaLista({
+    unidadeId: 'u1', alvo: 'tudo', deps: { ...depsFeliz, rpcPix: erro('PIX fora') },
+  });
+  assert.strictEqual(blocos.length, 2, 'anamnese e contrato ainda saem');
+  assert.strictEqual(falhas.length, 1);
+  assert.match(falhas[0], /PIX/);
+});
+
+test('C2: em "tudo", as DUAS fontes fora lançam (não há o que mostrar)', async () => {
+  await assert.rejects(
+    () => f.blocosDaLista({ unidadeId: 'u1', alvo: 'tudo', deps: { rpcPix: erro('A'), rpcSituacao: erro('B'), retry: semRetry } }),
+  );
 });
 
 test('fonte falhou: itensDaLista LANÇA — quem chama responde honesto, ninguém devolve lista vazia', async () => {
@@ -163,7 +229,7 @@ test('fonte falhou: itensDaLista LANÇA — quem chama responde honesto, ningué
 });
 
 test('nenhum item carrega telefone, cpf, e-mail, valor ou id de fatura', async () => {
-  for (const alvo of ['pix', 'pix_avulso', 'anamnese', 'contrato']) {
+  for (const alvo of ['pix', 'pix_avulso', 'ja_migrou', 'anamnese', 'contrato']) {
     for (const it of await f.itensDaLista({ unidadeId: 'u1', alvo, deps: depsFeliz })) {
       assert.deepStrictEqual(Object.keys(it).sort(), ['alunos', 'pagador']);
     }
@@ -171,6 +237,7 @@ test('nenhum item carrega telefone, cpf, e-mail, valor ou id de fatura', async (
 });
 
 // ── atenderPedidoNoGrupo ──────────────────────────────────────────────────────────────────────
+const atender = (arg) => f.atenderPedidoNoGrupo(arg);
 const postados = () => { const p = []; return [p, async (t) => { p.push(t); return { id: `m${p.length}` }; }]; };
 
 test('pedido de LISTA num grupo COM unidade: posta as mensagens em ordem e não chama o LLM', async () => {
@@ -250,7 +317,7 @@ test('pedido de NÚMEROS: NÃO intercepta — injeta o bloco no prompt do LLM', 
   });
   assert.strictEqual(r.tratou, false);
   assert.strictEqual(p.length, 0, 'nada postado — quem fala é o LLM');
-  assert.match(r.numerosContext, /Contrato: 2 pendentes de 4/);
+  assert.match(r.numerosContext, /Contrato \(TODOS os alunos ativos da unidade, NÃO é a pauta de hoje\): 2 pendentes de 4/);
   assert.match(r.numerosContext, /faltam migrar 4/);
   assert.match(r.numerosContext, /Nunca estime/);
 });
@@ -262,7 +329,66 @@ test('fala solta que cita o assunto também ganha os números (qualquer forma de
     hoje: '2026-09-17', postar, deps: depsFeliz,
   });
   assert.strictEqual(r.tratou, false);
-  assert.match(r.numerosContext, /Anamnese: 2 pendentes de 4/);
+  assert.match(r.numerosContext, /Anamnese \(TODOS os alunos ativos da unidade, NÃO é a pauta de hoje\): 2 pendentes de 4/);
+});
+
+// ── C1/I4: as falas que sequestravam o interceptador ────────────────────────────────────────
+test('C1: as 3 falas verificadas de sequestro passam batido — nada lido, nada postado', async () => {
+  const nunca = {
+    rpcPix: async () => { throw new Error('leu a fonte num sequestro'); },
+    rpcSituacao: async () => { throw new Error('leu a fonte num sequestro'); },
+    retry: semRetry,
+  };
+  for (const fala of [
+    'quem falta pagar o boleto da excursão da semana que vem?',
+    'me passa os nomes de quem falta pagar o cheque da rifa do coral',
+    'cadastrei o fulano no automático mas não achei o nome dele',
+  ]) {
+    const [p, postar] = postados();
+    const r = await atender({ unidadeId: 'u1', unidadeNome: 'Barra', text: fala, hoje: '2026-09-17', postar, deps: nunca });
+    assert.strictEqual(r.tratou, false, fala);
+    assert.strictEqual(r.numerosContext, '', fala);
+    assert.strictEqual(p.length, 0, fala);
+  }
+});
+
+// ── C2: lista de anamnese e lista de tudo, pelo orquestrador ────────────────────────────────
+test('C2: pedido de lista de ANAMNESE posta os alunos, com título e substantivo próprios', async () => {
+  const [p, postar] = postados();
+  const r = await atender({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'me manda a lista completa da anamnese',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, true);
+  assert.strictEqual(p.length, 1);
+  assert.match(p[0], /Anamnese — quem falta preencher — Barra\* \(2 alunos\)/);
+  assert.ok(!/clientes/.test(p[0]));
+  assert.match(p[0], /• Resp Um — Aluno 1/);
+  assert.ok(!/Dora|Caio/.test(p[0]), 'nenhum pagador do PIX na lista de anamnese');
+});
+
+test('C2: pedido de lista de TUDO manda PIX, depois anamnese, depois contrato — cada um com o seu título', async () => {
+  const [p, postar] = postados();
+  const r = await atender({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'me manda a lista de tudo: pix, anamnese e contrato',
+    hoje: '2026-09-17', postar, deps: depsFeliz,
+  });
+  assert.strictEqual(r.tratou, true);
+  assert.strictEqual(p.length, 3);
+  assert.match(p[0], /PIX automático — quem falta migrar — Barra\* \(4 clientes\) — parte 1\/1/);
+  assert.match(p[1], /Anamnese — quem falta preencher — Barra\* \(2 alunos\) — parte 1\/1/);
+  assert.match(p[2], /Contrato — quem falta assinar — Barra\* \(2 alunos\) — parte 1\/1/);
+});
+
+test('C2: em "tudo" com o PIX fora, anamnese e contrato ainda saem e a última mensagem avisa', async () => {
+  const [p, postar] = postados();
+  await atender({
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'me manda a lista de tudo: pix, anamnese e contrato',
+    hoje: '2026-09-17', postar, deps: { ...depsFeliz, rpcPix: erro('PIX fora') },
+  });
+  assert.strictEqual(p.length, 2);
+  assert.match(p[0], /Anamnese/);
+  assert.match(p[p.length - 1], /não consegui ler/i);
 });
 
 test('GATE BARATO: mensagem sem nenhum dos assuntos NÃO lê a fonte', async () => {
@@ -288,7 +414,7 @@ test('GATE DE UNIDADE nos números: grupo sem unidade não lê fonte e não inje
 test('fonte fora no pedido de NÚMEROS: injeta o bloco DIZENDO que não leu (nunca número inventado)', async () => {
   const [, postar] = postados();
   const r = await f.atenderPedidoNoGrupo({
-    unidadeId: 'u1', unidadeNome: 'Barra', text: 'quantos faltam pra migrar?', hoje: '2026-09-17', postar,
+    unidadeId: 'u1', unidadeNome: 'Barra', text: 'quantos faltam pra migrar no pix?', hoje: '2026-09-17', postar,
     deps: { rpcPix: erro('caiu'), rpcSituacao: erro('caiu'), retry: semRetry },
   });
   assert.strictEqual(r.tratou, false);

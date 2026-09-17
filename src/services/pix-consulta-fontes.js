@@ -23,6 +23,7 @@ const { consultaComRetry } = require('../lib/consulta-com-retry');
 const CATEGORIAS = ['migrar', 'autorizacao_pendente', 'ja_migrou', 'aguardando_cobranca',
   'nao_mexe', 'inadimplente', 'nao_pagante', 'excecao'];
 const NA_PAUTA = (l) => !!l && (l.categoria === 'migrar' || l.categoria === 'autorizacao_pendente');
+const FAMILIA_ALUNO = new Set(['anamnese', 'contrato']);
 
 function _rpcs({ laReport, unidadeId, deps }) {
   const retry = deps.retry || ((c) => consultaComRetry(c, { esperaMs: deps.esperaMs, sleep: deps.sleep }));
@@ -102,18 +103,20 @@ async function numerosDaUnidade({ laReport, unidadeId, unidadeNome, hoje, deps =
   };
 }
 
-// itensDaLista -> [{ pagador, alunos }]  (LANÇA quando a fonte falha — ver o topo do arquivo)
-async function itensDaLista({ laReport, unidadeId, alvo, deps = {} }) {
-  const { retry, rpcPix, rpcSituacao } = _rpcs({ laReport, unidadeId, deps });
+// C2 (fix round 1): ANTES, um pedido de anamnese/contrato (ou o alvo 'tudo') era servido com dado
+// do PIX e título do PIX — os alunos de verdade sumiam calados, que é o defeito original com
+// outra roupa. Agora cada família lê a SUA fonte.
+// O item traz o RESPONSÁVEL na frente (é quem a escola cobra) e o aluno ao lado; aluno sem
+// responsável cadastrado aparece com o próprio nome nos dois lugares — some ninguém.
+async function _itensDeAluno({ retry, rpcSituacao, recorte }) {
+  const r = await retry(rpcSituacao);
+  if (r && r.error) throw new Error(`get_situacao_alunos_v1: ${r.error.message}`);
+  return filtrarPorRecorte((r && r.data) || [], recorte)
+    .map((p) => ({ pagador: p.responsavel_nome || p.nome, alunos: [p.nome] }))
+    .sort((a, b) => String(a.pagador).localeCompare(String(b.pagador), 'pt-BR'));
+}
 
-  if (alvo === 'anamnese' || alvo === 'contrato') {
-    const r = await retry(rpcSituacao);
-    if (r && r.error) throw new Error(`get_situacao_alunos_v1: ${r.error.message}`);
-    return filtrarPorRecorte((r && r.data) || [], alvo)
-      .map((p) => ({ pagador: p.nome, alunos: [] }))
-      .sort((a, b) => String(a.pagador).localeCompare(String(b.pagador), 'pt-BR'));
-  }
-
+async function _itensDePix({ retry, rpcPix, alvo }) {
   const r = await retry(rpcPix);
   if (r && r.error) throw new Error(`get_pix_migracao_v1: ${r.error.message}`);
   const linhas = (r && r.data) || [];
@@ -125,30 +128,66 @@ async function itensDaLista({ laReport, unidadeId, alvo, deps = {} }) {
   return ordenarPorPrioridade(escolhidas).map((l) => ({ pagador: l.pagador_nome, alunos: l.alunos || [] }));
 }
 
+// itensDaLista -> [{ pagador, alunos }]  (LANÇA quando a fonte falha — ver o topo do arquivo)
+async function itensDaLista({ laReport, unidadeId, alvo, deps = {} }) {
+  const { retry, rpcPix, rpcSituacao } = _rpcs({ laReport, unidadeId, deps });
+  if (FAMILIA_ALUNO.has(alvo)) return _itensDeAluno({ retry, rpcSituacao, recorte: alvo });
+  return _itensDePix({ retry, rpcPix, alvo });
+}
+
+// blocosDaLista -> { blocos: [{ titulo, substantivo, itens }], falhas: [string] }
+// 'tudo' manda PIX primeiro, depois anamnese, depois contrato — cada um com o seu título e a sua
+// numeração de partes (quem monta as mensagens é pura.mensagensDeVariasListas).
+// Uma fonte fora NÃO cala a outra: o que deu sai, e o que faltou vira aviso. Só quando NADA saiu
+// é que lança (aí o grupo recebe a linha honesta de fonte fora).
+async function blocosDaLista({ laReport, unidadeId, alvo, deps = {} }) {
+  const { retry, rpcPix, rpcSituacao } = _rpcs({ laReport, unidadeId, deps });
+  const pedidos = alvo === 'tudo'
+    ? ['pix', 'anamnese', 'contrato']
+    : [alvo];
+  const blocos = [];
+  const falhas = [];
+  for (const p of pedidos) {
+    try {
+      const itens = FAMILIA_ALUNO.has(p)
+        ? await _itensDeAluno({ retry, rpcSituacao, recorte: p })
+        : await _itensDePix({ retry, rpcPix, alvo: p });
+      blocos.push({ titulo: pura.tituloDoAlvo(p), substantivo: pura.substantivoDoAlvo(p), itens });
+    } catch (e) {
+      console.warn(`[PixConsulta] bloco ${p} unidade=${unidadeId}: ${e.message}`);
+      falhas.push(`A lista de ${pura.tituloDoAlvo(p)} eu não consegui ler agora.`);
+    }
+  }
+  if (!blocos.length) throw new Error(`nenhuma fonte respondeu (${falhas.length} falha(s))`);
+  return { blocos, falhas };
+}
+
 // ── ORQUESTRAÇÃO DO TURNO DO GRUPO ────────────────────────────────────────────────────────────
 // Chamada por src/services/group-chat-engine.js, ANTES do LLM. Dois caminhos bem diferentes:
 //   LISTA   -> INTERCEPTA: posta as mensagens prontas e o turno acaba (o LLM não é chamado; ele
 //              reescreveria/resumiria 231 nomes, que é exatamente o que não pode acontecer).
 //   NÚMEROS -> NÃO intercepta: devolve `numerosContext` pro prompt, e o TOM responde na voz dele,
 //              com o número certo, seja qual for a forma de perguntar.
-// O gate barato mora aqui: sem pedido detectado E sem palavra-chave, nenhuma RPC é disparada.
+// O gate barato mora aqui: sem token de assunto na fala (C1/I4), nenhuma RPC é disparada.
 async function atenderPedidoNoGrupo({ laReport, unidadeId, unidadeNome, text, hoje, postar, deps = {} }) {
   const pedido = pura.detectarPedido(text);
   const nada = { tratou: false, ultimo: null, numerosContext: '' };
 
   if (pedido && pedido.tipo === 'lista') {
     if (!unidadeId) return { tratou: true, ultimo: await postar(pura.TEXTO_SEM_UNIDADE), numerosContext: '' };
-    let itens;
+    let blocos;
+    let falhas;
     try {
-      itens = await (deps.itensDaLista || itensDaLista)({ laReport, unidadeId, alvo: pedido.alvo, deps });
+      ({ blocos, falhas } = await (deps.blocosDaLista || blocosDaLista)({ laReport, unidadeId, alvo: pedido.alvo, deps }));
     } catch (e) {
       console.warn(`[PixConsulta] lista ${pedido.alvo} unidade=${unidadeId}: ${e.message}`);
       return { tratou: true, ultimo: await postar(pura.TEXTO_FONTE_FORA), numerosContext: '' };
     }
-    const msgs = pura.mensagensDaLista({ unidadeNome, titulo: pura.tituloDoAlvo(pedido.alvo), itens });
+    const msgs = pura.mensagensDeVariasListas({ unidadeNome, blocos, avisos: falhas });
     let ultimo = null;
     for (const m of msgs) ultimo = await postar(m); // uma por vez, em ordem
-    console.log(`[PixConsulta] lista ${pedido.alvo} unidade=${unidadeId}: ${itens.length} clientes em ${msgs.length} mensagem(ns)`);
+    const total = blocos.reduce((s, b) => s + (b.itens || []).length, 0);
+    console.log(`[PixConsulta] lista ${pedido.alvo} unidade=${unidadeId}: ${total} nomes em ${msgs.length} mensagem(ns)`);
     return { tratou: true, ultimo, numerosContext: '' };
   }
 
@@ -158,4 +197,4 @@ async function atenderPedidoNoGrupo({ laReport, unidadeId, unidadeNome, text, ho
   return { tratou: false, ultimo: null, numerosContext: pura.blocoDeNumeros({ ...n, unidadeNome }) };
 }
 
-module.exports = { numerosDaUnidade, itensDaLista, atenderPedidoNoGrupo };
+module.exports = { numerosDaUnidade, itensDaLista, blocosDaLista, atenderPedidoNoGrupo };
