@@ -37,7 +37,7 @@ function fmtHistoryLine(m) {
   return `${who}: ${content}`;
 }
 
-function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, comportamentoDoTom, notesContext, credentialContext, dateAnchor, today, poolTotal, poolTruncado, remetenteDesconhecido }) {
+function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, comportamentoDoTom, notesContext, credentialContext, numerosContext, dateAnchor, today, poolTotal, poolTruncado, remetenteDesconhecido }) {
   const memberNames = (members || []).map((m) => m.name).filter(Boolean).join(', ') || '—';
   const poolBlock = (pool || []).length ? (pool || []).map((t) => fmtPoolLine(t, today)).join('\n') : '(nenhuma tarefa ainda)';
   // GROUPCHAT-POOL-TRUNCADO-VIRA-AUSENCIA (04/09 10:36): o TOM disse que três anamneses "não
@@ -95,6 +95,7 @@ ${dateBlock}
 ${memoryBlock}
 ${comportamentoBlock}${notesContext ? `\n${notesContext}\n` : ''}
 ${credentialContext ? `\n${credentialContext}\n` : ''}
+${numerosContext ? `\n${numerosContext}\n` : ''}
 ## Tarefas do grupo (lista atual — NUNCA chame isso de "pool" na fala)
 (em ordem de vencimento: o que vence primeiro vem primeiro; sem prazo vai pro fim)
 ${poolBlock}

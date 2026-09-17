@@ -443,6 +443,37 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   let credCtx = '';
   try { credCtx = await groupNotes.credentialLookupContext({ supabase, groupId, text }); } catch (_) { credCtx = ''; }
 
+  // ── PRÉ-PASSO: consulta de LISTA e de NÚMERO (PIX, anamnese, contrato) — roda ANTES do LLM ──
+  // GROUPCHAT-TOM-TRAVA-A-LISTA (Alf, 17/09): Campo Grande pediu no grupo a lista completa do PIX
+  // avulso e o TOM respondeu "consigo mandar só os que estão aparecendo aqui na lista de hoje…
+  // pra te mandar mais 20 sem chutar, preciso do card/lista completa". Ele só conhecia o lote de
+  // 10 da mensagem da pauta; a fonte (get_pix_migracao_v1 / get_situacao_alunos_v1) sempre teve
+  // TUDO. Ordem do dono: o TOM não trava informação.
+  //   pedido de LISTA  -> INTERCEPTA: posta os nomes em partes e o turno acaba. O LLM não entra:
+  //                       ele resumiria/reescreveria 231 nomes, que é o que não pode acontecer.
+  //   pedido de NÚMERO -> NÃO intercepta: os números viram contexto do prompt (`numerosContext`,
+  //                       no mesmo estilo de `notesContext`) e o TOM responde na voz dele, com o
+  //                       número da fonte, seja qual for a forma de perguntar.
+  // A unidade sai do GRUPO (`la_report_unidade_id`), nunca da fala: responder pela unidade errada
+  // é pior que não responder. Gate barato dentro de atenderPedidoNoGrupo — a fonte só é lida
+  // quando a fala casa. Tudo em try/catch: falha de leitura vira log, e o turno segue normal.
+  let numerosCtx = '';
+  try {
+    const { atenderPedidoNoGrupo } = require('./pix-consulta-fontes');
+    const { laReportClient } = require('./la-report-client');
+    const unidadeId = ctx.group.la_report_unidade_id || null;
+    const rConsulta = await atenderPedidoNoGrupo({
+      laReport: laReportClient,
+      unidadeId,
+      unidadeNome: require('./situacao-aluno').nomeDaUnidade(unidadeId) || ctx.group.name,
+      text,
+      hoje: ctx.poolToday,
+      postar: (txt) => postTomText(supabase, groupId, txt),
+    });
+    if (rConsulta.tratou) return rConsulta.ultimo;
+    numerosCtx = rConsulta.numerosContext || '';
+  } catch (e) { console.error('[GroupChat] consulta PIX/anamnese/contrato:', e.message); }
+
   const systemPrompt = buildGroupChatPrompt({
     soulText: loadGroupChatSoul(),
     groupName: ctx.group.name,
@@ -454,6 +485,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     ...memoriaDoPrompt(ctx), // longTermMemory (deste grupo) + comportamentoDoTom (vale em todos)
     notesContext: notesCtx, // base de conhecimento do grupo (índice + body das fixadas)
     credentialContext: credCtx, // credenciais que casam com o pedido deste turno (secrets decifrados)
+    numerosContext: numerosCtx, // números da fonte AGORA (PIX/anamnese/contrato) — nunca estimar
     dateAnchor: buildBrtDateAnchor(), // hoje + tabela de datas (BRT) — LLM não calcula weekday e erra
     poolTotal: ctx.poolTotal, poolTruncado: ctx.poolTruncado, // o corte se declara (POOL-TRUNCADO)
     remetenteDesconhecido: semRemetente, // conversa sim, escrita não (SENDER-NULL)
