@@ -22,12 +22,21 @@
 // score 1.00 nos cinco, e os 4 dias restantes foram comidos em silêncio contra a tarefa
 // de 30/09. Re-emit é o MESMO item emitido duas vezes; prazo diferente = item diferente.
 //
-// @param {{created_by?:string, created_at?:string, due_date?:string}} conflict — a tarefa candidata a dup
+// Audit 18/09 (Rafinha, achado a60338c6): o mesmo TRADEOFF, agora no MESMO dia. Ele
+// mandou 4 manutenções pra Campo Grande; "Trocar lâmpada do corredor do estúdio" casou
+// 0.99 contra "Trocar lâmpada do bistrô" (o detector faz strip do sufixo de unidade e
+// compara o núcleo, então o miolo que distingue as duas fica diluído) e foi comida em
+// silêncio, com okCount++ e "✅ 4 demandas" pro usuário. A tabela tinha três.
+// O detector é fuzzy de propósito — o predicado de re-emit não pode ser. Título distinto
+// é item distinto: a dúvida vira menu (recuperável), nunca silêncio (irrecuperável).
+//
+// @param {{created_by?:string, created_at?:string, due_date?:string, title?:string}} conflict — a tarefa candidata a dup
 // @param {string} requesterId — id do remetente atual (collaborator.id)
 // @param {number} nowMs — Date.now()
 // @param {number} windowMs — janela de "recente"
 // @param {string} [candidateDueDate] — due_date do item sendo criado agora
-function isSelfRecentConflict(conflict, requesterId, nowMs, windowMs, candidateDueDate) {
+// @param {string} [candidateTitle] — title do item sendo criado agora
+function isSelfRecentConflict(conflict, requesterId, nowMs, windowMs, candidateDueDate, candidateTitle) {
   if (!conflict || !requesterId) return false;
   if (conflict.created_by !== requesterId) return false;   // só re-emit do PRÓPRIO remetente
   if (!conflict.created_at) return false;
@@ -38,7 +47,21 @@ function isSelfRecentConflict(conflict, requesterId, nowMs, windowMs, candidateD
   if (conflict.due_date && candidateDueDate && conflict.due_date !== candidateDueDate) {
     return false;                                           // dia diferente → não é re-emit
   }
+  if (conflict.title && candidateTitle
+      && normalizeTitle(conflict.title) !== normalizeTitle(candidateTitle)) {
+    return false;                                           // título distinto → item distinto
+  }
   return true;
+}
+
+// Sem fuzzy de propósito: só caixa, acento e pontuação. Foi a tolerância fuzzy do
+// detector que produziu os 12 sumiços medidos em 18/09.
+function normalizeTitle(t) {
+  return String(t || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 // buildSelfRecentSkipReason — monta a string `reason` do marker_logs quando o skip

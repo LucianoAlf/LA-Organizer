@@ -6061,7 +6061,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             const { isSelfRecentConflict, buildSelfRecentSkipReason } = require('./utils/self-recent-conflict');
             const _selfRecentMs = Number(process.env.TOM_SELF_RECENT_CONFLICT_MS) || 5 * 60 * 1000;
             const _nowMs = Date.now();
-            const _selfRecent = _taskDupResult.probable.find(p => isSelfRecentConflict(p, collaborator.id, _nowMs, _selfRecentMs, insertRow.due_date));
+            const _selfRecent = _taskDupResult.probable.find(p => isSelfRecentConflict(p, collaborator.id, _nowMs, _selfRecentMs, insertRow.due_date, a.title));
             if (_selfRecent) {
               const _skipReason = buildSelfRecentSkipReason({
                 existingId: _selfRecent.id,
