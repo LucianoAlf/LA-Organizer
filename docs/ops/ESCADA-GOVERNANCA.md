@@ -2441,3 +2441,36 @@ QUINTA ocorrência, a que ninguém vai revisar — e essa garantia é feita exat
 incomoda na primeira. Mude o código, nunca o detector. É a mesma regra já escrita em 09/09 para a
 fronteira das portas de honestidade (*"mude o detector, nunca o teste"*, na direção oposta e pelo
 mesmo motivo): o que não pode ceder é o que o instrumento prova.
+
+### ETAPA 7 — o relatório foi cortado DE NOVO, e desta vez citando o teto ERRADO
+
+**Ocorrências:** 3 (05/09, 07/09, 18/09). A terceira é a pior, porque é a recursão das duas
+primeiras.
+
+Em 05/09 a rodada supôs um teto menor que o real, cortou logo depois de commitar e postou uma
+linha de desculpa no lugar do relatório. Em 07/09 a frase de exemplo **deste protocolo** saiu
+repetida literalmente no grupo, com o teto errado dentro dela — e ficou registrado que *"exemplo
+citado vira roteiro"*.
+
+Em 18/09 as duas falhas se somaram. Duas correções foram para produção às **08:34** (`f611dc9c`,
+`src/utils/self-recent-conflict.js`) e **08:45 BRT** (`807563fd`, `src/lib/vitalidade-parse-on-open.js`
++ `src/lib/intent-executor.js`), cada uma com KI registrado e a suíte em 5305/5305 `fail 0`. O
+único texto que chegou ao grupo `b3bd198a` depois disso foi, às **08:51**:
+
+> _"Não terminei esse — passou de 30 min e eu cortei."_
+
+**Dois defeitos numa frase de dez palavras.** (1) Duas mudanças em produção ficaram sem relato —
+ninguém consegue conferir nem reverter, que é exatamente o que a ETAPA 7 diz ser *pior que mudança
+nenhuma*. (2) O número citado é **30 min** e o teto real é **60** (`TOM_GOV_TIMEOUT_MS`): a rodada
+cortou na metade do tempo que tinha, e o número saiu da memória do exemplo, não do relógio.
+
+O agravante: 07/09 já tinha diagnosticado a causa (exemplo citado vira roteiro) e escrito a regra
+aqui. **Diagnóstico na escada não impede a repetição** — é a mesma constatação de 12/09, quando o
+alarme falso do `batch_complete` voltou pela terceira vez e só parou ao virar código.
+
+Proposta de virar código, e é barata: o `gov-runner` já conhece `TOM_GOV_TIMEOUT_MS` e o instante
+de início. Ele deveria (a) injetar no contexto da rodada o **minuto corrente e o restante**, para
+que nenhum número de tempo saia de memória; e (b) **recusar o `postar` de um texto que declare
+corte por tempo sem trazer as correções commitadas na rodada** — a trava determinística já existe
+para restart (`restart-so-do-runner.js`), o molde está pronto. Enquanto o relatório depender de
+disciplina no fim do teto, ele vai ser a primeira coisa a cair, porque é a última a acontecer.
