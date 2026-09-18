@@ -33,6 +33,7 @@ const { parseCoordinationConfirmQuestion } = require('../coordination/coord-ques
 const { parseCompleteConfirmQuestion } = require('../utils/complete-question-parse');
 const { parseDelegateConfirmQuestion } = require('../utils/delegate-question-parse');
 const { parseRescheduleConfirmQuestion } = require('../tasks/reschedule-question-parse');
+const { familiaDoExecutor } = require('./intent-executor');
 
 // A detecção de TEMA é de propósito mais larga que o parser: ela representa "o TOM estava
 // falando disso". O vão entre TEMA e PARSER é o que denuncia a âncora que envelheceu.
@@ -119,9 +120,18 @@ function vitalidadeDasFatias(intents, opts = {}) {
       const _quando = Date.parse(String((r && r.asked_at) || ""));
       const _desde = f.desde ? Date.parse(f.desde) : NaN;
       if (Number.isFinite(_quando) && Number.isFinite(_desde) && _quando < _desde) { anteriores++; continue; }
-      // A pergunta estagiou OUTRA fatia? Então ela é daquele assunto, não deste — o tema é largo de
-      // propósito e pega palavra solta ("...foi quem delegou essa reunião" numa pergunta de RECADO).
-      const _outra = fatias.some((g) => g.chave !== f.chave && Object.prototype.hasOwnProperty.call(pl, g.chave));
+      // A pergunta estagiou OUTRA família de executor? Então ela é daquele assunto, não deste — o
+      // tema é largo de propósito e pega palavra solta ("...foi quem delegou essa reunião" numa
+      // pergunta de RECADO).
+      // FATIA-ALHEIA-CLOSING (18/09): este filtro olhava só as chaves das FATIAS, e as famílias de
+      // executor do engine são CINCO — `anchor` nunca foi fatia e `closing` nasceu em 15/09, fora
+      // do registro. O ritual de Fechamento escreve «Pode ser: "fiz", "não fiz" ou "reagendei pra
+      // X"» na própria instrução: o tema do reagendamento casava esse "reagendei", a pergunta
+      // passava, e o laudo saía `ancora_nao_casa` sobre uma âncora intacta (alarme de 18/09, o 5º
+      // seguido deste bloco). `familiaDoExecutor` já enumera as cinco — é ele quem sabe a lista.
+      const _famAlheia = familiaDoExecutor(pl);
+      const _outra = (_famAlheia != null && _famAlheia !== f.chave)
+        || fatias.some((g) => g.chave !== f.chave && Object.prototype.hasOwnProperty.call(pl, g.chave));
       if (_outra && !temChave) { anteriores++; continue; }
       tema++;
       // Parser quebrado NUNCA derruba a medição: um throw viraria laudo em branco, e
