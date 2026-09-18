@@ -262,7 +262,7 @@ function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHo
   const quando = _dataBr(dadoEm);
   if (quando) L.push(`Dado do LA Report atualizado em ${quando}${dadoDeHoje === false ? ' (NÃO é de hoje — diga isso se for cobrar alguém)' : ''}.`);
   if (motivo) L.push(`(falha de leitura: ${motivo})`);
-  L.push('Estes números vêm da fonte agora. Use SOMENTE eles para falar de quantidade; se a pessoa pedir a lista de nomes, diga que é só pedir "lista completa do <assunto>". Nunca estime.');
+  L.push('Estes números vêm da fonte agora. Use SOMENTE eles para falar de quantidade; se a pessoa pedir os NOMES, emita o marker <<LISTA_PIX>> (PIX) ou <<SITUACAO_ALUNO>> (anamnese/contrato) — o sistema posta a lista inteira; nunca peça planilha. Nunca estime.');
   L.push('Ao dar número de anamnese ou contrato, diga sempre que é o total da unidade e não a pauta de hoje.');
   return L.join('\n');
 }
@@ -317,13 +317,36 @@ function blocoDeNumerosTodasUnidades({ unidades }) {
   L.push(conOk
     ? `TOTAL — Contrato ${RECORTE_ALUNOS}: ${totalConPend} pendentes de ${totalConBase}`
     : 'TOTAL — Contrato: não dá pra somar agora — pelo menos uma unidade não respondeu.');
-  L.push('Estes números vêm da fonte agora. Use SOMENTE eles para falar de quantidade; se a pessoa pedir a lista de nomes, diga que é só pedir "lista completa do <assunto>" (pode citar a unidade). Nunca estime.');
+  L.push('Estes números vêm da fonte agora. Use SOMENTE eles para falar de quantidade; se a pessoa pedir os NOMES, emita o marker <<LISTA_PIX>> (PIX) ou <<SITUACAO_ALUNO>> (anamnese/contrato), com a unidade se ela disser — o sistema posta a lista inteira; nunca peça planilha. Nunca estime.');
   L.push('Ao dar número de anamnese ou contrato, diga sempre que é o total da unidade e não a pauta de hoje.');
   return L.join('\n');
+}
+
+// ── MARCADOR <<LISTA_PIX>> (Barra, 17/09 15:40) ────────────────────────────────────────────
+// Arthur perguntou "tom quais são os alunos pix que ainda não está no pix automático?" e o TOM
+// pediu planilha. O detector por palavra acima só conhece "lista", "nomes", "quem falta" — e
+// NÃO deve crescer pra cobrir toda forma de perguntar (decisão do Alf 02/09: "eu fujo de regex").
+// Quem entende a pergunta é o LLM: ele emite <<LISTA_PIX>>{"alvo": ...} e o CÓDIGO escreve os
+// nomes (pix-consulta-fontes.atenderMarkersListaPix), igual ao <<SITUACAO_ALUNO>>.
+// `alvosDoMarker` normaliza o que o LLM mandou: alvo fora da lista vira 'pix' (todo mundo que
+// falta migrar — responder a mais é melhor que calar), no máximo 3 formas por pedido (o teto de
+// mensagens é do pedido inteiro) e 'tudo' engole o resto.
+const ALVOS_DO_MARKER = new Set([...FATIAS, 'pix', 'ja_migrou', 'anamnese', 'contrato', 'tudo']);
+const TETO_ALVOS_DO_MARKER = 3;
+function alvosDoMarker(alvo) {
+  const brutos = Array.isArray(alvo) ? alvo : [alvo];
+  const vistos = [];
+  for (const a of brutos) {
+    const n = String(a == null ? '' : a).trim().toLowerCase();
+    if (ALVOS_DO_MARKER.has(n) && !vistos.includes(n)) vistos.push(n);
+  }
+  if (vistos.includes('tudo')) return ['tudo'];
+  return vistos.length ? vistos.slice(0, TETO_ALVOS_DO_MARKER) : ['pix'];
 }
 
 module.exports = {
   LIMITE_POR_MENSAGEM, TETO_MENSAGENS, TEXTO_SEM_UNIDADE, TEXTO_FONTE_FORA, RECORTE_ALUNOS,
   detectarPedido, precisaDeNumeros, detectarUnidade, tituloDoAlvo, substantivoDoAlvo,
   mensagensDaLista, mensagensDeVariasListas, blocoDeNumeros, blocoDeNumerosTodasUnidades,
+  alvosDoMarker,
 };

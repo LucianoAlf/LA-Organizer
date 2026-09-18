@@ -203,6 +203,79 @@ async function blocosDeTodasUnidades({ laReport, alvo, deps = {} }) {
   return { blocos, falhas };
 }
 
+// ── LISTA PRONTA PRA POSTAR (pedido por palavra E marcador <<LISTA_PIX>>) ──────────────────────
+// Um lugar só monta as mensagens de lista: o interceptador (atenderPedidoNoGrupo) e o marcador do
+// LLM (atenderMarkersListaPix) postam EXATAMENTE a mesma coisa. Com unidade: os blocos dela, e o
+// nome da unidade vai no título. Sem unidade: as três (blocosDeTodasUnidades já assina cada
+// título). Várias formas no mesmo pedido ("pix avulso e cheque") dividem o MESMO teto de
+// mensagens. Uma forma que falhou vira aviso; só lança quando NADA saiu (aí quem chama diz a
+// verdade — lista vazia com cara de "ninguém falta" nunca).
+// -> { msgs: [texto], total }
+async function mensagensDaListaPix({ laReport, unidadeId, unidadeNome, alvos, deps = {} }) {
+  const blocos = [];
+  const falhas = [];
+  let ultimoErro = null;
+  for (const alvo of (alvos && alvos.length ? alvos : ['pix'])) {
+    try {
+      // eslint-disable-next-line no-await-in-loop -- ordem importa: as formas saem na ordem pedida
+      const r = unidadeId
+        ? await (deps.blocosDaLista || blocosDaLista)({ laReport, unidadeId, alvo, deps })
+        : await (deps.blocosDeTodasUnidades || blocosDeTodasUnidades)({ laReport, alvo, deps });
+      blocos.push(...r.blocos);
+      falhas.push(...(r.falhas || []));
+    } catch (e) {
+      ultimoErro = e;
+      falhas.push(`A lista de ${pura.tituloDoAlvo(alvo)} eu não consegui ler agora.`);
+    }
+  }
+  if (!blocos.length) throw ultimoErro || new Error('nenhuma fonte respondeu');
+  const msgs = pura.mensagensDeVariasListas({ unidadeNome: unidadeId ? unidadeNome : null, blocos, avisos: falhas });
+  const total = blocos.reduce((s, b) => s + (b.itens || []).length, 0);
+  return { msgs, total };
+}
+
+// ── MARCADOR <<LISTA_PIX>> — o LLM entende a pergunta, o código escreve os nomes ───────────────
+// O CASO (Barra, 17/09 15:40): "tom quais são os alunos pix que ainda não está no pix automático?"
+// -> o TOM pediu planilha. O detector por palavra não reconhecia essa forma de pedir e o LLM não
+// tinha como puxar a lista. Agora o LLM emite <<LISTA_PIX>>{"alvo":"pix_avulso","unidade":"..."}
+// e esta função lê a fonte e devolve as mensagens prontas; o motor do grupo posta DEPOIS da fala.
+// Unidade DITA no marcador vence a do grupo (lista do Recreio pedida no grupo da Barra); sem
+// nenhuma das duas (grupo PIX AUTOMÁTICO L.A), vão as três. UM pedido de lista por turno: um
+// segundo marcador vira pedido de "me pede a próxima", nunca rajada de 16 mensagens no grupo.
+// -> { limpo, mensagens: [texto], actions: [{ kind, status, label, detail? }] }
+const RE_MARKER_LISTA_PIX = /<<LISTA_PIX>>([\s\S]*?)<<END>>/gi;
+async function atenderMarkersListaPix({ reply, laReport, grupoUnidadeId, deps = {} }) {
+  const texto = String(reply == null ? '' : reply);
+  const brutos = Array.from(texto.matchAll(RE_MARKER_LISTA_PIX)).map((m) => m[1]);
+  if (!brutos.length) return { limpo: texto, mensagens: [], actions: [] };
+  const limpo = texto.replace(RE_MARKER_LISTA_PIX, '').replace(/\n{3,}/g, '\n\n').trim();
+  const mensagens = [];
+  const actions = [];
+
+  let p = {};
+  try { p = JSON.parse(String(brutos[0]).trim()) || {}; } catch (_) { p = {}; }
+  const alvos = pura.alvosDoMarker(p.alvo);
+  const unidadeId = resolverUnidade(p.unidade) || grupoUnidadeId || null;
+  const unidadeNome = unidadeId ? nomeDaUnidade(unidadeId) : null;
+  const onde = unidadeNome || 'as três unidades';
+  const rotulo = `Lista: ${alvos.map(pura.tituloDoAlvo).join(' + ')} — ${onde}`;
+  try {
+    const { msgs, total } = await (deps.mensagensDaListaPix || mensagensDaListaPix)({ laReport, unidadeId, unidadeNome, alvos, deps });
+    mensagens.push(...msgs);
+    actions.push({ kind: 'situacao', status: 'ok', label: rotulo });
+    console.log(`[PixConsulta] marcador LISTA_PIX alvos=${alvos.join(',')} unidade=${unidadeId || 'TODAS'}: ${total} nomes em ${msgs.length} mensagem(ns)`);
+  } catch (e) {
+    console.warn(`[PixConsulta] marcador LISTA_PIX alvos=${alvos.join(',')} unidade=${unidadeId || 'TODAS'}: ${e.message}`);
+    actions.push({ kind: 'situacao', status: 'fail', label: rotulo,
+      detail: 'a fonte do LA Report não respondeu agora — me chama de novo daqui a pouco' });
+  }
+  if (brutos.length > 1) {
+    actions.push({ kind: 'situacao', status: 'ask', label: 'Uma lista por vez',
+      detail: 'mandei a primeira lista — me pede a próxima que eu puxo' });
+  }
+  return { limpo, mensagens, actions };
+}
+
 // ── ORQUESTRAÇÃO DO TURNO DO GRUPO ────────────────────────────────────────────────────────────
 // Chamada por src/services/group-chat-engine.js, ANTES do LLM. Dois caminhos bem diferentes:
 //   LISTA   -> INTERCEPTA: posta as mensagens prontas e o turno acaba (o LLM não é chamado; ele
@@ -226,36 +299,21 @@ async function atenderPedidoNoGrupo({ laReport, unidadeId, unidadeNome, text, ho
   const efetivoNome = unidadeCitada ? nomeDaUnidade(unidadeCitada) : unidadeNome;
 
   if (pedido && pedido.tipo === 'lista') {
-    if (!efetivoId) {
-      // Nem o grupo nem a fala amarram uma unidade: as três, em sequência (Campo Grande, Recreio,
-      // Barra), com o MESMO teto de mensagens do pedido inteiro — ver blocosDeTodasUnidades.
-      let blocos;
-      let falhas;
-      try {
-        ({ blocos, falhas } = await (deps.blocosDeTodasUnidades || blocosDeTodasUnidades)({ laReport, alvo: pedido.alvo, deps }));
-      } catch (e) {
-        console.warn(`[PixConsulta] lista ${pedido.alvo} TODAS unidades: ${e.message}`);
-        return { tratou: true, ultimo: await postar(pura.TEXTO_FONTE_FORA), numerosContext: '' };
-      }
-      const msgs = pura.mensagensDeVariasListas({ unidadeNome: null, blocos, avisos: falhas });
-      let ultimo = null;
-      for (const m of msgs) ultimo = await postar(m); // uma por vez, em ordem
-      console.log(`[PixConsulta] lista ${pedido.alvo} TODAS unidades: ${msgs.length} mensagem(ns)`);
-      return { tratou: true, ultimo, numerosContext: '' };
-    }
-    let blocos;
-    let falhas;
+    // Com unidade (do grupo ou citada): a lista dela. Sem nenhuma: as três, em sequência (Campo
+    // Grande, Recreio, Barra), com o MESMO teto de mensagens do pedido inteiro. Quem monta é
+    // mensagensDaListaPix — o mesmo caminho do marcador <<LISTA_PIX>>.
+    let r;
     try {
-      ({ blocos, falhas } = await (deps.blocosDaLista || blocosDaLista)({ laReport, unidadeId: efetivoId, alvo: pedido.alvo, deps }));
+      r = await (deps.mensagensDaListaPix || mensagensDaListaPix)({
+        laReport, unidadeId: efetivoId || null, unidadeNome: efetivoNome, alvos: [pedido.alvo], deps,
+      });
     } catch (e) {
-      console.warn(`[PixConsulta] lista ${pedido.alvo} unidade=${efetivoId}: ${e.message}`);
+      console.warn(`[PixConsulta] lista ${pedido.alvo} unidade=${efetivoId || 'TODAS'}: ${e.message}`);
       return { tratou: true, ultimo: await postar(pura.TEXTO_FONTE_FORA), numerosContext: '' };
     }
-    const msgs = pura.mensagensDeVariasListas({ unidadeNome: efetivoNome, blocos, avisos: falhas });
     let ultimo = null;
-    for (const m of msgs) ultimo = await postar(m); // uma por vez, em ordem
-    const total = blocos.reduce((s, b) => s + (b.itens || []).length, 0);
-    console.log(`[PixConsulta] lista ${pedido.alvo} unidade=${efetivoId}: ${total} nomes em ${msgs.length} mensagem(ns)`);
+    for (const m of r.msgs) ultimo = await postar(m); // uma por vez, em ordem
+    console.log(`[PixConsulta] lista ${pedido.alvo} unidade=${efetivoId || 'TODAS'}: ${r.total} nomes em ${r.msgs.length} mensagem(ns)`);
     return { tratou: true, ultimo, numerosContext: '' };
   }
 
@@ -274,4 +332,5 @@ async function atenderPedidoNoGrupo({ laReport, unidadeId, unidadeNome, text, ho
 module.exports = {
   numerosDaUnidade, itensDaLista, blocosDaLista, atenderPedidoNoGrupo,
   numerosDeTodasUnidades, blocosDeTodasUnidades,
+  mensagensDaListaPix, atenderMarkersListaPix,
 };

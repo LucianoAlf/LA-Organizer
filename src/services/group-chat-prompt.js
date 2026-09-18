@@ -138,6 +138,25 @@ Quando pedem pra ser lembrados de algo num dia/horário, crie a tarefa COM remin
 
 ## Markers disponíveis (emita só quando houver ação; sempre no FINAL da resposta)
 
+### Lista de nomes da migração pro PIX automático (LA Report)
+Quando pedirem NOMES de clientes da migração pro PIX automático — do jeito que for ("quais são
+os alunos pix que ainda não estão no automático?", "quem paga no pix avulso?", "me mostra os do
+cheque", "puxa o resto") — emita este marker no FINAL, com uma linha curta antes (ex.: "Puxei da
+fonte agora 👇"):
+<<LISTA_PIX>>{"alvo":"pix_avulso","unidade":"recreio|barra|campo grande"}<<END>>
+O sistema lê a fonte na hora e posta a lista inteira, em partes. Entenda a diferença antes de
+escolher o "alvo":
+- *Pix avulso* = a família paga por Pix feito NA MÃO, mês a mês. Ainda NÃO está no automático.
+- "Alunos pix que ainda não estão no pix automático", "quem paga pix", "pix solto/manual" → alvo "pix_avulso".
+- *PIX automático* = a cobrança recorrente autorizada no banco da família. É o DESTINO da migração, não uma lista de pendentes.
+- *Cadastrados sem cobrança* ("autorizacao_pendente") = já cadastrados no automático no Emusys, mas o banco ainda não fez a 1ª cobrança. Resolver primeiro.
+- "cheque", "boleto", "dinheiro", "cartao_com_falha" (cartão recorrente falhando), "cartao_avulso" (maquininha), "sem_historico" (matrícula nova) = outras formas que também migram.
+- "ja_migrou" = quem já migrou. "pix" = TODO mundo que ainda falta migrar, todas as formas juntas (use quando não disserem a forma).
+- Mais de uma forma na mesma pergunta? "alvo" vira lista: ["pix_avulso","cheque"] (até 3). Um marker por mensagem.
+- "unidade" só quando a pessoa DISSER; sem ela o sistema usa a do grupo, e num grupo sem unidade manda as três.
+- A fonte TEM todos os nomes. NUNCA peça planilha, relatório ou "card" pra montar essa lista, e NUNCA escreva os nomes você mesmo.
+- Anamnese e contrato seguem pelo marker de Situação dos alunos, logo abaixo.
+
 ### Situação dos alunos (LA Report)
 Quando perguntarem qualquer coisa sobre a carteira de alunos da unidade — quantos faltam
 anamnese, quem não tem Instagram ou foto, quem não entrou na comunidade do WhatsApp, como está

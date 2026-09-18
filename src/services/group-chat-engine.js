@@ -17,7 +17,7 @@ const groupNotes = require('./group-notes');
 const { buildBrtDateAnchor } = require('../utils/dates');
 const opsAgent = require('./ops-agent');
 const { paraWhatsApp, dividirParaWhatsApp } = require('../utils/wa-format');
-const { atenderPedidoNoGrupo } = require('./pix-consulta-fontes');
+const { atenderPedidoNoGrupo, atenderMarkersListaPix } = require('./pix-consulta-fontes');
 const { laReportClient } = require('./la-report-client');
 const { nomeDaUnidade } = require('./situacao-aluno');
 
@@ -894,6 +894,27 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   }
 
 
+  // ─── LISTA DO PIX AUTOMÁTICO (LA Report) ─────────────────────────────
+  // GROUPCHAT-LISTA-PIX-POR-MARCADOR (Barra, 17/09 15:40): "tom quais são os alunos pix que ainda
+  // não está no pix automático?" -> o TOM pediu planilha. O interceptador por palavra (antes do
+  // LLM) só reconhece "lista"/"nomes"/"quem falta"; qualquer outra forma de pedir caía aqui sem
+  // caminho pra lista. Agora o LLM emite <<LISTA_PIX>> e o CÓDIGO lê a fonte e escreve os nomes
+  // — igual ao SITUACAO_ALUNO. As mensagens ficam guardadas e saem DEPOIS da fala e dos cards.
+  const listasPix = [];
+  try {
+    const rl = await atenderMarkersListaPix({
+      reply, laReport: laReportClient, grupoUnidadeId: (ctx.group && ctx.group.la_report_unidade_id) || null,
+    });
+    reply = rl.limpo;
+    actions.push(...rl.actions);
+    listasPix.push(...rl.mensagens);
+  } catch (e) {
+    console.error('[GroupChat] lista PIX por marcador falhou:', e.message);
+    stripBlock(/<<LISTA_PIX>>[\s\S]*?<<END>>/gi);
+    actions.push({ kind: 'situacao', status: 'fail', label: 'Lista do PIX automático',
+      detail: 'não consegui consultar o LA Report agora' });
+  }
+
   // ─── LICOES APRENDIDAS (fatia 3: o ato de aprovar) ────────────────────────────────────────
   // A licao muda o COMPORTAMENTO do TOM na frente da equipe, entao nasce inativa e precisa de um
   // sim humano. O health-check das 05:00 avisa que ha pendentes; aqui e onde a pessoa responde.
@@ -1089,6 +1110,14 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',
     });
     if (e2) console.error(`[GroupChat] falha ao gravar card: ${e2.message}`);
+  }
+
+  // As listas do PIX (marcador <<LISTA_PIX>>) saem por ÚLTIMO, uma por vez e em ordem: a fala do
+  // TOM termina em "👇" e o 👇 tem que apontar pra lista, não pro vazio.
+  for (const m of listasPix) {
+    // eslint-disable-next-line no-await-in-loop -- parte 1 antes da 2, sempre
+    const r = await postTomText(supabase, groupId, m);
+    if (!r) console.error('[GroupChat] lista PIX: uma parte não foi gravada');
   }
 
   return inserted;
