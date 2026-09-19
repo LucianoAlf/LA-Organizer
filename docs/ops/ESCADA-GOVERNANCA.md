@@ -2474,3 +2474,73 @@ que nenhum número de tempo saia de memória; e (b) **recusar o `postar` de um t
 corte por tempo sem trazer as correções commitadas na rodada** — a trava determinística já existe
 para restart (`restart-so-do-runner.js`), o molde está pronto. Enquanto o relatório depender de
 disciplina no fim do teto, ele vai ser a primeira coisa a cair, porque é a última a acontecer.
+
+### ETAPA 2.7 — o predicado que FUNDE duas perguntas faz o relógio de parede virar único juiz
+
+**Ocorrência:** 1 (19/09), e é a correção da rodada. Classe nova.
+
+`isSelfRecentConflict` respondia, numa expressão só, duas perguntas com consequências opostas:
+**é o mesmo item?** (autor + prazo + título) e **chegou dentro da janela?** (5 min). Fundidas, o
+predicado só tem uma saída — e quando a identidade é óbvia, o que sobra decidindo é o relógio.
+
+O caso Rafinha (17/09 20:07:52 BRT) é o limite exato disso: ele derrubou a proposta de recado, o
+LLM re-emitiu os 4 `TASK_CREATE` e um deles chegou **5min18s** depois do original — **18 segundos**
+acima do teto. O skip de re-emit não pegou, e o dup-guard renderizou o menu 1/2/3 com os dois
+lados **byte a byte iguais** (`"Trocar lâmpada do bistrô — Campo Grande"` dos dois lados),
+oferecendo `2️⃣ crio essa nova mesmo (com nome um pouco diferente pra não confundir)` — um rename
+que nenhum código executa. Ele respondeu *"Ô, Tom, tá vacilando"* e o mesmo menu voltou **38s**
+depois.
+
+⚠️ **As duas saídas óbvias estavam ambas erradas, e as duas estão documentadas aqui:** alargar a
+janela reabre a cascata da Ana (08/07, 7 menus em 10 min → *"desisti de você"*), que é justamente
+o incidente que criou o teto de 5 min; e pular em silêncio fora da janela viola a doutrina escrita
+no cabeçalho do próprio módulo em 18/09 — *"a dúvida vira menu (recuperável), nunca silêncio
+(irrecuperável)"*.
+
+O conserto foi **decompor**, não ajustar: `isSameItemConflict` (identidade, sem relógio) ao lado de
+`isSelfRecentConflict` (identidade + janela). Dentro da janela, identidade = re-emit → skip mudo,
+inalterado. **Fora** da janela, identidade significa que o menu não tem resposta coerente — a 1 e a
+2 descrevem a mesma string — então o engine não o renderiza e devolve prosa honesta e visível
+(`failMessages`, mesmo padrão do `RECUR_TEMPLATE_DEDUP` logo abaixo). Título distinto, prazo
+distinto e outro autor seguem virando menu, com teste de controle para cada um.
+
+🔑 A regra, e vale além do dup-guard: **quando um predicado erra por margem pequena e a única coisa
+que o separava do acerto era tempo, o defeito raramente é o limiar.** Conte quantas perguntas
+aquele `return` está respondendo. Se forem duas, o limiar está julgando a pergunta errada — e
+mexer nele troca um erro por outro, que é exatamente o que as duas saídas recusadas fariam.
+
+Prima da regra de 09/09 (*"quando um casamento por overlap falha num caso óbvio, olhe o
+DENOMINADOR antes do limiar"*): as duas dizem que ajustar o número é a última hipótese, não a
+primeira.
+
+### ETAPA 3 — o auditor do GRUPO é cego ao silêncio DESENHADO, e a porta de conserto está travada
+
+**Ocorrência:** 1 (19/09), e produziu o único `falso_positivo` da rodada.
+
+`e2247730` acusava o TOM de ignorar um pedido do Jereh no grupo de ops. O pedido existe e está
+correto no banco (`group_chat_messages 8ff499e8`, 18/09 12:41:10 BRT, áudio com `content` NULL e
+`media_extracted_text` = *"Aí, coloquem essas aulas pra ele, pro Lucas, de hoje e de amanhã, por
+favor."*). O silêncio também: sem vocativo "Tom", janela fechada, e o watcher marcou
+`tom_seen_at` 12:41:15.424 → `tom_done_at` 12:41:18.75 — **3,3 segundos**, o ramo `!shouldRun` de
+silêncio intencional do modelo JANELA (decisão do Alf, 20/06). O TOM não respondeu a **nenhuma**
+mensagem de membro naquele grupo o dia inteiro; só rituais determinísticos saíram.
+
+O auditor não tinha como ver isso, e por três motivos independentes: (1) o caminho de grupo nunca
+carrega `tom_seen_at`/`tom_done_at`, então silêncio desenhado e silêncio por falha são a mesma
+coisa para ele; (2) monta transcript plano, sem a regra da JANELA no prompt — logo toda mensagem
+de membro sem resposta parece pedido derrubado; (3) o hook de refutação pelo banco
+(`_refutarConfabPeloBanco`) é gated em `category !== 'confabulation'` e está ligado só no 1:1.
+De quebra, o `occurred_at` do achado veio **7h49 fora** (20:30:40 contra 12:41:10) porque
+`resolveIncidentAt` se declara "inaplicável aqui" e cai no `lastAt`.
+
+⚠️ **Não consertei, e a razão é a trava da ETAPA 1:** `src/services/conversation-audit.js` tem
+**11 commits em 60 dias**, muito acima do tripwire de 3. O 12º remendo seria exatamente o
+microajuste que o Alf recusou. E a alternativa que parece óbvia — o TOM capturar pedido de grupo
+não endereçado a ele — **é FEATURE sob freeze**, não bug: o modelo JANELA é decisão de produto de
+20/06, e o comportamento medido é o desenhado.
+
+O que isto acrescenta ao registro de 23/08 (*o auditor FABRICA achado quando o TOM manda sem
+gravar em `conversation_history`*): lá a cegueira era sobre uma **saída** que não deixou rastro;
+aqui é sobre uma **decisão** que deixou rastro em outra tabela, que o auditor não lê. Mesma
+família, porta nova. Antes de tratar silêncio de grupo como pedido derrubado, leia
+`tom_seen_at`/`tom_done_at` da própria mensagem — custa uma query e desempata sozinho.
