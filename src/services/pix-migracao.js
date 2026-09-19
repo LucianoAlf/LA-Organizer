@@ -117,11 +117,21 @@ function ritmoNecessario({ faltam, hojeYmd, metaYmd = META_YMD }) {
   const semanas = Math.max(0, Math.ceil(dias / 7));
   return { semanas, porSemana: semanas ? Math.ceil(faltam / semanas) : faltam };
 }
+// Ritmo que a EQUIPE controla: o "faltam" sem quem depende do Emusys liberar (bloqueados). É este
+// número que o alerta de ritmo e o marcador da semana comparam — um cliente que o Emusys não deixa
+// migrar não pode acender "duas semanas abaixo do ritmo" contra quem não tem como fazer nada.
+function ritmoDaEquipe({ unidades, hojeYmd }) {
+  const us = unidades || [];
+  const faltam = us.reduce((s, u) => s + (u.total - u.migrados), 0);
+  const presos = us.reduce((s, u) => s + (u.aguardandoEmusys || 0), 0);
+  return ritmoNecessario({ faltam: Math.max(0, faltam - presos), hojeYmd });
+}
 function relatorioSemanal({ unidades, periodoBr, hojeYmd, alertaRitmo = false }) {
   const us = unidades || [];
   const total = us.reduce((s, u) => s + u.total, 0);
   const migrados = us.reduce((s, u) => s + u.migrados, 0);
   const pend = us.reduce((s, u) => s + (u.pendentesAutorizacao || 0), 0);
+  const presos = us.reduce((s, u) => s + (u.aguardandoEmusys || 0), 0);
   const pct = total ? Math.round((migrados / total) * 100) : 0;
   const faltam = total - migrados;
   const r = ritmoNecessario({ faltam, hojeYmd });
@@ -129,13 +139,23 @@ function relatorioSemanal({ unidades, periodoBr, hojeYmd, alertaRitmo = false })
     `Geral  ${barra(pct)}  ${pct}%  (${migrados} de ${total}) · meta ${METAS_BR}`];
   for (const u of us) {
     const p2 = u.total ? Math.round((u.migrados / u.total) * 100) : 0;
-    linhas.push(`${u.nome} ${barra(p2)} ${p2}% (${u.migrados}/${u.total}) — ${u.migradosNaSemana} nesta semana`);
+    linhas.push(`${u.nome} ${barra(p2)} ${p2}% (${u.migrados}/${u.total}) — ${u.migradosNaSemana} nesta semana${u.aguardandoEmusys ? ` · ${MARCA_BLOQUEIO} ${u.aguardandoEmusys}` : ''}`);
   }
   if (pend) linhas.push(`🔵 Cadastrados sem cobrança: ${pend}`);
+  // 19/09 (Alf): sem esta linha a meta de 31/10 parece atraso do time. Os bloqueados continuam
+  // DENTRO de "faltam" e do percentual (a conta não muda) — só ficam nomeados, com o motivo.
+  if (presos) linhas.push(`${MARCA_BLOQUEIO} Aguardando o Emusys: ${presos} (2+ cursos ou família — ele só liga o PIX automático a uma fatura)`);
   // M4 (revisão final): meta passou (0 semanas) — "faltam 0 semanas e N clientes → N por semana"
   // não diz nada; o que importa é que a meta venceu e quantos ainda faltam.
   if (r.semanas === 0) linhas.push(`Meta de ${METAS_BR} vencida — faltam ${faltam} clientes.`);
-  else linhas.push(`Ritmo: faltam ${r.semanas} semanas e ${faltam} clientes → ${r.porSemana} por semana.`);
+  else {
+    linhas.push(`Ritmo: faltam ${r.semanas} semanas e ${faltam} clientes → ${r.porSemana} por semana.`);
+    // O que a equipe consegue fazer de fato: sem quem depende do Emusys liberar.
+    if (presos) {
+      const livres = Math.max(0, faltam - presos);
+      linhas.push(`Sem os ${MARCA_BLOQUEIO}: faltam ${livres} clientes → ${ritmoNecessario({ faltam: livres, hojeYmd }).porSemana} por semana.`);
+    }
+  }
   if (alertaRitmo) linhas.push('⚠️ Duas semanas seguidas abaixo do ritmo necessário.');
   return linhas.join('\n');
 }
@@ -169,6 +189,7 @@ function dadosDaUnidadeParaRelatorio(linhas, { nome, hojeYmd }) {
   let migradosNaSemana = 0;
   let pendentesAutorizacao = 0;
   let aMigrar = 0;
+  let aguardandoEmusys = 0;
   for (const l of linhas || []) {
     if (!l) continue;
     if (l.categoria === 'ja_migrou') {
@@ -178,10 +199,12 @@ function dadosDaUnidadeParaRelatorio(linhas, { nome, hojeYmd }) {
       pendentesAutorizacao += 1;
     } else if (l.categoria === 'migrar') {
       aMigrar += 1;
+      // Mesma regra da pauta diária (bloqueadoNoEmusys): continua DENTRO do total — só é nomeado.
+      if (bloqueadoNoEmusys(l)) aguardandoEmusys += 1;
     }
   }
   return {
-    nome, total: migrados + aMigrar + pendentesAutorizacao, migrados, migradosNaSemana, pendentesAutorizacao,
+    nome, total: migrados + aMigrar + pendentesAutorizacao, migrados, migradosNaSemana, pendentesAutorizacao, aguardandoEmusys,
   };
 }
 
@@ -314,7 +337,7 @@ module.exports = {
   FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD, CARENCIA_PRIMEIRA_COBRANCA_DIAS, JANELA_VINCULO_SEM_TRANSICAO_DIAS,
   somaDiasYmd: _somaDiasYmd,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
-  bloqueadoNoEmusys, nomeComMarca, MARCA_BLOQUEIO, LEGENDA_BLOQUEIO,
+  bloqueadoNoEmusys, nomeComMarca, MARCA_BLOQUEIO, LEGENDA_BLOQUEIO, ritmoDaEquipe,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
   horaDaPautaPix, decisaoDaPublicacaoPix, prefixoDaGuardaPix,
   dadosDaUnidadeParaRelatorio, periodoDaSemanaBr, precisaAlertaRitmo,

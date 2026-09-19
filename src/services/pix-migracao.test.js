@@ -351,7 +351,7 @@ test('dadosDaUnidadeParaRelatorio: conta migrados, a migrar e autorização pend
   ];
   const d = p.dadosDaUnidadeParaRelatorio(linhas, { nome: 'Barra', hojeYmd: '2026-10-19' });
   assert.deepStrictEqual(d, {
-    nome: 'Barra', total: 6, migrados: 3, migradosNaSemana: 0, pendentesAutorizacao: 1,
+    nome: 'Barra', total: 6, migrados: 3, migradosNaSemana: 0, pendentesAutorizacao: 1, aguardandoEmusys: 0,
   });
 });
 
@@ -391,7 +391,7 @@ test('dadosDaUnidadeParaRelatorio: migradosNaSemana NÃO conta migrou_em de hoje
 test('dadosDaUnidadeParaRelatorio: sem linhas devolve zeros', () => {
   const d = p.dadosDaUnidadeParaRelatorio([], { nome: 'Recreio', hojeYmd: '2026-10-19' });
   assert.deepStrictEqual(d, {
-    nome: 'Recreio', total: 0, migrados: 0, migradosNaSemana: 0, pendentesAutorizacao: 0,
+    nome: 'Recreio', total: 0, migrados: 0, migradosNaSemana: 0, pendentesAutorizacao: 0, aguardandoEmusys: 0,
   });
 });
 

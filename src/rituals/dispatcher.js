@@ -5048,9 +5048,8 @@ async function run(opts = {}) {
         }
 
         const semanaAtual = unidades.reduce((s, u) => s + u.migradosNaSemana, 0);
-        const totalGeral = unidades.reduce((s, u) => s + u.total, 0);
-        const migradosGeral = unidades.reduce((s, u) => s + u.migrados, 0);
-        const ritmoAtual = _pixPura.ritmoNecessario({ faltam: totalGeral - migradosGeral, hojeYmd: now.ymd }).porSemana;
+        // Ritmo da EQUIPE: sem quem depende do Emusys liberar (2+ matrículas) — ver ritmoDaEquipe.
+        const ritmoAtual = _pixPura.ritmoDaEquipe({ unidades, hojeYmd: now.ymd }).porSemana;
         const alertaRitmo = _pixPura.precisaAlertaRitmo({
           semanaAtual, ritmoAtual, semanaAnterior, ritmoAnterior,
         });
