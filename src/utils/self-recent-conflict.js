@@ -37,15 +37,26 @@
 // @param {string} [candidateDueDate] — due_date do item sendo criado agora
 // @param {string} [candidateTitle] — title do item sendo criado agora
 function isSelfRecentConflict(conflict, requesterId, nowMs, windowMs, candidateDueDate, candidateTitle) {
-  if (!conflict || !requesterId) return false;
-  if (conflict.created_by !== requesterId) return false;   // só re-emit do PRÓPRIO remetente
+  if (!isSameItemConflict(conflict, requesterId, candidateDueDate, candidateTitle)) return false;
   if (!conflict.created_at) return false;
   const createdMs = new Date(conflict.created_at).getTime();
   if (!Number.isFinite(createdMs)) return false;
   const age = nowMs - createdMs;
   if (age < 0 || age > windowMs) return false;              // dentro da janela (não futuro)
+  return true;
+}
+
+// isSameItemConflict — IDENTIDADE, sem relógio: autor + prazo + título normalizado.
+// Separada da janela porque as duas perguntas têm consequências diferentes. Dentro da
+// janela, identidade = re-emit → skip silencioso. FORA da janela, identidade significa
+// que o menu 1/2/3 não tem resposta coerente: os dois lados são a MESMA string, a 1 e a 2
+// descrevem o mesmo item e a 2 promete um rename que ninguém faz (Rafinha 17/09, 5min18s —
+// 18s acima do teto). O engine usa esta função pra não renderizar aquele menu.
+function isSameItemConflict(conflict, requesterId, candidateDueDate, candidateTitle) {
+  if (!conflict || !requesterId) return false;
+  if (conflict.created_by !== requesterId) return false;   // identidade não atravessa pessoas
   if (conflict.due_date && candidateDueDate && conflict.due_date !== candidateDueDate) {
-    return false;                                           // dia diferente → não é re-emit
+    return false;                                           // dia diferente → item diferente
   }
   if (conflict.title && candidateTitle
       && normalizeTitle(conflict.title) !== normalizeTitle(candidateTitle)) {
@@ -81,4 +92,4 @@ function buildSelfRecentSkipReason(opts = {}) {
   return `self_recent_skip:existing=${existing} age=${ageMin}min score=${scoreStr}`;
 }
 
-module.exports = { isSelfRecentConflict, buildSelfRecentSkipReason };
+module.exports = { isSelfRecentConflict, isSameItemConflict, buildSelfRecentSkipReason };

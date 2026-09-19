@@ -6058,7 +6058,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             // semântico). Evita a cascata de perguntas que fez a Ana desistir. Janela
             // env-tunável (TOM_SELF_RECENT_CONFLICT_MS, default 5min). TRADEOFF documentado
             // em utils/self-recent-conflict.js (fuzzy pode casar distinta quase-idêntica).
-            const { isSelfRecentConflict, buildSelfRecentSkipReason } = require('./utils/self-recent-conflict');
+            const { isSelfRecentConflict, isSameItemConflict, buildSelfRecentSkipReason } = require('./utils/self-recent-conflict');
             const _selfRecentMs = Number(process.env.TOM_SELF_RECENT_CONFLICT_MS) || 5 * 60 * 1000;
             const _nowMs = Date.now();
             const _selfRecent = _taskDupResult.probable.find(p => isSelfRecentConflict(p, collaborator.id, _nowMs, _selfRecentMs, insertRow.due_date, a.title));
@@ -6081,6 +6081,26 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
                 console.error('[IntegrityCheck] SELF_RECENT_SKIP logMarker throw:', _logErr.message);
               }
               okCount++;
+              continue;
+            }
+            // Audit 17/09 (Rafinha, achado a60338c6): MESMO item (autor+prazo+título) porém
+            // FORA da janela — o re-emit chegou 5min18s depois, 18s acima do teto. O skip
+            // silencioso não pega, e o menu 1/2/3 sai com os dois lados BYTE A BYTE IGUAIS:
+            // a 1 e a 2 descrevem a mesma string e a 2 promete um rename que ninguém faz.
+            // Ele respondeu "Ô, Tom, tá vacilando" e o mesmo menu voltou 38s depois.
+            // Alargar a janela reabriria a cascata da Ana (08/07), então o que muda é só
+            // isto: pergunta sem resposta coerente não é feita. Prosa honesta e visível
+            // (não é o skip mudo) — mesmo padrão do RECUR_TEMPLATE_DEDUP logo abaixo.
+            const _mesmoItem = _taskDupResult.probable.find(p => isSameItemConflict(p, collaborator.id, insertRow.due_date, a.title));
+            if (_mesmoItem) {
+              console.warn(`[IntegrityCheck] SAME_ITEM_NO_MENU "${a.title.trim().slice(0,40)}" ~ existing=${String(_mesmoItem.id).slice(0,8)} (fora da janela) — não pergunta 1/2/3`);
+              try {
+                await logMarker(collaborator.id, 'TASK_CREATE', 'skipped', `same_item_no_menu:existing=${String(_mesmoItem.id).slice(0, 8)}`, a);
+              } catch (_logErr) {
+                console.error('[IntegrityCheck] SAME_ITEM_NO_MENU logMarker throw:', _logErr.message);
+              }
+              failMessages.push(`✋ Você já tem *${_mesmoItem.title}* anotada pro mesmo dia — não criei outra igual.`);
+              failCount++;
               continue;
             }
             console.warn(`[IntegrityCheck] DUP_TASK score=${_d._score.toFixed(2)} "${a.title.trim().slice(0,40)}" ~ "${String(_d.title).slice(0,40)}" (${_d.status})`);
