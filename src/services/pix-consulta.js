@@ -248,6 +248,7 @@ function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHo
   const L = [`## NÚMEROS DA FONTE AGORA — ${unidadeNome} (leia ANTES de falar qualquer quantidade)`];
   if (pix) {
     L.push(`PIX automático: ${pix.total} clientes na fonte · já migraram ${pix.ja_migrou} · faltam migrar ${pix.faltam} (${pix.migrar} a migrar + ${pix.autorizacao_pendente} cadastrados sem cobrança)`);
+    if (pix.bloqueado_emusys) L.push(`  dos que faltam, ${pix.bloqueado_emusys} estão aguardando o Emusys (2+ matrículas: ele só liga o PIX automático a uma fatura) — continuam contados, vão pro fim da fila`);
     const fat = FATIAS.map((f) => [ROTULO[f], (pix.fatias || {})[f] || 0])
       .filter(([, n]) => n > 0).map(([r, n]) => `${r.emoji} ${r.nome} ${n}`);
     L.push(`Fatias de quem falta: ${fat.length ? fat.join(' · ') : 'nenhuma'}`);
@@ -276,15 +277,16 @@ function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHo
 // saúde, e é assim que um laudo vira mentira").
 function blocoDeNumerosTodasUnidades({ unidades }) {
   const L = ['## NÚMEROS DA FONTE AGORA — as três unidades (leia ANTES de falar qualquer quantidade)'];
-  let pixOk = true; let totalClientes = 0; let totalFaltam = 0;
+  let pixOk = true; let totalClientes = 0; let totalFaltam = 0; let totalPresos = 0;
   let anaOk = true; let totalAnaPend = 0; let totalAnaBase = 0;
   let conOk = true; let totalConPend = 0; let totalConBase = 0;
 
   for (const u of (unidades || [])) {
     if (u.pix) {
-      L.push(`${u.unidadeNome} — PIX automático: ${u.pix.total} clientes na fonte · já migraram ${u.pix.ja_migrou} · faltam migrar ${u.pix.faltam}`);
+      L.push(`${u.unidadeNome} — PIX automático: ${u.pix.total} clientes na fonte · já migraram ${u.pix.ja_migrou} · faltam migrar ${u.pix.faltam}${u.pix.bloqueado_emusys ? ` (${u.pix.bloqueado_emusys} aguardando o Emusys)` : ''}`);
       totalClientes += u.pix.total;
       totalFaltam += u.pix.faltam;
+      totalPresos += u.pix.bloqueado_emusys || 0;
     } else {
       L.push(`${u.unidadeNome} — PIX automático: NÃO CONSEGUI LER a fonte agora.`);
       pixOk = false;
@@ -309,7 +311,7 @@ function blocoDeNumerosTodasUnidades({ unidades }) {
   }
 
   L.push(pixOk
-    ? `TOTAL — PIX automático: ${totalClientes} clientes na fonte · faltam migrar ${totalFaltam}`
+    ? `TOTAL — PIX automático: ${totalClientes} clientes na fonte · faltam migrar ${totalFaltam}${totalPresos ? ` (${totalPresos} aguardando o Emusys: 2+ matrículas, ele só liga o PIX automático a uma fatura)` : ''}`
     : 'TOTAL — PIX automático: não dá pra somar agora — pelo menos uma unidade não respondeu.');
   L.push(anaOk
     ? `TOTAL — Anamnese ${RECORTE_ALUNOS}: ${totalAnaPend} pendentes de ${totalAnaBase}`

@@ -154,6 +154,7 @@ escolher o "alvo":
 - "ja_migrou" = quem já migrou. "pix" = TODO mundo que ainda falta migrar, todas as formas juntas (use quando não disserem a forma).
 - Mais de uma forma na mesma pergunta? "alvo" vira lista: ["pix_avulso","cheque"] (até 3). Um marker por mensagem.
 - "unidade" só quando a pessoa DISSER; sem ela o sistema usa a do grupo, e num grupo sem unidade manda as três.
+- Nome com 🔒 = aguardando o Emusys: cliente com 2+ matrículas (família ou aluno com 2+ cursos) — o Emusys só liga o PIX automático a UMA fatura por enquanto. Continua na lista e no "faltam"; só vai pro fim da fila. Não diga que "não dá pra migrar": diga que depende do Emusys liberar.
 - A fonte TEM todos os nomes. NUNCA peça planilha, relatório ou "card" pra montar essa lista, e NUNCA escreva os nomes você mesmo.
 - Anamnese e contrato seguem pelo marker de Situação dos alunos, logo abaixo.
 

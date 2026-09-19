@@ -13,7 +13,7 @@
 // de fatura nunca saem daqui (um teste prende as chaves do objeto).
 
 const pura = require('./pix-consulta');
-const { ordenarPorPrioridade, fatiaDoCliente, FATIAS } = require('./pix-migracao');
+const { ordenarPorPrioridade, fatiaDoCliente, FATIAS, bloqueadoNoEmusys, nomeComMarca, LEGENDA_BLOQUEIO, MARCA_BLOQUEIO } = require('./pix-migracao');
 const { filtrarPorRecorte, nomeDaUnidade, resolverUnidade } = require('./situacao-aluno');
 const { consultaComRetry } = require('../lib/consulta-com-retry');
 
@@ -51,7 +51,7 @@ function _contarPix(linhas) {
   for (const l of naPauta) { const f = fatiaDoCliente(l); fatias[f] = (fatias[f] || 0) + 1; }
   let outras = 0;
   for (const [c, n] of porCategoria) if (!CATEGORIAS.includes(c)) outras += n;
-  const out = { total: todas.length, faltam: naPauta.length, fatias, outras };
+  const out = { total: todas.length, faltam: naPauta.length, fatias, outras, bloqueado_emusys: naPauta.filter(bloqueadoNoEmusys).length };
   for (const c of CATEGORIAS) out[c] = porCategoria.get(c) || 0;
   return out;
 }
@@ -130,7 +130,7 @@ async function _itensDePix({ retry, rpcPix, alvo }) {
   else if (alvo === 'autorizacao_pendente') escolhidas = linhas.filter((l) => l && l.categoria === 'autorizacao_pendente');
   else if (FATIAS.includes(alvo)) escolhidas = linhas.filter((l) => NA_PAUTA(l) && fatiaDoCliente(l) === alvo);
   else escolhidas = linhas.filter(NA_PAUTA); // 'pix' e 'tudo': tudo o que falta migrar
-  return ordenarPorPrioridade(escolhidas).map((l) => ({ pagador: l.pagador_nome, alunos: l.alunos || [] }));
+  return ordenarPorPrioridade(escolhidas).map((l) => ({ pagador: nomeComMarca(l), alunos: l.alunos || [] }));
 }
 
 // itensDaLista -> [{ pagador, alunos }]  (LANÇA quando a fonte falha — ver o topo do arquivo)
@@ -229,6 +229,10 @@ async function mensagensDaListaPix({ laReport, unidadeId, unidadeNome, alvos, de
     }
   }
   if (!blocos.length) throw ultimoErro || new Error('nenhuma fonte respondeu');
+  // 🔒 no nome = aguardando o Emusys (ver pix-migracao.bloqueadoNoEmusys): a legenda vai no rodapé
+  // só quando alguém da lista leva a marca — quem lê não precisa adivinhar o que o cadeado quer dizer.
+  const temMarca = blocos.some((b) => (b.itens || []).some((it) => String(it.pagador).endsWith(` ${MARCA_BLOQUEIO}`)));
+  if (temMarca) falhas.push(LEGENDA_BLOQUEIO);
   const msgs = pura.mensagensDeVariasListas({ unidadeNome: unidadeId ? unidadeNome : null, blocos, avisos: falhas });
   const total = blocos.reduce((s, b) => s + (b.itens || []).length, 0);
   return { msgs, total };

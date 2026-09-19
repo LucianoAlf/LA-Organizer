@@ -29,7 +29,25 @@ const fatiaDoCliente = (l) => {
   if (l.categoria === 'autorizacao_pendente') return 'autorizacao_pendente';
   return FATIAS.includes(l.fatia) ? l.fatia : 'sem_historico';
 };
+// ── BLOQUEIO DO EMUSYS: 2+ MATRÍCULAS (Alf, 19/09) ──────────────────────────────────────────────
+// Família OU aluno com 2+ cursos tem faturas separadas, e o Emusys só liga o PIX automático a UMA
+// delas — o Alf confirmou e já pediu ao Mateus (Emusys) pra resolver. Medido em 19/09: 82 dos 357
+// clientes da pauta (23%) têm 2+ matrículas. Mandar a equipe atrás deles primeiro é gastar o lote
+// diário em quem não consegue concluir, e era o que a própria equipe de Campo Grande já evitava.
+// Por isso: bloqueado vai pro FIM da fila e leva 🔒. NINGUÉM SOME — continua contado no "faltam",
+// continua nas listas, e a mensagem diz quantos são. Só vale pra quem ainda precisa de cadastro
+// NOVO (`migrar`): 🔵 já cadastrado e quem já migrou não dependem desta barreira. Dado torto
+// (sem `matriculas`, não-lista) nunca bloqueia: na dúvida, cobra.
+// Interruptor TOM_PIX_BLOQUEIO_EMUSYS=off desliga tudo (quando o Emusys liberar), sem deploy.
+const bloqueioEmusysAtivo = () => String(process.env.TOM_PIX_BLOQUEIO_EMUSYS || '').trim().toLowerCase() !== 'off';
+const bloqueadoNoEmusys = (l) => !!l && bloqueioEmusysAtivo() && l.categoria === 'migrar'
+  && Array.isArray(l.matriculas) && l.matriculas.length > 1;
+const MARCA_BLOQUEIO = '🔒';
+const LEGENDA_BLOQUEIO = '🔒 = aguardando o Emusys liberar (2+ cursos ou família: ele só liga o PIX automático a uma fatura) — vão pro fim da fila';
+const nomeComMarca = (l) => `${l.pagador_nome}${bloqueadoNoEmusys(l) ? ` ${MARCA_BLOQUEIO}` : ''}`;
 const ordenarPorPrioridade = (linhas) => [...(linhas || [])].sort((a, b) => {
+  const bloq = Number(bloqueadoNoEmusys(a)) - Number(bloqueadoNoEmusys(b)); // livre antes de bloqueado
+  if (bloq !== 0) return bloq;
   const d = FATIAS.indexOf(fatiaDoCliente(a)) - FATIAS.indexOf(fatiaDoCliente(b));
   return d !== 0 ? d : String(a.pagador_nome || '').localeCompare(String(b.pagador_nome || ''), 'pt-BR');
 });
@@ -59,6 +77,7 @@ function mensagemDaUnidade({
   const noLote = new Set((lote || []).map((l) => l.pagador_chave).filter((k) => !chavesVoltaram.has(k)));
   const cont = contagemPorFatia(todas);
   const linhasTxt = [`${cab} · faltam ${todas.length + aguardando} · meta ${METAS_BR}`];
+  const presos = todas.filter(bloqueadoNoEmusys).length;
   // TAREFA 7 — reconferência de 7 dias: quem a equipe disse ter cadastrado, mas a fonte ainda
   // mostra como `migrar` depois do prazo de graça, ganha uma seção própria logo após o
   // cabeçalho — separada da lista normal pra não se confundir com "gente nova na fila".
@@ -75,10 +94,11 @@ function mensagemDaUnidade({
     if (!doLote.length) { resumo.push(`${ROTULO[f].emoji} ${ROTULO[f].nome} (${n})`); continue; }
     const extra = f === 'autorizacao_pendente' ? ' — resolver primeiro' : '';
     linhasTxt.push(`${ROTULO[f].emoji} *${ROTULO[f].nome}* (${n})${extra}\n`
-      + doLote.map((l) => `   • ${l.pagador_nome}${(l.alunos || []).length ? ` (${l.alunos.join(', ')})` : ''}`).join('\n'));
+      + doLote.map((l) => `   • ${nomeComMarca(l)}${(l.alunos || []).length ? ` (${l.alunos.join(', ')})` : ''}`).join('\n'));
   }
   if (resumo.length) linhasTxt.push(resumo.join(' · '));
   if (aguardando) linhasTxt.push(`⏳ Aguardando 1ª cobrança (${aguardando})`);
+  if (presos) linhasTxt.push(`🔒 Aguardando o Emusys (${presos}) — 2+ cursos ou família: ele só liga o PIX automático a uma fatura. Vão pro fim da fila.`);
   // M6 (revisão final): no grupo o TOM só lê mensagem em que é marcado — quem vê a lista precisa
   // saber COMO avisar. Só quando a mensagem lista algum nome do lote (sem lote, não há o que avisar).
   const chavesListaveis = new Set(todas.map((l) => l.pagador_chave));
@@ -294,6 +314,7 @@ module.exports = {
   FATIAS, ROTULO, LOTE_DIARIO, TETO_FILHAS, META_YMD, CARENCIA_PRIMEIRA_COBRANCA_DIAS, JANELA_VINCULO_SEM_TRANSICAO_DIAS,
   somaDiasYmd: _somaDiasYmd,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
+  bloqueadoNoEmusys, nomeComMarca, MARCA_BLOQUEIO, LEGENDA_BLOQUEIO,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
   horaDaPautaPix, decisaoDaPublicacaoPix, prefixoDaGuardaPix,
   dadosDaUnidadeParaRelatorio, periodoDaSemanaBr, precisaAlertaRitmo,
