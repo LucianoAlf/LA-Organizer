@@ -259,6 +259,9 @@ function lerSemanaDoMotivo(reason) {
 // Ordem exata do código:
 //   1. `diaSemana` não inteiro, ou domingo (0) -> null. Vem PRIMEIRO e é incondicional: nem um
 //      `loteUnico` fixo fura o domingo (a escola não abre nas três unidades nesse dia).
+//   1b. SÁBADO (6) COM `horaAbertura` -> publica na abertura de sábado, nas TRÊS unidades (08:00),
+//      e o lembrete único de dia útil NÃO vale. Alf, 19/09: "nas três unidades, às 8h da manhã no
+//      sábado, assim como anamnese e contratos". Sem `horaAbertura` conhecida cai no passo 2.
 //   2. Tem `loteUnico` (lembrete ÚNICO no dia — Barra, Campo Grande, anamnese-pauta.js
 //      LEMBRETE_UNICO_POR_UNIDADE) -> publica NESSE horário, qualquer que seja a abertura (mesmo
 //      nula): são unidades que já pediram uma cadência de "uma vez por dia".
@@ -266,6 +269,7 @@ function lerSemanaDoMotivo(reason) {
 //   4. Sem `loteUnico` E sem `horaAbertura` -> null (não dá pra inventar quando a equipe chega).
 function horaDaPautaPix(unidadeNome, diaSemana, { loteUnico, horaAbertura } = {}) {
   if (!Number.isInteger(diaSemana) || diaSemana === 0) return null;
+  if (diaSemana === 6 && horaAbertura) return horaAbertura;
   return loteUnico || horaAbertura || null;
 }
 

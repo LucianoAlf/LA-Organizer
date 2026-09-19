@@ -247,14 +247,27 @@ test('horaDaPautaPix: Recreio (sem lembrete único) segue o horário de abertura
   assert.strictEqual(p.horaDaPautaPix('Recreio', 6, { loteUnico: undefined, horaAbertura: '08:00' }), '08:00');
 });
 
-test('horaDaPautaPix: Barra tem lembrete único (09:00) e ignora a hora de abertura', () => {
-  // Sábado a Barra abre 08:00, mas o lembrete único dela continua 09:00 — o loteUnico vence.
-  assert.strictEqual(p.horaDaPautaPix('Barra', 6, { loteUnico: '09:00', horaAbertura: '08:00' }), '09:00');
+test('horaDaPautaPix: Barra tem lembrete único (09:00) em dia útil e ignora a hora de abertura', () => {
   assert.strictEqual(p.horaDaPautaPix('Barra', 3, { loteUnico: '09:00', horaAbertura: '09:00' }), '09:00');
+  assert.strictEqual(p.horaDaPautaPix('Barra', 5, { loteUnico: '09:00', horaAbertura: '09:00' }), '09:00');
 });
 
-test('horaDaPautaPix: Campo Grande tem lembrete único (13:00) e ignora a hora de abertura', () => {
+test('horaDaPautaPix: Campo Grande tem lembrete único (13:00) em dia útil e ignora a hora de abertura', () => {
   assert.strictEqual(p.horaDaPautaPix('Campo Grande', 3, { loteUnico: '13:00', horaAbertura: '10:00' }), '13:00');
+  assert.strictEqual(p.horaDaPautaPix('Campo Grande', 1, { loteUnico: '13:00', horaAbertura: '10:00' }), '13:00');
+});
+
+// 19/09 (Alf): "nas três unidades, às 8h da manhã no sábado, assim como anamnese e contratos".
+// Sábado o lembrete único NÃO vale: a pauta do PIX sai na abertura de sábado (08:00 nas três).
+test('horaDaPautaPix: SÁBADO as três unidades saem na abertura (08:00), o lembrete único de dia útil não vale', () => {
+  assert.strictEqual(p.horaDaPautaPix('Barra', 6, { loteUnico: '09:00', horaAbertura: '08:00' }), '08:00');
+  assert.strictEqual(p.horaDaPautaPix('Campo Grande', 6, { loteUnico: '13:00', horaAbertura: '08:00' }), '08:00');
+  assert.strictEqual(p.horaDaPautaPix('Recreio', 6, { loteUnico: undefined, horaAbertura: '08:00' }), '08:00');
+});
+
+test('horaDaPautaPix: sábado sem hora de abertura conhecida cai no lembrete único (nunca inventa horário nem silencia)', () => {
+  assert.strictEqual(p.horaDaPautaPix('Barra', 6, { loteUnico: '09:00', horaAbertura: null }), '09:00');
+  assert.strictEqual(p.horaDaPautaPix('Unidade Nova', 6, { loteUnico: undefined, horaAbertura: null }), null);
 });
 
 test('horaDaPautaPix: domingo nunca publica, mesmo com loteUnico fixo', () => {

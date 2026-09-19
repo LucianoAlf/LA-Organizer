@@ -178,10 +178,15 @@ test('pix no dispatcher: dia util — Recreio publica as 08:00 (abertura), Barra
   assert.strictEqual(tick(SEXTA, '10:00').abre, false, '10:00 e a abertura da Barra/CG na anamnese, mas nao e slot de ninguem no pix');
 });
 
-test('pix no dispatcher: sabado — Recreio segue a abertura de sabado (08:00), Barra e Campo Grande NAO mudam (09:00/13:00 fixos)', () => {
-  assert.deepStrictEqual(tick(SABADO, '08:00').porUnidade, { Recreio: '08:00' });
-  assert.deepStrictEqual(tick(SABADO, '09:00').porUnidade, { Barra: '09:00' });
-  assert.deepStrictEqual(tick(SABADO, '13:00').porUnidade, { 'Campo Grande': '13:00' });
+test('pix no dispatcher: sabado — as TRES unidades publicam as 08:00 (abertura de sabado); 09:00 e 13:00 nao abrem o bloco', () => {
+  // Alf, 19/09: "nas tres unidades, as 8h da manha no sabado, assim como anamnese e contratos".
+  assert.deepStrictEqual(tick(SABADO, '08:00').porUnidade, { Recreio: '08:00', Barra: '08:00', 'Campo Grande': '08:00' });
+  assert.strictEqual(tick(SABADO, '08:00').abre, true);
+  for (const h of ['09:00', '13:00']) {
+    const r = tick(SABADO, h);
+    assert.deepStrictEqual(r.porUnidade, {}, `sabado as ${h} ninguem publica (ja saiu as 08:00)`);
+    assert.strictEqual(r.abre, false);
+  }
 });
 
 test('pix no dispatcher: domingo nao publica em NENHUMA unidade, nem as que tem lembrete unico fixo', () => {
