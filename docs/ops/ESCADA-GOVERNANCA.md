@@ -2544,3 +2544,75 @@ gravar em `conversation_history`*): lá a cegueira era sobre uma **saída** que 
 aqui é sobre uma **decisão** que deixou rastro em outra tabela, que o auditor não lê. Mesma
 família, porta nova. Antes de tratar silêncio de grupo como pedido derrubado, leia
 `tom_seen_at`/`tom_done_at` da própria mensagem — custa uma query e desempata sozinho.
+
+### ETAPA 1 — a trava mandou "medir a fronteira" e a fronteira DESMENTIU a hipótese óbvia
+
+**Ocorrência:** 1 (20/09), e é o produto inteiro de uma rodada sem correção.
+
+A trava disparou limpa: `src/lib/optimistic-confirm.js` com **23 commits em 60 dias** (limiar 3),
+mais o KI já aberto `PORTAS-HONESTIDADE-DETECTORES-DISJUNTOS`. A escada manda, com estas palavras,
+*"pare de consertar e vá medir a fronteira"* — e esta é a primeira rodada em que a medição foi
+feita **antes** de escrever qualquer linha de conserto, em vez de depois de um remendo reprovado.
+
+**O método, porque ele é reaproveitável.** Os 39 `CHOKEPOINT` de `marker_logs` desde **21/08** (o
+corte importa: só a partir dali o `raw_excerpt` guarda a resposta ORIGINAL, e não a nota já
+rebaixada) foram pareados cada um com o último inbound dos 15 min anteriores. Aí cada linha
+acusada por `hasCompletionClaim`/`hasWeakCompletionClaim` foi classificada por **sobreposição de
+palavras de conteúdo** com a fala do usuário (≥4 chars, sem stopword; eco = 2+ palavras vindas do
+inbound). Isso troca "olhar e achar parecido" por um número que a próxima rodada pode refazer.
+
+```
+ECO_TOTAL .......... 9/39 (23%)   TOM repete o que a pessoa relatou sobre si → o guard come VERDADE
+claim_propria ...... 18/39 (46%)  afirmação de escrita própria → o chokepoint está CERTO
+sem_linha_acusada .. 12/39 (31%)  nenhuma claim → falso-fire de OUTRA classe
+vetados por isReportedStateClaim HOJE ....... 0 de 39
+```
+
+🔑 **O número que decide é o último, e ele não era a hipótese.** A leitura natural do caso Dudu era
+"o veto tem um furo e o furo é o agente implícito". A medição diz coisa maior: o veto construído
+exatamente para esta classe **não alcança um único caso da população inteira**. Ele é passado de um
+só lugar em todo o `src/` (`services/group-chat-engine.js:1220`, conferido por grep) e exige agente
+terceiro nomeado ou marcador de inferência em **toda** linha acusada. Não é veto com furo — é veto
+estruturalmente inalcançável. É a forma já registrada cinco vezes em 07-08/09 (*o mecanismo existe
+e não está ligado nesta porta*), agora medida sobre população em vez de sobre um incidente.
+
+E a medição derruba de quebra a segunda hipótese óbvia: os **18/46%** dizem que quase metade dos
+disparos está correta, então **desligar ou afrouxar o chokepoint não é opção** — o que separa as
+duas metades não é a força do detector, é saber **quem** fez o que a frase descreve, e isso não
+está no texto, está no turno anterior.
+
+⚠️ **Ressalva que ficou escrita no achado e no relatório:** os 9 são proxy por tokens, não contagem
+conferida à mão. O scaffold de reply-quote injeta a fala **anterior do próprio TOM** dentro do
+inbound e pode inflar o eco — a linha de 27/08 19:23 (inbound literal *"Campo Grande"* + scaffold)
+é suspeita por isso. Leia como "ordem de 20-25%", não como 9 exatos. É prima da regra de 07/09
+(`falaReal(texto)`): enquanto o scaffold não for removido num lugar só, ele contamina inclusive as
+**medições**, não apenas os detectores.
+
+Proposta de virar código: a classificação acima deveria ser uma função no `gov-runner`
+(`fronteiraDoChokepoint(desde)`), rodada toda vez que a trava de commits disparar num guard. A
+trava hoje diz "vá medir" e cada rodada inventa a própria medição — foi barato desta vez porque o
+`raw_excerpt` guarda o original, e não vai ser barato no próximo guard.
+
+### ETAPA 7 — pergunta de desenho levada ao grupo e SEM RESPOSTA: não há mecanismo, e a rodada repete
+
+**Ocorrências:** 3 rodadas sobre o MESMO achado (18/09, 19/09, 20/09).
+
+Em 18/09 09:14 BRT a rodada levou ao grupo, corretamente, a pergunta de desenho do achado do Dudu:
+*"Alargar por forma esbarra na regra de falso-fire medido. Vale mexer nisso amanhã?"*. Ninguém
+respondeu — as únicas mensagens humanas na janela foram aprovações de memória. Em 19/09 a rodada
+repetiu o adiamento (*"⚠️ Larguei 1: o achado do Dudu (16/09)…"*). Hoje foi a terceira.
+
+O protocolo tem caminho para *levar* uma decisão ao grupo e **nenhum** para o caso de ela não
+voltar. O efeito medido é caro e silencioso: o mesmo achado é reinvestigado do zero a cada rodada
+— localizar o turno, reproduzir, rodar controles, reler a raiz — e o custo é pago inteiro toda vez,
+enquanto o achado envelhece no acervo como se ninguém tivesse olhado para ele. É a mesma constatação
+de 12/09 (*diagnóstico escrito na escada não impede a repetição; só parou quando virou código*).
+
+O que salvou esta rodada de ser a terceira repetição idêntica foi a trava da ETAPA 1 ter apontado
+para um trabalho DIFERENTE — medir a fronteira em vez de reinvestigar o caso. Isso é sorte de
+calendário, não desenho.
+
+Proposta de virar código, barata: o achado que já foi ao grupo como pergunta ganha
+`status='aguardando_decisao'` com a data da pergunta e o link da mensagem. A rodada seguinte não o
+reinvestiga — só relata *"segue aguardando decisão desde DD/MM (N dias)"*. E, passados 3 dias sem
+resposta, o relatório abre com isso em vez de enterrar no item 3.
