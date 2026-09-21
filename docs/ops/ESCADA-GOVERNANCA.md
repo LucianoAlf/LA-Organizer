@@ -2616,3 +2616,77 @@ Proposta de virar código, barata: o achado que já foi ao grupo como pergunta g
 `status='aguardando_decisao'` com a data da pergunta e o link da mensagem. A rodada seguinte não o
 reinvestiga — só relata *"segue aguardando decisão desde DD/MM (N dias)"*. E, passados 3 dias sem
 resposta, o relatório abre com isso em vez de enterrar no item 3.
+
+### ETAPA 3 — classe nova: a recusa dispara porque o trabalho JÁ DEU CERTO
+
+**Ocorrência:** 1 (21/09), e é a correção da rodada.
+
+Ana Paula, 21/09 06:39–06:41 BRT. Ela pediu para excluir de vez um lembrete diário; o TOM
+perguntou série-ou-só-domingos, ela respondeu, e o cancel de série **executou**: `EVENT_UPDATE
+executed ok=1` às **06:40:07.743**, `series_ended_at` no molde `64ce8cae` e as 11 ocorrências em
+`cancelled` no mesmo segundo. Aí o LLM re-emitiu o MESMO marker 15s depois e o TOM respondeu
+*"Não achei o evento _"Marcar presencas do horário"_ na sua agenda — me diz o nome certinho?"* —
+**duas vezes, palavra por palavra**. Ela desistiu: *"Depois vemos isso"*.
+
+A raiz não é o cancel nem o LLM: é o **resolvedor**. `escolherEventoPorTitulo` filtra
+`done`/`cancelled` e o molde para fora de `vivos` **antes** de casar o título
+(`src/lib/evento-por-titulo.js:33`). Com isso ele não tem como distinguir duas coisas opostas:
+*"esse evento não existe"* e *"esse evento existe e já está exatamente no estado que você pediu"*.
+As duas voltam como `{evento:null}`, e o engine tem uma frase só para as duas — uma frase **falsa**
+no segundo caso.
+
+🔑 A generalização, e é o que vale levar: **re-emit idempotente transforma sucesso em mentira
+sempre que o resolvedor for fail-closed por status.** Não é bug de escrita, é bug de leitura — e
+aparece justamente quando tudo funcionou. Antes de acreditar num `rejected` de marker, olhe a
+TABELA DE EFEITO (`series_ended_at`, `updated_at`, `status` das ocorrências): se o estado já é o
+pedido, o `rejected` está descrevendo a segunda tentativa, não a primeira.
+
+Escopo medido antes de embarcar (regra de 04/09): 141 `EVENT_UPDATE` em 90 dias, 10 `rejected`, e
+**só 2 com "não achei o evento"** — as duas da Ana, hoje, as duas `cancel/scope=series`. Por isso o
+ramo novo é `cancel`→`cancelled` e nada mais; estender para `complete`→`done` seria escopo sem
+medição. Prova de reversão: ANTES 7/8 (`testCodeFailure` na linha do `jaNoEstado`) → DEPOIS 8/8;
+suíte 5353/5353 `fail 0`; commit `ddb9c889`.
+
+### ETAPA 4 — a frase honesta nova pode ser comida pela SUA PRÓPRIA porta de honestidade
+
+**Ocorrência:** 1 (21/09), evitada a tempo.
+
+A primeira redação da mensagem honesta acima era *"…já está encerrada, não vou mais cobrar isso"*.
+`REPLY_PROMISE_RE` (`promise-honesty.js:16`) casa `paro/vou parar de te cobrar` — e a porta de cima
+**reescreve o `reply`**, então a minha própria correção teria sido apagada antes de chegar na Ana,
+sem erro e sem log. Reescrita como afirmação de ESTADO pura e **medida**, com controle:
+`downgradeEmptyPromise fired=false` e `sanitize(...,'failed')` preserva 111 de 111 chars, enquanto o
+controle `'Cancelei a série e paro de te cobrar isso.'` dispara nas duas portas.
+
+Regra: **toda frase nova que o engine passe a emitir em ramo de falha tem que ser rodada pelas
+portas de honestidade antes de embarcar, com um controle que dispare.** Custa uma chamada. A catraca
+de fonte do teste fixa isso (`assert.doesNotMatch` proibindo `cobrar|Cancelei|Encerrei` na frase),
+senão a próxima edição de wording reintroduz o problema em silêncio.
+
+### ETAPA 2 (varredura) — nota da escada que nomeia alvo vivo é ARTEFATO DATADO
+
+**Ocorrências:** 2 (08/09 para commits, 21/09 para a própria escada).
+
+Em 08/09 ficou escrito que commit, log e mensagem são artefatos datados e que só o estado atual do
+código decide. Hoje isso bateu na escada em si. Dois alvos que ela nomeava como vivos caíram na
+primeira medição:
+
+- *"o alvo mais maduro para a próxima rodada"* (09/09, Bianca "Tomar remédios" caindo em
+  `TASK_UPDATE all_failed` mudo): **já corrigido** por `f6bff982`. Produção confirma — `habit_logs`
+  em 16/09, 17/09 e 18/09 no segundo exato do inbound, `current_streak=3`.
+- *"anomalia MEDIDA e NÃO explicada"* (10/09, `HABIT_ACTION,HABIT_ACTION` vazando com `/gi` nos dois
+  lados): os 7 turnos são de 28/05 a 25/08 e o `/gi` entrou em `7134134c`, **30/08** — todos
+  anteriores. É falta de oportunidade, exatamente como a ETAPA 2.6 manda checar para parser recém-
+  nascido. **A regra de data de nascimento vale para o CONSERTO do parser, não só para o parser.**
+
+Regra: **antes de trabalhar um alvo que a escada nomeia, re-meça.** A escada é registro do que era
+verdade no dia em que foi escrita; ela envelhece igual a comentário de código.
+
+### ETAPA 6 — `tom_known_issues.area` é NOT NULL, e o insert falha sem ela
+
+**Ocorrência:** 1 (21/09). Detalhe de schema, custa uma tentativa perdida por rodada.
+
+O insert do KI morreu com `null value in column "area" ... violates not-null constraint`. Vale
+junto uma correção de leitura: hoje `tom_audit_findings.severity` veio **toda em português**
+(`medio` 350, `alto` 54, `baixo` 62, zero `high`) — os registros de 30/08 e 02/09 sobre a coluna
+mista podem estar desatualizados, mas contar por `in ('alto','high')` continua sendo o mais seguro.
