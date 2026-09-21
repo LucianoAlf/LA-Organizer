@@ -26,11 +26,47 @@ test('títulos diferentes que batem → ambíguo (pergunta), nada casa → null,
   assert.strictEqual(escolherEventoPorTitulo('xy', evs, AGORA, 'complete').evento, null, 'curto demais');
 });
 
+// EVENT-CANCEL-SERIE-JA-ENCERRADA (Ana Paula 21/09 06:40 BRT). O cancel de série FUNCIONOU às
+// 06:40:07 (series_ended_at no molde + 11 ocorrências cancelled); o LLM re-emitiu o mesmo
+// <<EVENT_UPDATE>> cancel/scope=series e o resolvedor, que descarta cancelado/fechado/molde ANTES
+// de casar, devolveu null → "Não achei o evento … me diz o nome certinho?" duas vezes. Ela
+// desistiu ("Depois vemos isso") achando que o pedido tinha falhado.
+test('Ana 21/09: série já cancelada não é "não achei" — o resolvedor diz que já está no estado pedido', () => {
+  const T = 'Marcar presencas do horário';
+  const evs = [];
+  for (let i = 0; i < 11; i++) {
+    evs.push(EV('o' + i, T, '2026-09-' + String(11 + i).padStart(2, '0') + 'T09:00:00Z',
+      { status: 'cancelled', recurrence_parent_id: '64ce8cae' }));
+  }
+  evs.push(EV('64ce8cae', T, '2026-09-10T09:00:00Z', { status: 'done', recurrence_rule: 'FREQ=DAILY' }));
+  const agora = Date.parse('2026-09-21T09:40:22Z');
+  const r = escolherEventoPorTitulo(T, evs, agora, 'cancel');
+  assert.strictEqual(r.evento, null, 'não há o que cancelar de novo');
+  assert.strictEqual(r.jaNoEstado, 'cancelled', 'e o engine precisa saber que é isso, não ausência');
+});
+test('controle: título ausente segue null SEM jaNoEstado, e fechado-só não vira "já cancelado"', () => {
+  const evs = [EV('a', 'Reunião ADM', '2026-09-20T13:00:00Z'),
+    EV('d', 'Ensaio geral', '2026-09-19T13:00:00Z', { status: 'done' })];
+  const agora = Date.parse('2026-09-21T09:40:22Z');
+  const r1 = escolherEventoPorTitulo('Aula de bateria', evs, agora, 'cancel');
+  assert.strictEqual(r1.evento, null);
+  assert.strictEqual(r1.jaNoEstado, undefined, 'ausência de verdade não pode virar "já encerrada"');
+  const r2 = escolherEventoPorTitulo('Ensaio geral', evs, agora, 'cancel');
+  assert.strictEqual(r2.jaNoEstado, undefined, 'done não é cancelled — fora do escopo medido');
+  assert.strictEqual(escolherEventoPorTitulo('Reunião ADM', evs, agora, 'cancel').evento.id, 'a', 'evento vivo segue resolvendo');
+});
+
 // Ligação no engine (catraca de fonte): o helper puro só protege se o engine usar.
 const ENG = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'engine.js'), 'utf8');
 test('engine: EVENT_UPDATE sem id e com title passa na validação e resolve pelo título', () => {
   assert.match(ENG, /const _porTitulo = \(a\.id === undefined \|\| a\.id === null \|\| a\.id === ''\) && \['complete', 'cancel', 'reschedule'\]\.includes\(a\.action\)/);
   assert.match(ENG, /const _rt = await resolveEventByTitle\(collaborator\.id, a\.title, a\.action\);/);
+});
+test('engine: re-emit de cancel em série já encerrada diz o ESTADO, não "não achei"', () => {
+  assert.match(ENG, /if \(!ev && _rt\.jaNoEstado === 'cancelled'\) \{\s*failMessages\.push\('A série _"' \+ a\.title\.slice\(0, 60\) \+ '"_ já está encerrada/);
+  // e a frase honesta não pode ser comida pelas portas de honestidade: sem verbo de promessa
+  // (REPLY_PROMISE_RE) e sem claim de conclusão em 1ª pessoa (hasCompletionClaim).
+  assert.doesNotMatch(ENG, /'A série _"' \+ a\.title\.slice\(0, 60\) \+ '"_ já está encerrada[^']*(?:cobrar|Cancelei|Encerrei)/);
 });
 test('engine: delegação recusada diz o motivo (DELEGATE-RECUSA-MUDA, 824d11c7)', () => {
   assert.match(ENG, /delegate REJECTED id=\$\{a\.id\} \(not owned by \$\{last4\} or not found\)\x60\);\s*\/\/ DELEGATE-RECUSA-MUDA[\s\S]{0,400}failMessages\.push\(/);

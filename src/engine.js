@@ -3594,7 +3594,12 @@ async function applyEventUpdates(collaborator, actions) {
           continue;
         }
         ev = _rt.evento;
-        if (!ev) failMessages.push('Não achei o evento _"' + a.title.slice(0, 60) + '"_ na sua agenda — me diz o nome certinho?');
+        // EVENT-CANCEL-SERIE-JA-ENCERRADA (Ana Paula 21/09 06:40 BRT): o cancel de série executou
+        // (ok=1) e o LLM re-emitiu o mesmo marker 15s depois. Dizer "não achei" num re-emit é FALSO
+        // sobre o estado — o evento existe e já está exatamente no estado pedido.
+        if (!ev && _rt.jaNoEstado === 'cancelled') {
+          failMessages.push('A série _"' + a.title.slice(0, 60) + '"_ já está encerrada — nenhuma ocorrência dela segue aberta na sua agenda.');
+        } else if (!ev) failMessages.push('Não achei o evento _"' + a.title.slice(0, 60) + '"_ na sua agenda — me diz o nome certinho?');
       }
       if (!ev) {
         console.warn(`[Event] ${a.action} REJECTED id=${a.id} (not owned by ${last4} or not found)`);
