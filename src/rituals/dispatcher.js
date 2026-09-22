@@ -7463,6 +7463,17 @@ async function checkEventReminders() {
       await supabase.from('event_reminders').update({ sent_at: nowIso }).eq('id', r.id);
       continue;
     }
+    // Lembrete de evento é alerta PRÉ-evento (remind_at = start_at − minutos). Evento
+    // que já começou não tem mais alerta a dar: consome em silêncio. Tem que vir ANTES
+    // dos dois defers abaixo — eles adiam sem consumir, e sem este piso a fila de um
+    // fim de semana inteiro era despejada à meia-noite de segunda (caso Ana Paula 21/09).
+    const { lembreteDeEventoVencido } = require('../lib/lembrete-evento-vencido');
+    const _venc = lembreteDeEventoVencido(ev.start_at, new Date(nowIso));
+    if (_venc.vencido) {
+      await supabase.from('event_reminders').update({ sent_at: nowIso }).eq('id', r.id);
+      console.log(`[EventReminders] skip vencido ${String(r.id).slice(0,8)} — evento começou há ${_venc.atrasoMin}min`);
+      continue;
+    }
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
       console.log(`[EventReminders] defer ${String(r.id).slice(0,8)} — DND until ${dnd.until}`);
