@@ -2690,3 +2690,48 @@ O insert do KI morreu com `null value in column "area" ... violates not-null con
 junto uma correção de leitura: hoje `tom_audit_findings.severity` veio **toda em português**
 (`medio` 350, `alto` 54, `baixo` 62, zero `high`) — os registros de 30/08 e 02/09 sobre a coluna
 mista podem estar desatualizados, mas contar por `in ('alto','high')` continua sendo o mais seguro.
+
+### ETAPA 3 — classe nova: o DEFER SEM EXPIRAÇÃO transforma alerta pré-evento em mentira de madrugada
+
+**Ocorrência:** 1 (22/09), e é a correção da rodada.
+
+O achado chegou como `proactive_overreach` com o resumo *"TOM enviou lembrete no domingo, dia de
+folga da usuária"*. Lido assim, o alvo é o gate de quiet/folga — e o gate estava **funcionando**:
+foi justamente ele que segurou os lembretes. O que a Ana Paula recebeu foram dois
+`📅 *Lembrete:* (15min antes) Marcar presenças do horário` na **meia-noite de SEGUNDA** (21/09
+00:00:14 e 00:00:15 BRT), sobre eventos de **sábado 19/09 13:00** e **domingo 20/09 13:00** —
+atraso de **35h e 11h**. Ela respondeu *"Foi domingo tom, domingo é folga"*, pediu silêncio de
+domingo, e encerrou com *"Depois vemos isso"*.
+
+A raiz é a forma do adiamento, não a condição dele. `checkEventReminders`
+(`src/rituals/dispatcher.js`) adia por DND e por quiet_day com `continue` **sem consumir**
+`sent_at`, e a query de `event_reminders` **não tem piso inferior** de `remind_at`. Com isso o
+adiamento não tem expiração: a fila de um fim de semana inteiro fica viva e é despejada no
+instante em que o dia vira. A assinatura no banco é inequívoca — o padrão saudável é
+`sent_at ≈ remind_at + ~13s` (35 das 39 linhas da Ana), e as quatro patológicas são todas
+`remind_at` de sábado/domingo 12:45 com `sent_at` na segunda 00:00:1x.
+
+⚠️ **A hipótese óbvia estava errada e custou uma query para cair.** As duas ocorrências do fim de
+semana estão `cancelled` hoje, então "evento cancelado continua mandando lembrete" parece o
+diagnóstico. `updated_at` das duas é **21/09 06:40:07** — seis horas DEPOIS do envio. Estavam
+`scheduled` quando dispararam. Ler o estado de hoje e projetá-lo sobre o incidente inverte o
+veredito; o que desempata é a coluna de quando o estado mudou.
+
+🔑 A regra, e vale para todo gate que adia: **`continue` sem consumir é uma promessa de reentrega
+— pergunte até quando ela vale.** Se o item tem validade (alerta pré-evento, lembrete de prazo,
+convite), o adiamento precisa de um piso, senão o gate de silêncio vira um acumulador que estoura
+no primeiro minuto em que o silêncio acaba. O piso aqui foi barato porque
+`buildEventReminderRows` garante `remind_at = start_at − minutos`: lembrete de evento é
+**sempre** pré-evento, logo evento começado não tem mais alerta a dar.
+
+**Porta nova, não reincidência.** A família já tinha mecanismo do lado de tarefa —
+`REMINDER-STALE-PAST` (10/06, caso Geraldo/Rose, mesma assinatura de madrugada) — e ele nunca foi
+ligado em `event_reminders`. E não bastaria ligar: o predicado de lá é `remind_at < created_at`
+("nasceu vencido"), e a linha da Ana **nasceu sã** e venceu adiada. Mesmo sintoma, predicado
+diferente — é o padrão já registrado cinco vezes em 07-08/09 (*o mecanismo existe e talvez não
+esteja ligado nesta porta*), com o agravante de que copiar o guard existente não teria resolvido.
+
+Prova de reversão: 6/7 → 7/7 no teste novo, com o vermelho em `testCodeFailure`
+(*"checkEventReminders não chama lembreteDeEventoVencido"*) — a catraca de fonte fixa que o guard
+roda ANTES dos dois defers, que é a única ordem que funciona. Suíte 5360/5360 `fail 0`, commit
+`0b4eeef8`.
