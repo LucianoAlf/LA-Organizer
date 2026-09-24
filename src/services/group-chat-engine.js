@@ -1070,7 +1070,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   // O `onResidual` fecha o par do raspador: ele arranca, isto REGISTRA. Sem a linha em
   // marker_logs, "nenhum marcador vazou hoje" e "vazou e foi raspado 40 vezes" ficam iguais.
   const residuaisDoTurno = [];
-  const content = buildTomContent(reply, actions, { onResidual: (n) => residuaisDoTurno.push(...n) });
+  const content = buildTomContent(reply, actions, { onResidual: (n) => residuaisDoTurno.push(...n), userText: text });
   if (residuaisDoTurno.length) {
     try {
       const { error: _e } = await supabase.from('marker_logs').insert({
@@ -1211,7 +1211,9 @@ function buildTomContent(rawReply, actions, opts) {
         // mandou o time desconfiar dela. Veto NARROW, com cinto de segurança dentro de
         // isReportedStateClaim (qualquer 1ª pessoa ou ✅ na fala desarma o veto e a guarda
         // dispara como sempre).
-        const relato = isReportedStateClaim(prose);
+        // + eco do relato do próprio membro (achado a0a688e2) — ver lib/eco-relato-usuario.js.
+        const { ecoDoRelatoDoUsuario } = require('../lib/eco-relato-usuario');
+        const relato = isReportedStateClaim(prose) || ecoDoRelatoDoUsuario((opts && opts.userText) || '', prose);
         if (relato) console.log('[GroupChat] chokepoint VETADO: fala relata estado de terceiro/inferência, não escrita própria');
         prose = enforceNoMarkerHonesty(prose, {
           nothingPersisted: true,
