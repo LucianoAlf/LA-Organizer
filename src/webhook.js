@@ -36,12 +36,27 @@ async function pdfToText(buf, mime, caption) {
   // cartão de 1 item" → pedia o cartão. Testa a assinatura de boleto (linha digitável +
   // vocabulário) no texto cru; se for, extrai estruturado. FAIL-SAFE: qualquer erro na extração
   // NÃO cai no fluxo de cartão — segue pro analyzeInvoice como qualquer PDF.
+  // R2 (Rose 15/09): 5 DAS iguais caíram em 3 rotas (boleto, FATURA DE CARTÃO, texto cru) porque a
+  // decisão dependia do resumo do modelo ter "beneficiário/cedente" — que o DAS não tem. O texto do
+  // PDF (pdftotext, sem modelo) traz a linha digitável; se ela passa nos dígitos verificadores, É
+  // boleto, e o código usado é ESTE, não o que o modelo copiou.
+  let linhasDoPdf = [];
   try {
-    if (cru.ok && boletoParse.looksLikeBoleto(cru.text)) {
+    const { textoDoPdf } = require('./finance/pdf-texto');
+    linhasDoPdf = boletoParse.extractLinhasValidas(await textoDoPdf(buf));
+  } catch (_) { linhasDoPdf = []; }
+  try {
+    if (linhasDoPdf.length > 0 || (cru.ok && boletoParse.looksLikeBoleto(cru.text))) {
       const b = await gemini.analyzeBoleto(buf, caption);
-      if (b.ok && b.isBoleto && b.boleto) {
-        console.log(`[Webhook] boleto detectado: ${b.boleto.beneficiario || '?'} R$ ${b.boleto.valor}`);
-        return `[BOLETO_JSON]${JSON.stringify(b.boleto)}[/BOLETO_JSON]\n${captionLine}Boleto ${b.boleto.beneficiario || ''} · R$ ${Number(b.boleto.valor || 0).toFixed(2)}`;
+      let boleto = (b.ok && b.isBoleto && b.boleto) ? b.boleto : null;
+      // A linha provada pelo DV vale mesmo se o modelo errou ou disse "não é boleto".
+      if (linhasDoPdf.length) {
+        boleto = { isBoleto: true, ...(boleto || {}), linha_digitavel: linhasDoPdf[0] };
+        if (!(Number(boleto.valor) > 0)) boleto.valor = boletoParse.parseBoletoValor(linhasDoPdf[0]);
+      }
+      if (boleto) {
+        console.log(`[Webhook] boleto detectado: ${boleto.beneficiario || '?'} R$ ${boleto.valor} linha_do_pdf=${linhasDoPdf.length > 0}`);
+        return `[BOLETO_JSON]${JSON.stringify(boleto)}[/BOLETO_JSON]\n${captionLine}Boleto ${boleto.beneficiario || ''} · R$ ${Number(boleto.valor || 0).toFixed(2)}`;
       }
     }
   } catch (e) { console.warn('[Webhook] rota boleto err (sigo pra fatura):', e.message); }

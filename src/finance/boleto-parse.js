@@ -9,15 +9,40 @@ const RE_FATURA = /\bfatura\b|limite\s*(dispon[íi]vel|de\s*cr[ée]dito)|cart[ã
 
 function _digitsOnly(s) { return String(s || '').replace(/\D/g, ''); }
 
+// R1 (Rose 15/09): DAS/DARF/GPS (arrecadação) imprimem cada bloco com HÍFEN antes do DV
+// ("85800000004-0 01450328261-5 …"). Sem o hífen na classe, a linha do DAS nunca era achada — nem
+// quando o modelo a copiava certo ("EXATAMENTE como impressa").
 function extractLinhaDigitavel(text) {
   const t = String(text || '');
-  const m = t.match(/(\d[\d.\s]{44,60}\d)/g);
-  if (!m) return null;
+  // Linha a linha (sem quebra de linha na classe): uma data na linha de cima ("30/09/2026")
+  // colava na linha digitável e o total de dígitos deixava de ser 47/48.
+  const m = t.split(/\r?\n/).flatMap((l) => l.match(/\d[\d. \t-]{44,60}\d/g) || []);
+  if (!m.length) return null;
   for (const cand of m) {
     const d = _digitsOnly(cand);
     if (d.length === 47 || d.length === 48) return d;
   }
   return null;
+}
+
+// Todas as linhas digitáveis VÁLIDAS (dígito verificador conferido) de um texto — pra ler do
+// próprio PDF, sem modelo. Linha a linha do texto (não junta números de linhas vizinhas); dentro da
+// linha, janela de 48/47 dígitos, porque o layout pode colar a linha a outro número. Só entra o
+// que passa na validação: número de documento, CNPJ e datas nunca passam.
+function extractLinhasValidas(text) {
+  const out = [];
+  for (const linha of String(text == null ? '' : text).split(/\r?\n/)) {
+    for (const cand of linha.match(/\d[\d.\s-]{42,90}\d/g) || []) {
+      const d = _digitsOnly(cand);
+      for (const len of [48, 47]) {
+        for (let i = 0; i + len <= d.length; i++) {
+          const w = d.slice(i, i + len);
+          if (!out.includes(w) && validateLinhaDigitavel(w).valid) out.push(w);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function looksLikeBoleto(text) {
@@ -94,7 +119,9 @@ function parseBoletoValor(digits) {
     return centavos > 0 ? centavos / 100 : null;
   }
   if (d.length === 48) {
-    const centavos = Number(d.slice(4, 15));
+    // R5: a linha de arrecadação intercala um DV a cada 11 dígitos (posição 11 do 1º bloco). O valor
+    // são as posições 4–14 do CÓDIGO DE BARRAS: 4–10 do 1º bloco + 0–3 do 2º. Antes lia o DV no meio.
+    const centavos = Number(d.slice(4, 11) + d.slice(12, 16));
     return centavos > 0 ? centavos / 100 : null;
   }
   return null;
@@ -112,6 +139,6 @@ function formatLinhaDigitavel(digits) {
 }
 
 module.exports = {
-  looksLikeBoleto, extractLinhaDigitavel, validateLinhaDigitavel,
+  looksLikeBoleto, extractLinhaDigitavel, extractLinhasValidas, validateLinhaDigitavel,
   formatLinhaDigitavel, parseBoletoValor,
 };

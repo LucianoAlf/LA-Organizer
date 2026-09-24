@@ -10788,7 +10788,29 @@ async function processMessage(phone, text, raw = {}) {
   // verificador bater (pagamento errado). Abre intent bill_from_boleto; a resposta (recorrência +
   // conta) confirma e chama createBill.
   try {
-    const _bMatch = text.match(/\[BOLETO_JSON\]([\s\S]*?)\[\/BOLETO_JSON\]/);
+    // R4 (Rose 15/09): rajada de vários PDFs — antes só o 1º [BOLETO_JSON] era tratado e o resto
+    // sumia calado. Agora todos; com mais de um, a resposta é a LISTA (sem abrir criação de conta).
+    const _bTodos = Array.from(text.matchAll(/\[BOLETO_JSON\]([\s\S]*?)\[\/BOLETO_JSON\]/g));
+    const _bMatch = _bTodos[0];
+    // R3: o nome de quem mandou (era "Luciano" fixo no texto).
+    const _nomeBoleto = String((collab && (collab.preferred_name || collab.full_name)) || '').trim().split(/\s+/)[0] || null;
+    if (_bTodos.length > 1) {
+      const boletoParse = require('./finance/boleto-parse');
+      const { buildListaDeBoletos } = require('./finance/boleto-preview');
+      const _lista = [];
+      for (const m of _bTodos) {
+        try {
+          const _x = JSON.parse(m[1]);
+          const _l = boletoParse.extractLinhaDigitavel(_x.linha_digitavel || '');
+          _lista.push({ beneficiario: _x.beneficiario, valor: _x.valor, vencimento: _x.vencimento, linha: _l, barcodeOk: !!(_l && boletoParse.validateLinhaDigitavel(_l).valid) });
+        } catch (_) { /* bloco ilegível não derruba os outros */ }
+      }
+      const _msgLista = buildListaDeBoletos({ nome: _nomeBoleto, boletos: _lista });
+      await whatsapp.sendMessage(phone, _msgLista);
+      await logConversation(collab.id, 'outbound', _msgLista);
+      console.log(`[Boleto] rajada: ${_lista.length} boleto(s) listados, ${_lista.filter((b) => b.barcodeOk).length} com código conferido`);
+      return;
+    }
     if (_bMatch) {
       const boletoParse = require('./finance/boleto-parse');
       const { buildBoletoPreview } = require('./finance/boleto-preview');
@@ -10806,9 +10828,13 @@ async function processMessage(phone, text, raw = {}) {
         return;
       }
       console.log(`[Boleto] intent aberta: ${_b.beneficiario || '?'} R$ ${_b.valor} barcode_ok=${_barcodeOk}`);
-      await whatsapp.sendMessage(phone, buildBoletoPreview({
-        beneficiario: _b.beneficiario, valor: _b.valor, vencimento: _b.vencimento, barcodeOk: _barcodeOk,
-      }));
+      const _msgBoleto = buildBoletoPreview({
+        nome: _nomeBoleto, beneficiario: _b.beneficiario, valor: _b.valor, vencimento: _b.vencimento, barcodeOk: _barcodeOk, linha: _barcodeOk ? _linha : null,
+      });
+      await whatsapp.sendMessage(phone, _msgBoleto);
+      // Sem isto a prévia não existia pro próprio TOM: no turno seguinte ele não sabia o que tinha
+      // perguntado (Rose 15/09: "Desculpa a antecipação" sem saber de quê) e a auditoria não via.
+      await logConversation(collab.id, 'outbound', _msgBoleto);
       return;
     }
   } catch (e) { console.warn('[Boleto] intercept err:', e.message); }
@@ -10947,6 +10973,7 @@ async function processMessage(phone, text, raw = {}) {
       if (_boletoDec === 'no') {
         await pendingIntents.resolveIntent(_boletoIntent.id, 'denied', 'user cancelou boleto');
         await whatsapp.sendMessage(phone, 'Beleza, não criei a conta. 👍');
+        await logConversation(collab.id, 'outbound', 'Beleza, não criei a conta. 👍');
         return;
       }
       const _repete = /\b(repete|todo\s*m[êe]s|mensal|recorrente|fixa|fixo)\b/.test(_low);
@@ -10978,7 +11005,9 @@ async function processMessage(phone, text, raw = {}) {
       const _dm = _vencOk ? `${_p.vencimento.slice(8, 10)}/${_p.vencimento.slice(5, 7)}` : '?';
       const _quando = _recurrence === 'once' ? `dia ${_dm}` : `todo dia ${_vencOk ? _p.vencimento.slice(8, 10) : '?'}`;
       console.log(`[Boleto] conta criada: ${_boletoNome} ${_recurrence} venc=${_dm} barcode=${!!_p.barcode} veiculo=${_p.veiculo || '-'}`);
-      await whatsapp.sendMessage(phone, `✅ Criei a conta *${_boletoNome}* (R$ ${Number(_p.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}), ${_recurrence === 'once' ? 'única' : 'mensal'}, vencendo ${_quando}. Te lembro no dia${_p.barcode ? ' com o código pra copiar' : ''}. 👍`);
+      const _msgCriada = `✅ Criei a conta *${_boletoNome}* (R$ ${Number(_p.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}), ${_recurrence === 'once' ? 'única' : 'mensal'}, vencendo ${_quando}. Te lembro no dia${_p.barcode ? ' com o código pra copiar' : ''}. 👍`;
+      await whatsapp.sendMessage(phone, _msgCriada);
+      await logConversation(collab.id, 'outbound', _msgCriada);
       return;
     }
   } catch (e) { console.warn('[Boleto] resposta err:', e.message); }
