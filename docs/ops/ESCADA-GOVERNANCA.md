@@ -2735,3 +2735,81 @@ Prova de reversão: 6/7 → 7/7 no teste novo, com o vermelho em `testCodeFailur
 (*"checkEventReminders não chama lembreteDeEventoVencido"*) — a catraca de fonte fixa que o guard
 roda ANTES dos dois defers, que é a única ordem que funciona. Suíte 5360/5360 `fail 0`, commit
 `0b4eeef8`.
+
+### ETAPA 3 — a LISTA DE PORTAS enumerada à mão envelhece, e o custo é comportamento correto virar acervo
+
+**Ocorrências:** 4 (07/09, 10/09, 15/09, 24/09). É a forma mais reincidente de todo o registro.
+
+O mecanismo `PERGUNTA-NAO-E-FALHA` nasceu em **07/09** (`05d9f110`, 19:45:22 UTC) para um defeito
+de instrumento: quando o TOM PERGUNTA *"confirma?"*, ele remove os `complete` do lote e devolve a
+pergunta — reusando a plumbing de FALHA. `failCount` sobe, `okCount` fica zero, e o turno saudável
+era gravado como `TASK_UPDATE rejected all_failed:N`. A bandeira `_perguntouConfirmacao` (devolvida
+como `awaitingConfirm`) rebaixa isso para `skipped awaiting_confirm:N`.
+
+O conserto de 07/09 foi correto **no chamador** — o site que grava o veredito nunca mais mentiu
+sozinho, e há teste de contrato desde então. O que envelheceu foi o lado PRODUTOR: as portas que
+perguntam foram enumeradas **à mão**, e uma ficou de fora.
+
+Jéssica, **23/09 18:08:06 BRT**. O TOM tinha avisado *"amanhã está marcado: *Rose quentinhas*"*;
+ela respondeu por reply-quote **"Marcar como realizado"**; o guard de data futura respondeu
+*"está marcado pra 24/09 (ainda não chegou). Confirma que já foi feito mesmo assim?"* — pergunta
+perfeita, intent ancorada aberta, e gravada às 18:08:14 como **recusa**. A mesma porta já tinha
+disparado em **14/09 20:52**, com a mesma pessoa e a mesma tarefa.
+
+**O dano não é cosmético, e é auto-infligido:** esta escada manda o agente cruzar achado aberto com
+`marker_logs result='rejected'` — logo o turno saudável vira candidato de varredura, e candidato
+falso come rodada de um teto de duas correções por dia. O instrumento que deveria achar defeito
+passou a fabricá-lo.
+
+🔑 **A forma, já medida quatro vezes:** *o mecanismo existe e não está ligado nesta porta* — mas o
+que falha não é o mecanismo, é a **contagem das portas**. Em 10/09 o `PERSONAL_LIST_ACTION` ficou
+fora de uma varredura que se declarava exaustiva porque era parseado **inline**, sem função
+nomeada. Em 15/09 a quinta família de executor (`closing.items`) nasceu fora do enumerador. Hoje
+foi a terceira porta de pergunta. **Lista escrita à mão não tem como acusar a linha que nasceu
+depois dela.**
+
+O conserto embarcado troca a lista pelo **censo derivado da fonte**: o teste varre o corpo de
+`applyTaskActions`, acha todo `openIntent(collaborator.id, 'confirmation'`, e exige que cada um
+levante a bandeira dentro da própria janela. Um `assert.strictEqual(..., 3)` ao lado obriga quem
+abrir a porta nova a decidir, em vez de passar calado. O dup-bypass (~6139) fica fora de propósito
+e isso está escrito no teste: é `kind:'task_creation'` com `question_text` null — persiste
+rascunho, não pergunta nada.
+
+⚠️ E o predicado quase nasceu errado, pela razão já registrada em 16/09: a primeira redação era
+"qualquer `openIntent` dentro de `applyTaskActions`", que **acusaria o dup-bypass**, que está
+correto. Quem estreita para `'confirmation'` acha exatamente 3 sites, 2 sãos e 1 mudo. Contrato que
+acusa código certo é abandonado na primeira vez que incomoda.
+
+Prova de reversão: 10/11 → **11/11** no contrato, com o vermelho em `testCodeFailure` nomeando a
+linha (*"…levanta a bandeira (linhas: 5066)"*). Suíte 5368/5368 `fail 0`, commit `b745bc9f`.
+
+Medição que sustentou o `sinal_tipo='marker_log'`: `TASK_UPDATE%all_failed%` tem **88 linhas em 90
+dias**, mas só **5 desde o nascimento da bandeira** — e **2 das 5 são os dois incidentes deste
+defeito**. Densidade pós-fix baixa é o que torna o sensor legível; vale a ressalva de 09/09 de que
+o sinal nomeia a PORTA, não o defeito.
+
+⚠️ **Pegadinha de instrumento que custou um passo:** a primeira query devolveu `total: 1000` — o
+teto default de linhas do supabase-js, silencioso. Os "últimos all_failed" impressos terminavam em
+04/09 e **não eram os mais recentes**. Refeita com filtro + `order desc`, o incidente de 23/09
+apareceu. É a mesma classe do neutro-em-bloco (18/08): número redondo saindo de um `select` é
+hipótese, não medição.
+
+### ETAPA 7 — a pergunta de desenho não respondida chegou à 4ª rodada
+
+**Ocorrências:** 4 rodadas sobre o MESMO achado (18/09, 19/09, 20/09, 24/09).
+
+Em 20/09 ficou registrado que o protocolo tem caminho para *levar* uma decisão ao grupo e nenhum
+para o caso de ela não voltar, e que o efeito medido é o achado ser reinvestigado do zero a cada
+rodada. Hoje foi a quarta. O achado `a0a688e2` (Dudu, 16/09) segue aberto **de propósito** — a
+família está em parada pela ETAPA 1 (`src/lib/optimistic-confirm.js` re-medido hoje em **23 commits
+em 60 dias**, limiar 3) e a fronteira já foi medida em 20/09.
+
+O que mudou de 20/09 para hoje é só o custo de oportunidade ficar visível: o acervo tem **1 achado
+aberto, e é este**. Ou seja, a rodada inteira de varredura é estruturalmente vazia enquanto a
+decisão não volta — não por falta de trabalho, mas porque o único trabalho disponível está travado
+esperando uma resposta de três dias atrás.
+
+A proposta de 20/09 segue de pé e não foi embarcada: `status='aguardando_decisao'` com a data da
+pergunta, a rodada seguinte não reinvestiga e o relatório **abre** com isso passados 3 dias. Quatro
+ocorrências dizem que isto não vai ser resolvido por disciplina — é a mesma constatação de 12/09,
+quando o alarme falso do `batch_complete` só parou ao virar código.
