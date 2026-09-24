@@ -46,7 +46,7 @@ test('sucesso NAO precisa de payload (o raw e para diagnosticar recusa)', () => 
 // CATRACA. Sobe = alguem gravou uma recusa nova sem diagnostico.
 // Desce = alguem pagou divida (atualize o numero e comemore).
 // ---------------------------------------------------------------------------
-const CEGAS_CONHECIDAS = 57;
+const CEGAS_CONHECIDAS = 56; // 57 → 56 em 24/09: COORDINATION_REQUEST/schema_invalid pagou.
 
 test('CATRACA: rejeicao cega nao pode aumentar', () => {
   const n = (FONTE.match(/logMarker\([^;]*'rejected'[^;]*, null\)/g) || []).length;

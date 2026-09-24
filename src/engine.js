@@ -1778,7 +1778,9 @@ function parseCoordinationRequestMarker(text) {
   }
 
   if (items.length === 0) {
-    return { malformed: true, cleanText, reasons: malformedReasons };
+    // `reasons` diz o NOME do campo (`marker[0]:mode`); quem investiga precisa do VALOR
+    // que o LLM emitiu pra decidir entre alias novo e prompt envelhecido.
+    return { malformed: true, cleanText, reasons: malformedReasons, blocks: matches.map((m) => String(m[1] || '').trim()) };
   }
   if (matches.length > 1) {
     console.log(`[CoordinationRequest] processing ${items.length} markers (${malformedReasons.length} malformed dropped)`);
@@ -14731,7 +14733,8 @@ Output AGORA, apenas o marker:`;
     const parsedCoord = parseCoordinationRequestMarker(reply);
     if (parsedCoord && parsedCoord.malformed) {
       console.warn('[CoordinationRequest] WARN: all markers malformed, dropping block', parsedCoord.reasons);
-      await logMarker(collab.id, 'COORDINATION_REQUEST', 'rejected', 'schema_invalid', null);
+      await logMarker(collab.id, 'COORDINATION_REQUEST', 'rejected', 'schema_invalid',
+        { reasons: parsedCoord.reasons, blocks: parsedCoord.blocks }, { rawLimit: 4000 });
       // Fatia B — anti-mentira (espelha o guard de TASK_UPDATE/EVENT_CREATE): marker
       // rejeitado por schema_invalid NÃO entregou recado nenhum. Se o texto limpo do
       // LLM afirma envio ("avisei/mandei/repassei..."), troca por aviso honesto —
@@ -18056,4 +18059,5 @@ module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamS
 
 // LIDER-FECHA-TAREFA-DE-OUTRO: exposto pro teste de ponta a ponta do resolvedor.
 module.exports.resolveTaskParaLider = resolveTaskParaLider;
+module.exports.parseCoordinationRequestMarker = parseCoordinationRequestMarker;
 module.exports.despacharRecadoAgendado = despacharRecadoAgendado;
