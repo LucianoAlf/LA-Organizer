@@ -236,7 +236,7 @@ async function executarComandoFila(supabase, cmd) {
 }
 
 /** 07:30 no grupo de ops. Idempotente por dia; só grava o log com a entrega confirmada. */
-async function enviarFilaDeMemorias(sb, { postar, ymd, force = false, ownerId = DONO_DO_CANAL } = {}) {
+async function enviarFilaDeMemorias(sb, { postar, ymd, force = false, ownerId = DONO_DO_CANAL, chat } = {}) {
   if (typeof postar !== 'function') return { enviado: false, motivo: 'sem canal de envio' };
   if (!ownerId) return { enviado: false, motivo: 'sem owner para idempotência' };
   if (!force) {
@@ -245,17 +245,39 @@ async function enviarFilaDeMemorias(sb, { postar, ymd, force = false, ownerId = 
       .eq('reference_date', ymd).eq('status', 'sent').limit(1);
     if (ja && ja.length) return { enviado: false, motivo: 'já entregue hoje' };
   }
-  const itens = await listarFilaGlobal(sb);
+  let itens = await listarFilaGlobal(sb);
   if (itens === null) throw new Error('não consegui ler a fila');
   if (!itens.length) return { enviado: false, motivo: 'fila vazia' };
+  // TRIAGEM (Alf, 24/09 — o mesmo que a Maria faz): o que repete o histórico (ativa, pendente mais
+  // antiga ou já recusada) sai ANTES de numerar; a lista só traz o que é diferente. Falha-aberta:
+  // qualquer erro deixa a fila como estava. Ver services/triagem-memorias.js.
+  let tri = { ficam: itens, tiradas: [], cegas: 0 };
+  try {
+    const { triarFila } = require('./triagem-memorias');
+    tri = await triarFila(sb, itens, { chat: chat || require('../ai/provider').chat });
+  } catch (e) { console.warn('[FilaMemorias] triagem falhou (fila segue inteira):', e.message); }
+  const { linhaDaTriagem } = require('./triagem-memorias');
+  const aviso = linhaDaTriagem(tri);
+  if (tri.tiradas.length) console.log(`[FilaMemorias] triagem tirou ${tri.tiradas.length} repetida(s)`);
+  itens = tri.ficam;
+  if (!itens.length) {
+    // Tudo o que havia era repetido: diz isso uma vez, sem lista vazia.
+    const r0 = await postar(`${aviso}\n🧠 Nenhuma memória nova esperando o seu ok.`);
+    if (!r0) throw new Error('o aviso da triagem não foi entregue no grupo');
+    await sb.from('ritual_logs').insert({
+      collaborator_id: ownerId, ritual_type: 'fila_memorias', reference_date: ymd,
+      status: 'sent', sent_at: new Date().toISOString(), detail: `itens=0 tiradas=${tri.tiradas.length}`,
+    });
+    return { enviado: true, itens: 0, tiradas: tri.tiradas.length };
+  }
   const numerados = await numerarFila(sb, itens);
-  const r = await postar(renderFila(numerados));
+  const r = await postar(aviso ? `${aviso}\n\n${renderFila(numerados)}` : renderFila(numerados));
   if (!r) throw new Error('a lista não foi entregue no grupo');
   await sb.from('ritual_logs').insert({
     collaborator_id: ownerId, ritual_type: 'fila_memorias', reference_date: ymd,
-    status: 'sent', sent_at: new Date().toISOString(), detail: `itens=${numerados.length}`,
+    status: 'sent', sent_at: new Date().toISOString(), detail: `itens=${numerados.length} tiradas=${tri.tiradas.length}`,
   });
-  return { enviado: true, itens: numerados.length };
+  return { enviado: true, itens: numerados.length, tiradas: tri.tiradas.length };
 }
 
 module.exports = {
