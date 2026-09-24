@@ -5069,6 +5069,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             } catch (_) { /* intent é best-effort */ }
             console.warn(`[Task] complete BLOQUEADO (due futura ${fullTask.due_date}) — pedindo confirmação id=${String(fullTask.id).slice(0, 8)}`);
             _retidos.push(fullTask.title);
+            // Este ramo PERGUNTA; nao falha. Sem a bandeira o chamador grava
+            // `rejected all_failed` em cima de um turno saudavel (Jessica 23/09,
+            // "Marcar como realizado" numa tarefa de amanha).
+            _perguntouConfirmacao = true;
             failCount++;
             continue;
           }

@@ -111,3 +111,63 @@ test('a linha companheira de 03/09 nao voltou (um turno, um registro)', () => {
     'duas linhas para o mesmo turno dobram a contagem — e ninguem lia a segunda',
   );
 });
+
+// ---------------------------------------------------------------------------
+// O LADO PRODUTOR. Tudo acima checa o CHAMADOR — que le a bandeira e grava o
+// veredito. Ele esta certo desde 07/09 e nunca mais mentiu sozinho. Quem mente
+// e quem PERGUNTA sem levantar a bandeira: o chamador recebe false e escreve
+// `rejected all_failed`, com toda a razao, sobre um turno saudavel.
+//
+// 23/09 18:08:14 BRT, Jessica: o TOM avisou "amanha esta marcado: *Rose
+// quentinhas*", ela respondeu por reply-quote "Marcar como realizado", e o
+// guard de data futura perguntou "esta marcado pra 24/09 (ainda nao chegou).
+// Confirma que ja foi feito mesmo assim?". Pergunta perfeita, gravada como
+// recusa. A mesma porta ja tinha disparado em 14/09 20:52.
+//
+// A varredura de 07/09 enumerou as portas A MAO e envelheceu — e a forma ja
+// repetiu: PERSONAL_LIST_ACTION parseado inline ficou fora da varredura de
+// 10/09, e a 5a familia de executor (closing.items) nasceu fora do enumerador
+// em 15/09. Por isso aqui o censo e DERIVADO da fonte, nao escrito a mao.
+const CORPO = (() => {
+  const ini = FONTE.indexOf('async function applyTaskActions(');
+  const fim = FONTE.indexOf('awaitingConfirm: _perguntouConfirmacao', ini);
+  return { ini, fim, texto: FONTE.slice(ini, fim) };
+})();
+
+// Cada openIntent de kind 'confirmation' e uma PERGUNTA ao usuario. A janela de
+// cada um vai ate o proximo (ou 2500 chars, o que vier antes): e nela que a
+// bandeira tem que subir.
+function perguntasQueAbremIntent() {
+  const re = /openIntent\(\s*collaborator\.id,\s*'confirmation'/g;
+  const pos = [];
+  let m;
+  while ((m = re.exec(CORPO.texto)) !== null) pos.push(m.index);
+  return pos.map((p, i) => {
+    const limite = Math.min(i + 1 < pos.length ? pos[i + 1] : CORPO.texto.length, p + 2500);
+    const janela = CORPO.texto.slice(p, limite);
+    return {
+      linha: FONTE.slice(0, CORPO.ini + p).split('\n').length,
+      levanta: /_perguntouConfirmacao\s*=\s*true/.test(janela),
+    };
+  });
+}
+
+test('o corpo de applyTaskActions foi localizado (senao o contrato vira no-op)', () => {
+  assert.ok(CORPO.ini > 0 && CORPO.fim > CORPO.ini, 'nao achei applyTaskActions ou o return da bandeira');
+});
+
+test('toda pergunta de confirmacao levanta a bandeira antes de sair do ramo', () => {
+  const mudas = perguntasQueAbremIntent().filter((s) => !s.levanta);
+  assert.deepStrictEqual(mudas.map((s) => s.linha), [],
+    'openIntent de confirmacao que nao levanta _perguntouConfirmacao: o turno PERGUNTOU '
+    + 'e vai ser gravado como all_failed (linhas: ' + mudas.map((s) => s.linha).join(', ') + ')');
+});
+
+test('CENSO das perguntas: uma porta nova obriga a decidir', () => {
+  // 3 em 24/09: A2 batch-complete, data futura, cascata de serie antiga.
+  // O dup-bypass (~6139) fica de fora de proposito: e kind 'task_creation' com
+  // question_text null — persiste rascunho, nao pergunta nada.
+  assert.strictEqual(perguntasQueAbremIntent().length, 3,
+    'mudou a quantidade de perguntas de confirmacao em applyTaskActions. A porta nova '
+    + 'tem que levantar a bandeira, ou o turno dela vai ser gravado como recusa.');
+});
