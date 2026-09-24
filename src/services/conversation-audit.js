@@ -86,6 +86,19 @@ function chaveDoAchado(finding) {
  * fallbackOccurredAt (AUDIT-NO-OCCURRED-AT, 12/06): quando o LLM não devolve occurred_at,
  * usa o timestamp da última msg da janela analisada como proxy — assim o achado tem QUANDO
  * aconteceu e a triagem pode comparar com corrigido_em dos known-issues (auto-supressão). */
+// AUDIT-RESPOSTA-SEM-JSON-VIRA-NOITE-LIMPA (24/09). O sensor de cegueira só pegava falha que
+// LANÇA. Resposta que chega sem o JSON `{"findings":[...]}` (recusa, prosa, resposta cortada, o
+// Codex assumindo com a cota do Claude estourada — 24/09 03:00) virava `[]` calado no parser:
+// zero por falha idêntico a zero por saúde. Esta função separa os dois; quem chama registra a
+// cegueira quando ela é falsa. JSON válido com lista vazia = noite limpa de verdade.
+function respostaDaAuditoriaValida(raw) {
+  const s = String(raw == null ? '' : raw);
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return false;
+  try { const obj = JSON.parse(s.slice(start, end + 1)); return Array.isArray(obj && obj.findings); } catch { return false; }
+}
+
 function parseFindings(raw, fallbackOccurredAt = null) {
   const s = String(raw == null ? '' : raw);
   const start = s.indexOf('{');
@@ -365,6 +378,10 @@ async function auditGroupConversation(sb, chat, group, hours = 24, ateIso = null
     const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
     const { system, messages } = buildAuditMessages(convo);
     const r = await chat(system, messages, 1200);
+    if (!respostaDaAuditoriaValida(r && r.text)) {
+      await registrarCegueira(sb, `grupo:${group && group.name}`, new Error(`resposta sem JSON (${(r && r.provider) || '?'})`));
+      return [];
+    }
     // `resolveIncidentAt` casa evidência contra `conversation_history` — inaplicável aqui.
     // Sem ele, occurred_at cai no lastAt da janela, que é o mesmo fallback do 1:1.
     return parseFindings(r && r.text, lastAt);
@@ -383,6 +400,10 @@ async function auditConversation(sb, chat, collaborator, hours = 24, ateIso = nu
     const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
     const { system, messages } = buildAuditMessages(convo);
     const r = await chat(system, messages, 1200);
+    if (!respostaDaAuditoriaValida(r && r.text)) {
+      await registrarCegueira(sb, collaborator.full_name, new Error(`resposta sem JSON (${(r && r.provider) || '?'})`));
+      return [];
+    }
     const brutos = parseFindings(r && r.text, lastAt);
     const findings = [];
     for (const f of brutos) {
@@ -634,7 +655,7 @@ async function ancorarEvidencia(sb, collaboratorId, evidence, sinceIso) {
 }
 
 module.exports = {
-  normalizeSummary, signatureFor, chaveDoAchado, parseFindings, rankFindings,
+  normalizeSummary, signatureFor, chaveDoAchado, parseFindings, respostaDaAuditoriaValida, rankFindings,
   loadConversation, rotuloDaLinha, linhasDeMarkers, loadMarkerTrail, auditConversation, upsertFinding, resolveIncidentAt, pickProbe, ancorarEvidencia,
   formatGroupTranscript, loadGroupConversation, auditGroupConversation,
   CLOSED_STATUSES, SEV_RANK,
