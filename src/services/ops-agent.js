@@ -29,7 +29,7 @@ const os = require('os');
 
 const REPO = process.env.TOM_OPS_REPO || '/opt/LA-Organizer';
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/usr/bin/claude';
-const OPS_MODEL = process.env.TOM_OPS_MODEL || 'claude-opus-5';
+const OPS_MODEL = process.env.TOM_OPS_MODEL || 'claude-opus-5-5';
 // HOME isolado, o mesmo do TOM — é onde vive o login OAuth do CLI na VPS.
 const OPS_HOME = process.env.TOM_CLAUDE_HOME || '/opt/LA-Organizer/.claude-tom';
 const OPS_TIMEOUT_MS = Number(process.env.TOM_OPS_TIMEOUT_MS || 600000);   // 10 min
