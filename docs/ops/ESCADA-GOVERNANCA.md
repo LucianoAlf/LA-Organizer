@@ -2813,3 +2813,21 @@ A proposta de 20/09 segue de pé e não foi embarcada: `status='aguardando_decis
 pergunta, a rodada seguinte não reinvestiga e o relatório **abre** com isso passados 3 dias. Quatro
 ocorrências dizem que isto não vai ser resolvido por disciplina — é a mesma constatação de 12/09,
 quando o alarme falso do `batch_complete` só parou ao virar código.
+
+> ✅ **Desfecho (25/09):** `a0a688e2` fechou como `corrigido` por `1f5085f8` (*eco do relato da
+> própria pessoa não vira "não consegui registrar"*), fora do ciclo de governança. A pergunta não
+> voltou pelo grupo — voltou como commit. A proposta de `status='aguardando_decisao'` segue válida
+> para o próximo caso; este não precisa mais dela.
+
+### ETAPA 2 — acervo zerado: como provar que o zero é SAÚDE e não cegueira (25/09)
+
+**Ocorrência:** 1 (25/09). Segunda vez com acervo vazio (a primeira foi 14/09).
+
+Conferido em três sinais independentes, nesta ordem, antes de concluir "nada a fazer":
+(1) `tom_audit_findings` em `novo`/`confirmado` = 0, com controle (a mesma tabela devolve 467 no
+total e os fechados recentes aparecem); (2) o laço noturno rodou — `ritual_logs daily_dream sent`
+= 38 nas noites de 22 a 25/09 e `DREAM_MEMORY colabs=38` em cada uma; (3) **nenhum**
+`marker_logs AUDIT/fallback` (`audit_blind`) desde 20/09, e o processo do TOM reiniciou às
+24/09 11:29 BRT, depois do `eb9ce281` que passou a registrar resposta sem JSON como cegueira —
+logo a noite de 25/09 rodou com o sensor ligado. Os três juntos custam três queries; sem o (3), o
+zero de 24/09 (cota estourada, minerador no Codex) seria indistinguível deste.
