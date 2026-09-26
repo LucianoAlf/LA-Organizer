@@ -99,6 +99,14 @@ function respostaDaAuditoriaValida(raw) {
   try { const obj = JSON.parse(s.slice(start, end + 1)); return Array.isArray(obj && obj.findings); } catch { return false; }
 }
 
+// AUDIT-OCCURRED-AT-CARIMBO-DERRUBA-INSERT (26/09, caso Clayton). O modelo copiou o carimbo do
+// transcript ("25/09 13:05") pro occurred_at; o Postgres recusou o insert e os achados sumiram.
+// Só timestamp ISO passa — o resto cai no fallback da janela, como o null.
+const _ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+function occurredAtValido(v) {
+  return typeof v === 'string' && _ISO_TS.test(v) && !Number.isNaN(Date.parse(v)) ? v : null;
+}
+
 function parseFindings(raw, fallbackOccurredAt = null) {
   const s = String(raw == null ? '' : raw);
   const start = s.indexOf('{');
@@ -116,7 +124,7 @@ function parseFindings(raw, fallbackOccurredAt = null) {
     severity: VALID_SEVERITY.has(f.severity) ? f.severity : 'medio',
     summary: String(f.summary).slice(0, 200),
     evidence: String(f.evidence).slice(0, 1000),
-    occurred_at: f.occurred_at || fallbackOccurredAt || null,
+    occurred_at: occurredAtValido(f.occurred_at) || fallbackOccurredAt || null,
   }));
 }
 
@@ -546,6 +554,8 @@ async function upsertFinding(sb, collaborator, finding, opts = {}) {
     });
     if (erroInsert) {
       console.error(`[ConvAudit] INSERT FALHOU (${collaborator && collaborator.full_name || _groupId}): ${String(erroInsert.message || erroInsert).slice(0, 160)}`);
+      // Achado detectado e não gravado é cegueira: sem a linha, o acervo zerado parece saúde (26/09).
+      await registrarCegueira(sb, (collaborator && collaborator.full_name) || _groupId, new Error(`insert falhou: ${erroInsert.message || erroInsert}`));
       return 'erro_insert';
     }
     return 'inserted';
