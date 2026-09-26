@@ -2831,3 +2831,23 @@ total e os fechados recentes aparecem); (2) o laço noturno rodou — `ritual_lo
 24/09 11:29 BRT, depois do `eb9ce281` que passou a registrar resposta sem JSON como cegueira —
 logo a noite de 25/09 rodou com o sensor ligado. Os três juntos custam três queries; sem o (3), o
 zero de 24/09 (cota estourada, minerador no Codex) seria indistinguível deste.
+
+### ETAPA 2 — a prova de "acervo zerado é saúde" de 25/09 tinha um furo: achado detectado e não gravado
+
+**Ocorrência:** 1 (26/09), no dia seguinte à regra. Virou a correção da rodada.
+
+Em 25/09 ficou escrito que o zero se prova com três sinais: tabela zerada com controle, laço
+noturno rodou, nenhum `AUDIT/fallback`. Em 26/09 os três vieram **verdes** e o zero era falso.
+O `rituals.log` da noite tinha `[ConvAudit] Clayton: 2 achado(s)` logo depois de dois
+`INSERT FALHOU … invalid input syntax for type timestamp with time zone: "25/09 13:05"`. O modelo
+copiou o carimbo do transcript pro `occurred_at`, o Postgres recusou, e `upsertFinding` só fazia
+`console.error` — o sensor de cegueira nunca soube.
+
+🔑 **O quarto sinal, e é o único que compara DETECÇÃO com GRAVAÇÃO:** some os `N achado(s)` que o
+log do processo declara na noite (`grep -a "ConvAudit" logs/rituals.log`) e compare com as linhas
+criadas em `tom_audit_findings` na mesma janela. Os três sinais de 25/09 provam que o detector
+OLHOU; nenhum prova que o que ele viu CHEGOU na tabela. Divergência é perda.
+
+Corrigido em `7e28ee68`: `occurred_at` só aceita ISO e insert que falha vira `AUDIT/fallback`.
+Depois do fix os três sinais de 25/09 voltam a bastar para esta porta — mas o log continua sendo
+a conferência barata para as próximas, porque é a única fonte que conta o que foi detectado.
