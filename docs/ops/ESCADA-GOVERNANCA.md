@@ -2851,3 +2851,45 @@ OLHOU; nenhum prova que o que ele viu CHEGOU na tabela. Divergência é perda.
 Corrigido em `7e28ee68`: `occurred_at` só aceita ISO e insert que falha vira `AUDIT/fallback`.
 Depois do fix os três sinais de 25/09 voltam a bastar para esta porta — mas o log continua sendo
 a conferência barata para as próximas, porque é a única fonte que conta o que foi detectado.
+
+### ETAPA 3 — o limite DECLARADO no call site não vale se a camada de baixo recorta de novo
+
+**Ocorrência:** 1 (27/09), e é a correção da rodada.
+
+O `958bfd9d` (10/09) subiu a prova das duas portas de honestidade de 200/300 para 800 chars
+(`String(reply).slice(0, 800)`), com o diagnóstico certo: *"a prova estava cortada exatamente no
+trecho que importa"*. O commit, o comentário e o teste diziam 800. O `logMarker` (`engine.js:254`)
+recorta em `rawLimit = 500` por padrão, e nenhuma das duas chamadas passava o limite. **Durante 17
+dias, o 800 existiu em todo lugar menos no banco.** Medido: das 47 linhas de CHOKEPOINT desde 21/08,
+a maior tem 500 chars.
+
+O custo apareceu hoje. O health-check acusou `%CHOKEPOINT%` 3× em 26/09. Dois disparos são do
+Clayton, respostas de LEITURA rebaixadas, e nos dois o `raw_excerpt` para no char 500, antes da linha
+acusada. Não dá pra provar nem refutar o guard. Eram as duas únicas linhas com exatamente 500 chars.
+
+🔑 Regra: **quando um conserto aumenta um limite, meça o limite no DESTINO, não no call site.** Uma
+query de `max(length(coluna))` teria pego isso no dia. É a forma de 08/09 (*commit é artefato
+datado*), agora pelo lado de dentro: a mensagem do commit estava certa sobre a intenção e errada
+sobre o efeito.
+
+Corrigido em `2500fd68`, com censo derivado do fonte (`src/prova-do-chokepoint-cabe.test.js`): todo
+`logMarker` que recebe um `_orig*` com `.slice(0, N)` tem que gravar pelo menos N.
+
+### ETAPA 2 — o health-check achou o que o auditor não viu: 3 "não consegui registrar" falsos, 0 achados
+
+**Ocorrência:** 1 (27/09).
+
+A noite de 27/09 terminou com zero achados em 38 colaboradores. Os três sinais de 25/09 e o quarto
+de 26/09 vieram verdes, porque não havia nada detectado e perdido. O sábado teve só 13 inbound.
+Mesmo assim, o alarme de KI do health-check apontou 3 disparos do chokepoint, e os três são
+falsos-fires com a nota de falha visível pro usuário: dois do Clayton (leitura) e um da Anne. No da
+Anne, uma afirmação VERDADEIRA foi apagada: ela tinha relatado os cheques separados 3h16 antes, e o
+veto de eco só lê a fala do turno atual.
+
+Consequência pro protocolo: **acervo zerado prova que o auditor não achou nada, e não que não havia
+o que achar.** Os quatro sinais medem a TUBULAÇÃO do auditor, não a CEGUEIRA dele. O alarme de KI do
+health-check é uma segunda rede, independente, e deve ser lido toda rodada, mesmo com acervo vazio.
+
+O caso da Anne ficou aberto como `19df16e2`, sem conserto. A família está travada (`optimistic-confirm.js`,
+22 commits em 60 dias), e saber QUEM fez a ação exige ler o turno anterior. É a fronteira medida em
+20/09, e a decisão é de desenho.
