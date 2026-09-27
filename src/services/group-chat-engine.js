@@ -1213,7 +1213,8 @@ function buildTomContent(rawReply, actions, opts) {
         // dispara como sempre).
         // + eco do relato do próprio membro (achado a0a688e2) — ver lib/eco-relato-usuario.js.
         const { ecoDoRelatoDoUsuario } = require('../lib/eco-relato-usuario');
-        const relato = isReportedStateClaim(prose) || ecoDoRelatoDoUsuario((opts && opts.userText) || '', prose);
+        const { linhasAcusadasSaoPergunta } = require('../lib/pergunta-nao-e-afirmacao');
+        const relato = isReportedStateClaim(prose) || ecoDoRelatoDoUsuario((opts && opts.userText) || '', prose) || linhasAcusadasSaoPergunta(prose);
         if (relato) console.log('[GroupChat] chokepoint VETADO: fala relata estado de terceiro/inferência, não escrita própria');
         prose = enforceNoMarkerHonesty(prose, {
           nothingPersisted: true,

@@ -55,6 +55,7 @@ const { buildReminderRefsQuery, mapRefRows } = require('./lib/reminder-refs-quer
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply, restatesRecentWrite } = require('./lib/optimistic-confirm');
 const { ecoDoRelatoDoUsuario } = require('./lib/eco-relato-usuario');
+const { linhasAcusadasSaoPergunta } = require('./lib/pergunta-nao-e-afirmacao');
 const { normalizarAcaoDeTarefa } = require('./lib/acao-de-tarefa');
 const { fundeBlocosRepetidos } = require('./lib/funde-blocos-repetidos');
 const { buscarEscritasRecentes } = require('./lib/escritas-recentes');
@@ -16205,7 +16206,8 @@ Output AGORA, apenas o marker:`;
       // fez ("já fiz a ronda") e o TOM só repetiu pedindo confirmação. Quem fez a ação está na fala
       // DA PESSOA, não no texto do TOM — ver lib/eco-relato-usuario.js. Porta reportedState já
       // existente; markerAttempted continua freando.
-      reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply, { relatosRecentes: _relatosRecentes }),
+      // + a linha acusada é PERGUNTA/proposta ('Salvo como X ou Y?', 'Fechando: … Confirma?') — ver lib/pergunta-nao-e-afirmacao.js.
+      reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply, { relatosRecentes: _relatosRecentes }) || linhasAcusadasSaoPergunta(reply),
     }, { meta: true });
     // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08) — este é O ponto que cega o maior cluster do
     // acervo. O raw_excerpt guardava o texto JÁ rebaixado ("_não consegui registrar isso agora_"),
