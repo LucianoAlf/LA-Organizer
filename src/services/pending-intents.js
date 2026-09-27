@@ -198,6 +198,27 @@ function detectConfirmationQuestion(reply) {
   if (TASK_Q.test(trimmed)) return { kind: 'task_creation' };
   if (EVENT_Q.test(trimmed)) return { kind: 'event_creation' };
   if (GENERIC_CONFIRM_Q.test(trimmed) && trimmed.length < 600) return { kind: 'confirmation' };
+  // PROPOSTA DE RECADO (Clayton 26/09 09:03): "Quer que eu peça pra Fefê te mandar a lista…?",
+  // "Quer que eu avise a Rose?", "Quer que eu mande um recado pro Hugo?" não casavam nenhum padrão
+  // acima — a pergunta não virava intent, o "Ok" chegava solto, o LLM montava o recado e o engine
+  // perguntava DE NOVO ("Aviso a Fefê assim? Confirma?"); o recado nunca saiu. Usa a MESMA régua
+  // que libera o despacho pré-confirmado (confirm-coord-gate.podeLiberarRecado), então as duas
+  // pontas concordam: o que vira intent aqui é exatamente o que o "sim" libera lá.
+  // Só a ÚLTIMA frase precisa terminar em "?" — proposta no meio de explicação longa também conta.
+  if (/\?\s*[*_]*\s*$/.test(trimmed) && trimmed.length < 1200) {
+    try {
+      const { podeLiberarRecado } = require('../coordination/confirm-coord-gate');
+      // Só pergunta de SIM/NÃO. Medido em 30 dias de falas reais: "QUAL é a mensagem que quer
+      // mandar?", "confirmar O QUE quer mandar?" e "lembrar a Juliana… OU é um lembrete pra você?"
+      // casavam a régua do recado mas não pedem sim — resposta a elas é conteúdo, não confirmação.
+      const _frases = trimmed.split(/(?<=[.!?])\s+/).filter((s) => s.includes('?'));
+      const _ultima = (_frases[_frases.length - 1] || '').replace(/[*_"“”]/g, '').trim();
+      const _aberta = /(?:^|[,:;—–-]\s*)(?:qual|quais|quem|quando|como|onde|quanto|o\s+que|por\s+que|pra\s+que)\b/i.test(_ultima)
+        || /\bo\s+que\s+(?:voc[êe]\s+)?quer\b/i.test(_ultima)
+        || /\bou\s+(?:[ée]|seria|prefere|vai)(?=\s|$)/i.test(_ultima);
+      if (!_aberta && podeLiberarRecado(trimmed)) return { kind: 'confirmation' };
+    } catch (_) { /* gate indisponível: comportamento antigo */ }
+  }
   return null;
 }
 

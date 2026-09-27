@@ -13,7 +13,7 @@ const { ACAO_SOBRE_EXISTENTE } = require('../utils/confirm-create-gate');
 
 // Sinal de que o TOM está PROPONDO mandar um recado/aviso a alguém.
 const PROPOE_RECADO = new RegExp([
-  '\\bavis(?:o|ar)\\s+(?:o|a|os|as|\\d|pra|pro|para)\\b',
+  '\\bavis(?:o|ar|e)\\s+(?:o|a|os|as|\\d|pra|pro|para)\\b', // "avise" (subjuntivo): "Quer que eu avise a Rose?"
   '\\baviso\\s+\\d+\\s+pessoa',
   // "mande" (subjuntivo) entrou em 19/08: o gate determinístico propõe "Quer que eu MANDE um
   // recado…" e a forma não casava — o "sim" não pré-confirmava e o recado era re-estagiado.
@@ -21,6 +21,11 @@ const PROPOE_RECADO = new RegExp([
   '\\bmand(?:o|ar|e)\\s+(?:pra|pro|para)\\b',
   '\\bpasso?\\s+o\\s+recado', '\\brepass(?:o|ar)\\s+(?:o\\s+)?(?:recado|agradecimento|mensagem)',
   '\\bfal(?:o|ar)\\s+com\\b', '\\bagrade[çc](?:o|er)\\b',
+  // Clayton 26/09: "Quer que eu PEÇA PRA Fefê te mandar a lista…?" não casava — o "Ok" não
+  // pré-confirmava e o recado era estagiado de novo ("Aviso a Fefê assim? Confirma?"), nunca saindo.
+  // Pedido a uma PESSOA: peço/peça/pedir + pra/pro/para/à/ao. "Separe essa peça pra você" não casa
+  // ("peça" substantivo sem verbo de pedido antes de pra).
+  '(?:\\bque\\s+eu|^|[.!?]\\s*|\\bposso)\\s*pe[çc](?:o|a)\\s+(?:pra|pro|para|ao|[àa])(?=\\s)', '\\bpedir\\s+(?:pra|pro|para|ao|[àa])(?=\\s)',
 ].join('|'), 'iu');
 
 // COORD-GATE-VETADO-PELO-PREAMBULO (Alf 19/08 13:10). O veto rodava no TEXTO INTEIRO da
