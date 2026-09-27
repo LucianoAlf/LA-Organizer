@@ -323,6 +323,9 @@ function _rodarClaude(pedido, { quem = 'alguém do grupo', briefing = null, time
       '--allowedTools', ...OPS_TOOLS,
       ...(_briefFile ? ['--append-system-prompt-file', _briefFile] : ['--append-system-prompt', _brief]),
       '--output-format', 'json',
+      // Sem conector nenhum (27/09): o CLI 2.1.281 carrega os conectores do claude.ai da conta
+      // Max (Gmail, banco, Composio…) em todo processo sem esta trava. Ver ops-agent-sem-conectores.test.js.
+      '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     ];
 
     // O arquivo morre com o turno, aconteca o que acontecer. Sem isto, /tmp acumula briefing
@@ -332,7 +335,7 @@ function _rodarClaude(pedido, { quem = 'alguém do grupo', briefing = null, time
       try { fs.unlinkSync(_briefFile); } catch (_) { /* best-effort */ }
       _briefFile = null;
     };
-    const env = { ...process.env, HOME: OPS_HOME };
+    const env = { ...process.env, HOME: OPS_HOME, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' };
     let child;
     try {
       child = spawn(CLAUDE_BIN, args, { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
