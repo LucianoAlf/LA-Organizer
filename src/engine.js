@@ -55,6 +55,7 @@ const { buildReminderRefsQuery, mapRefRows } = require('./lib/reminder-refs-quer
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply, restatesRecentWrite } = require('./lib/optimistic-confirm');
 const { ecoDoRelatoDoUsuario } = require('./lib/eco-relato-usuario');
+const { normalizarAcaoDeTarefa } = require('./lib/acao-de-tarefa');
 const { fundeBlocosRepetidos } = require('./lib/funde-blocos-repetidos');
 const { buscarEscritasRecentes } = require('./lib/escritas-recentes');
 const { isActionConfirmQuestion } = require('./lib/confirm-question');
@@ -628,7 +629,9 @@ function parseTaskUpdateMarker(text) {
   const valid = [];
   const dropped = [];
   for (let i = 0; i < rawActions.length; i++) {
-    const a = rawActions[i];
+    // Achado da44ab45 (Clayton → Vitoria): "delegate" de tarefa que não existe vira create pra
+    // pessoa, e recorrência em atalho ("weekdays") vira RRULE — ver lib/acao-de-tarefa.js.
+    const a = normalizarAcaoDeTarefa(rawActions[i]);
     const why = validateTaskAction(a);
     if (why) {
       dropped.push(`action[${i}]:${why}`);
