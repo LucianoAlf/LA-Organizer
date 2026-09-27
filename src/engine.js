@@ -15870,7 +15870,7 @@ Output AGORA, apenas o marker:`;
               const _origPd = String(reply).slice(0, 800);
               reply = _pd.reply;
               console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → rebaixado (promessa sem persistência)`);
-              try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:promise_nomarker', _origPd); } catch (_) {}
+              try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:promise_nomarker', _origPd, { rawLimit: 800 }); } catch (_) {}
             }
           }
         }
@@ -16206,7 +16206,7 @@ Output AGORA, apenas o marker:`;
     const _origHon = String(reply).slice(0, 800);
     reply = _hon.reply;
     if (_hon.fired) {
-      try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', `confab:${_domainOf(_metrics)}`, _origHon); } catch (_) {}
+      try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', `confab:${_domainOf(_metrics)}`, _origHon, { rawLimit: 800 }); } catch (_) {}
     }
   } catch (e) {
     // Liveness (Fatia 0): NUNCA engolir. Trava quebrada (ex.: ReferenceError) vira métrica

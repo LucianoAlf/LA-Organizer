@@ -24,7 +24,10 @@ test('engine: os 3 rebaixamentos capturam o texto ORIGINAL antes de reatribuir r
   for (const v of ['_origSh', '_origPd', '_origHon']) {
     assert.ok(ENGINE.includes(`const ${v} = String(reply).slice(`),
       `${v}: captura do original sumiu`);
-    assert.ok(ENGINE.includes(`, ${v});`), `${v}: não está sendo passado ao logMarker`);
+    // `{ rawLimit: N }` é a única cauda aceita: sem ela o logMarker recorta em 500 e a prova de
+    // 800 não chega inteira (Clayton 26/09 — ver src/prova-do-chokepoint-cabe.test.js).
+    assert.ok(new RegExp(`, ${v}(?:, \\{ rawLimit: \\d+ \\})?\\);`).test(ENGINE),
+      `${v}: não está sendo passado ao logMarker`);
   }
 });
 
