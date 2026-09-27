@@ -25,7 +25,7 @@
 // parada por 23 commits em 60 dias) não é tocado.
 const { hasCompletionClaim, hasWeakCompletionClaim } = require('./optimistic-confirm');
 
-const RELATO_PROPRIO_RE = /(?<![\p{L}])(?:fiz|fizemos|terminei|terminamos|acabei|finalizei|entreguei|mandei|enviei|paguei|pagamos|liguei|resolvi|resolvemos|verifiquei|conferi|chequei|olhei|arrumei|troquei|montei|limpei|testei|levei|busquei|comprei|falei|avisei|passei|recebi|devolvi|consertei)(?![\p{L}])|(?<![\p{L}])j[áa]\s+(?:foi|t[áa]|est[áa])\s+(?:feit|pag|entregu|resolvid|conferid|verificad|arrumad|consertad)/iu;
+const RELATO_PROPRIO_RE = /(?<![\p{L}])(?:fiz|fizemos|terminei|terminamos|acabei|finalizei|entreguei|mandei|enviei|paguei|pagamos|liguei|resolvi|resolvemos|verifiquei|conferi|chequei|olhei|arrumei|troquei|montei|limpei|testei|levei|busquei|comprei|falei|avisei|passei|recebi|devolvi|consertei|separei|separamos|juntei|guardei|organizei|preparei|deixei)(?![\p{L}])|(?<![\p{L}])j[áa]\s+(?:foi|t[áa]|est[áa])\s+(?:feit|pag|entregu|resolvid|conferid|verificad|arrumad|consertad)/iu;
 const PEDIDO_RE = /(?<![\p{L}])(?:marca|marque|marcar|anota|anote|anotar|registra|registre|registrar|cria|crie|criar|lan[çc]a|lance|lan[çc]ar|agenda|agende|agendar|coloca|coloque|colocar|bota|botar|p[õo]e|d[áa]\s+baixa|dar\s+baixa|me\s+lembr[ae]|lembra\s+(?:de|que)|conclui|finaliza|cancela|apaga|exclui)(?![\p{L}])/iu;
 const TOM_ESCREVEU_RE = /(?<![\p{L}])(?:criei|registrei|anotei|agendei|marquei|salvei|lancei|cadastrei|atualizei|conclu[íi]|finalizei|fechei|coloquei|botei|dei\s+baixa)(?![\p{L}])/iu;
 const PARTICIPIO_ESCRITA_RE = /(?<![\p{L}])(?:marcad|registrad|anotad|salv|gravad|lan[çc]ad|criad|agendad|cadastrad|baixad|atualizad|conclu[íi]d|finalizad|encerrad|fechad|confirmad)[oa]s?(?![\p{L}])/iu;
@@ -34,17 +34,31 @@ const _PARADAS = new Set(['hoje', 'ontem', 'amanha', 'tudo', 'certo', 'para', 'p
 function _norm(s) { return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
 function _palavras(s) { return new Set((_norm(s).match(/[a-z]{4,}/g) || []).filter((w) => !_PARADAS.has(w))); }
 
-function ecoDoRelatoDoUsuario(userText, reply) {
+// "Dia fechado", "semana encerrada": é o TOM fechando a CONVERSA do dia, não gravando nada no
+// sistema (caso Anne 26/09 00:04: "✅ Show, Anne. Dia fechado, e os cheques da Vitória já
+// separados"). Só essas expressões saem antes da checagem (4); "tarefa fechada" segue pega.
+const FECHAMENTO_DE_PERIODO_RE = /(?<![\p{L}])(?:dia|semana|m[êe]s|expediente|turno)\s+(?:fechad|encerrad)[oa]s?(?![\p{L}])/giu;
+
+// Um texto só vale como FONTE de relato quando relata ação própria e não pede nada ao TOM.
+const _ehRelato = (s) => RELATO_PROPRIO_RE.test(s) && !PEDIDO_RE.test(s);
+
+// RELATO DE HORAS ANTES (achado 19df16e2, Anne 25/09 20:46 → boa-noite 26/09 00:04): a pessoa
+// relata numa mensagem e o TOM ecoa no fechamento do dia, horas depois — a fala do turno atual
+// ("Tudo certo Tom") não traz o relato. `relatosRecentes` são as falas DELA das últimas horas
+// (quem busca é o engine). A fala ATUAL continua sem poder pedir nada.
+function ecoDoRelatoDoUsuario(userText, reply, { relatosRecentes = [] } = {}) {
   const u = String(userText == null ? '' : userText);
   const r = String(reply == null ? '' : reply);
-  if (!u.trim() || !r.trim()) return false;
-  if (!RELATO_PROPRIO_RE.test(u) || PEDIDO_RE.test(u)) return false; // (1)
-  if (TOM_ESCREVEU_RE.test(r)) return false;                        // (2)
+  if (!r.trim()) return false;
+  if (PEDIDO_RE.test(u)) return false;                                 // (1) pedido no turno = a trava vale
+  const fontes = [u, ...(relatosRecentes || []).map((x) => String(x == null ? '' : x))].filter((s) => s.trim() && _ehRelato(s));
+  if (!fontes.length) return false;                                     // (1) ninguém relatou ação própria
+  if (TOM_ESCREVEU_RE.test(r)) return false;                           // (2)
   const acusadas = r.split('\n').filter((l) => l.trim() && (hasCompletionClaim(l) || hasWeakCompletionClaim(l)));
   if (!acusadas.length) return false;
-  const doRelato = _palavras(u);
-  return acusadas.every((l) => !PARTICIPIO_ESCRITA_RE.test(l)       // (4)
-    && [..._palavras(l)].some((w) => doRelato.has(w)));             // (3)
+  const doRelato = _palavras(fontes.join(' '));
+  return acusadas.every((l) => !PARTICIPIO_ESCRITA_RE.test(l.replace(FECHAMENTO_DE_PERIODO_RE, ' ')) // (4)
+    && [..._palavras(l)].some((w) => doRelato.has(w)));                // (3)
 }
 
 module.exports = { ecoDoRelatoDoUsuario };

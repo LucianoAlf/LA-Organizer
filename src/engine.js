@@ -16144,6 +16144,7 @@ Output AGORA, apenas o marker:`;
   // decidir se a fala REAFIRMA um deles. Só paga o I/O quando há claim sem persistência e
   // NENHUM marker foi tentado (tentado-e-rejeitado é falha real — ali o guard tem que valer).
   let _restatesRecentWrite = false;
+  let _relatosRecentes = [];
   try {
     const _npW = !_metrics.marker_emitted && !_metrics.auto_retry_succeeded && !_metrics.deterministic_complete_ok;
     if (_npW && !_metrics.marker_attempted && (hasCompletionClaim(reply) || hasWeakCompletionClaim(reply))) {
@@ -16165,6 +16166,13 @@ Output AGORA, apenas o marker:`;
       const _rw = await buscarEscritasRecentes(supabase, collab.id, _sinceIso);
       // remind_at junto do título (Rafinha 24/08): reafirmar lembrete cita data/hora, não o nome.
       _restatesRecentWrite = restatesRecentWrite(reply, _rw);
+      // ECO DE RELATO DE HORAS ANTES (achado 19df16e2, Anne): as falas DELA das últimas 6h, pro
+      // detector saber se o que o TOM ecoa foi relatado por ela — ver lib/eco-relato-usuario.js.
+      const { data: _inb } = await supabase.from('conversation_history').select('content')
+        .eq('collaborator_id', collab.id).eq('direction', 'inbound')
+        .gte('created_at', new Date(_t0 - 6 * 3600_000).toISOString())
+        .order('created_at', { ascending: false }).limit(12);
+      _relatosRecentes = (_inb || []).map((m) => stripReplyScaffold(String(m.content || '')).userText);
     }
   } catch (_) {}
   try {
@@ -16194,7 +16202,7 @@ Output AGORA, apenas o marker:`;
       // fez ("já fiz a ronda") e o TOM só repetiu pedindo confirmação. Quem fez a ação está na fala
       // DA PESSOA, não no texto do TOM — ver lib/eco-relato-usuario.js. Porta reportedState já
       // existente; markerAttempted continua freando.
-      reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply),
+      reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply, { relatosRecentes: _relatosRecentes }),
     }, { meta: true });
     // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08) — este é O ponto que cega o maior cluster do
     // acervo. O raw_excerpt guardava o texto JÁ rebaixado ("_não consegui registrar isso agora_"),
