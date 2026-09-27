@@ -63,16 +63,29 @@ if [ "$VARRER" = 1 ]; then
   # sofreu -- a blindagem foi aplicada num ramo e esquecida no outro.
   # `! -type l` em vez de `-type f`: diretorio aberto E exposicao de verdade e tem que continuar
   # no escopo; so o symlink sai.
+  # ARQUIVO QUE SOME NO MEIO NÃO É EXPOSIÇÃO (27/09). O CLI do Claude cria e apaga
+  # .claude.json.lock / .claude.json.tmp.* em milissegundos; se o find lista e o arquivo some
+  # antes do stat, sai rc=1 com "No such file or directory" — e virava "REPROVOU" no WhatsApp
+  # do Alf (30× em 3 dias, todas falsas). Só esse erro ganha até 2 repetições; qualquer outro
+  # (permissão, I/O, mount) reprova na PRIMEIRA, como sempre. Ver teste-varredura-arquivo-sumiu.sh.
   contar() {
-    local saida rc
-    saida=$(find "$1" ! -type l \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$TMPERR")
-    rc=$?
-    if [ "$rc" -ne 0 ] || [ -s "$TMPERR" ]; then
+    local saida rc tentativa
+    for tentativa in 1 2 3; do
+      saida=$(find "$1" ! -type l \( -perm -g=r -o -perm -o=r -o -perm -g=w -o -perm -o=w -o -perm -g=x -o -perm -o=x \) 2>"$TMPERR")
+      rc=$?
+      if [ "$rc" -eq 0 ] && [ ! -s "$TMPERR" ]; then
+        printf '%s\n' "$saida" | grep -c . || true
+        return 0
+      fi
       ERR_FIND="$(head -1 "$TMPERR")"
+      # Só repete se TODA linha do stderr for "sumiu" — uma linha de outro erro já reprova.
+      if [ "$tentativa" -lt 3 ] && ! grep -qv 'No such file or directory' "$TMPERR"; then
+        echo "[varrer] arquivo sumiu durante a varredura em $1 (tentativa $tentativa): ${ERR_FIND:0:120}" >&2
+        continue
+      fi
       echo "[varrer] find falhou em $1 (rc=$rc): ${ERR_FIND:0:120}" >&2
       return 1
-    fi
-    printf '%s\n' "$saida" | grep -c . || true
+    done
   }
   TMPERR=$(mktemp /run/varrer.XXXXXX 2>/dev/null || mktemp) || { echo "[varrer] mktemp falhou" >&2; exit 1; }
   chmod 0600 "$TMPERR"; trap 'rm -f "$TMPERR"' EXIT INT TERM
