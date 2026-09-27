@@ -272,9 +272,11 @@ test('trilha: só ação de domínio executed/rejected vira linha SISTEMA', () =
     { marker_type: 'COORDINATION_REQUEST', result: 'skipped', reason: 'staged_coord:1', created_at: 'x' },
     { marker_type: 'EVENT_CREATE', result: 'rejected', reason: 'schema_invalid', created_at: 'x' },
   ], st);
-  assert.strictEqual(out.length, 2, 'META e skipped ficam de fora');
+  // 27/09: a TRAVA (CHOKEPOINT/redirected) passou a entrar como linha própria — ver AUDITOR-CEGO-PRA-TRAVA.
+  assert.strictEqual(out.length, 3, 'skipped fica de fora; a trava entra como linha própria');
   assert.match(out[0].linha, /SISTEMA: TASK_UPDATE executed \(ok=1 fail=0\)/);
   assert.match(out[1].linha, /SISTEMA: EVENT_CREATE rejected/);
+  assert.match(out[2].linha, /SISTEMA: TRAVA trocou a fala do TOM/);
 });
 test('trilha: entrada inválida não quebra', () => {
   assert.deepStrictEqual(linhasDeMarkers(null, () => ''), []);

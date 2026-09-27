@@ -39,6 +39,11 @@ REGRAS (inegociáveis):
    • "rejected" ou ausência de qualquer SISTEMA para uma ação que o TOM AFIRMA ter feito → aí sim é falha real, e a linha SISTEMA (ou a falta dela) é a prova.
    Nunca cite a linha SISTEMA como "evidence": ela é a checagem, e o trecho-prova tem que ser fala de gente. Não existe finding cuja única prova seja uma linha SISTEMA.
 
+14. "SISTEMA: TRAVA trocou a fala do TOM…" = a nota "⚠️ Na real não consegui registrar isso agora" foi COLADA PELO SISTEMA, não escrita pelo TOM, e a linha traz o que o TOM TINHA escrito. Julgue a nota:
+   • Se o USUÁRIO não pediu pra gravar nada naquela troca — fez uma PERGUNTA, pediu uma CONSULTA/lista, RELATOU algo que ele mesmo fez, ou só conversou — OU se o que o TOM tinha escrito era uma PERGUNTA ao usuário ("Confirma?", "Salvo como X ou Y?"), a nota é FALSA: emita "confabulation", severity "medio", summary começando com "Trava colou 'não consegui registrar'" e dizendo o que o usuário pediu; evidence = a fala do TOM que chegou com a nota.
+   • Se o usuário PEDIU pra gravar algo (criar, marcar, lançar, concluir) e nada foi gravado, a nota está CERTA — NÃO emita por causa dela.
+15. CONFIRMAÇÃO IGNORADA: o TOM propôs uma ação ("Quer que eu…?", "Mando pro X?", "Crio?"), o USUÁRIO confirmou na linha seguinte ("ok", "sim", "pode", "isso", "manda", "s") e o TOM, em vez de executar, PERGUNTOU DE NOVO a mesma coisa (inclusive montando o texto do recado e pedindo "Confirma?" outra vez, depois de o usuário já ter dito "ok" à proposta) ou pediu pra mandar de novo → "dropped_request", severity "medio", summary "Confirmou e o TOM perguntou de novo". Também é "dropped_request" (severity "alto") quando o TOM responde 3 vezes ou mais seguidas ao MESMO pedido com "problema técnico"/"me manda de novo" — a pessoa ficou presa num laço. Isso não conflita com a regra 2: a prova está na troca.
+
 Responda SOMENTE com JSON válido, sem texto fora do JSON:
 {"findings":[{"category":"<key>","severity":"alto|medio|baixo","summary":"<1 linha>","evidence":"<trecho literal>","occurred_at":null}]}
 Se não houver falha: {"findings":[]}`;

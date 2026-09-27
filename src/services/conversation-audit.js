@@ -173,21 +173,40 @@ function rotuloDaLinha(row) {
 const _MARKER_META = new Set(['LEAK_BLOCKED', 'UNKNOWN_MARKER_STRIPPED', 'TOOL_CALL_STRIPPED', 'PROVIDER', 'ACTIONABLE_NO_MARKER', 'CHOKEPOINT']);
 
 /** Linhas SISTEMA a partir de marker_logs. Pura. */
+// AUDITOR-CEGO-PRA-TRAVA (27/09). A troca feita pela trava de honestidade (CHOKEPOINT/redirected)
+// ficava de fora como "telemetria" — e o auditor via o "⚠️ Na real não consegui registrar" como
+// se fosse o TOM sendo honesto. Em 5 noites (20, 21, 23, 24, 25/09) ele não pegou nenhum dos casos
+// em que a nota era FALSA (pergunta, consulta, relato da própria pessoa); quem pegava era o alarme
+// da manhã. Agora a troca entra na trilha com o começo da fala ORIGINAL, pro auditor julgar se a
+// nota era devida (regra 14 do prompt).
+function _linhaDaTrava(m, stamp) {
+  // Começo E fim: a pergunta que desmente a nota costuma estar no FIM da fala (Hugo 25/09: "…Salvo
+  // como X ou Y?" ficava fora de um corte de 220 no começo e o auditor julgou a nota certa).
+  const cheio = String(m.raw_excerpt || '').replace(/\s+/g, ' ').trim();
+  const orig = cheio.length > 400 ? `${cheio.slice(0, 220)} … ${cheio.slice(-160)}` : cheio;
+  return {
+    created_at: m.created_at,
+    linha: `[${stamp(m.created_at)}] SISTEMA: TRAVA trocou a fala do TOM e colou "não consegui registrar" (nada foi gravado neste turno)${orig ? `. O TOM tinha escrito: "${orig}"` : ''}`,
+  };
+}
+
 function linhasDeMarkers(markerRows, stamp) {
-  return (Array.isArray(markerRows) ? markerRows : [])
+  const lista = Array.isArray(markerRows) ? markerRows : [];
+  const travas = lista.filter((m) => m && m.marker_type === 'CHOKEPOINT' && m.result === 'redirected').map((m) => _linhaDaTrava(m, stamp));
+  return lista
     .filter((m) => m && m.marker_type && !_MARKER_META.has(m.marker_type)
       && (m.result === 'executed' || m.result === 'rejected'))
     .map((m) => ({
       created_at: m.created_at,
       linha: `[${stamp(m.created_at)}] SISTEMA: ${m.marker_type} ${m.result}${m.reason ? ` (${String(m.reason).slice(0, 80)})` : ''}`,
-    }));
+    })).concat(travas);
 }
 
 /** Lê a trilha de execução do turno. Falha NUNCA derruba a auditoria — devolve []. */
 async function loadMarkerTrail(sb, collaboratorId, sinceIso) {
   try {
     const { data } = await sb.from('marker_logs')
-      .select('marker_type, result, reason, created_at')
+      .select('marker_type, result, reason, raw_excerpt, created_at')
       .eq('collaborator_id', collaboratorId)
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: false })
