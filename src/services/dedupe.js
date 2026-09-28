@@ -37,6 +37,18 @@ function getMessageId(body) {
   return null;
 }
 
+// messages_update (recibo, leitura, deleção) não traz body.message: o que identifica o evento é
+// event.Type + event.MessageIDs. Sem isso o fallback caía em hash(''|event|minuto|'') e TODO
+// update do mesmo minuto colidia — o 1º recibo do minuto engolia as deleções seguintes
+// (Barra 04/09: 36 de 67 deleções descartadas, mensagens apagadas vivas no espelho do grupo).
+function updateKey(body) {
+  const ev = body && body.event;
+  if (!ev || typeof ev !== 'object') return null;
+  const ids = Array.isArray(ev.MessageIDs) ? ev.MessageIDs : (ev.MessageID ? [ev.MessageID] : []);
+  if (!ids.length) return null;
+  return 'upd:' + String(ev.Type || body.state || '') + ':' + String(ev.Chat || '') + ':' + ids.join(',');
+}
+
 function fallbackKey(body) {
   const msg = (body && body.message) || (Array.isArray(body && body.messages) && body.messages[0]) || {};
   const phone = String(
@@ -53,7 +65,7 @@ function fallbackKey(body) {
 }
 
 function eventKey(body) {
-  return getMessageId(body) || fallbackKey(body);
+  return getMessageId(body) || updateKey(body) || fallbackKey(body);
 }
 
 // Returns true if this body was already processed recently. Marks as seen on
