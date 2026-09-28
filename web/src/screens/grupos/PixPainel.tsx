@@ -61,6 +61,7 @@ function Resumo({ p }: { p: Painel }) {
         <div className="flex flex-wrap gap-x-md gap-y-xs mt-sm text-body-sm text-fg-muted">
           <span>⏳ Faltam <b className="text-fg">{p.faltam}</b></span>
           {p.cadastradosSemCobranca > 0 && <span>🔵 {p.cadastradosSemCobranca} sem cobrança</span>}
+          {(p.cartaoCadastrado ?? 0) > 0 && <span>💳 {p.cartaoCadastrado} conferir no Emusys</span>}
           {p.aguardandoEmusys > 0 && <span>🔒 {p.aguardandoEmusys} aguardando o Emusys</span>}
         </div>
       </div>

@@ -12,6 +12,8 @@ export interface PixPainel {
   migrados: number;
   faltam: number;
   aguardandoEmusys: number;
+  /** 💳 cartão recorrente cadastrado no Emusys, mas pagou a última por PIX — conferir (28/09). */
+  cartaoCadastrado?: number;
   cadastradosSemCobranca: number;
   dadoEm: string | null;
   faltamSecoes: PixSecao[];
