@@ -79,6 +79,9 @@ export default defineConfig(({ mode }) => {
         headers: {
           'x-internal-secret': secret,
           ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
+          // O painel PIX (/internal/pix-painel) entra pelo LOGIN da pessoa, não pelo segredo —
+          // sem repassar o Authorization, o preview local dava 401 onde a produção dava 200.
+          ...(req.headers.authorization ? { Authorization: String(req.headers.authorization) } : {}),
         },
       };
       if (method !== 'GET' && method !== 'HEAD') {
