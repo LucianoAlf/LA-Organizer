@@ -2893,3 +2893,43 @@ health-check é uma segunda rede, independente, e deve ser lido toda rodada, mes
 O caso da Anne ficou aberto como `19df16e2`, sem conserto. A família está travada (`optimistic-confirm.js`,
 22 commits em 60 dias), e saber QUEM fez a ação exige ler o turno anterior. É a fronteira medida em
 20/09, e a decisão é de desenho.
+
+### ETAPA 2 — acervo zerado de novo, e o defeito do dia estava num lugar que o auditor NÃO lê
+
+**Ocorrência:** 1 (28/09), e é a correção da rodada. Reforça 27/09: zero no acervo mede o
+auditor, não o sistema.
+
+O auditor lê conversa. Deleção de mensagem no grupo não é conversa: é um `messages_update` que
+só existe no `tom-out.log`. O que achou o defeito foi ler o log do webhook procurando o que ele
+**descarta**: `[Webhook] SKIP duplicate` aparecia com a MESMA chave (`fb:5c409ca5…`) para
+recibos de conversas diferentes. Classificando os descartes por `event.Type`, **36 de 67
+`Deleted` tinham sido engolidos**.
+
+A raiz é um fallback sem entrada: `dedupe.js` monta `hash(phone|event|minuto|texto)`, e num
+`messages_update` phone e texto vêm **vazios**. A chave vira "qualquer update deste minuto" e
+o primeiro recibo de entrega consome a vez das deleções. Controle no banco: as 29 deleções que
+não colidiram estão 27/27 com `deleted_at`; das engolidas, 28 mensagens seguem vivas no espelho
+(caso: grupo da Barra, 04/09, surpresa da Duda apagada no zap e mantida no app). Corrigido em
+`57bfb656`: para `messages_update` a chave é `Type + Chat + MessageIDs`.
+
+🔑 Regra: **todo dedupe/hash de fallback tem que ser conferido contra o payload que CHEGA, não
+contra o que o autor imaginou.** Campo vazio numa chave de hash não dá erro — dá colisão, e
+colisão num dedupe é descarte silencioso. O tell barato: agrupar as linhas de descarte por
+chave; chave com dezenas de repetições em conversas diferentes é colisão, não reentrega.
+
+Proposta de virar código: o health-check conta `SKIP duplicate` por chave nas últimas 24h e
+alarma quando uma chave aparece em mais de um `Chat`.
+
+### ETAPA 2 — o alarme de segunda do health-check é artefato do domingo, e a trava impediu o 2º conserto
+
+**Ocorrência:** 3 segundas seguidas (14/09, 21/09, 28/09). Medido, não corrigido.
+
+`checkOverdueTasks` avisa "N tasks vencidas (2+ dias) sem cobrança nas últimas 48h" **só às
+segundas**. Em 28/09 os 5 casos "reais" venceram todos no **sábado 26/09**. O chaser
+(`checkOverdueAlerts`, 13-19h) cobra a partir do dia seguinte ao vencimento, e o domingo não tem
+cobrança (0 `overdue_alert` em 13/09, 20/09 e 27/09). A task nunca teve um dia útil de atraso.
+O corte "venceu ontem" (Sprint 31.12) conta dia de calendário, não dia com cobrança.
+
+Não corrigi: `src/rituals/health-check.js` tem **17 commits em 60 dias** (tripwire 3), e o custo
+é só ruído num relatório interno. Proposta: o corte vira "venceu antes do último dia em que o
+chaser rodou", lido de `notifications`, em vez de `ymdMinus(today, 1)`.
