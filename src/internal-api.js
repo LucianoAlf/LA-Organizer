@@ -28,7 +28,7 @@ const router = express.Router();
 router.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-internal-secret');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-internal-secret, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -1805,6 +1805,46 @@ router.get('/internal/lareport/alertas', requireInternalSecret, async (req, res)
   } catch (e) {
     console.error('[internal-api] /lareport/alertas:', e);
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── PAINEL "PIX AUTOMÁTICO" NA ÁREA DO GRUPO (Alf, 28/09) ─────────────────────────────────────────
+// GET /internal/pix-painel?group_id=  · Authorization: Bearer <JWT do Supabase do usuário>
+// Diferente das outras rotas /internal/*: aqui a porta é o LOGIN da pessoa + a regra de quem vê o
+// grupo (pix-painel.podeVerGrupo), NUNCA o x-internal-secret — ele vai no bundle do navegador e
+// esta rota devolve nome de cliente. Toda a regra mora em services/pix-painel.js (testada); aqui
+// só liga as dependências reais. Cache de 60s por unidade: o painel recarrega sem martelar a fonte.
+const _pixPainelCache = new Map();
+router.get('/internal/pix-painel', async (req, res) => {
+  const { atenderPainel } = require('./services/pix-painel');
+  const { consultaComRetry } = require('./lib/consulta-com-retry');
+  const auth = req.get('authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  const groupId = typeof req.query.group_id === 'string' ? req.query.group_id : null;
+  try {
+    const r = await atenderPainel({
+      token,
+      groupId,
+      deps: {
+        usuarioDoToken: async (t) => { const { data, error } = await supabase.auth.getUser(t); return error ? null : (data && data.user) || null; },
+        colaboradorPorEmail: async (email) => (await supabase.from('collaborators').select('id, role').eq('email', email).eq('is_active', true).maybeSingle()).data || null,
+        grupo: async (id) => (await supabase.from('work_groups').select('id, leader_id, created_by, la_report_unidade_id').eq('id', id).maybeSingle()).data || null,
+        souMembro: async (gid, cid) => { const { data } = await supabase.from('work_group_members').select('group_id').eq('group_id', gid).eq('collaborator_id', cid).limit(1); return !!(data && data.length); },
+        lerFonte: async (unidadeId) => {
+          const c = _pixPainelCache.get(unidadeId);
+          if (c && Date.now() - c.em < 60000) return c.linhas;
+          const r2 = await consultaComRetry(() => _lrcInternal.rpc('get_pix_migracao_v1', { p_unidade_id: unidadeId, p_fatia: null }));
+          if (r2 && r2.error) throw new Error(r2.error.message);
+          const linhas = (r2 && r2.data) || [];
+          _pixPainelCache.set(unidadeId, { em: Date.now(), linhas });
+          return linhas;
+        },
+      },
+    });
+    res.status(r.status).json(r.body);
+  } catch (e) {
+    console.error('[internal-api] /pix-painel:', e.message);
+    res.status(500).json({ ok: false, error: 'erro_interno' });
   }
 });
 

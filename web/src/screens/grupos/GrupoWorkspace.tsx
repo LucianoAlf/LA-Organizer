@@ -28,6 +28,7 @@ import { TaskGroupSheet } from '../../components/TaskGroupSheet';
 import { GroupTaskSheet } from './GroupTaskSheet';
 import { TaskDetailSheet } from '../../components/TaskDetailSheet';
 import { TaskChecklistSection } from '../../components/TaskChecklistSection';
+import { PixPainel } from './PixPainel';
 import type { Task } from '../../types';
 
 const first = (name: string | null | undefined) => (name ?? '').split(' ')[0];
@@ -351,6 +352,9 @@ export function GrupoWorkspace() {
         <StatCard label="Atrasadas" value={stats.atrasadas} tone={stats.atrasadas > 0 ? 'danger' : 'neutral'} />
         <StatCard label="Feitas no mês" value={stats.feitasNoMes} tone={stats.feitasNoMes > 0 ? 'success' : 'neutral'} />
       </div>
+
+      {/* 💠 PIX automático — só aparece em grupo amarrado a uma unidade (Alf, 28/09) */}
+      {groupId && <PixPainel groupId={groupId} />}
 
       {wsLoading && <LoadingState rows={3} />}
 
