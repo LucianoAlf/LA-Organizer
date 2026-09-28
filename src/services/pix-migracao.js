@@ -44,6 +44,17 @@ const bloqueadoNoEmusys = (l) => !!l && bloqueioEmusysAtivo() && l.categoria ===
   && Array.isArray(l.matriculas) && l.matriculas.length > 1;
 const MARCA_BLOQUEIO = '🔒';
 const LEGENDA_BLOQUEIO = '🔒 = aguardando o Emusys liberar (2+ cursos ou família: ele só liga o PIX automático a uma fatura) — vão pro fim da fila';
+// ── 💳 CARTÃO RECORRENTE CADASTRADO, MAS PAGANDO POR PIX (Alf, 28/09) ──────────────────────────────
+// CG avisou: "alguns estão como pix no sistema mas mudaram pra crédito recorrente". A fonte põe na
+// fila do Pix avulso quem tem CARTÃO RECORRENTE cadastrado no Emusys mas pagou a última mensalidade
+// por PIX — 50 nas três unidades em 28/09. Parte mudou agora (o cartão ainda não cobrou), parte
+// pagava no cartão e voltou pro PIX: não dá pra afirmar que já resolveu, então o relatório diz
+// CONFERIR no Emusys. Continua dentro do "faltam" (a fonte manda); 🔒 tem precedência (não conta 2x).
+const RE_CARTAO = /cart[aã]o/i;
+const cartaoCadastradoPagandoPix = (l) => !!l && l.categoria === 'migrar' && !bloqueadoNoEmusys(l)
+  && RE_CARTAO.test(String(l.cobranca_automatica_cadastrada || ''))
+  && !RE_CARTAO.test(String(l.forma_ultima_mensalidade || ''));
+const MARCA_CARTAO = '💳';
 const nomeComMarca = (l) => `${l.pagador_nome}${bloqueadoNoEmusys(l) ? ` ${MARCA_BLOQUEIO}` : ''}`;
 const ordenarPorPrioridade = (linhas) => [...(linhas || [])].sort((a, b) => {
   const bloq = Number(bloqueadoNoEmusys(a)) - Number(bloqueadoNoEmusys(b)); // livre antes de bloqueado
@@ -126,12 +137,19 @@ function ritmoDaEquipe({ unidades, hojeYmd }) {
   const presos = us.reduce((s, u) => s + (u.aguardandoEmusys || 0), 0);
   return ritmoNecessario({ faltam: Math.max(0, faltam - presos), hojeYmd });
 }
+// 28/09 (Alf): o 9% sozinho parecia "ninguém fez nada". O relatório passa a ter blocos:
+//   ✅ Feito pela equipe — migrados + ⏳ cadastrados aguardando a 1ª cobrança do banco
+//   ⏸️ Esperando        — 🔒 Emusys (2+ matrículas) e 💳 cartão cadastrado pagando PIX (conferir)
+//   🎯 Ritmo            — a linha de sempre + o que a equipe consegue fazer sem 🔒 e 💳
+// O percentual do topo e o "faltam" NÃO mudam: continuam contando só quem o banco já cobrou.
 function relatorioSemanal({ unidades, periodoBr, hojeYmd, alertaRitmo = false }) {
   const us = unidades || [];
-  const total = us.reduce((s, u) => s + u.total, 0);
-  const migrados = us.reduce((s, u) => s + u.migrados, 0);
-  const pend = us.reduce((s, u) => s + (u.pendentesAutorizacao || 0), 0);
-  const presos = us.reduce((s, u) => s + (u.aguardandoEmusys || 0), 0);
+  const soma = (k) => us.reduce((s, u) => s + (Number(u[k]) || 0), 0);
+  const total = soma('total');
+  const migrados = soma('migrados');
+  const pend = soma('pendentesAutorizacao');
+  const presos = soma('aguardandoEmusys');
+  const cartao = soma('cartaoCadastrado');
   const pct = total ? Math.round((migrados / total) * 100) : 0;
   const faltam = total - migrados;
   const r = ritmoNecessario({ faltam, hojeYmd });
@@ -139,21 +157,32 @@ function relatorioSemanal({ unidades, periodoBr, hojeYmd, alertaRitmo = false })
     `Geral  ${barra(pct)}  ${pct}%  (${migrados} de ${total}) · meta ${METAS_BR}`];
   for (const u of us) {
     const p2 = u.total ? Math.round((u.migrados / u.total) * 100) : 0;
-    linhas.push(`${u.nome} ${barra(p2)} ${p2}% (${u.migrados}/${u.total}) — ${u.migradosNaSemana} nesta semana${u.aguardandoEmusys ? ` · ${MARCA_BLOQUEIO} ${u.aguardandoEmusys}` : ''}`);
+    const marcas = [[MARCA_BLOQUEIO, u.aguardandoEmusys], [MARCA_CARTAO, u.cartaoCadastrado], ['⏳', u.pendentesAutorizacao]]
+      .filter(([, n]) => Number(n) > 0).map(([m, n]) => ` · ${m} ${n}`).join('');
+    linhas.push(`${u.nome} ${barra(p2)} ${p2}% (${u.migrados}/${u.total}) — ${u.migradosNaSemana} nesta semana${marcas}`);
   }
-  if (pend) linhas.push(`🔵 Cadastrados sem cobrança: ${pend}`);
-  // 19/09 (Alf): sem esta linha a meta de 31/10 parece atraso do time. Os bloqueados continuam
-  // DENTRO de "faltam" e do percentual (a conta não muda) — só ficam nomeados, com o motivo.
-  if (presos) linhas.push(`${MARCA_BLOQUEIO} Aguardando o Emusys: ${presos} (2+ cursos ou família — ele só liga o PIX automático a uma fatura)`);
+  if (pend) {
+    const feito = migrados + pend;
+    linhas.push('', `*✅ Feito pela equipe: ${feito} (${total ? Math.round((feito / total) * 100) : 0}%)*`,
+      `• ${migrados} já migraram — o banco já cobrou no automático`,
+      `• ⏳ ${pend} cadastrados, aguardando a 1ª cobrança do banco — contam como migrados depois dela`);
+  }
+  // 19/09 (Alf): sem a linha 🔒 a meta parece atraso do time. 🔒 e 💳 continuam DENTRO de "faltam".
+  if (presos || cartao) {
+    linhas.push('', '*⏸️ Esperando*');
+    if (presos) linhas.push(`• ${MARCA_BLOQUEIO} ${presos} aguardando o Emusys — 2+ cursos ou família: ele só liga o PIX automático a uma fatura`);
+    if (cartao) linhas.push(`• ${MARCA_CARTAO} ${cartao} com cartão recorrente cadastrado, mas pagaram por PIX — conferir no Emusys: se já estão no cartão, saem da lista quando a cobrança passar`);
+  }
   // M4 (revisão final): meta passou (0 semanas) — "faltam 0 semanas e N clientes → N por semana"
   // não diz nada; o que importa é que a meta venceu e quantos ainda faltam.
-  if (r.semanas === 0) linhas.push(`Meta de ${METAS_BR} vencida — faltam ${faltam} clientes.`);
+  if (r.semanas === 0) linhas.push('', `Meta de ${METAS_BR} vencida — faltam ${faltam} clientes.`);
   else {
-    linhas.push(`Ritmo: faltam ${r.semanas} semanas e ${faltam} clientes → ${r.porSemana} por semana.`);
-    // O que a equipe consegue fazer de fato: sem quem depende do Emusys liberar.
-    if (presos) {
-      const livres = Math.max(0, faltam - presos);
-      linhas.push(`Sem os ${MARCA_BLOQUEIO}: faltam ${livres} clientes → ${ritmoNecessario({ faltam: livres, hojeYmd }).porSemana} por semana.`);
+    linhas.push('', `🎯 Ritmo: faltam ${r.semanas} semanas e ${faltam} clientes → ${r.porSemana} por semana.`);
+    // O que a equipe consegue fazer de fato: sem quem depende do Emusys e sem os 💳 a conferir.
+    if (presos || cartao) {
+      const livres = Math.max(0, faltam - presos - cartao);
+      const rot = [presos ? MARCA_BLOQUEIO : null, cartao ? MARCA_CARTAO : null].filter(Boolean).join(' e ');
+      linhas.push(`Sem os ${rot}: faltam ${livres} clientes → ${ritmoNecessario({ faltam: livres, hojeYmd }).porSemana} por semana.`);
     }
   }
   if (alertaRitmo) linhas.push('⚠️ Duas semanas seguidas abaixo do ritmo necessário.');
@@ -190,6 +219,7 @@ function dadosDaUnidadeParaRelatorio(linhas, { nome, hojeYmd }) {
   let pendentesAutorizacao = 0;
   let aMigrar = 0;
   let aguardandoEmusys = 0;
+  let cartaoCadastrado = 0;
   for (const l of linhas || []) {
     if (!l) continue;
     if (l.categoria === 'ja_migrou') {
@@ -201,10 +231,11 @@ function dadosDaUnidadeParaRelatorio(linhas, { nome, hojeYmd }) {
       aMigrar += 1;
       // Mesma regra da pauta diária (bloqueadoNoEmusys): continua DENTRO do total — só é nomeado.
       if (bloqueadoNoEmusys(l)) aguardandoEmusys += 1;
+      if (cartaoCadastradoPagandoPix(l)) cartaoCadastrado += 1;
     }
   }
   return {
-    nome, total: migrados + aMigrar + pendentesAutorizacao, migrados, migradosNaSemana, pendentesAutorizacao, aguardandoEmusys,
+    nome, total: migrados + aMigrar + pendentesAutorizacao, migrados, migradosNaSemana, pendentesAutorizacao, aguardandoEmusys, cartaoCadastrado,
   };
 }
 
@@ -342,6 +373,7 @@ module.exports = {
   somaDiasYmd: _somaDiasYmd,
   fatiaDoCliente, ordenarPorPrioridade, loteDoDia, contagemPorFatia, tituloDaFilha,
   bloqueadoNoEmusys, nomeComMarca, MARCA_BLOQUEIO, LEGENDA_BLOQUEIO, ritmoDaEquipe,
+  cartaoCadastradoPagandoPix, MARCA_CARTAO,
   mensagemDaUnidade, barra, ritmoNecessario, relatorioSemanal,
   horaDaPautaPix, decisaoDaPublicacaoPix, prefixoDaGuardaPix,
   dadosDaUnidadeParaRelatorio, periodoDaSemanaBr, precisaAlertaRitmo,

@@ -47,7 +47,7 @@ const RE = { nome: 'Recreio', total: 76, migrados: 58, migradosNaSemana: 9, pend
 
 test('relatório: linha própria com o total de bloqueados e o motivo', () => {
   const txt = p.relatorioSemanal(base([CG, RE]));
-  assert.match(txt, /🔒 Aguardando o Emusys: 67 \(2\+ cursos ou família/);
+  assert.match(txt, /• 🔒 67 aguardando o Emusys — 2\+ cursos ou família/); // 28/09: bloco "Esperando"
   assert.match(txt, /uma fatura/);
 });
 
@@ -82,13 +82,15 @@ test('relatório: unidade sem o campo (dado antigo) não quebra nem vira NaN', (
 
 test('relatório depois da meta: a linha 🔒 continua (é justamente quando mais importa) e o texto não fala "0 semanas"', () => {
   const txt = p.relatorioSemanal({ periodoBr: '26/10 a 01/11', hojeYmd: '2026-11-02', unidades: [{ nome: 'Barra', total: 100, migrados: 88, migradosNaSemana: 3, pendentesAutorizacao: 2, aguardandoEmusys: 9 }] });
-  assert.match(txt, /🔒 Aguardando o Emusys: 9/);
+  assert.match(txt, /• 🔒 9 aguardando o Emusys/); // 28/09: bloco "Esperando"
   assert.match(txt, /Meta de 31\/10 vencida — faltam 12 clientes\./);
   assert.ok(!txt.includes('0 semanas'));
 });
 
 test('relatório: nunca lista nomes (é placar)', () => {
-  assert.ok(!/•/.test(p.relatorioSemanal(base([CG, RE]))));
+  // 28/09: os blocos Feito/Esperando usam •, mas todo item é NÚMERO (placar), nunca nome.
+  const itens = p.relatorioSemanal(base([CG, RE])).split('\n').filter((l) => l.startsWith('• '));
+  for (const l of itens) assert.match(l, /^• (\d|⏳ \d|🔒 \d|💳 \d)/, l);
 });
 
 // ── ritmoDaEquipe: o alerta de ritmo compara a equipe com o que ELA controla ─────────────────

@@ -205,9 +205,9 @@ test('relatório semanal: geral, unidades, pendentes e ritmo', () => {
   assert.match(txt, /💠 \*PIX automático — semana de 13 a 19\/10\*/);
   assert.match(txt, /Geral\s+▓+░*\s+50%\s+\(151 de 302\)/);
   assert.match(txt, /Campo Grande .*41% \(93\/226\) — 12 nesta semana/);
-  assert.match(txt, /🔵 Cadastrados sem cobrança: 7/);
+  assert.match(txt, /• ⏳ 7 cadastrados, aguardando a 1ª cobrança do banco/); // 28/09: bloco "Feito pela equipe"
   assert.match(txt, /Ritmo: faltam 2 semanas e 151 clientes → 76 por semana/);
-  assert.ok(!/•/.test(txt), 'relatório semanal não lista nomes');
+  assert.ok(!/Ana|Bia|Caio/.test(txt), 'relatório semanal não lista nomes'); // 28/09: blocos usam •, nomes não
 });
 
 test('M4: relatório semanal depois da meta — a linha de ritmo vira "Meta de 31/10 vencida — faltam N clientes."', () => {
@@ -364,7 +364,7 @@ test('dadosDaUnidadeParaRelatorio: conta migrados, a migrar e autorização pend
   ];
   const d = p.dadosDaUnidadeParaRelatorio(linhas, { nome: 'Barra', hojeYmd: '2026-10-19' });
   assert.deepStrictEqual(d, {
-    nome: 'Barra', total: 6, migrados: 3, migradosNaSemana: 0, pendentesAutorizacao: 1, aguardandoEmusys: 0,
+    nome: 'Barra', total: 6, migrados: 3, migradosNaSemana: 0, pendentesAutorizacao: 1, aguardandoEmusys: 0, cartaoCadastrado: 0,
   });
 });
 
@@ -404,7 +404,7 @@ test('dadosDaUnidadeParaRelatorio: migradosNaSemana NÃO conta migrou_em de hoje
 test('dadosDaUnidadeParaRelatorio: sem linhas devolve zeros', () => {
   const d = p.dadosDaUnidadeParaRelatorio([], { nome: 'Recreio', hojeYmd: '2026-10-19' });
   assert.deepStrictEqual(d, {
-    nome: 'Recreio', total: 0, migrados: 0, migradosNaSemana: 0, pendentesAutorizacao: 0, aguardandoEmusys: 0,
+    nome: 'Recreio', total: 0, migrados: 0, migradosNaSemana: 0, pendentesAutorizacao: 0, aguardandoEmusys: 0, cartaoCadastrado: 0,
   });
 });
 
