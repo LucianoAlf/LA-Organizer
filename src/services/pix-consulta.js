@@ -16,7 +16,7 @@
 // (Campo Grande/CG, Recreio, Barra); sem citação, o orquestrador (pix-consulta-fontes.js) manda
 // as três. `blocoDeNumerosTodasUnidades` formata o bloco de números das três juntas + TOTAL.
 
-const { FATIAS, ROTULO } = require('./pix-migracao');
+const { FATIAS, ROTULO, META_YMD } = require('./pix-migracao');
 const { pareceFalaDeCadastro } = require('../lib/pix-cadastro-informado');
 const situ = require('./situacao-aluno');
 
@@ -205,8 +205,9 @@ function mensagensDeVariasListas({
     if (!itens.length) { out.push(`💠 *${rotulo(b.titulo)}* (0 ${subst}) — parte 1/1\nNinguém nesta lista agora.`); continue; }
     for (let k = 0; k < partes; k++) {
       const fatia = itens.slice(k * lim, Math.min((k + 1) * lim, mostrados));
-      const corpo = fatia.map((it) => `• ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`).join('\n');
-      out.push(`💠 *${rotulo(b.titulo)}* (${itens.length} ${subst}) — parte ${k + 1}/${precisa}\n${corpo}`);
+      const corpo = _corpoDaParte(fatia, k > 0 ? itens[k * lim - 1] : null);
+      const topo = k === 0 && b.resumo ? `\n${b.resumo}${corpo.secionado ? '\n' : ''}` : '';
+      out.push(`💠 *${rotulo(b.titulo)}* (${itens.length} ${subst}) — parte ${k + 1}/${precisa}${topo}\n${corpo.texto}`);
     }
   }
   const rodape = [];
@@ -214,6 +215,53 @@ function mensagensDeVariasListas({
   for (const a of avisos || []) if (a) rodape.push(`_${a}_`);
   if (rodape.length && out.length) out[out.length - 1] += `\n${rodape.join('\n')}`;
   return out;
+}
+
+// ── LISTA ORGANIZADA (Alf, 28/09) ─────────────────────────────────────────────────────────────
+// "Sempre que o TOM responder, tem que vir organizado, hierárquico, como mensagem de WhatsApp." A
+// lista de quem falta migrar saía como 43 linhas corridas (Barra, pedido do Arthur). Item com
+// `secao` ganha cabeçalho da seção (a mesma forma de pagamento da pauta das 9h), linha em branco
+// entre seções e nome recuado — igual à pauta. Parte que começa no meio de uma seção repete o
+// cabeçalho com "(continuação)". Item SEM `secao` (anamnese, contrato, já migraram) sai como antes.
+function _linhaPlana(it) {
+  return `• ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`;
+}
+function _corpoDaParte(fatia, anterior) {
+  if (!fatia.some((it) => it && it.secao)) return { texto: fatia.map(_linhaPlana).join('\n'), secionado: false };
+  const linhas = [];
+  let atual;
+  fatia.forEach((it, i) => {
+    if (i === 0 || it.secao !== atual) {
+      if (linhas.length) linhas.push('');
+      const cont = i === 0 && anterior && anterior.secao === it.secao ? ' _(continuação)_' : '';
+      if (it.secao) linhas.push(`${it.secao}${cont}`);
+      atual = it.secao;
+    }
+    linhas.push(`   • ${it.pagador}${(it.alunos || []).length ? ` (${it.alunos.join(', ')})` : ''}`);
+  });
+  return { texto: linhas.join('\n'), secionado: true };
+}
+
+// Topo da lista do PIX: onde a unidade está e quanto tempo falta. Mesma conta do relatório de
+// segunda (total = migrados + a migrar + cadastrados sem cobrança) — o grupo nunca vê dois números.
+function _diasAte(hojeYmd, metaYmd) {
+  const a = Date.parse(`${hojeYmd}T00:00:00Z`);
+  const b = Date.parse(`${metaYmd}T00:00:00Z`);
+  return Number.isNaN(a) || Number.isNaN(b) ? null : Math.round((b - a) / 86400000);
+}
+function resumoDaMigracao({ migrados, total, hojeYmd, metaYmd = META_YMD }) {
+  const m = Math.max(0, Number(migrados) || 0);
+  const tot = Math.max(m, Number(total) || 0);
+  const linhas = [`✅ *${m} de ${tot} já migraram* · faltam ${tot - m}`];
+  const metaBr = `${metaYmd.slice(8, 10)}/${metaYmd.slice(5, 7)}`;
+  const dias = hojeYmd ? _diasAte(hojeYmd, metaYmd) : null;
+  if (dias != null) {
+    if (dias > 1) linhas.push(`⏰ Faltam ${dias} dias pra meta de ${metaBr}`);
+    else if (dias === 1) linhas.push(`⏰ Falta 1 dia pra meta de ${metaBr}`);
+    else if (dias === 0) linhas.push(`⏰ A meta é hoje (${metaBr})`);
+    else linhas.push(`⏰ Meta de ${metaBr} vencida`);
+  }
+  return linhas.join('\n');
 }
 
 // Atalho de UMA família só (o caso comum). Lista vazia NÃO devolve array vazio: um pedido
@@ -350,5 +398,5 @@ module.exports = {
   LIMITE_POR_MENSAGEM, TETO_MENSAGENS, TEXTO_SEM_UNIDADE, TEXTO_FONTE_FORA, RECORTE_ALUNOS,
   detectarPedido, precisaDeNumeros, detectarUnidade, tituloDoAlvo, substantivoDoAlvo,
   mensagensDaLista, mensagensDeVariasListas, blocoDeNumeros, blocoDeNumerosTodasUnidades,
-  alvosDoMarker,
+  alvosDoMarker, resumoDaMigracao,
 };

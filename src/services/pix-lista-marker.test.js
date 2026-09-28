@@ -165,6 +165,15 @@ test('prompt ensina a DIFERENÇA: "alunos pix que não estão no automático" = 
   assert.match(p, /PIX automático[^\n]*(destino|recorrente)/i);
 });
 
+test('prompt: "quem falta" sem forma = "pix" (nunca pix_avulso); total/"já foi e falta" = as duas listas; abertura sem número (28/09)', () => {
+  const p = promptBase();
+  assert.match(p, /SEM dizer a forma → SEMPRE "pix"\. NUNCA "pix_avulso"/);
+  assert.match(p, /\["ja_migrou","pix"\]/);
+  assert.match(p, /quem já foi/);
+  assert.match(p, /10 JÁ MIGRARAM de 53 NO TOTAL/);
+  assert.match(p, /A linha antes do marker NÃO leva número nem nome/);
+});
+
 test('prompt proíbe pedir planilha pra montar a lista', () => {
   assert.match(promptBase(), /NUNCA peça planilha/);
 });

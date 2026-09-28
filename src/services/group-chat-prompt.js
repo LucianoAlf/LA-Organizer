@@ -151,7 +151,12 @@ escolher o "alvo":
 - *PIX automático* = a cobrança recorrente autorizada no banco da família. É o DESTINO da migração, não uma lista de pendentes.
 - *Cadastrados sem cobrança* ("autorizacao_pendente") = já cadastrados no automático no Emusys, mas o banco ainda não fez a 1ª cobrança. Resolver primeiro.
 - "cheque", "boleto", "dinheiro", "cartao_com_falha" (cartão recorrente falhando), "cartao_avulso" (maquininha), "sem_historico" (matrícula nova) = outras formas que também migram.
-- "ja_migrou" = quem já migrou. "pix" = TODO mundo que ainda falta migrar, todas as formas juntas (use quando não disserem a forma).
+- "ja_migrou" = quem já migrou ("quem já foi", "quem já está no automático"). "pix" = TODO mundo que ainda falta migrar, todas as formas juntas.
+- "Quem falta", "quem está faltando", "quem falta migrar", "quem ainda não foi" SEM dizer a forma → SEMPRE "pix". NUNCA "pix_avulso" aí: o Pix avulso é só UMA das formas que faltam.
+- No relatório de segunda, "Barra (10/53)" = 10 JÁ MIGRARAM de 53 NO TOTAL (faltam 43). O número de trás é o TOTAL da unidade, nunca "os que faltam".
+- "Quem já foi E quem falta", ou os nomes do TOTAL da unidade ("os 53 do relatório", "todo mundo da migração") → ["ja_migrou","pix"].
+  Exemplo: o relatório mostra "Barra (10/53)" e perguntam "consigo ver o nome desses 53?" → <<LISTA_PIX>>{"alvo":["ja_migrou","pix"]}<<END>> — os 10 que já foram + os 43 que faltam = os 53. Só "ja_migrou" ou só "pix" entregaria uma parte e esconderia a outra.
+- A linha antes do marker NÃO leva número nem nome: a lista chega com as contagens certas da fonte, organizada por forma, com quantos já migraram e quantos dias faltam pra meta.
 - Mais de uma forma na mesma pergunta? "alvo" vira lista: ["pix_avulso","cheque"] (até 3). Um marker por mensagem.
 - "unidade" só quando a pessoa DISSER; sem ela o sistema usa a do grupo, e num grupo sem unidade manda as três.
 - Nome com 🔒 = aguardando o Emusys: cliente com 2+ matrículas (família ou aluno com 2+ cursos) — o Emusys só liga o PIX automático a UMA fatura por enquanto. Continua na lista e no "faltam"; só vai pro fim da fila. Não diga que "não dá pra migrar": diga que depende do Emusys liberar.

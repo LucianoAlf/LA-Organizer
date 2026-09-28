@@ -255,7 +255,7 @@ test('pedido de LISTA num grupo COM unidade: posta as mensagens em ordem e não 
   assert.strictEqual(r.numerosContext, '');
   assert.strictEqual(p.length, 1);
   assert.match(p[0], /Pix avulso — Barra/);
-  assert.match(p[0], /• Ana — A1, A2/);
+  assert.match(p[0], /\n   • Ana \(A1, A2\)/); // 28/09: formato organizado em seções
   assert.strictEqual(r.ultimo.id, 'm1');
 });
 
@@ -270,7 +270,7 @@ test('lista com 120 clientes: sai em 3 mensagens, na ordem, e o grupo recebe TOD
   assert.strictEqual(p.length, 3);
   assert.match(p[0], /parte 1\/3/);
   assert.match(p[2], /parte 3\/3/);
-  assert.strictEqual(p.reduce((s, m) => s + (m.split('\n• ').length - 1), 0), 120);
+  assert.strictEqual(p.reduce((s, m) => s + (m.split('\n   • ').length - 1), 0), 120); // 28/09: nome recuado na seção
 });
 
 test('as partes saem UMA POR VEZ, na ordem — mesmo com a parte 1 demorando mais que as outras', async () => {

@@ -146,13 +146,14 @@ const semRetry = (c) => c();
 const PIX = [livre('Ana Livre'), preso('Bia Presa'), L({ pagador_nome: 'Cadastrada', categoria: 'autorizacao_pendente', fatia: null, matriculas: [1, 2] })];
 const deps = { rpcPix: ok(PIX), rpcSituacao: ok([]), retry: semRetry };
 
-test('lista do PIX: bloqueado leva 🔒 no nome, na MESMA lista (nada escondido) e a legenda explica', () => semInterruptor(async () => {
+// 28/09 (lista organizada, pix-lista-organizada.test.js): o 🔒 deixou de ser marca no nome + legenda
+// no rodapé e virou SEÇÃO própria no fim da MESMA mensagem, com o motivo no cabeçalho.
+test('lista do PIX: bloqueado vai pra seção 🔒 no fim da MESMA lista (nada escondido), com o motivo', () => semInterruptor(async () => {
   const r = await f.mensagensDaListaPix({ unidadeId: BARRA, unidadeNome: 'Barra', alvos: ['pix_avulso'], deps });
   const t = r.msgs.join('\n');
   assert.match(t, /Ana Livre/);
-  assert.match(t, /Bia Presa 🔒/);
-  assert.ok(!/Ana Livre 🔒/.test(t));
-  assert.match(t, /🔒 = aguardando o Emusys/);
+  assert.match(t, /🔒 \*Aguardando o Emusys\* \(1\) — 2\+ cursos ou família[^\n]*\n   • Bia Presa/);
+  assert.ok(t.indexOf('Ana Livre') < t.indexOf('🔒 *Aguardando o Emusys*'));
   assert.strictEqual(r.total, 2);
 }));
 

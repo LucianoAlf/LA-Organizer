@@ -13,7 +13,7 @@
 // de fatura nunca saem daqui (um teste prende as chaves do objeto).
 
 const pura = require('./pix-consulta');
-const { ordenarPorPrioridade, fatiaDoCliente, FATIAS, bloqueadoNoEmusys, nomeComMarca, LEGENDA_BLOQUEIO, MARCA_BLOQUEIO } = require('./pix-migracao');
+const { ordenarPorPrioridade, fatiaDoCliente, FATIAS, ROTULO, bloqueadoNoEmusys, nomeComMarca, LEGENDA_BLOQUEIO, MARCA_BLOQUEIO, dadosDaUnidadeParaRelatorio } = require('./pix-migracao');
 const { filtrarPorRecorte, nomeDaUnidade, resolverUnidade } = require('./situacao-aluno');
 const { consultaComRetry } = require('../lib/consulta-com-retry');
 
@@ -121,23 +121,53 @@ async function _itensDeAluno({ retry, rpcSituacao, recorte }) {
     .sort((a, b) => String(a.pagador).localeCompare(String(b.pagador), 'pt-BR'));
 }
 
-async function _itensDePix({ retry, rpcPix, alvo }) {
+// Seção de cada cliente na lista ORGANIZADA (pix-consulta.mensagensDeVariasListas): a forma de
+// pagamento, igual à pauta das 9h; quem depende do Emusys liberar ganha a seção 🔒 própria (a
+// ordenação já os põe no fim), e o cabeçalho explica — por isso o nome sai sem o 🔒 colado.
+const SECAO_BLOQUEIO = 'bloqueio_emusys';
+const _chaveDaSecao = (l) => (bloqueadoNoEmusys(l) ? SECAO_BLOQUEIO : fatiaDoCliente(l));
+function _rotuloDaSecao(chave, n) {
+  if (chave === SECAO_BLOQUEIO) return `${MARCA_BLOQUEIO} *Aguardando o Emusys* (${n}) — 2+ cursos ou família, o Emusys ainda não libera`;
+  const r = ROTULO[chave] || ROTULO.sem_historico;
+  return `${r.emoji} *${r.nome}* (${n})${chave === 'autorizacao_pendente' ? ' — resolver primeiro' : ''}`;
+}
+
+// -> { itens: [{ pagador, alunos, secao? }], resumo }
+async function _lerPix({ retry, rpcPix, alvo, hoje }) {
   const r = await retry(rpcPix);
   if (r && r.error) throw new Error(`get_pix_migracao_v1: ${r.error.message}`);
   const linhas = (r && r.data) || [];
+  const d = dadosDaUnidadeParaRelatorio(linhas, { nome: '', hojeYmd: hoje || _ymdBrt(new Date().toISOString()) });
+  const resumo = pura.resumoDaMigracao({ migrados: d.migrados, total: d.total, hojeYmd: hoje || _ymdBrt(new Date().toISOString()) });
+  if (alvo === 'ja_migrou') {
+    const itens = ordenarPorPrioridade(linhas.filter((l) => l && l.categoria === 'ja_migrou'))
+      .map((l) => ({ pagador: l.pagador_nome, alunos: l.alunos || [] }));
+    return { itens, resumo };
+  }
   let escolhidas;
-  if (alvo === 'ja_migrou') escolhidas = linhas.filter((l) => l && l.categoria === 'ja_migrou');
-  else if (alvo === 'autorizacao_pendente') escolhidas = linhas.filter((l) => l && l.categoria === 'autorizacao_pendente');
+  if (alvo === 'autorizacao_pendente') escolhidas = linhas.filter((l) => l && l.categoria === 'autorizacao_pendente');
   else if (FATIAS.includes(alvo)) escolhidas = linhas.filter((l) => NA_PAUTA(l) && fatiaDoCliente(l) === alvo);
   else escolhidas = linhas.filter(NA_PAUTA); // 'pix' e 'tudo': tudo o que falta migrar
-  return ordenarPorPrioridade(escolhidas).map((l) => ({ pagador: nomeComMarca(l), alunos: l.alunos || [] }));
+  const ordenadas = ordenarPorPrioridade(escolhidas);
+  const porSecao = new Map();
+  for (const l of ordenadas) porSecao.set(_chaveDaSecao(l), (porSecao.get(_chaveDaSecao(l)) || 0) + 1);
+  const itens = ordenadas.map((l) => {
+    const chave = _chaveDaSecao(l);
+    return { pagador: l.pagador_nome, alunos: l.alunos || [], secao: _rotuloDaSecao(chave, porSecao.get(chave)) };
+  });
+  return { itens, resumo };
+}
+
+async function _itensDePix({ retry, rpcPix, alvo, hoje }) {
+  return (await _lerPix({ retry, rpcPix, alvo, hoje })).itens;
 }
 
 // itensDaLista -> [{ pagador, alunos }]  (LANÇA quando a fonte falha — ver o topo do arquivo)
 async function itensDaLista({ laReport, unidadeId, alvo, deps = {} }) {
   const { retry, rpcPix, rpcSituacao } = _rpcs({ laReport, unidadeId, deps });
   if (FAMILIA_ALUNO.has(alvo)) return _itensDeAluno({ retry, rpcSituacao, recorte: alvo });
-  return _itensDePix({ retry, rpcPix, alvo });
+  // API pública: só pagador+alunos (a seção é detalhe de formatação da mensagem).
+  return (await _itensDePix({ retry, rpcPix, alvo, hoje: deps.hoje })).map((it) => ({ pagador: it.pagador, alunos: it.alunos }));
 }
 
 // blocosDaLista -> { blocos: [{ titulo, substantivo, itens }], falhas: [string] }
@@ -154,10 +184,13 @@ async function blocosDaLista({ laReport, unidadeId, alvo, deps = {} }) {
   const falhas = [];
   for (const p of pedidos) {
     try {
-      const itens = FAMILIA_ALUNO.has(p)
-        ? await _itensDeAluno({ retry, rpcSituacao, recorte: p })
-        : await _itensDePix({ retry, rpcPix, alvo: p });
-      blocos.push({ titulo: pura.tituloDoAlvo(p), substantivo: pura.substantivoDoAlvo(p), itens });
+      if (FAMILIA_ALUNO.has(p)) {
+        const itens = await _itensDeAluno({ retry, rpcSituacao, recorte: p });
+        blocos.push({ titulo: pura.tituloDoAlvo(p), substantivo: pura.substantivoDoAlvo(p), itens });
+      } else {
+        const { itens, resumo } = await _lerPix({ retry, rpcPix, alvo: p, hoje: deps.hoje });
+        blocos.push({ titulo: pura.tituloDoAlvo(p), substantivo: pura.substantivoDoAlvo(p), itens, resumo });
+      }
     } catch (e) {
       console.warn(`[PixConsulta] bloco ${p} unidade=${unidadeId}: ${e.message}`);
       falhas.push(`A lista de ${pura.tituloDoAlvo(p)} eu não consegui ler agora.`);
