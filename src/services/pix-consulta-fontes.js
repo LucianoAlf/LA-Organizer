@@ -140,8 +140,10 @@ async function _lerPix({ retry, rpcPix, alvo, hoje }) {
   const d = dadosDaUnidadeParaRelatorio(linhas, { nome: '', hojeYmd: hoje || _ymdBrt(new Date().toISOString()) });
   const resumo = pura.resumoDaMigracao({ migrados: d.migrados, total: d.total, hojeYmd: hoje || _ymdBrt(new Date().toISOString()) });
   if (alvo === 'ja_migrou') {
-    const itens = ordenarPorPrioridade(linhas.filter((l) => l && l.categoria === 'ja_migrou'))
-      .map((l) => ({ pagador: l.pagador_nome, alunos: l.alunos || [] }));
+    // Mesmo formato da lista de quem falta (nome recuado, alunos entre parênteses) — as duas saem
+    // juntas no "quem já foi e quem falta" e não podem ter cara diferente.
+    const ja = ordenarPorPrioridade(linhas.filter((l) => l && l.categoria === 'ja_migrou'));
+    const itens = ja.map((l) => ({ pagador: l.pagador_nome, alunos: l.alunos || [], secao: `✅ *Já no PIX automático* (${ja.length})` }));
     return { itens, resumo };
   }
   let escolhidas;

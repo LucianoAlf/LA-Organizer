@@ -97,9 +97,9 @@ test('quem falta: seções na ordem da pauta (🔵 primeiro, 🔒 no fim), conta
   assert.match(t, /🔒 \*Aguardando o Emusys\* \(1\) — 2\+ cursos ou família, o Emusys ainda não libera\n   • Presa \(P1, P2\)/);
   assert.ok(!/Já Foi|Fora/.test(t));
 }));
-test('já migraram: lista simples com o mesmo resumo no topo', () => semInterruptor(async () => {
+test('já migraram: mesmo resumo no topo e o MESMO formato da lista de quem falta', () => semInterruptor(async () => {
   const r = await f.mensagensDaListaPix({ unidadeId: BARRA, unidadeNome: 'Barra', alvos: ['ja_migrou'], deps });
-  assert.strictEqual(r.msgs[0], '💠 *Já migraram — Barra* (1 clientes) — parte 1/1\n✅ *1 de 5 já migraram* · faltam 4\n⏰ Faltam 33 dias pra meta de 31/10\n• Já Foi');
+  assert.strictEqual(r.msgs[0], '💠 *Já migraram — Barra* (1 clientes) — parte 1/1\n✅ *1 de 5 já migraram* · faltam 4\n⏰ Faltam 33 dias pra meta de 31/10\n\n✅ *Já no PIX automático* (1)\n   • Já Foi');
 }));
 test('"quem já foi e quem falta": as duas listas no mesmo pedido, cada uma organizada', () => semInterruptor(async () => {
   const r = await f.mensagensDaListaPix({ unidadeId: BARRA, unidadeNome: 'Barra', alvos: ['ja_migrou', 'pix'], deps });
