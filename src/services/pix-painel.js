@@ -15,16 +15,21 @@
 // vai no bundle do navegador.
 const {
   FATIAS, ROTULO, META_YMD, fatiaDoCliente, ordenarPorPrioridade, bloqueadoNoEmusys, dadosDaUnidadeParaRelatorio,
+  cartaoCadastradoPagandoPix,
 } = require('./pix-migracao');
 
 const NA_PAUTA = (l) => !!l && (l.categoria === 'migrar' || l.categoria === 'autorizacao_pendente');
 const SECAO_BLOQUEIO = 'bloqueio_emusys';
-const _chave = (l) => (bloqueadoNoEmusys(l) ? SECAO_BLOQUEIO : fatiaDoCliente(l));
+const SECAO_CARTAO = 'cartao_cadastrado';
+const _chave = (l) => (bloqueadoNoEmusys(l) ? SECAO_BLOQUEIO : cartaoCadastradoPagandoPix(l) ? SECAO_CARTAO : fatiaDoCliente(l));
 const _cliente = (l) => ({ nome: String(l.pagador_nome || ''), alunos: Array.isArray(l.alunos) ? l.alunos.map(String) : [] });
 
 function _secao(chave) {
   if (chave === SECAO_BLOQUEIO) {
     return { chave, emoji: '🔒', nome: 'Aguardando o Emusys', nota: '2+ cursos ou família — o Emusys ainda só liga o PIX automático a uma fatura' };
+  }
+  if (chave === SECAO_CARTAO) {
+    return { chave, emoji: '💳', nome: 'Cartão cadastrado, pagando PIX', nota: 'conferir no Emusys — se já está no cartão, sai da lista quando a cobrança passar' };
   }
   const r = ROTULO[chave] || ROTULO.sem_historico;
   return { chave, emoji: r.emoji, nome: r.nome, nota: chave === 'autorizacao_pendente' ? 'já cadastrados, o banco ainda não cobrou — resolver primeiro' : null };
@@ -45,11 +50,18 @@ function montarPainel(linhasBrutas, { unidadeNome } = {}) {
   // Mesma conta da pauta das 9h (que conta a forma COM os 🔒 dentro): a seção diz quantos da forma
   // estão no 🔒 — "Pix avulso 10" + "mais 6 em 🔒" = os 16 da pauta.
   const presosPorForma = new Map();
-  for (const l of faltando) if (bloqueadoNoEmusys(l)) presosPorForma.set(fatiaDoCliente(l), (presosPorForma.get(fatiaDoCliente(l)) || 0) + 1);
+  const cartaoPorForma = new Map();
+  for (const l of faltando) {
+    if (bloqueadoNoEmusys(l)) presosPorForma.set(fatiaDoCliente(l), (presosPorForma.get(fatiaDoCliente(l)) || 0) + 1);
+    if (cartaoCadastradoPagandoPix(l)) cartaoPorForma.set(fatiaDoCliente(l), (cartaoPorForma.get(fatiaDoCliente(l)) || 0) + 1);
+  }
   for (const s of porChave.values()) {
-    const presos = s.chave === SECAO_BLOQUEIO ? 0 : presosPorForma.get(s.chave) || 0;
+    const presos = presosPorForma.get(s.chave) || 0;
+    const noCartao = cartaoPorForma.get(s.chave) || 0;
     s.presos = presos;
-    if (presos) s.nota = [s.nota, `mais ${presos} em 🔒 Aguardando o Emusys`].filter(Boolean).join(' · ');
+    s.cartao = noCartao;
+    const extra = [noCartao ? `mais ${noCartao} em 💳 Cartão cadastrado` : null, presos ? `mais ${presos} em 🔒 Aguardando o Emusys` : null];
+    s.nota = [s.nota, ...extra].filter(Boolean).join(' · ') || null;
   }
   const jaMigraram = ordenarPorPrioridade(linhas.filter((l) => l.categoria === 'ja_migrou'))
     .map((l) => ({ ..._cliente(l), migrouEm: l.migrou_em || null }));
@@ -61,6 +73,7 @@ function montarPainel(linhasBrutas, { unidadeNome } = {}) {
     migrados: d.migrados,
     faltam: d.total - d.migrados,
     aguardandoEmusys: d.aguardandoEmusys,
+    cartaoCadastrado: d.cartaoCadastrado,
     cadastradosSemCobranca: d.pendentesAutorizacao,
     dadoEm: datas.length ? datas[datas.length - 1] : null,
     faltamSecoes: [...porChave.values()],

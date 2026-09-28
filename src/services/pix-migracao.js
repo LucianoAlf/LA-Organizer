@@ -55,9 +55,11 @@ const cartaoCadastradoPagandoPix = (l) => !!l && l.categoria === 'migrar' && !bl
   && RE_CARTAO.test(String(l.cobranca_automatica_cadastrada || ''))
   && !RE_CARTAO.test(String(l.forma_ultima_mensalidade || ''));
 const MARCA_CARTAO = '💳';
-const nomeComMarca = (l) => `${l.pagador_nome}${bloqueadoNoEmusys(l) ? ` ${MARCA_BLOQUEIO}` : ''}`;
+const nomeComMarca = (l) => `${l.pagador_nome}${bloqueadoNoEmusys(l) ? ` ${MARCA_BLOQUEIO}` : cartaoCadastradoPagandoPix(l) ? ` ${MARCA_CARTAO}` : ''}`;
+// Peso na fila (Alf 28/09): livre (0) → 💳 conferir no Emusys (1) → 🔒 aguardando o Emusys (2).
+const _pesoNaFila = (l) => (bloqueadoNoEmusys(l) ? 2 : cartaoCadastradoPagandoPix(l) ? 1 : 0);
 const ordenarPorPrioridade = (linhas) => [...(linhas || [])].sort((a, b) => {
-  const bloq = Number(bloqueadoNoEmusys(a)) - Number(bloqueadoNoEmusys(b)); // livre antes de bloqueado
+  const bloq = _pesoNaFila(a) - _pesoNaFila(b); // livre, depois 💳, depois 🔒
   if (bloq !== 0) return bloq;
   const d = FATIAS.indexOf(fatiaDoCliente(a)) - FATIAS.indexOf(fatiaDoCliente(b));
   return d !== 0 ? d : String(a.pagador_nome || '').localeCompare(String(b.pagador_nome || ''), 'pt-BR');
@@ -110,6 +112,8 @@ function mensagemDaUnidade({
   if (resumo.length) linhasTxt.push(resumo.join(' · '));
   if (aguardando) linhasTxt.push(`⏳ Aguardando 1ª cobrança (${aguardando})`);
   if (presos) linhasTxt.push(`🔒 Aguardando o Emusys (${presos}) — 2+ cursos ou família: ele só liga o PIX automático a uma fatura. Vão pro fim da fila.`);
+  const noCartao = todas.filter(cartaoCadastradoPagandoPix).length;
+  if (noCartao) linhasTxt.push(`${MARCA_CARTAO} Cartão cadastrado, pagando PIX (${noCartao}) — conferir no Emusys: se já está no cartão, sai da lista quando a cobrança passar. Vão pro fim da fila.`);
   // M6 (revisão final): no grupo o TOM só lê mensagem em que é marcado — quem vê a lista precisa
   // saber COMO avisar. Só quando a mensagem lista algum nome do lote (sem lote, não há o que avisar).
   const chavesListaveis = new Set(todas.map((l) => l.pagador_chave));

@@ -13,7 +13,7 @@
 // de fatura nunca saem daqui (um teste prende as chaves do objeto).
 
 const pura = require('./pix-consulta');
-const { ordenarPorPrioridade, fatiaDoCliente, FATIAS, ROTULO, bloqueadoNoEmusys, nomeComMarca, LEGENDA_BLOQUEIO, MARCA_BLOQUEIO, dadosDaUnidadeParaRelatorio } = require('./pix-migracao');
+const { ordenarPorPrioridade, fatiaDoCliente, FATIAS, ROTULO, bloqueadoNoEmusys, nomeComMarca, LEGENDA_BLOQUEIO, MARCA_BLOQUEIO, dadosDaUnidadeParaRelatorio, cartaoCadastradoPagandoPix, MARCA_CARTAO } = require('./pix-migracao');
 const { filtrarPorRecorte, nomeDaUnidade, resolverUnidade } = require('./situacao-aluno');
 const { consultaComRetry } = require('../lib/consulta-com-retry');
 
@@ -51,7 +51,7 @@ function _contarPix(linhas) {
   for (const l of naPauta) { const f = fatiaDoCliente(l); fatias[f] = (fatias[f] || 0) + 1; }
   let outras = 0;
   for (const [c, n] of porCategoria) if (!CATEGORIAS.includes(c)) outras += n;
-  const out = { total: todas.length, faltam: naPauta.length, fatias, outras, bloqueado_emusys: naPauta.filter(bloqueadoNoEmusys).length };
+  const out = { total: todas.length, faltam: naPauta.length, fatias, outras, bloqueado_emusys: naPauta.filter(bloqueadoNoEmusys).length, cartao_cadastrado: naPauta.filter(cartaoCadastradoPagandoPix).length };
   for (const c of CATEGORIAS) out[c] = porCategoria.get(c) || 0;
   return out;
 }
@@ -125,11 +125,14 @@ async function _itensDeAluno({ retry, rpcSituacao, recorte }) {
 // pagamento, igual à pauta das 9h; quem depende do Emusys liberar ganha a seção 🔒 própria (a
 // ordenação já os põe no fim), e o cabeçalho explica — por isso o nome sai sem o 🔒 colado.
 const SECAO_BLOQUEIO = 'bloqueio_emusys';
-const _chaveDaSecao = (l) => (bloqueadoNoEmusys(l) ? SECAO_BLOQUEIO : fatiaDoCliente(l));
-function _rotuloDaSecao(chave, n, presos = 0) {
+const SECAO_CARTAO = 'cartao_cadastrado';
+const _chaveDaSecao = (l) => (bloqueadoNoEmusys(l) ? SECAO_BLOQUEIO : cartaoCadastradoPagandoPix(l) ? SECAO_CARTAO : fatiaDoCliente(l));
+function _rotuloDaSecao(chave, n, presos = 0, noCartao = 0) {
   if (chave === SECAO_BLOQUEIO) return `${MARCA_BLOQUEIO} *Aguardando o Emusys* (${n}) — 2+ cursos ou família, o Emusys ainda não libera`;
+  if (chave === SECAO_CARTAO) return `${MARCA_CARTAO} *Cartão cadastrado, pagando PIX* (${n}) — conferir no Emusys: se já está no cartão, sai da lista quando a cobrança passar`;
   const r = ROTULO[chave] || ROTULO.sem_historico;
-  return `${r.emoji} *${r.nome}* (${n})${presos ? ` · +${presos} ${MARCA_BLOQUEIO} no fim` : ''}${chave === 'autorizacao_pendente' ? ' — resolver primeiro' : ''}`;
+  const fim = [noCartao ? `+${noCartao} ${MARCA_CARTAO}` : null, presos ? `+${presos} ${MARCA_BLOQUEIO}` : null].filter(Boolean).join(' ');
+  return `${r.emoji} *${r.nome}* (${n})${fim ? ` · ${fim} no fim` : ''}${chave === 'autorizacao_pendente' ? ' — resolver primeiro' : ''}`;
 }
 
 // -> { itens: [{ pagador, alunos, secao? }], resumo }
@@ -153,13 +156,15 @@ async function _lerPix({ retry, rpcPix, alvo, hoje }) {
   const ordenadas = ordenarPorPrioridade(escolhidas);
   const porSecao = new Map();
   const presosPorForma = new Map();
+  const cartaoPorForma = new Map();
   for (const l of ordenadas) {
     porSecao.set(_chaveDaSecao(l), (porSecao.get(_chaveDaSecao(l)) || 0) + 1);
     if (bloqueadoNoEmusys(l)) presosPorForma.set(fatiaDoCliente(l), (presosPorForma.get(fatiaDoCliente(l)) || 0) + 1);
+    if (cartaoCadastradoPagandoPix(l)) cartaoPorForma.set(fatiaDoCliente(l), (cartaoPorForma.get(fatiaDoCliente(l)) || 0) + 1);
   }
   const itens = ordenadas.map((l) => {
     const chave = _chaveDaSecao(l);
-    return { pagador: l.pagador_nome, alunos: l.alunos || [], secao: _rotuloDaSecao(chave, porSecao.get(chave), chave === SECAO_BLOQUEIO ? 0 : presosPorForma.get(chave) || 0) };
+    return { pagador: l.pagador_nome, alunos: l.alunos || [], secao: _rotuloDaSecao(chave, porSecao.get(chave), presosPorForma.get(chave) || 0, cartaoPorForma.get(chave) || 0) };
   });
   return { itens, resumo };
 }

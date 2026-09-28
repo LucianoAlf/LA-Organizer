@@ -312,6 +312,7 @@ function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHo
     // entra na migração. A base aqui é a MESMA do relatório de segunda: já migraram + faltam.
     L.push(`PIX automático: ${pix.ja_migrou + pix.faltam} clientes na migração (a mesma base do relatório de segunda) · já migraram ${pix.ja_migrou} · faltam migrar ${pix.faltam} (${pix.migrar} a migrar + ${pix.autorizacao_pendente} cadastrados sem cobrança)`);
     if (pix.bloqueado_emusys) L.push(`  dos que faltam, ${pix.bloqueado_emusys} estão aguardando o Emusys (2+ matrículas: ele só liga o PIX automático a uma fatura) — continuam contados, vão pro fim da fila`);
+    if (pix.cartao_cadastrado) L.push(`  dos que faltam, ${pix.cartao_cadastrado} têm cartão recorrente cadastrado mas pagaram por PIX (💳) — conferir no Emusys: se já estão no cartão, saem da lista quando a cobrança passar; vão pro fim da fila`);
     const fat = FATIAS.map((f) => [ROTULO[f], (pix.fatias || {})[f] || 0])
       .filter(([, n]) => n > 0).map(([r, n]) => `${r.emoji} ${r.nome} ${n}`);
     L.push(`Fatias de quem falta: ${fat.length ? fat.join(' · ') : 'nenhuma'}`);
@@ -346,7 +347,7 @@ function blocoDeNumerosTodasUnidades({ unidades }) {
 
   for (const u of (unidades || [])) {
     if (u.pix) {
-      L.push(`${u.unidadeNome} — PIX automático: ${u.pix.ja_migrou + u.pix.faltam} na migração · já migraram ${u.pix.ja_migrou} · faltam migrar ${u.pix.faltam}${u.pix.bloqueado_emusys ? ` (${u.pix.bloqueado_emusys} aguardando o Emusys)` : ''}`);
+      L.push(`${u.unidadeNome} — PIX automático: ${u.pix.ja_migrou + u.pix.faltam} na migração · já migraram ${u.pix.ja_migrou} · faltam migrar ${u.pix.faltam}${u.pix.bloqueado_emusys ? ` (${u.pix.bloqueado_emusys} aguardando o Emusys)` : ''}${u.pix.cartao_cadastrado ? ` (${u.pix.cartao_cadastrado} 💳 conferir no Emusys)` : ''}`);
       totalBase += u.pix.ja_migrou + u.pix.faltam;
       totalJa += u.pix.ja_migrou;
       totalFaltam += u.pix.faltam;
