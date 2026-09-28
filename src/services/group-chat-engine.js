@@ -470,6 +470,8 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       text,
       hoje: ctx.poolToday,
       postar: (txt) => postTomText(supabase, groupId, txt),
+      // 28/09: "quantas faltam?" logo depois do relatório do PIX também lê a fonte.
+      assuntoPixRecente: require('./pix-consulta').assuntoPixRecente(ctx.history),
     });
     if (rConsulta.tratou) return rConsulta.ultimo;
     numerosCtx = rConsulta.numerosContext || '';

@@ -126,10 +126,10 @@ async function _itensDeAluno({ retry, rpcSituacao, recorte }) {
 // ordenação já os põe no fim), e o cabeçalho explica — por isso o nome sai sem o 🔒 colado.
 const SECAO_BLOQUEIO = 'bloqueio_emusys';
 const _chaveDaSecao = (l) => (bloqueadoNoEmusys(l) ? SECAO_BLOQUEIO : fatiaDoCliente(l));
-function _rotuloDaSecao(chave, n) {
+function _rotuloDaSecao(chave, n, presos = 0) {
   if (chave === SECAO_BLOQUEIO) return `${MARCA_BLOQUEIO} *Aguardando o Emusys* (${n}) — 2+ cursos ou família, o Emusys ainda não libera`;
   const r = ROTULO[chave] || ROTULO.sem_historico;
-  return `${r.emoji} *${r.nome}* (${n})${chave === 'autorizacao_pendente' ? ' — resolver primeiro' : ''}`;
+  return `${r.emoji} *${r.nome}* (${n})${presos ? ` · +${presos} ${MARCA_BLOQUEIO} no fim` : ''}${chave === 'autorizacao_pendente' ? ' — resolver primeiro' : ''}`;
 }
 
 // -> { itens: [{ pagador, alunos, secao? }], resumo }
@@ -152,10 +152,14 @@ async function _lerPix({ retry, rpcPix, alvo, hoje }) {
   else escolhidas = linhas.filter(NA_PAUTA); // 'pix' e 'tudo': tudo o que falta migrar
   const ordenadas = ordenarPorPrioridade(escolhidas);
   const porSecao = new Map();
-  for (const l of ordenadas) porSecao.set(_chaveDaSecao(l), (porSecao.get(_chaveDaSecao(l)) || 0) + 1);
+  const presosPorForma = new Map();
+  for (const l of ordenadas) {
+    porSecao.set(_chaveDaSecao(l), (porSecao.get(_chaveDaSecao(l)) || 0) + 1);
+    if (bloqueadoNoEmusys(l)) presosPorForma.set(fatiaDoCliente(l), (presosPorForma.get(fatiaDoCliente(l)) || 0) + 1);
+  }
   const itens = ordenadas.map((l) => {
     const chave = _chaveDaSecao(l);
-    return { pagador: l.pagador_nome, alunos: l.alunos || [], secao: _rotuloDaSecao(chave, porSecao.get(chave)) };
+    return { pagador: l.pagador_nome, alunos: l.alunos || [], secao: _rotuloDaSecao(chave, porSecao.get(chave), chave === SECAO_BLOQUEIO ? 0 : presosPorForma.get(chave) || 0) };
   });
   return { itens, resumo };
 }
@@ -329,7 +333,7 @@ async function atenderMarkersListaPix({ reply, laReport, grupoUnidadeId, deps = 
 // explicitamente: `unidadeCitada` (pura.detectarUnidade) VENCE a do grupo — permite "lista do
 // recreio" dentro do grupo da Barra (dizendo qual unidade é), e dá capacidade PLENA ao grupo "PIX
 // AUTOMÁTICO L.A." (sem unidade amarrada), que antes só sabia responder "me diz a unidade".
-async function atenderPedidoNoGrupo({ laReport, unidadeId, unidadeNome, text, hoje, postar, deps = {} }) {
+async function atenderPedidoNoGrupo({ laReport, unidadeId, unidadeNome, text, hoje, postar, assuntoPixRecente = false, deps = {} }) {
   const pedido = pura.detectarPedido(text);
   const nada = { tratou: false, ultimo: null, numerosContext: '' };
 
@@ -358,7 +362,7 @@ async function atenderPedidoNoGrupo({ laReport, unidadeId, unidadeNome, text, ho
 
   // GATE BARATO: sem token de assunto/quantidade na fala, nenhuma RPC é disparada — nem aqui, nem
   // no caminho das três unidades.
-  if (!pedido && !pura.precisaDeNumeros(text)) return nada;
+  if (!pedido && !pura.precisaDeNumeros(text, { assuntoPixRecente })) return nada;
   if (!efetivoId) {
     // Nem o grupo nem a fala amarram uma unidade: as três + TOTAL — nunca mais "me diz a unidade".
     const porUnidade = await (deps.numerosDeTodasUnidades || numerosDeTodasUnidades)({ laReport, hoje, deps });

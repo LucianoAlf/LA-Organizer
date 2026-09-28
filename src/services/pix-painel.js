@@ -42,6 +42,15 @@ function montarPainel(linhasBrutas, { unidadeNome } = {}) {
     s.n += 1;
     s.clientes.push(_cliente(l));
   }
+  // Mesma conta da pauta das 9h (que conta a forma COM os 🔒 dentro): a seção diz quantos da forma
+  // estão no 🔒 — "Pix avulso 10" + "mais 6 em 🔒" = os 16 da pauta.
+  const presosPorForma = new Map();
+  for (const l of faltando) if (bloqueadoNoEmusys(l)) presosPorForma.set(fatiaDoCliente(l), (presosPorForma.get(fatiaDoCliente(l)) || 0) + 1);
+  for (const s of porChave.values()) {
+    const presos = s.chave === SECAO_BLOQUEIO ? 0 : presosPorForma.get(s.chave) || 0;
+    s.presos = presos;
+    if (presos) s.nota = [s.nota, `mais ${presos} em 🔒 Aguardando o Emusys`].filter(Boolean).join(' · ');
+  }
   const jaMigraram = ordenarPorPrioridade(linhas.filter((l) => l.categoria === 'ja_migrou'))
     .map((l) => ({ ..._cliente(l), migrouEm: l.migrou_em || null }));
   const datas = linhas.map((l) => l.dado_atualizado_em).filter(Boolean).sort();

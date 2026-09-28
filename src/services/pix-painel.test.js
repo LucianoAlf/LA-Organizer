@@ -41,6 +41,10 @@ test('seções de quem falta: ordem da pauta (🔵 primeiro, 🔒 por último), 
   ]);
   assert.match(r.faltamSecoes[0].nota, /resolver primeiro/);
   assert.match(r.faltamSecoes[3].nota, /2\+ cursos ou família/);
+  // a forma diz quantos dela foram pro 🔒 (soma = número da pauta das 9h)
+  assert.strictEqual(r.faltamSecoes[1].presos, 1);
+  assert.match(r.faltamSecoes[1].nota, /mais 1 em 🔒 Aguardando o Emusys/);
+  assert.strictEqual(r.faltamSecoes[2].presos, 0);
   assert.deepStrictEqual(r.faltamSecoes[3].clientes, [{ nome: 'Presa', alunos: ['P1', 'P2'] }]);
 }));
 

@@ -91,7 +91,7 @@ test('quem falta: seções na ordem da pauta (🔵 primeiro, 🔒 no fim), conta
   const t = r.msgs.join('\n');
   assert.strictEqual(r.total, 4);
   assert.match(t, /^💠 \*PIX automático — quem falta migrar — Barra\* \(4 clientes\) — parte 1\/1\n✅ \*1 de 5 já migraram\* · faltam 4\n⏰ Faltam 33 dias pra meta de 31\/10\n/);
-  const ordem = ['🔵 *Cadastrados sem cobrança* (1) — resolver primeiro', '🔴 *Pix avulso* (1)', '🟣 *Cartão falhando* (1)', '🔒 *Aguardando o Emusys* (1)'].map((h) => t.indexOf(`\n${h}`));
+  const ordem = ['🔵 *Cadastrados sem cobrança* (1) — resolver primeiro', '🔴 *Pix avulso* (1) · +1 🔒 no fim', '🟣 *Cartão falhando* (1)', '🔒 *Aguardando o Emusys* (1)'].map((h) => t.indexOf(`\n${h}`));
   assert.ok(ordem.every((i) => i > 0), `seções: ${ordem} em\n${t}`);
   assert.deepStrictEqual([...ordem].sort((a, b) => a - b), ordem);
   assert.match(t, /🔒 \*Aguardando o Emusys\* \(1\) — 2\+ cursos ou família, o Emusys ainda não libera\n   • Presa \(P1, P2\)/);
@@ -105,12 +105,16 @@ test('"quem já foi e quem falta": as duas listas no mesmo pedido, cada uma orga
   const r = await f.mensagensDaListaPix({ unidadeId: BARRA, unidadeNome: 'Barra', alvos: ['ja_migrou', 'pix'], deps });
   assert.strictEqual(r.msgs.length, 2);
   assert.match(r.msgs[0], /Já migraram — Barra/);
-  assert.match(r.msgs[1], /quem falta migrar — Barra[\s\S]*🔴 \*Pix avulso\* \(1\)/);
+  assert.match(r.msgs[1], /quem falta migrar — Barra[\s\S]*🔴 \*Pix avulso\* \(1\) · \+1 🔒 no fim/);
 }));
 test('uma forma só (pix avulso): seção da forma + 🔒 separado', () => semInterruptor(async () => {
   const r = await f.mensagensDaListaPix({ unidadeId: BARRA, unidadeNome: 'Barra', alvos: ['pix_avulso'], deps });
   const t = r.msgs.join('\n');
-  assert.match(t, /\n🔴 \*Pix avulso\* \(1\)\n   • Zé Avulso \(Z1\)\n\n🔒 \*Aguardando o Emusys\* \(1\)/);
+  assert.match(t, /\n🔴 \*Pix avulso\* \(1\) · \+1 🔒 no fim\n   • Zé Avulso \(Z1\)\n\n🔒 \*Aguardando o Emusys\* \(1\)/);
+}));
+test('a forma + os 🔒 dela somam o número da pauta das 9h (que conta a forma com os 🔒 dentro)', () => semInterruptor(async () => {
+  const r = await f.mensagensDaListaPix({ unidadeId: BARRA, unidadeNome: 'Barra', alvos: ['pix'], deps });
+  assert.match(r.msgs.join('\n'), /🔴 \*Pix avulso\* \(1\) · \+1 🔒 no fim/);
 }));
 test('itensDaLista (API pública) continua só com pagador+alunos', () => semInterruptor(async () => {
   for (const x of await f.itensDaLista({ unidadeId: BARRA, alvo: 'pix', deps })) assert.deepStrictEqual(Object.keys(x).sort(), ['alunos', 'pagador']);

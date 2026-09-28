@@ -116,7 +116,19 @@ function detectarPedido(texto) {
 
 // I4 (fix round 1): o gate dos números exige o MESMO token de assunto. Antes bastava "quantos" ou
 // "falta" — palavras de conversa de trabalho —, e cada uma custava duas RPCs ao LA Report.
-function precisaDeNumeros(texto) {
+// CONTEXTO RECENTE (bateria em sombra, 28/09): no grupo "PIX AUTOMÁTICO L.A", logo depois do
+// relatório de segunda, "Tom, quantas faltam?" e "essas informações aqui estão certas?" não traziam
+// "pix" na fala — o gate fechava e o TOM respondia sem os números. Quando a conversa RECENTE do
+// grupo é sobre PIX automático, pergunta de QUANTIDADE ou de CONFERÊNCIA abre a leitura. Só isso:
+// conversa comum continua sem custar leitura, e sem esse contexto o gate é o mesmo de antes.
+const RE_CONFERENCIA = /\b(esta|estao|ta|tao|sao|e|isso|isto) (tudo |mesmo )?cert[oa]s?\b|\bconfere\b|\bbate(m)?\b/;
+const JANELA_ASSUNTO = 8;
+function assuntoPixRecente(history) {
+  const ult = Array.isArray(history) ? history.slice(-JANELA_ASSUNTO) : [];
+  return ult.some((m) => m && TOKEN_PIX_FORTE.test(_norm(m.content)));
+}
+
+function precisaDeNumeros(texto, { assuntoPixRecente: recente = false } = {}) {
   // C1: a mesma trava do interceptador vale aqui — fala com forma de aviso de cadastro é assunto
   // do atalho determinístico e NÃO custa leitura de fonte nenhuma (a revisão exigiu "no source
   // read" para "cadastrei o fulano no automático mas não achei o nome dele").
@@ -126,7 +138,8 @@ function precisaDeNumeros(texto) {
   if (temAssuntoForte(t)) return true;
   // So o verbo "migrar": ambiguo por si ("vou migrar o cadastro do aluno pro app"). Abre a
   // leitura apenas quando a fala pede lista ou quantidade — os portoes do C1 seguem de pe.
-  return TOKEN_PIX_VERBO.test(t) && (RE_LISTA.test(t) || RE_NUMEROS.test(t));
+  if (TOKEN_PIX_VERBO.test(t) && (RE_LISTA.test(t) || RE_NUMEROS.test(t))) return true;
+  return !!recente && (RE_NUMEROS.test(t) || RE_CONFERENCIA.test(t));
 }
 
 // ── C4: detectarUnidade — acha uma unidade CITADA dentro de uma fala qualquer ──────────────────
@@ -295,13 +308,15 @@ function _dataBr(iso) {
 function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHoje, motivo }) {
   const L = [`## NÚMEROS DA FONTE AGORA — ${unidadeNome} (leia ANTES de falar qualquer quantidade)`];
   if (pix) {
-    L.push(`PIX automático: ${pix.total} clientes na fonte · já migraram ${pix.ja_migrou} · faltam migrar ${pix.faltam} (${pix.migrar} a migrar + ${pix.autorizacao_pendente} cadastrados sem cobrança)`);
+    // 28/09: "213 clientes na fonte" (Barra) virava fala do TOM, e o relatório diz 53 — o resto nem
+    // entra na migração. A base aqui é a MESMA do relatório de segunda: já migraram + faltam.
+    L.push(`PIX automático: ${pix.ja_migrou + pix.faltam} clientes na migração (a mesma base do relatório de segunda) · já migraram ${pix.ja_migrou} · faltam migrar ${pix.faltam} (${pix.migrar} a migrar + ${pix.autorizacao_pendente} cadastrados sem cobrança)`);
     if (pix.bloqueado_emusys) L.push(`  dos que faltam, ${pix.bloqueado_emusys} estão aguardando o Emusys (2+ matrículas: ele só liga o PIX automático a uma fatura) — continuam contados, vão pro fim da fila`);
     const fat = FATIAS.map((f) => [ROTULO[f], (pix.fatias || {})[f] || 0])
       .filter(([, n]) => n > 0).map(([r, n]) => `${r.emoji} ${r.nome} ${n}`);
     L.push(`Fatias de quem falta: ${fat.length ? fat.join(' · ') : 'nenhuma'}`);
     if (pix.aguardando_cobranca) L.push(`Aguardando a 1ª cobrança: ${pix.aguardando_cobranca}`);
-    L.push(`Fora da migração: ${NOMES_FORA.map(([k, r]) => `${r} ${pix[k] || 0}`).join(' · ')}`);
+    L.push(`Fora da migração (NÃO entram em nenhuma conta): ${NOMES_FORA.map(([k, r]) => `${r} ${pix[k] || 0}`).join(' · ')}`);
   } else {
     L.push('PIX automático: NÃO CONSEGUI LER a fonte agora — não afirme nenhum número de PIX nesta resposta.');
   }
@@ -325,14 +340,15 @@ function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHo
 // saúde, e é assim que um laudo vira mentira").
 function blocoDeNumerosTodasUnidades({ unidades }) {
   const L = ['## NÚMEROS DA FONTE AGORA — as três unidades (leia ANTES de falar qualquer quantidade)'];
-  let pixOk = true; let totalClientes = 0; let totalFaltam = 0; let totalPresos = 0;
+  let pixOk = true; let totalBase = 0; let totalJa = 0; let totalFaltam = 0; let totalPresos = 0;
   let anaOk = true; let totalAnaPend = 0; let totalAnaBase = 0;
   let conOk = true; let totalConPend = 0; let totalConBase = 0;
 
   for (const u of (unidades || [])) {
     if (u.pix) {
-      L.push(`${u.unidadeNome} — PIX automático: ${u.pix.total} clientes na fonte · já migraram ${u.pix.ja_migrou} · faltam migrar ${u.pix.faltam}${u.pix.bloqueado_emusys ? ` (${u.pix.bloqueado_emusys} aguardando o Emusys)` : ''}`);
-      totalClientes += u.pix.total;
+      L.push(`${u.unidadeNome} — PIX automático: ${u.pix.ja_migrou + u.pix.faltam} na migração · já migraram ${u.pix.ja_migrou} · faltam migrar ${u.pix.faltam}${u.pix.bloqueado_emusys ? ` (${u.pix.bloqueado_emusys} aguardando o Emusys)` : ''}`);
+      totalBase += u.pix.ja_migrou + u.pix.faltam;
+      totalJa += u.pix.ja_migrou;
       totalFaltam += u.pix.faltam;
       totalPresos += u.pix.bloqueado_emusys || 0;
     } else {
@@ -359,7 +375,7 @@ function blocoDeNumerosTodasUnidades({ unidades }) {
   }
 
   L.push(pixOk
-    ? `TOTAL — PIX automático: ${totalClientes} clientes na fonte · faltam migrar ${totalFaltam}${totalPresos ? ` (${totalPresos} aguardando o Emusys: 2+ matrículas, ele só liga o PIX automático a uma fatura)` : ''}`
+    ? `TOTAL — PIX automático: ${totalBase} na migração · já migraram ${totalJa} · faltam migrar ${totalFaltam}${totalPresos ? ` (${totalPresos} aguardando o Emusys: 2+ matrículas, ele só liga o PIX automático a uma fatura)` : ''}`
     : 'TOTAL — PIX automático: não dá pra somar agora — pelo menos uma unidade não respondeu.');
   L.push(anaOk
     ? `TOTAL — Anamnese ${RECORTE_ALUNOS}: ${totalAnaPend} pendentes de ${totalAnaBase}`
@@ -367,6 +383,7 @@ function blocoDeNumerosTodasUnidades({ unidades }) {
   L.push(conOk
     ? `TOTAL — Contrato ${RECORTE_ALUNOS}: ${totalConPend} pendentes de ${totalConBase}`
     : 'TOTAL — Contrato: não dá pra somar agora — pelo menos uma unidade não respondeu.');
+  L.push('Perguntaram quantas faltam sem dizer a unidade? Responda ORGANIZADO: uma linha por unidade (Campo Grande, Recreio, Barra) com já migraram e faltam, e a linha do total no fim.');
   L.push('Estes números vêm da fonte agora. Use SOMENTE eles para falar de quantidade; se a pessoa pedir os NOMES, emita o marker <<LISTA_PIX>> (PIX) ou <<SITUACAO_ALUNO>> (anamnese/contrato), com a unidade se ela disser — o sistema posta a lista inteira; nunca peça planilha. Nunca estime.');
   L.push('Ao dar número de anamnese ou contrato, diga sempre que é o total da unidade e não a pauta de hoje.');
   return L.join('\n');
@@ -398,5 +415,5 @@ module.exports = {
   LIMITE_POR_MENSAGEM, TETO_MENSAGENS, TEXTO_SEM_UNIDADE, TEXTO_FONTE_FORA, RECORTE_ALUNOS,
   detectarPedido, precisaDeNumeros, detectarUnidade, tituloDoAlvo, substantivoDoAlvo,
   mensagensDaLista, mensagensDeVariasListas, blocoDeNumeros, blocoDeNumerosTodasUnidades,
-  alvosDoMarker, resumoDaMigracao,
+  alvosDoMarker, resumoDaMigracao, assuntoPixRecente,
 };
