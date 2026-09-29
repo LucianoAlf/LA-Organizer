@@ -2933,3 +2933,26 @@ O corte "venceu ontem" (Sprint 31.12) conta dia de calendário, não dia com cob
 Não corrigi: `src/rituals/health-check.js` tem **17 commits em 60 dias** (tripwire 3), e o custo
 é só ruído num relatório interno. Proposta: o corte vira "venceu antes do último dia em que o
 chaser rodou", lido de `notifications`, em vez de `ymdMinus(today, 1)`.
+
+### ETAPA 3 — o auditor acusa "fechou sem o usuário confirmar" quando a pessoa fechou pelo APP
+
+**Ocorrência:** 1 (29/09), num achado `alto`. É a família do achado fantasma (23/08, 19/09), agora por outra porta.
+
+`e7b6b143` (Vitoria, Fechamento do dia 28/09 19:06 BRT): *"Hoje você já fechou os 3 leads — 100% do
+dia!"*, acusado de confabulação porque o chat não tem nenhuma confirmação dela. As 3 tarefas estão
+`done` com **`completed_by` = a própria Vitoria**, entre 14:23 e 14:25 BRT, `source=manual`, sem
+nenhum inbound nessa janela. Ela fechou pelo app, e o TOM leu o estado certo.
+
+Regra: **quando a acusação é "afirmou conclusão sem confirmação no chat", a primeira query é
+`tasks.completed_at/completed_by`.** Isso resolve o caso sozinho, e o auditor não lê essa tabela.
+
+### ETAPA 1 — porta nova numa família em parada: o TOTALIZADOR ignora negação
+
+**Ocorrência:** 1 (29/09). Medido e **não corrigido** (`optimistic-confirm.js` com 21 commits em 60 dias).
+
+Matheus, 28/09 11:35 BRT: *"Fica tudo em aberto mesmo, nenhuma foi marcada como paga"* virou "não
+consegui registrar", duas vezes. O ramo `TOTALIZER_RE + COMPLETION_ANYWHERE` casa "tudo" + "marcada"
+e é o único que não passa por `_claimSemNegacao`, e `_NEG_ANTES_RE` também não conhece "nada/nenhuma".
+O veto de 11/09 (`NOOP_DECLARADO_RE`) cobre só a camada FRACA. População: **2 de 49** CHOKEPOINT
+desde 21/08, e os dois são este caso. Estreito demais para justificar um 22º remendo. Foi ao grupo
+como pergunta junto com a fronteira de 20/09.
