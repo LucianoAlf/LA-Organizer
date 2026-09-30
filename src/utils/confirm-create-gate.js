@@ -33,6 +33,9 @@ const _ACOES_EXISTENTE = [
   '\\bexclu\\w+', 'd[áa]\\s+baixa', 'dar\\s+baixa', 'marc\\w*\\s+como\\s+feit\\w*',
   'tir(?:o|ar)\\s+da\\s+(?:sua\\s+)?fila', 'estorn\\w+', '\\blan[çc]\\w+',
   'j[áa]\\s+existe', 'atualiz\\w+', '\\bedit\\w+',
+  // Quintela 29/09 16:11: "problema técnico ao ALTERAR o compromisso… me confirma?" liberava criação
+  // só por conter "compromisso". Alterar é ação sobre item existente.
+  '\\balter\\w+',
 ];
 const ACAO_SOBRE_EXISTENTE = new RegExp(_ACOES_EXISTENTE.join('|'), 'iu');
 
@@ -40,7 +43,10 @@ const ACAO_SOBRE_EXISTENTE = new RegExp(_ACOES_EXISTENTE.join('|'), 'iu');
 const PROPOE_CRIACAO = new RegExp([
   'lembret\\w*', 'te\\s+lembr\\w+', 'me\\s+lembr\\w+', '\\bcompromisso\\w*',
   '\\bevento\\w*', '\\bagend(?:a|o|ar)\\b', '\\breuni[ãa]o\\w*', '\\bviagem\\b',
-  'plano\\s+da\\s+semana', '\\btarefa\\w*', '\\bcri(?:o|ar|ando)\\b',
+  'plano\\s+da\\s+semana', '\\btarefa\\w*',
+  // CONFIRM-CREATE-RECRIAR (Quintela 29/09 16:08): "Bora RECRIAR então: *Jornada de Cordas*…" — em
+  // "recriar" não há fronteira antes de "cri", e o "Isso" virava "me manda os detalhes de novo".
+  '\\b(?:re)?cri(?:o|ar|ando)\\b',
   '\\banot(?:o|ar)\\b', '\\bregistr(?:o|ar)\\b',
   // CONFIRM-CREATE-DAQUI-X-MIN (triagem 11/09 — Rafinha 24/08 14:56): "Entendi: *Buscar
   // calendários na Borges* — daqui 30 min (15h23). Certo?" é lembrete sem a palavra lembrete.

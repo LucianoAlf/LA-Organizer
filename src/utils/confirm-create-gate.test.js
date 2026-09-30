@@ -75,3 +75,20 @@ test('lembrete em tempo relativo ("daqui 30 min") é proposta de criação', () 
   assert.strictEqual(podeLiberarCriacao('Fechado: ligar pro fornecedor daqui a 2 horas. Pode ser?'), true);
   assert.strictEqual(podeLiberarCriacao('Reagendo *Buscar calendários* pra daqui 30 min? Certo?'), false, 'o veto de item existente continua');
 });
+
+// CONFIRM-CREATE-RECRIAR (Quintela 29/09 16:08 BRT): "Bora recriar então: *Jornada de Cordas*…
+// — confirma?" + "Isso" → o TOM pediu os detalhes de novo. A régua só aceitava `\bcri…`, e em
+// "recriar" não há fronteira antes do "cri".
+test('CASO REAL Quintela 29/09: "Bora recriar então" é proposta de criação', () => {
+  const q = 'Kkk verdade, foi mal. Bora recriar então: *Jornada de Cordas*, quarta que vem (07/10), 13h às 17h, presencial, convidando Luciano e Rodrigo de novo — confirma?';
+  assert.strictEqual(podeLiberarCriacao(q), true);
+  assert.strictEqual(podeLiberarCriacao('Recrio a tarefa *Pagar DAS* pra sexta? Certo?'), true);
+});
+// Colateral do mesmo dia (16:11 BRT): o aviso de erro "Tive um problema técnico ao ALTERAR o
+// compromisso… me confirma o que você quer?" liberava criação só por conter "compromisso".
+// Alterar é ação sobre item existente — veta como editar/atualizar.
+test('CASO REAL Quintela 29/09: "ao alterar o compromisso" veta criação', () => {
+  const q = '_⚠️ Tive um problema técnico ao alterar o compromisso. Nada mudou no banco — me confirma o que você quer?_';
+  assert.strictEqual(podeLiberarCriacao(q), false);
+  assert.strictEqual(podeLiberarCriacao('Altero o compromisso *Jornada de Cordas* pra 14h? Certo?'), false);
+});

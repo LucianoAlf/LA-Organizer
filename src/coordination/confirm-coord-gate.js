@@ -17,7 +17,10 @@ const PROPOE_RECADO = new RegExp([
   '\\baviso\\s+\\d+\\s+pessoa',
   // "mande" (subjuntivo) entrou em 19/08: o gate determinístico propõe "Quer que eu MANDE um
   // recado…" e a forma não casava — o "sim" não pré-confirmava e o recado era re-estagiado.
-  '\\bmand(?:o|ar|e)\\s+(?:um[a]?\\s+)?(?:recado|mensagem|aviso|agradecimento)',
+  // RECADO-MANDA-ESSA-MENSAGEM (Kailane 29/09 19:11): "MANDA ESSA mensagem literal pra Krissya?"
+  // não casava (só mando/mandar/mande e um/uma) — o "sim" não liberava e o recado era re-estagiado.
+  // Só aqui, com objeto recado/mensagem/aviso explícito; o "mand… pra" de baixo segue sem "manda".
+  '\\bmand(?:o|ar|e|a)\\s+(?:(?:um[a]?|ess[ae]|est[ae])\\s+)?(?:recado|mensagem|aviso|agradecimento)',
   '\\bmand(?:o|ar|e)\\s+(?:pra|pro|para)\\b',
   '\\bpasso?\\s+o\\s+recado', '\\brepass(?:o|ar)\\s+(?:o\\s+)?(?:recado|agradecimento|mensagem)',
   '\\bfal(?:o|ar)\\s+com\\b', '\\bagrade[çc](?:o|er)\\b',

@@ -99,3 +99,19 @@ const _ENG5 = require('node:fs').readFileSync(require('node:path').join(__dirnam
 require('node:test').test('velocímetro: recado liberado tem contagem própria (não infla o CONFIRM_NOEXEC)', () => {
   _rgA.match(_ENG5, /_liberaRecado \? 'CONFIRM_RECADO_ALLOWED' : 'CONFIRM_NOEXEC'/);
 });
+
+// RECADO-MANDA-ESSA-MENSAGEM (Kailane 29/09 19:11 BRT): o TOM perguntou "Manda essa mensagem
+// literal pra Krissya? Confirma?", ela disse "sim" e o recado NÃO saiu — o TOM re-estagiou
+// ("Aviso o Krissya? Confirma?") duas vezes. A régua só aceitava mando/mandar/mande e o
+// determinante um/uma; "Manda essa mensagem" não casava.
+require('node:test').test('CASO REAL Kailane 29/09: "Manda essa mensagem literal pra Krissya?" libera recado', () => {
+  _rgA.strictEqual(podeLiberarRecado('Manda essa mensagem literal pra Krissya? Confirma?'), true);
+  _rgA.strictEqual(podeLiberarRecado('Mando esta mensagem pro Hugo?'), true);
+  _rgA.strictEqual(podeLiberarRecado('Mande esse recado pra Rose?'), true);
+  _rgA.strictEqual(podeLiberarRecado('Mandar este aviso pro time?'), true);
+});
+require('node:test').test('controles negativos: "manda" sem proposta limpa de recado não libera', () => {
+  _rgA.strictEqual(podeLiberarRecado('Manda essa mensagem e fecho a tarefa?'), false, 'ação sobre item existente na mesma pergunta veta');
+  _rgA.strictEqual(podeLiberarRecado('A Rose manda o boleto'), false, 'terceira pessoa + objeto que não é recado');
+  _rgA.strictEqual(podeLiberarRecado('A Rose manda o boleto?'), false);
+});
