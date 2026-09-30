@@ -1144,8 +1144,8 @@ async function pendenciasDoDia({ laReport, unidadeId, hoje }) {
   const falha = (motivo) => ({ anamnese: null, contrato: null, totalUnidade: null, motivo });
   let data;
   try {
-    const r = await consultaComRetry(() => laReport.rpc('get_situacao_alunos_v1',
-      { p_unidade_id: unidadeId, p_apenas_pendentes: false }));
+    // Leitura ÚNICA da base (01273c25): o 1:1 dá o mesmo número do card, da lista e da pauta.
+    const r = await consultaComRetry(() => situ.rpcBaseDeAlunos(laReport, unidadeId));
     if (r.error) return falha(`consulta do LA Report falhou na pauta do 1:1: ${r.error.message}`);
     data = r.data || [];
   } catch (e) {
