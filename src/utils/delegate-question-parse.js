@@ -10,8 +10,10 @@
 // buscado com os blocos em negrito REMOVIDOS (pra não casar nome dentro do título, ex.: "para o
 // pai da Amelie"). Fail-closed: faltando título OU destinatário → null.
 
-const NEG_RE = /\bn[ãa]o\s+delego/i;
-const ANCHOR_RE = /\bdelego\b/i;
+// "delegar" entrou em 30/09 (Krissya 29/09): a prosa real é "Confirma pra eu delegar pra X: *…*?",
+// e com a âncora só em "delego" o parser não casou NENHUMA pergunta em 30 dias.
+const NEG_RE = /\bn[ãa]o\s+deleg(?:o|ar)\b/i;
+const ANCHOR_RE = /\bdeleg(?:o|ar)\b/i;
 const BOLD_RE = /\*([^*]+)\*/;
 const BOLD_GLOBAL = /\*[^*]+\*/g;
 const DEST_RE = /\b(?:pra|pro|para)\s+([A-ZÀ-Ú][\p{L}'-]*(?:\s+[A-ZÀ-Ú][\p{L}'-]*)?)/u;

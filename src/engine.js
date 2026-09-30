@@ -11653,7 +11653,7 @@ async function processMessage(phone, text, raw = {}) {
         // Flag de rollback: TOM_CONFIRM_CREATE_GATE=0 volta ao comportamento antigo sem
         // deploy. Também é o que permite rodar o cenário de prova nos DOIS modos e mostrar
         // a reversão (scripts/prova-confirm-create-gate.js).
-        const { podeLiberarCriacao } = require('./utils/confirm-create-gate');
+        const { podeLiberarCriacao, podeLiberarCriacaoDelegada } = require('./utils/confirm-create-gate');
         const _gateOn = process.env.TOM_CONFIRM_CREATE_GATE !== '0';
         // CREDENCIAL (04/09) — Camada 2 do caso Hugo 17:21. Se o TOM propos cadastrar uma
         // credencial SEM marker, a intent que nasce aqui e generica, e o ramo de baixo mandava
@@ -11664,7 +11664,8 @@ async function processMessage(phone, text, raw = {}) {
         // esta e a rede, e as duas juntas nunca devolvem "me manda os dados de novo".
         const { pareceEscritaDeCredencial } = require('./lib/credencial-retry-gate');
         const _liberaCredencial = !hasConcrete && pareceEscritaDeCredencial(target.question_text);
-        const _liberaCriacao = _gateOn && !hasConcrete && !_liberaCredencial && podeLiberarCriacao(target.question_text);
+        const _liberaCriacao = _gateOn && !hasConcrete && !_liberaCredencial
+          && (podeLiberarCriacao(target.question_text) || podeLiberarCriacaoDelegada(target.question_text, target.payload));
         // FATIA 8: análogo do create-gate para RECADO implícito. Se a pergunta é proposta de recado
         // e o usuário confirmou, instrui o LLM a compor+emitir COORDINATION_REQUEST — e o handler
         // despacha DIRETO (preConfirmed, sem re-estagiar/loopar). Flag de rollback
@@ -16036,6 +16037,23 @@ Output AGORA, apenas o marker:`;
                 if (_resD && _resD.ids.length === 1) {
                   payload.delegation = { task_id: _resD.ids[0], to_name: _deleg.to_name };
                   _metrics.confirm_parse_deleg = 1;
+                } else {
+                  // CONFIRM-DELEG-NOVA-SEM-PORTA (Krissya 29/09): "delegar pra Kailane: *ver o
+                  // vídeo…*" era tarefa NOVA — não há alvo existente, e o create-gate vetava pelo
+                  // "deleg". Só marca como nova com PROVA: zero tarefas abertas com esse título
+                  // atribuídas A ou criadas POR quem pediu. Leitura com erro → não marca (fail-closed).
+                  const _t = String(_deleg.task_title).slice(0, 60);
+                  const [_a, _c] = await Promise.all([
+                    supabase.from('tasks').select('id').eq('assigned_to', collab.id).ilike('title', `%${_t}%`)
+                      .not('status', 'in', '("done","cancelled")').limit(1),
+                    supabase.from('tasks').select('id').eq('created_by', collab.id).ilike('title', `%${_t}%`)
+                      .not('status', 'in', '("done","cancelled")').limit(1),
+                  ]);
+                  if (!_a.error && !_c.error && Array.isArray(_a.data) && Array.isArray(_c.data)
+                      && !_a.data.length && !_c.data.length) {
+                    payload.delegacao_nova = { task_title: _deleg.task_title, to_name: _deleg.to_name };
+                    _metrics.confirm_parse_deleg_nova = 1;
+                  }
                 }
               }
             } catch (e) { console.warn('[PendingIntents] delegate parse-on-open err (non-fatal):', e.message); }

@@ -27,13 +27,14 @@
 // o custo de errar é assimétrico.
 
 // Ação sobre item que JÁ EXISTE. Qualquer um destes veta, mesmo com sinal de criação junto.
-const ACAO_SOBRE_EXISTENTE = new RegExp([
+const _ACOES_EXISTENTE = [
   'deleg\\w*', 'fechament\\w*', '\\bfech(?:a|ar|o)\\b', 'conclu\\w+', 'reagend\\w+',
   '\\bremarc\\w+', 'cancel\\w+', '\\badia\\w*\\b', '\\bapag\\w+', '\\bdelet\\w+',
   '\\bexclu\\w+', 'd[áa]\\s+baixa', 'dar\\s+baixa', 'marc\\w*\\s+como\\s+feit\\w*',
   'tir(?:o|ar)\\s+da\\s+(?:sua\\s+)?fila', 'estorn\\w+', '\\blan[çc]\\w+',
   'j[áa]\\s+existe', 'atualiz\\w+', '\\bedit\\w+',
-].join('|'), 'iu');
+];
+const ACAO_SOBRE_EXISTENTE = new RegExp(_ACOES_EXISTENTE.join('|'), 'iu');
 
 // Sinal de que o TOM está PROPONDO criar algo novo (tarefa, lembrete, compromisso, plano).
 const PROPOE_CRIACAO = new RegExp([
@@ -59,4 +60,19 @@ function podeLiberarCriacao(perguntaDoTom) {
   return PROPOE_CRIACAO.test(t);
 }
 
-module.exports = { podeLiberarCriacao, ACAO_SOBRE_EXISTENTE, PROPOE_CRIACAO };
+// CONFIRM-DELEG-NOVA-SEM-PORTA (Krissya 29/09): "Confirma pra eu delegar pra Kailane: *ver o
+// vídeo…* — prazo quarta?" é CRIAÇÃO com destinatário, mas o "deleg" acima veta. O veto não é
+// afrouxado no texto: só libera quando o hook de fim-de-turno PROVOU no banco que o título não
+// existe entre as tarefas abertas de quem pediu (payload.delegacao_nova). Qualquer OUTRA ação
+// sobre existente na mesma pergunta continua vetando.
+const ACAO_SOBRE_EXISTENTE_SEM_DELEG = new RegExp(
+  _ACOES_EXISTENTE.filter((a) => !a.startsWith('deleg')).join('|'), 'iu');
+
+function podeLiberarCriacaoDelegada(perguntaDoTom, payload) {
+  if (typeof perguntaDoTom !== 'string' || !perguntaDoTom.trim()) return false;
+  const d = payload && payload.delegacao_nova;
+  if (!d || !d.task_title || !d.to_name) return false;
+  return !ACAO_SOBRE_EXISTENTE_SEM_DELEG.test(perguntaDoTom);
+}
+
+module.exports = { podeLiberarCriacao, podeLiberarCriacaoDelegada, ACAO_SOBRE_EXISTENTE, PROPOE_CRIACAO };
