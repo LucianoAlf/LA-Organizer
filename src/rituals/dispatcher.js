@@ -7313,12 +7313,39 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
   if (_turnoAtual && _turnoAtual.qa === true) {
     consulta = consulta.in('assigned_to', await qaIsolation.idsDePerfisQA(sb));
   }
-  const { data: due, error } = await consulta.limit(50);
+  const { data: dueBase, error } = await consulta.limit(50);
   if (error) {
     console.error('[Reminders] query err:', error.message);
     return;
   }
-  if (!due || !due.length) return;
+  // GROUP-REMINDAT-COMIDO-PELO-T1 (Kailane 29/09): o aviso T-1 de tarefa de grupo
+  // (remindGroupTasks, "vence amanhã", 09:00 da véspera) grava `reminded_at` — a MESMA coluna
+  // que a trava acima lê. Com isso o lembrete de HORA MARCADA do dia seguinte nunca saía
+  // (15 de 20 tarefas de grupo com remind_at, medido em 30/09). Aqui entra de volta a tarefa de
+  // grupo cujo `reminded_at` é ANTERIOR ao `remind_at`: esse carimbo é do T-1, não desta hora.
+  // Janela de 2h pra trás: não despeja lembrete velho (lição de 22/09, alerta vencido em lote).
+  let due = dueBase || [];
+  if (!(_turnoAtual && _turnoAtual.qa === true)) {
+    try {
+      const desde = new Date(now.getTime() - 2 * 3600_000).toISOString();
+      const { data: grp, error: eGrp } = await sb
+        .from('tasks')
+        .select('id, title, description, assigned_to, assigned_group_id, remind_at, status, context, reminded_at, due_date, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
+        .not('assigned_group_id', 'is', null)
+        .not('reminded_at', 'is', null)
+        .lte('remind_at', nowIso)
+        .gte('remind_at', desde)
+        .not('status', 'in', '(done,cancelled)')
+        .limit(50);
+      if (eGrp) console.error('[Reminders] group remind_at query err:', eGrp.message);
+      const vistos = new Set(due.map((t) => t.id));
+      for (const t of grp || []) {
+        if (vistos.has(t.id)) continue;
+        if (new Date(t.reminded_at).getTime() < new Date(t.remind_at).getTime()) due.push(t);
+      }
+    } catch (eG) { console.error('[Reminders] group remind_at err:', eG.message); }
+  }
+  if (!due.length) return;
   console.log(`[Reminders] ${due.length} pending reminder(s) to fire`);
 
   // Resolve phones in batch.
