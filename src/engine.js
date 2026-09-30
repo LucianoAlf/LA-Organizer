@@ -6602,6 +6602,14 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           failCount++;
           continue;
         }
+        // QA-DELEGA-PRA-GENTE-REAL (30/09): repassar tarefa também respeita a fronteira de QA.
+        if (!require('./services/qa-isolation').permiteDelegacao(collaborator, recipient)) {
+          console.warn('[Task] delegate REJECTED — qa_isolation');
+          await logMarker(collaborator.id, 'TASK_UPDATE', 'rejected', 'qa_isolation', JSON.stringify({ acao: 'delegate', tarefa: a.id, para: recipient.id }));
+          failMessages.push('Perfil de teste não delega tarefa pra pessoa real (e vice-versa).');
+          failCount++;
+          continue;
+        }
         const { error } = await supabase
           .from('tasks')
           .update({

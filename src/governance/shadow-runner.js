@@ -74,6 +74,7 @@ async function runShadowGrupo(finding, deps) {
 async function runShadow(finding, deps = {}) {
   const { supabase, engine, whatsapp, turnClaim, qaPhone } = deps;
   if (!FAIXA_QA.test(String(qaPhone || ''))) return { transcript: { turns: [] }, erro: 'qaPhone fora da faixa' };
+  const inicioRodada = new Date(Date.now() - 2000).toISOString();
   // Finding de GRUPO encena pelo caminho de grupo — o 1:1 abaixo nao alcanca esse codigo.
   if (finding && finding.group_id) {
     if (!deps.groupEngine) return { transcript: { turns: [] }, erro: 'groupEngine não injetado' };
@@ -125,6 +126,9 @@ async function runShadow(finding, deps = {}) {
     } catch (_) { /* best-effort */ }
     await del(() => supabase.from('habits').delete().eq('collaborator_id', qa.id));
     await del(() => supabase.from('tasks').delete().eq('assigned_to', qa.id));
+    // 30/09: o que o perfil QA CRIOU pra outra pessoa NESTA rodada também sai (antes só o que era
+    // DELE). Só desta rodada: o que ficou de antes é dado real a decidir por gente, não pela sonda.
+    await del(() => supabase.from('tasks').delete().eq('created_by', qa.id).gte('created_at', inicioRodada));
     for (const tbl of ['conversation_history', 'marker_logs', 'pending_intents']) {
       await del(() => supabase.from(tbl).delete().eq('collaborator_id', qa.id));
     }

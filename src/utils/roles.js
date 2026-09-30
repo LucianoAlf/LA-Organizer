@@ -99,6 +99,13 @@ function isPedagogicoTransit(collab) {
 function canCreateForOther(creator, target) {
   if (!creator || !target) return { allowed: false, reason: 'missing_party' };
 
+  // Gate 0 — QA-DELEGA-PRA-GENTE-REAL (30/09): perfil de QA só cria pra QA, gente só pra gente.
+  // A trava existia em qa-isolation.js desde 05/08 mas nunca foi ligada; o Replay Lab do gov-agent
+  // criou 2 tarefas reais pra Kailane e ela recebeu os avisos no WhatsApp.
+  if (!require('../services/qa-isolation').permiteDelegacao(creator, target)) {
+    return { allowed: false, reason: 'qa_isolation' };
+  }
+
   // Gate 1: Director nunca recebe de Farmer
   if (isFarmer(creator) && target.role === 'director') {
     return { allowed: false, reason: 'farmer_to_director' };
