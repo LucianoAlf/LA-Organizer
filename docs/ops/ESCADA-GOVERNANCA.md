@@ -2956,3 +2956,37 @@ e é o único que não passa por `_claimSemNegacao`, e `_NEG_ANTES_RE` também n
 O veto de 11/09 (`NOOP_DECLARADO_RE`) cobre só a camada FRACA. População: **2 de 49** CHOKEPOINT
 desde 21/08, e os dois são este caso. Estreito demais para justificar um 22º remendo. Foi ao grupo
 como pergunta junto com a fronteira de 20/09.
+
+### ETAPA 2.6 — pela 1ª vez desde 07/09, o "parser 0" era a âncora envelhecida de verdade
+
+**Ocorrência:** 1 (30/09), e virou a 1ª correção da rodada.
+
+Quatro rodadas (07/09, 11/09, 12/09, 13/09) mostraram alarme de vitalidade que não era defeito.
+Hoje a fatia `delegation` acusou `tema 5 · parser 0`, e as 5 perguntas eram de 29/09 — posteriores
+ao nascimento do parser (16/08 17:00). Era defeito: a âncora casava `delego` e a prosa real é
+*"Confirma pra eu delegar pra Kailane: *…*?"*. Krissya confirmou 5 vezes em 20 min e ouviu "não
+travou, me manda de novo" em todas.
+
+O que a leitura da âncora não mostrava, e só o banco mostrou: consertar a âncora **não bastava**.
+A Fatia 5 resolve tarefa JÁ existente; a da Krissya era tarefa NOVA para outra pessoa. O
+create-gate, que libera criação, veta qualquer `deleg*`. As duas portas estavam fechadas e cada
+uma tinha razão isolada. O conserto liga a segunda só com prova do banco (título inexistente), sem
+afrouxar o veto no texto.
+
+🔑 Regra: **quando a fatia acusa âncora, conserte a âncora e depois pergunte se a alça que ela
+estagia serve para o CASO real.** Um parser que passa a casar e depois resolve para "não achei"
+troca `parser 0` por `estagiou 0` e o usuário vê a mesma coisa.
+
+### ETAPA 3 — duas rotinas usando a MESMA coluna como trava de "já disparei"
+
+**Ocorrência:** 1 (30/09), e é a 2ª correção da rodada.
+
+`remindGroupTasks` (aviso T-1, "vence amanhã") e `checkReminders` (lembrete de hora marcada) gravam
+e leem `tasks.reminded_at`. O primeiro dispara na véspera e o segundo nunca mais seleciona a tarefa.
+O conserto de 02/09 (`GROUP-REMINDAT-IGNORADO`) criou o ramo de grupo no `checkReminders` e ele
+nunca alcançou tarefa com prazo a partir de amanhã. Medido: **15 de 20** tarefas de grupo com
+`remind_at` têm `reminded_at` anterior ao `remind_at`.
+
+O tell é barato e vale para qualquer coluna de idempotência: **`grep` quem ESCREVE a coluna que a
+trava lê.** Se for mais de uma rotina, a trava de uma é o apagador da outra. A query de população
+(`reminded_at < remind_at`) custou uma linha e transformou um achado de grupo em defeito medido.
