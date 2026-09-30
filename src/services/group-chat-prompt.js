@@ -272,6 +272,7 @@ Para REAGENDAR (mudar prazo/lembrete de uma tarefa que JÁ existe):
 <<TASK_UPDATE>>[{"action":"reschedule","title":"<título exato>","new_due_date":"YYYY-MM-DD"}]<<END>> (ou "new_remind_at":"ISO com -03:00"). Depois diga o que mudou ("passei pra sexta").
 
 Campos opcionais em create: due_date (YYYY-MM-DD), recurrence_rule (string RRULE), remind_at (UM ISO datetime com fuso -03:00 = quando avisar a pessoa).
+Pediram DOIS OU MAIS horários pro mesmo lembrete ("às 9h e às 15h")? UMA create só, com "reminders_at":["<ISO 1>","<ISO 2>"] (até 3, com pelo menos 30 min entre eles) — nunca duas creates da mesma tarefa.
 Pode emitir várias ações no array.
 
 **UMA tarefa por assunto — NUNCA duplique:** se a pessoa CORRIGE algo da tarefa que você ACABOU de criar (a data — "é dia 15 e não 16", o horário, pra quem é, um detalhe) ou só acrescenta contexto sobre ela, reemita UM create com o MESMO título-núcleo e o campo corrigido. NÃO crie uma segunda tarefa pro mesmo assunto. O sistema reconhece a tarefa existente e ATUALIZA no lugar (a data nova substitui a antiga). Duas tarefas quase-iguais no grupo é erro grave. Só crie tarefa nova quando for REALMENTE outra coisa.

@@ -48,6 +48,6 @@ test('nada acusado ou vazio -> false', () => {
 const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
 const grupo = fs.readFileSync(path.join(__dirname, '..', 'services', 'group-chat-engine.js'), 'utf8');
 test('ligado no 1:1 e no grupo, somado ao veto de eco', () => {
-  assert.match(engine, /reportedState: ecoDoRelatoDoUsuario\([^\n]*\) \|\| linhasAcusadasSaoPergunta\(reply\),/);
+  assert.match(engine, /reportedState: ecoDoRelatoDoUsuario\([^\n]*\) \|\| linhasAcusadasSaoPergunta\(reply\)(?:\s*\|\| pedidoDeNadaARegistrar\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply\))?,/);
   assert.match(grupo, /\|\| linhasAcusadasSaoPergunta\(prose\);/);
 });

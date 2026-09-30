@@ -308,6 +308,29 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
   const cancelled = [];
   const failed = [];
 
+  // DOIS-HORARIOS-UM-LEMBRETE (Kailane, Barra 22/09 20:58): "me lembra dia 29/09 às 09h e às 15h".
+  // A tarefa guarda UM remind_at; o LLM mandou duas creates iguais (09h, 15h), a 2ª caiu no dedup
+  // abaixo e SOBRESCREVEU o 09h com o 15h. O TOM respondeu "te aviso às 09h e às 15h" — promessa
+  // que nenhum caminho cumpria. `task_reminders` já guarda N lembretes por tarefa, com disparo
+  // próprio no ramo de grupo do checkTaskReminders (sent_at por linha — não colide com o T-1).
+  // Regra: horário a mais pra uma tarefa criada NESTE MESMO pedido SOMA (linha em task_reminders);
+  // pedido de OUTRA mensagem continua sendo correção e sobrescreve (caso Rose 12/06, "ajusta o
+  // lembrete"). Teto de 3 com 30 min entre eles (lib/teto-lembretes, decisão do Alf 11/09).
+  const _criadasNoLote = new Map(); // task id → { horarios: [iso] }
+  const _iso = (v) => { if (typeof v !== 'string' || !v.trim()) return null; const d = new Date(v.trim()); return Number.isNaN(d.getTime()) ? null : d.toISOString(); };
+  async function _somaHorarioNoLote(taskId, iso) {
+    const reg = _criadasNoLote.get(taskId);
+    if (!reg || !iso) return null;
+    if (reg.horarios.includes(iso)) return { jaTinha: true };
+    const { limitarLembretes } = require('../lib/teto-lembretes');
+    const t = limitarLembretes([...reg.horarios, iso]);
+    if (!t.mantidos.includes(iso) || reg.horarios.some((h) => !t.mantidos.includes(h))) return { cortado: true };
+    const { error } = await supabase.from('task_reminders').insert({ task_id: taskId, remind_at: iso, label: null });
+    if (error) return { erro: error.message };
+    reg.horarios.push(iso);
+    return { somou: true };
+  }
+
   // Candidatas a dedup: pool recente (24h) não-concluído do grupo. Falha → sem dedup
   // (degrada pra inserir; nunca lança). Inclui as criadas DENTRO deste mesmo batch.
   let candidates = [];
@@ -348,6 +371,17 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         if (typeof a.remind_at === 'string' && a.remind_at.trim()) {
           const d = new Date(a.remind_at.trim());
           if (!Number.isNaN(d.getTime())) remindISO = d.toISOString();
+        }
+        // DOIS-HORARIOS-UM-LEMBRETE: `reminders_at` (lista) no mesmo create. O 1º horário vai no
+        // remind_at da tarefa (caminho de sempre); os demais viram linhas em task_reminders.
+        let _horarios = remindISO ? [remindISO] : [];
+        let _horariosCortados = 0;
+        const _extras = (Array.isArray(a.reminders_at) ? a.reminders_at : []).map(_iso).filter(Boolean);
+        if (_extras.length) {
+          const { limitarLembretes } = require('../lib/teto-lembretes');
+          const t = limitarLembretes([...new Set([remindISO, ..._extras].filter(Boolean))]);
+          _horarios = t.mantidos; _horariosCortados = t.cortados;
+          remindISO = _horarios[0] || null;
         }
         const recur = (typeof a.recurrence_rule === 'string' && a.recurrence_rule.trim())
           ? a.recurrence_rule.trim().replace(/^RRULE:/i, '') : null;
@@ -400,6 +434,17 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
             continue;
           }
         }
+        // DOIS-HORARIOS-UM-LEMBRETE: a "duplicata" nasceu NESTE pedido e só traz outro horário →
+        // é o 2º lembrete da mesma tarefa, não correção. Soma em task_reminders; não sobrescreve.
+        if (dup && !recur && _criadasNoLote.has(dup.id) && _horarios.length && (!wantsDue || wantsDue === dup.due_date)) {
+          let _recusado = 0;
+          for (const h of _horarios) {
+            const r = await _somaHorarioNoLote(dup.id, h);
+            if (!r || r.cortado || r.erro) _recusado++;
+          }
+          updated.push({ id: dup.id, title: dup.title, changed: { lembretes: _criadasNoLote.get(dup.id).horarios.slice() }, lembretesRecusados: _recusado + _horariosCortados });
+          continue;
+        }
         if (dup && !recur) {
           const patch = {};
           if (wantsDue && wantsDue !== dup.due_date) patch.due_date = wantsDue;
@@ -430,7 +475,18 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
             if (fullTpl) await materializeSeries('tasks', fullTpl);
           } catch (e) { console.warn('[GroupChat] materialize recorrência falhou:', e.message); }
         }
-        created.push(data);
+        // DOIS-HORARIOS-UM-LEMBRETE: horários além do 1º viram linhas em task_reminders.
+        let _extrasGravados = 0;
+        if (data?.id && !recur && _horarios.length > 1) {
+          const { error: eRem } = await supabase.from('task_reminders')
+            .insert(_horarios.slice(1).map((h) => ({ task_id: data.id, remind_at: h, label: null })));
+          if (eRem) console.error('[GroupChat] lembretes extras err:', eRem.message);
+          else _extrasGravados = _horarios.length - 1;
+        }
+        if (data?.id && !recur) _criadasNoLote.set(data.id, { horarios: _horarios.slice(0, 1 + _extrasGravados) });
+        created.push(_horarios.length > 1 || _horariosCortados
+          ? { ...data, lembretes: _horarios.slice(0, 1 + _extrasGravados), lembretesRecusados: _horariosCortados + (_horarios.length - 1 - _extrasGravados) }
+          : data);
         // Entra como candidata pra dedup das próximas ações deste mesmo batch.
         if (data?.id) candidates.push({ id: data.id, title, due_date: wantsDue, tokens: _titleTokens(title) });
       } else if (a.action === 'complete') {
@@ -627,6 +683,15 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // Último degrau: pedaço do título — o caso da Krissya. Container permitido aqui.
         if (!target) target = await _resolveTituloContemPedido({ supabase, groupId, phrase: title });
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
+        // DOIS-HORARIOS-UM-LEMBRETE: só um novo HORÁRIO pra tarefa criada neste mesmo pedido
+        // ("cria… e lembra às 15h também") soma um lembrete; não move o que acabou de ser pedido.
+        if (!nd && nr && _criadasNoLote.has(target.id)) {
+          const r = await _somaHorarioNoLote(target.id, nr);
+          if (r && (r.somou || r.jaTinha)) {
+            updated.push({ id: target.id, title: target.title, changed: { lembretes: _criadasNoLote.get(target.id).horarios.slice() } });
+          } else failed.push({ action: a, why: r && r.cortado ? 'lembrete_teto' : 'race_lost' });
+          continue;
+        }
         // updated_by (13/08): remarcar move trabalho de dia sem deixar rastro de quem moveu —
         // e desce em cascata pras filhas logo abaixo, então some prazo de várias de uma vez.
         const patch = { updated_by: senderCollabId }; if (nd) patch.due_date = nd; if (nr) patch.remind_at = nr;

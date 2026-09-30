@@ -7157,9 +7157,10 @@ function spYmdLocal(tsLike) {
 // Multi-reminder: dispara linhas de task_reminders pendentes (sent_at IS NULL,
 // remind_at <= now). Cada linha vira um WA "⏰ <label>: *<task title>*". A tarefa
 // fica intacta (status, due_date) — esses são alertas pré-evento, não one-shots.
-async function checkTaskReminders() {
-  const nowIso = new Date().toISOString();
-  const { data: due, error } = await supabase
+// `sb` injetável (teste) — mesmo padrão do checkReminders; em produção é o cliente do módulo.
+async function checkTaskReminders({ supabase: sb = supabase, now = new Date() } = {}) {
+  const nowIso = now.toISOString();
+  const { data: due, error } = await sb
     .from('task_reminders')
     .select('id, task_id, remind_at, label, created_at, tasks(id, title, description, assigned_to, assigned_group_id, parent_task_id, status, due_date, due_time, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name))')
     .is('sent_at', null)
@@ -7179,7 +7180,7 @@ async function checkTaskReminders() {
   // nesse caso. A consulta de colaborador é que é opcional, não o ciclo.
   let byId = new Map();
   if (ids.length) {
-    const { data: collabs } = await supabase
+    const { data: collabs } = await sb
       .from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
     byId = new Map((collabs || []).map(c => [c.id, c]));
   }
@@ -7191,7 +7192,7 @@ async function checkTaskReminders() {
     if (t && t.assigned_group_id && t.status !== 'done' && t.status !== 'cancelled') {
       try {
         const wg = require('../services/work-groups');
-        const members = await wg.membersWithPhones(supabase, t.assigned_group_id);
+        const members = await wg.membersWithPhones(sb, t.assigned_group_id);
         const { buildGroupTaskReminderText, firstNameOf } = require('../utils/group-task-relay');
         const dayG = relativeDayFromYmd(t.due_date);
         const whenG = [dayG, (t.due_time || '').slice(0, 5)].filter(Boolean).join(' ');
@@ -7200,7 +7201,7 @@ async function checkTaskReminders() {
         // (o bridge-out espelha) em vez de N DMs; grupo sem vínculo mantém o fan-out por DM.
         const { enviarLembreteDeGrupo } = require('./group-task-reminder');
         const resG = await enviarLembreteDeGrupo({
-          supabase, task: t, texto: textG,
+          supabase: sb, task: t, texto: textG,
           deps: {
             membros: members,
             isQuietNow: (cid) => isQuietNow(cid, nowSaoPaulo(), 'work', { defaultNightGate: false }),
@@ -7208,7 +7209,7 @@ async function checkTaskReminders() {
           },
         });
         const sentG = resG.enviados;
-        await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+        await sb.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
         console.log(`[TaskReminders] grupo ${String(r.id).slice(0,8)} task=${String(t.id).slice(0,8)} destino=${resG.destino} enviados=${sentG}`);
         if (sentG) fired++;
       } catch (eG) { console.error('[TaskReminders] group branch err:', eG.message); }
@@ -7218,12 +7219,12 @@ async function checkTaskReminders() {
     if (!collab || !collab.is_active || !collab.phone) {
       console.warn(`[TaskReminders] skip ${String(r.id).slice(0,8)} — no active collaborator`);
       // Mark as sent anyway so it doesn't loop forever.
-      await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+      await sb.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
       continue;
     }
     if (t.status === 'done' || t.status === 'cancelled') {
       // Tarefa já concluída — não envia mais alerta. Marca como sent.
-      await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+      await sb.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
       continue;
     }
     // REMINDER-STALE-PAST (caso Geraldo/Rose 10/06): reminder que JÁ NASCEU vencido
@@ -7232,7 +7233,7 @@ async function checkTaskReminders() {
     // um lembrete de prazo que já passou há dias.
     if (r.created_at && r.remind_at
         && new Date(r.remind_at).getTime() < new Date(r.created_at).getTime() - 60_000) {
-      await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+      await sb.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
       console.log(`[TaskReminders] skip stale ${String(r.id).slice(0,8)} — remind_at (${r.remind_at}) anterior à criação do reminder`);
       continue;
     }
@@ -7258,8 +7259,8 @@ async function checkTaskReminders() {
     const whenStr = [dayLabel, hm].filter(Boolean).join(' ');
     const text = `⏰ ${labelStr}*${t.title}*${whenStr ? ` — ${whenStr}` : ''}`;
     try {
-      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
-      await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+      await proactiveLink.sendAndLink(sb, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
+      await sb.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
       await logRitualEvent(collab.id, 'lembrete', 'sent', `reminder:${String(r.id).slice(0,8)} task:${String(t.id).slice(0,8)}`);
       fired++;
     } catch (err) {
@@ -8032,4 +8033,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, checkReminders, checkDailyTaskReminders, dispatchScheduledCoordination, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
+module.exports = { run, checkReminders, checkTaskReminders, checkDailyTaskReminders, dispatchScheduledCoordination, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };

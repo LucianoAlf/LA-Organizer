@@ -76,7 +76,7 @@ const grupo = fs.readFileSync(path.join(__dirname, '..', 'services', 'group-chat
 const oc = fs.readFileSync(path.join(__dirname, 'optimistic-confirm.js'), 'utf8');
 
 test('1:1: o engine passa a fala DA PESSOA (sem o scaffold de citação) pro detector, na porta reportedState', () => {
-  assert.match(engine, /reportedState: ecoDoRelatoDoUsuario\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply(, \{ relatosRecentes: _relatosRecentes \})?\)( \|\| linhasAcusadasSaoPergunta\(reply\))?,/);
+  assert.match(engine, /reportedState: ecoDoRelatoDoUsuario\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply(, \{ relatosRecentes: _relatosRecentes \})?\)( \|\| linhasAcusadasSaoPergunta\(reply\))?(?:\s*\|\| pedidoDeNadaARegistrar\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply\))?,/);
   assert.match(engine, /require\('\.\/lib\/eco-relato-usuario'\)/);
 });
 

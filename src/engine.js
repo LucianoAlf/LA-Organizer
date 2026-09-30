@@ -58,6 +58,7 @@ const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply, restatesRecentWrite } = require('./lib/optimistic-confirm');
 const { ecoDoRelatoDoUsuario } = require('./lib/eco-relato-usuario');
 const { linhasAcusadasSaoPergunta } = require('./lib/pergunta-nao-e-afirmacao');
+const { pedidoDeNadaARegistrar } = require('./lib/nada-a-registrar');
 const { normalizarAcaoDeTarefa } = require('./lib/acao-de-tarefa');
 const { fundeBlocosRepetidos } = require('./lib/funde-blocos-repetidos');
 const { buscarEscritasRecentes } = require('./lib/escritas-recentes');
@@ -3579,7 +3580,27 @@ async function applyEventUpdates(collaborator, actions) {
                                // seta _metrics.awaiting_user_confirm (senão ACTIONABLE_NO_MARKER rebaixa)
   const failMessages = []; // F5 — perguntas/avisos da guarda temporal sobem pro caller
   const last4 = String(collaborator.phone || '').slice(-4);
+  // RESULTADO-PARCIAL-POR-ITEM (achado ae5f4b42, Alf 29/09): só as CONTAGENS subiam pro caller,
+  // então no lote misto (ok=1 fail=1) ninguém sabia QUAL item falhou e a prosa "Cancelados ✅"
+  // saía pros dois. Cada ação vira um item {titulo, acao, ok, mensagens}; o snapshot é fechado no
+  // início da ação seguinte e depois do laço (sem reindentar o corpo nem tocar nos `continue`).
+  const itens = [];
+  let _item = null;
+  const _fechaItem = () => {
+    if (!_item) return;
+    const deuCerto = okCount > _item.ok0 && failCount === _item.fail0;
+    const falhou = failCount > _item.fail0;
+    if (deuCerto || falhou) {
+      itens.push({
+        titulo: (_item.ev && _item.ev.title) || (typeof _item.a.title === 'string' ? _item.a.title : null),
+        acao: _item.a.action, ok: deuCerto, mensagens: failMessages.slice(_item.msg0),
+      });
+    }
+    _item = null;
+  };
   for (const a of actions) {
+    _fechaItem();
+    _item = { a, ev: null, ok0: okCount, fail0: failCount, msg0: failMessages.length };
     try {
       // Sprint 31.15 — verbo de RSVP veio (erroneamente) como EVENT_UPDATE: roteia pro
       // applyRsvp (lookup global) em vez de resolveEventByShortId (owner-scoped, não acharia).
@@ -3610,6 +3631,7 @@ async function applyEventUpdates(collaborator, actions) {
           failMessages.push('A série _"' + a.title.slice(0, 60) + '"_ já está encerrada — nenhuma ocorrência dela segue aberta na sua agenda.');
         } else if (!ev) failMessages.push('Não achei o evento _"' + a.title.slice(0, 60) + '"_ na sua agenda — me diz o nome certinho?');
       }
+      _item.ev = ev;
       if (!ev) {
         console.warn(`[Event] ${a.action} REJECTED id=${a.id} (not owned by ${last4} or not found)`);
         failCount++;
@@ -3881,7 +3903,8 @@ async function applyEventUpdates(collaborator, actions) {
       failCount++;
     }
   }
-  return { okCount, failCount, failMessages, awaitingConfirm };
+  _fechaItem();
+  return { okCount, failCount, failMessages, awaitingConfirm, itens };
 }
 
 // Parse <<WEEKLY_PLAN>>{...}<<END>> — weekly planning marker.
@@ -13882,7 +13905,7 @@ Output AGORA, apenas o marker:`;
       }
       reply = baseEU;
     } else if (parsedEU) {
-      const { okCount, failCount, failMessages: evFailMessages, awaitingConfirm: evAwaitingConfirm } = await applyEventUpdates(collab, parsedEU.actions);
+      const { okCount, failCount, failMessages: evFailMessages, awaitingConfirm: evAwaitingConfirm, itens: evItens } = await applyEventUpdates(collab, parsedEU.actions);
       // participant-edit (add/remove) abriu pergunta de confirmação / relatou noop → não é
       // ACTIONABLE_NO_MARKER (senão o guard rebaixaria a pergunta pra "não foi executada").
       if (evAwaitingConfirm) _metrics.awaiting_user_confirm = true;
@@ -13922,7 +13945,23 @@ Output AGORA, apenas o marker:`;
         // failMessages com okCount===0, então "corrige modalidade + adiciona Matheus" aplicava
         // a modalidade e ENGOLIA a pergunta (intent ficava aberta e o user nem sabia do "sim").
         // Pergunta com intent aberta NUNCA pode sumir — anexa ao final da prosa.
-        if (evFailMessages && evFailMessages.length) {
+        // RESULTADO-PARCIAL-POR-ITEM (achado ae5f4b42, Alf 29/09 15:23): com ok E falha no lote, a
+        // prosa "Cancelados ✅" saía pros dois e a recusa vinha colada embaixo. O count-honesty acima
+        // só pega NUMERAL; aqui a afirmação sai e cada item diz o próprio resultado ("✅ X — cancelado"
+        // / "⚠️ Y — não consegui cancelar: <motivo>"). As perguntas das falhas saem de dentro do relato.
+        let _parcial = null;
+        if (failCount > 0) {
+          try {
+            const { relatoParcialPorItem } = require('./lib/resultado-parcial-por-item');
+            const _antesParcial = base;
+            _parcial = relatoParcialPorItem(base, evItens);
+            if (_parcial.fired) {
+              base = _parcial.texto;
+              try { await logMarker(collab.id, 'PARTIAL_HONESTY', 'redirected', `event:ok=${okCount} fail=${failCount}`, _antesParcial, { rawLimit: 800 }); } catch (_) {}
+            }
+          } catch (e) { console.error('[Event] relato parcial por item FALHOU:', e.message); _parcial = null; }
+        }
+        if (!(_parcial && _parcial.fired) && evFailMessages && evFailMessages.length) {
           base = (base ? base + '\n\n' : '') + evFailMessages.join('\n');
         }
       }
@@ -16286,7 +16325,10 @@ Output AGORA, apenas o marker:`;
       // DA PESSOA, não no texto do TOM — ver lib/eco-relato-usuario.js. Porta reportedState já
       // existente; markerAttempted continua freando.
       // + a linha acusada é PERGUNTA/proposta ('Salvo como X ou Y?', 'Fechando: … Confirma?') — ver lib/pergunta-nao-e-afirmacao.js.
-      reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply, { relatosRecentes: _relatosRecentes }) || linhasAcusadasSaoPergunta(reply),
+      // + a pessoa pediu pra NÃO registrar e o TOM só disse que nada mudou ('deixa tudo em aberto' →
+      //   'nenhuma foi marcada como paga', achado 3b33aa68 Matheus 28/09) — ver lib/nada-a-registrar.js.
+      reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply, { relatosRecentes: _relatosRecentes }) || linhasAcusadasSaoPergunta(reply)
+        || pedidoDeNadaARegistrar(stripReplyScaffold(String(text || '')).userText, reply),
     }, { meta: true });
     // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08) — este é O ponto que cega o maior cluster do
     // acervo. O raw_excerpt guardava o texto JÁ rebaixado ("_não consegui registrar isso agora_"),

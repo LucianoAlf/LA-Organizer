@@ -566,9 +566,24 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       const { created, updated, completed, cancelled, failed } = await applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions: parsed.actions });
       // detecta recorrência pra rotular
       const recurMap = new Set(parsed.actions.filter((a) => a.recurrence_rule).map((a) => (a.title || '').toLowerCase()));
-      created.forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: recurMap.has((t.title || '').toLowerCase()) ? 'recorrente' : '' }));
+      // DOIS-HORARIOS-UM-LEMBRETE (Kailane 22/09): o chip mostra os horários que FICARAM gravados,
+      // e o que não entrou (teto 3 / 30 min) vira chip de falha — nunca "atualizada" genérico.
+      const { horariosDoChip } = require('../lib/horarios-do-chip');
+      const _chipsLembrete = (t) => {
+        if (!t.lembretesRecusados) return;
+        actions.push({ kind: 'task', status: 'fail', label: t.title, detail: `${t.lembretesRecusados} horário${t.lembretesRecusados === 1 ? '' : 's'} não entr${t.lembretesRecusados === 1 ? 'ou' : 'aram'} — no máximo 3 lembretes por tarefa, com 30 min entre eles` });
+      };
+      created.forEach((t) => {
+        const _h = horariosDoChip(t.lembretes);
+        actions.push({ kind: 'task', status: 'ok', label: t.title, detail: [recurMap.has((t.title || '').toLowerCase()) ? 'recorrente' : '', _h].filter(Boolean).join(' · ') });
+        _chipsLembrete(t);
+      });
       // Dedup: tarefa existente atualizada no lugar (data corrigida etc.) — não é tarefa nova.
-      (updated || []).forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: (t.changed && t.changed.due_date) ? 'data atualizada' : 'atualizada' }));
+      (updated || []).forEach((t) => {
+        const _h = horariosDoChip(t.changed && t.changed.lembretes);
+        actions.push({ kind: 'task', status: 'ok', label: t.title, detail: _h || ((t.changed && t.changed.due_date) ? 'data atualizada' : 'atualizada') });
+        _chipsLembrete(t);
+      });
       completed.forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: 'concluída' }));
       // Cancel bem-sucedido também vira chip 'ok' (antes `cancelled` nem era lido → ficava invisível).
       (cancelled || []).forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: '🗑️ cancelada' }));
@@ -1259,6 +1274,7 @@ function friendlyTaskFail(why) {
     race_lost: 'alguém mexeu nela ao mesmo tempo, tenta de novo',
     unsupported_action: 'essa ação eu ainda não faço por aqui',
     package_recurrence_unsupported: 'a data eu ajustei, mas mudar a recorrência de um pacote eu não faço por aqui — dá pra ajustar no app',
+    lembrete_teto: 'esse horário não entrou — no máximo 3 lembretes por tarefa, com 30 min entre eles',
   };
   return MAP[why] || 'não consegui registrar';
 }
