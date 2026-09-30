@@ -562,9 +562,7 @@ async function checkRecurringErrors() {
   const recurring = [...tally.entries()].filter(([, c]) => c >= WARN_THRESHOLDS.recurringErrors)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
-  if (recurring.length === 0) return { status: 'ok', detail: 'Sem erros recorrentes nas últimas 24h' };
-  const summary = recurring.map(([m, c]) => `${c}x "${m.slice(0, 60)}"`).join('; ');
-  return { status: 'warning', detail: `Erros recorrentes: ${summary}` };
+  return formatarErrosRecorrentes(recurring);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -721,7 +719,7 @@ async function checkConversationQuality() {
   // findings abertos da JANELA (atividade recente) + veredito de auto-triagem
   const { data, error } = await supabase
     .from('tom_audit_findings')
-    .select('id, category, severity, summary, occurrences, collaborator_id, auto_triage, promoted_code, collaborators:collaborator_id(full_name)')
+    .select('id, category, severity, summary, occurrences, collaborator_id, group_id, auto_triage, promoted_code, collaborators:collaborator_id(full_name)')
     .in('status', ['novo', 'confirmado'])
     .gte('last_seen', windowIso)
     .order('occurrences', { ascending: false })
@@ -733,6 +731,13 @@ async function checkConversationQuality() {
     .select('id', { count: 'exact', head: true })
     .in('status', ['novo', 'confirmado'])
     .lt('last_seen', windowIso);
+  // Achado de GRUPO (sem pessoa) leva o nome do grupo — antes saía "*—*" no relatório (30/09).
+  const semPessoa = [...new Set((data || []).filter((f) => !f.collaborator_id && f.group_id).map((f) => f.group_id))];
+  if (semPessoa.length) {
+    const { data: gs } = await supabase.from('work_groups').select('id, name').in('id', semPessoa);
+    const nome = new Map((gs || []).map((g) => [g.id, g.name]));
+    for (const f of data || []) if (!f.collaborator_id && f.group_id) f.grupo_nome = nome.get(f.group_id) || null;
+  }
   return formatConvQuality(data || [], { inactiveCount: inactiveCount || 0 });
 }
 
@@ -899,23 +904,8 @@ function formatarLinhaGrupo({ nome, fichas, abertas, claims, memorias = 0 }) {
 // e foi por isso que ninguém viu. No dia em que virarem 40, o aviso continua dizendo 20 pra
 // sempre — a fila cresce e o número fica parado, que é a forma mais silenciosa de um
 // instrumento mentir: ele não erra, ele satura. Amostra e total entram separados.
-function resumirLicoesPendentes(licoes, total = null) {
-  const arr = Array.isArray(licoes) ? licoes : [];
-  if (!arr.length) return { status: 'ok', detail: 'Nenhuma lição esperando aprovação' };
-  // `total` do banco quando veio; senão a amostra — que é o que o chamador antigo passa.
-  const n = typeof total === 'number' && total >= arr.length ? total : arr.length;
-  const mostra = arr.slice(0, 3).map((l) => {
-    const [a, m, d] = String(l.dia || '').split('-');
-    const data = d ? `${d}/${m}` : (l.dia || '?');
-    return `“${String(l.conteudo || '').slice(0, 110)}” — ${l.grupo}, ${data}`;
-  }).join(' | ');
-  const resto = n > 3 ? ` (+${n - 3})` : '';
-  const soLicoes = arr.every((l) => !l.tipo || l.tipo === 'lesson');
-  const plural = soLicoes
-    ? (n === 1 ? 'lição' : 'lições')
-    : (n === 1 ? 'memória' : 'memórias');
-  return { status: 'warning', detail: `⛔ ${n} ${plural} esperando seu ok: ${mostra}${resto} — a lista inteira, com o que muda no TOM, vai pro grupo LA ORGANIZER - TOM às 07:30; responde lá` };
-}
+// Texto mora em health-check-format.js (puro, testável fora da VPS).
+const { resumirLicoesPendentes, formatarErrosRecorrentes } = require('./health-check-format');
 
 async function checkLicoesPendentes() {
   // Sem `.eq('memory_type', ...)`: o aviso e "tudo que nasceu inativo e ninguem decidiu".

@@ -3,6 +3,7 @@
 // Separado de health-check.js (que importa supabase/client, só-na-VPS) para ser
 // testável isolado — mesmo padrão de group-report-builder.js.
 'use strict';
+const { cortarNaPalavra } = require('../lib/texto-curto');
 
 const CONV_CAT_LABEL = {
   confabulation: 'confabulação/contradição',
@@ -32,7 +33,7 @@ function formatConvQuality(findings, opts = {}) {
   const body = findings.filter(f => dec(f) !== 'suppress' && !ehRegressaoConfirmada(f));
 
   const counts = [];
-  if (inactiveCount) counts.push(`🗃️ ${inactiveCount} abertos de dias anteriores (painel)`);
+  if (inactiveCount) counts.push(`🗃️ ${inactiveCount} ${inactiveCount === 1 ? "aberto" : "abertos"} de dias anteriores (painel)`);
   if (suppressed.length) {
     const codes = [...new Set(suppressed.map(f => f.auto_triage.matched_code).filter(Boolean))];
     counts.push(`🔇 ${suppressed.length} já-corrigidos${codes.length ? ' (' + codes.join(', ') + ')' : ''}`);
@@ -43,35 +44,47 @@ function formatConvQuality(findings, opts = {}) {
     return { status: 'ok', detail: `🗣️ 0 falhas pra revisar${countLine}` };
   }
 
+  // 30/09 (Alf: "está vindo bagunçado"): título em negrito, bloco por pessoa (👤) ou por GRUPO (👥)
+  // quando o achado não tem pessoa — antes saía "*—*" —, item "• 🟠 Pedido largado — …" cortado na
+  // palavra (antes: "prendendo a p", "Usuário confirmo").
   const sevRk = f => (SEV_RANK[f.severity] != null ? SEV_RANK[f.severity] : 1);
+  const rotulo = (c) => { const s = CONV_CAT_LABEL[c] || c || ''; return s.charAt(0).toUpperCase() + s.slice(1); };
   const regLines = regressions
     .sort((a, b) => sevRk(a) - sevRk(b))
-    .map(f => `  • 🔁 REGRESSÃO [${f.auto_triage.matched_code || '?'}] ${String(f.summary).slice(0, 120)}`);
+    .map(f => `• [${f.auto_triage.matched_code || '?'}] ${cortarNaPalavra(f.summary, 160)}`);
 
+  const chave = (f) => (f.collaborator_id ? `p:${f.collaborator_id}` : `g:${f.grupo_nome || '?'}`);
   const groups = {};
-  for (const f of body) (groups[f.collaborator_id || 'unknown'] = groups[f.collaborator_id || 'unknown'] || []).push(f);
-  const nameById = {};
-  for (const f of body) nameById[f.collaborator_id] = f.collaborators?.full_name?.split(' ')[0] || '—';
+  const tituloDe = {};
+  for (const f of body) {
+    const k = chave(f);
+    (groups[k] = groups[k] || []).push(f);
+    tituloDe[k] = f.collaborator_id
+      ? `👤 *${(f.collaborators && f.collaborators.full_name ? f.collaborators.full_name.split(' ')[0] : 'Sem nome')}*`
+      : `👥 *${f.grupo_nome || 'Sem pessoa identificada'}*`;
+  }
   const worstOf = arr => Math.min(...arr.map(sevRk));
-  const orderedPids = Object.keys(groups).sort((a, b) => {
+  const ordered = Object.keys(groups).sort((a, b) => {
     const d = worstOf(groups[a]) - worstOf(groups[b]);
     return d !== 0 ? d : groups[b].length - groups[a].length;
   });
-  const blocks = orderedPids.map(pid => {
-    const arr = groups[pid].slice().sort((x, y) => sevRk(x) - sevRk(y));
+  const blocks = ordered.map(k => {
+    const arr = groups[k].slice().sort((x, y) => sevRk(x) - sevRk(y));
     const lines = arr.map(f => {
       const rec = (f.occurrences || 1) >= 2 ? `🔁${f.occurrences}× ` : '';
-      const sev = SEV_EMOJI[f.severity] || '';
-      return `  • ${sev} ${rec}[${CONV_CAT_LABEL[f.category] || f.category}] ${String(f.summary).slice(0, 120)}`;
+      const sev = SEV_EMOJI[f.severity] ? `${SEV_EMOJI[f.severity]} ` : '';
+      return `• ${sev}${rec}${rotulo(f.category)} — ${cortarNaPalavra(f.summary, 160)}`;
     });
-    return `*${nameById[pid] || '—'}* (${arr.length}):\n${lines.join('\n')}`;
+    return `${tituloDe[k]} (${arr.length})\n${lines.join('\n')}`;
   });
 
   const total = body.length + regressions.length;
-  const head = regLines.length ? `🚨 ${regLines.length} regressão(ões):\n${regLines.join('\n')}\n\n` : '';
+  const partes = [];
+  if (regLines.length) partes.push(`🚨 *${regLines.length === 1 ? '1 regressão' : `${regLines.length} regressões`}*\n${regLines.join('\n')}`);
+  partes.push(...blocks);
   return {
     status: 'warning',
-    detail: `🗣️ ${total} falha(s) pra revisar:${countLine}\n${head}${blocks.join('\n\n')}`.trim(),
+    detail: `🗣️ *Conversas: ${total} ${total === 1 ? 'falha' : 'falhas'} pra revisar*${countLine}\n\n${partes.join('\n\n')}`.trim(),
   };
 }
 

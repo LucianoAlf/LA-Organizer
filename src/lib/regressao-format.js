@@ -79,7 +79,7 @@ function formatarRegressoes(regs) {
     const suspeitos = g.codigos.length === 1
       ? `${g.codigos[0].codigo} (corrigido ${_fmtData(g.codigos[0].corrigido_em)})`
       : `${g.codigos.length} KIs corrigidos usam este sinal: ${g.codigos.map((c) => c.codigo).join(', ')}`;
-    return `${porta} disparou ${g.ocorrencias}×${quem} — ${suspeitos}`;
+    return `• ${porta} disparou ${g.ocorrencias}×${quem} — ${suspeitos}`;
   });
 
   const n = grupos.length;
@@ -87,7 +87,8 @@ function formatarRegressoes(regs) {
     status: 'warning',
     // "sinal(is) de KI corrigido disparou" e não "regressão": o disparo é fato, a regressão é
     // hipótese. Quem confirma é quem abre o turno — e a ETAPA 2.7 do protocolo manda fazer isso.
-    detail: `🔁 ${n} sinal(is) de KI corrigido disparou nas últimas 24h — CONFIRME o turno antes de tratar como regressão: ${linhas.join('; ')}`,
+    // 30/09: título em negrito e um sinal por linha (antes, tudo colado por ";").
+    detail: `🔁 *${n === 1 ? '1 sinal de KI corrigido disparou' : `${n} sinais de KI corrigido dispararam`} nas últimas 24h*\nCONFIRME o turno antes de tratar como regressão:\n${linhas.join('\n')}`,
   };
 }
 

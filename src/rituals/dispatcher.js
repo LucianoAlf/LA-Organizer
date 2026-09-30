@@ -7960,38 +7960,9 @@ function statusEmoji(s) {
 // `resumoGov` (opcional) é a 2ª seção — o que foi FEITO e o que REINCIDIU nas últimas 24h.
 // Vem pronta de src/lib/governanca-resumo.js; string vazia quando não há dados, e aí o
 // relatório sai exatamente como saía antes (zero-regressão).
+// 30/09: montagem ORGANIZADA mora em lib/relatorio-saude.js (pura, testada).
 function formatHealthReport(run, resumoGov = '') {
-  const head = `🔍 *Auditoria TOM — ${fmtBrtDayMonth()}*`;
-  const govBlock = (typeof resumoGov === 'string' && resumoGov.trim()) ? `\n\n${resumoGov.trim()}` : '';
-  const { summary, checks } = run;
-  // Sprint 30.1: sempre mostra amostras de ACTIONABLE_NO_MARKER quando há (mesmo se status=ok)
-  const anmCheck = (checks || []).find(c => c.name === 'actionable_no_marker');
-  const anmSamplesBlock = (anmCheck && anmCheck.samples && anmCheck.samples.length)
-    ? '\n\n📋 *Promessas sem persistência (últimas 24h):*\n' +
-      anmCheck.samples.slice(0, 3).map((s, i) => {
-        const name = s.collaborators?.full_name || 'desconhecido';
-        const when = s.created_at ? new Date(s.created_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
-        const userText = String(s.reason || '').replace(/^text:/, '').slice(0, 100);
-        const tomReply = String(s.raw_excerpt || '').slice(0, 100);
-        // A causa (ex.: "MEMORY_SAVE (schema_invalid)") é o que transforma a amostra em algo
-        // que dá pra agir — sem ela sobra "o TOM prometeu e não fez", que não aponta pra lugar.
-        const causa = s.detalhe ? `\n   _falhou:_ ${s.detalhe}` : '';
-        return `${i + 1}. *${name}* (${when})\n   _user:_ "${userText}"\n   _TOM:_ "${tomReply}"${causa}`;
-      }).join('\n')
-    : '';
-
-  // Caminho feliz: tudo verde
-  if (summary.warning === 0 && summary.error === 0 && summary.fixed === 0) {
-    return `${head}\n\n✅ Sistema saudável — ${summary.ok}/${summary.total} checks OK${anmSamplesBlock}${govBlock}`;
-  }
-  const lines = checks
-    .filter(c => c.status !== 'ok')
-    .map(c => `${statusEmoji(c.status)} ${c.detail}`);
-  const okCount = summary.ok > 0 ? `\n\n✅ ${summary.ok}/${summary.total} checks OK` : '';
-  let footer = '';
-  if (summary.error > 0) footer = `\n\n_Precisa de atenção: ${summary.error} check(s) com erro._`;
-  else if (summary.warning > 0) footer = `\n\n_${summary.warning} alerta(s) — sem ação obrigatória._`;
-  return `${head}\n\n${lines.join('\n')}${anmSamplesBlock}${govBlock}${okCount}${footer}`;
+  return require('../lib/relatorio-saude').formatHealthReport(run, resumoGov, { hojeBr: fmtBrtDayMonth() });
 }
 
 async function sendHealthReport(refYmd = null, force = false) {

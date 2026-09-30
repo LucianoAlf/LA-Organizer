@@ -91,19 +91,19 @@ test('o numero relatado e o TOTAL da fila, nao o teto da consulta', () => {
     grupo: 'Barra', dia: '2026-09-08', conteudo: 'memoria ' + i, tipo: 'fact',
   }));
   const r = resumirLicoesPendentes(amostra, 47);
-  assert.match(r.detail, /⛔ 47 /, 'a fila tem 47; a amostra so cabia 20');
+  assert.match(r.detail, /⛔ \*47 /, 'a fila tem 47; a amostra so cabia 20');
   assert.ok(r.detail.includes('(+44)'), 'o resto tambem conta do total: 47 - 3 mostrados');
 });
 
 test('sem total, cai na amostra — chamador antigo segue valendo', () => {
   const um = [{ grupo: 'Barra', dia: '2026-09-08', conteudo: 'x', tipo: 'lesson' }];
-  assert.match(resumirLicoesPendentes(um).detail, /⛔ 1 lição /);
-  assert.match(resumirLicoesPendentes(um, null).detail, /⛔ 1 lição /);
+  assert.match(resumirLicoesPendentes(um).detail, /⛔ \*1 lição /);
+  assert.match(resumirLicoesPendentes(um, null).detail, /⛔ \*1 lição /);
 });
 
 test('total menor que a amostra e ignorado — nunca reporta menos do que ja viu', () => {
   const tres = Array.from({ length: 3 }, () => ({ grupo: 'g', dia: '2026-09-08', conteudo: 'x', tipo: 'fact' }));
-  assert.match(resumirLicoesPendentes(tres, 1).detail, /⛔ 3 /);
+  assert.match(resumirLicoesPendentes(tres, 1).detail, /⛔ \*3 /);
 });
 
 // ── PERFIL-PARADO-CONTAVA-QUEM-NAO-FALOU (10/09/2026) ─────────────────────────────────
