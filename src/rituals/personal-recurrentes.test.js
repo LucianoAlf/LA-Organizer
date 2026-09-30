@@ -75,3 +75,34 @@ test("schema real: o select do cron roda sem erro (read-only)", { skip: !process
   const { error } = await supabase.from("personal_checklists").select(PERSONAL_RECORRENTES_SELECT).limit(1);
   assert.strictEqual(error, null, error && error.message);
 });
+
+// Decisão (30/09): lista recorrente SEM ITENS não gera completion — só viraria dia "0/0" no
+// histórico. Ela aparece no log numa linha só, com a contagem (sem nome de ninguém).
+const { planejarRecorrentesPessoaisDetalhado, linhaPuladasSemItens } = require("./personal-recurrentes");
+
+test("lista ativa recorrente com 0 itens não gera completion e é contada como pulada", () => {
+  const comItens = L({ id: "C", personal_checklist_items: [{ id: "i1" }] });
+  const vazia = L({ id: "V", personal_checklist_items: [] });
+  const r = planejarRecorrentesPessoaisDetalhado([comItens, vazia], "2026-09-30");
+  assert.deepStrictEqual(r.rows.map((x) => x.checklist_id), ["C"]);
+  assert.strictEqual(r.puladasSemItens, 1);
+  assert.deepStrictEqual(planejarRecorrentesPessoais([comItens, vazia], "2026-09-30").map((x) => x.checklist_id), ["C"]);
+});
+
+test("vazia que nem vale hoje (semanal de outro dia) não conta como pulada", () => {
+  const r = planejarRecorrentesPessoaisDetalhado(
+    [L({ id: "S", recurrence_type: "weekly", days_of_week: [6], personal_checklist_items: [] })], "2026-09-30");
+  assert.deepStrictEqual(r, { rows: [], puladasSemItens: 0 });
+});
+
+test("linha de log das puladas: 1 linha resumida só com a contagem; nada quando 0", () => {
+  assert.strictEqual(linhaPuladasSemItens(0), null);
+  const l = linhaPuladasSemItens(3);
+  assert.strictEqual(l.split("\n").length, 1);
+  assert.match(l, /^\[Rituals\] dispatchPersonalRecurrentes pulou 3 listas? sem itens/);
+  assert.doesNotMatch(l, /\d{8,}/); // nada com cara de telefone
+});
+
+test("o select traz os itens pra saber se a lista está vazia", () => {
+  assert.match(PERSONAL_RECORRENTES_SELECT, /personal_checklist_items\s*\(/);
+});

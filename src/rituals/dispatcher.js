@@ -3742,7 +3742,7 @@ async function autoArchiveStale(now = new Date()) {
 // Idempotência: lê o que já existe hoje antes de inserir (não depende só do UNIQUE) e
 // 23505 segue ignorado. Sem backfill — só a data de hoje.
 async function dispatchPersonalRecurrentes() {
-  const { PERSONAL_RECORRENTES_SELECT, planejarRecorrentesPessoais, MAX_CRIACOES_POR_RODADA } = require("./personal-recurrentes");
+  const { PERSONAL_RECORRENTES_SELECT, planejarRecorrentesPessoaisDetalhado, linhaPuladasSemItens, MAX_CRIACOES_POR_RODADA } = require("./personal-recurrentes");
   const { todaySP } = require("../services/personalCompletions");
   const refDate = todaySP();
 
@@ -3774,7 +3774,9 @@ async function dispatchPersonalRecurrentes() {
     jaExistem = new Set((hoje || []).map((r) => r.checklist_id));
   }
 
-  const rows = planejarRecorrentesPessoais(lists || [], refDate, { jaExistem });
+  const { rows, puladasSemItens } = planejarRecorrentesPessoaisDetalhado(lists || [], refDate, { jaExistem });
+  const linhaPuladas = linhaPuladasSemItens(puladasSemItens);
+  if (linhaPuladas) console.log(linhaPuladas);
   if (rows.length >= MAX_CRIACOES_POR_RODADA) {
     console.error(`[Rituals] dispatchPersonalRecurrentes bateu o teto (${MAX_CRIACOES_POR_RODADA}) — conferir personal_checklists`);
   }
