@@ -672,8 +672,21 @@ function lembreteDaProximaHora({ itens, hora, recuperacao = false } = {}) {
   return `${cabecalho}\n\n${blocos.join('\n\n')}`;
 }
 
+// O TÍTULO DA FILHA É A ASSINATURA DA PAUTA (30/09). Mesmo formato que tituloDaFilha escreve e que
+// a fala do dispatcher lê ("HH:MM Anamnese — Nome…"). O 1:1 usa isto pra TIRAR as filhas do recorte
+// de 12 tarefas de grupo do prompt: ali elas eram uma amostra cortada (2 de 36 na Mayra, 30/09), e
+// o TOM contava a amostra como se fosse a pauta. A pauta do 1:1 vem da fonte (pauta-dm.js).
+const RE_TITULO_FILHA = /^\d{1,2}:\d{2} Anamnese — \S/;
+function ehFilhaDaPauta(tarefa) {
+  return !!tarefa && !!tarefa.parent_task_id && RE_TITULO_FILHA.test(String(tarefa.title || ''));
+}
+
 module.exports = {
   pautaDoDiaPeloRoster,
+  ehFilhaDaPauta,
+  // A arrumação por horário da manhã, pra a lista do 1:1 sair com a MESMA cara da do grupo.
+  linhasPorHora: _linhasPorHora,
+  marcadorDaHora: _marcadorDaHora,
   // O horário de abertura sai daqui pro dispatcher e pros testes lerem a MESMA tabela — uma
   // cópia redigitada lá faria a suíte continuar verde no dia em que alguém mudasse o valor aqui.
   diaSemanaBrt, horaDeAberturaDaUnidade, horariosDeAberturaDoDia,

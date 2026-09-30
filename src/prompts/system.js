@@ -301,6 +301,12 @@ function nameFor(collab) {
   return (collab.full_name || '').split(' ')[0] || 'amigo';
 }
 
+// DM-ANAMNESE-CONTA-TAREFA (Mayra 30/09): anamnese e contrato do dia NÃO se contam por tarefa. O
+// número vem da seção "📋 PAUTA DE HOJE" (services/pauta-dm.js — a mesma fonte da pauta dos
+// grupos), que o engine injeta quando a conversa é sobre isso e no bom dia. Sem ela no contexto,
+// o TOM não afirma quantidade. Vai no bloco de grupos porque é ali que a amostra tentava.
+const REGRA_ANAMNESE_NAO_E_TAREFA = '_Anamnese e contrato do dia: NUNCA conte pelas tarefas acima (é um recorte cortado). O número e a lista vêm SÓ da seção "📋 PAUTA DE HOJE"; se ela não estiver no contexto, não afirme quantidade de anamnese/contrato._';
+
 // ---------- BLOCK 3 — CONTEXTO (dynamic, ~1KB) ----------
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
@@ -623,6 +629,7 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
         lines.push(ln);
       }
     }
+    lines.push(REGRA_ANAMNESE_NAO_E_TAREFA);
   }
 
   // Bloco mensal (injetado quando keyword mensal detectada ou últimos 7 dias do mês).
@@ -1965,7 +1972,13 @@ async function fetchCollaboratorContext(collaborator) {
       // de fora, e as filhas-template deles chegam ao TOM como tarefa real, mesmo título e mesma
       // data da filha de verdade. Foi assim que ele deu 10 baixas erradas antes de acertar.
       const idsMolde = await idsDeMoldeDosPais(supabase, gt || []);
-      myGroupTasks = dropPackageContainers(filterVisibleGroupTasks(gt || [], idsMolde)).slice(0, 12);
+      // DM-ANAMNESE-CONTA-TAREFA (Mayra 30/09): as filhas da pauta de anamnese ("HH:MM Anamnese —
+      // …") entravam aqui como AMOSTRA cortada — 2 de 36 na Mayra — e o TOM contava a amostra
+      // como se fosse a pauta ("2 anamneses de hoje" no bom dia de 4 pessoas). A pauta do 1:1
+      // vem da fonte (services/pauta-dm.js); aqui ela só roubava vaga das tarefas de verdade.
+      const { ehFilhaDaPauta } = require('../services/anamnese-pauta');
+      myGroupTasks = dropPackageContainers(filterVisibleGroupTasks(gt || [], idsMolde))
+        .filter((t) => !ehFilhaDaPauta(t)).slice(0, 12);
     }
     workGroupsCtx = { groups, myGroupTasks, parentTitleById };
   } catch (_) { /* sem grupos no contexto */ }
@@ -4078,4 +4091,4 @@ function formatMessages(recent, currentText) {
   return msgs;
 }
 
-module.exports = { buildSystemPrompt, formatMessages, fetchCollaboratorContext, nameFor, todaySaoPaulo, buildAccessBlock, pickSkill };
+module.exports = { buildSystemPrompt, formatMessages, fetchCollaboratorContext, nameFor, todaySaoPaulo, buildAccessBlock, pickSkill, buildContext, REGRA_ANAMNESE_NAO_E_TAREFA };

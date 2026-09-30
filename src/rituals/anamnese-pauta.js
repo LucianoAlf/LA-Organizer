@@ -1126,7 +1126,45 @@ async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recupera
   return { texto, alunos, motivo: null };
 }
 
+// ── A PAUTA DE HOJE PRA QUEM PERGUNTA NO 1:1 (30/09) ─────────────────────────────────────────
+// Mayra, 30/09 08:32 BRT, no privado: "me manda a lista de anamneses pendentes de hoje" -> o TOM
+// respondeu DUAS (e o bom dia dela, da Ana, do Clayton e do Jereh também disse 2), com a pauta do
+// grupo das 06:00 listando 36. O 1:1 não tinha a fonte: contava as filhas "HH:MM Anamnese — …" que
+// cabiam no recorte de 12 tarefas de grupo do prompt (as 2 escaladas, que vêm antes na ordem).
+//
+// Aqui é a MESMA conta da montagem das 06:00 e do lembrete: get_situacao_alunos_v1 → recorte
+// canônico (situ.filtrarPorRecorte) → calendário do dia (rosterDoDia) → pura.pautaDoDiaPeloRoster.
+// Nenhum filtro próprio. Lida AGORA — quem preencheu desde a manhã já saiu, igual ao painel, que
+// a passada do meio do dia vai fechando pela mesma fonte.
+//
+// -> { anamnese: [itens]|null, contrato: [itens]|null, totalUnidade: { anamnese, contrato, alunos }|null, motivo }
+// Falha NUNCA vira lista vazia: `null` + motivo. Zero por falha tem que soar diferente de zero
+// por saúde.
+async function pendenciasDoDia({ laReport, unidadeId, hoje }) {
+  const falha = (motivo) => ({ anamnese: null, contrato: null, totalUnidade: null, motivo });
+  let data;
+  try {
+    const r = await consultaComRetry(() => laReport.rpc('get_situacao_alunos_v1',
+      { p_unidade_id: unidadeId, p_apenas_pendentes: false }));
+    if (r.error) return falha(`consulta do LA Report falhou na pauta do 1:1: ${r.error.message}`);
+    data = r.data || [];
+  } catch (e) {
+    return falha(`consulta do LA Report falhou na pauta do 1:1: ${(e && e.message) || String(e)}`);
+  }
+  const { roster, motivo } = await rosterDoDia({ laReport, unidadeId, hoje });
+  if (motivo) return falha(motivo);
+  const semAnamnese = situ.filtrarPorRecorte(data, 'anamnese');
+  const semContrato = pura.CONTRATO_NA_PAUTA ? situ.filtrarPorRecorte(data, 'contrato') : [];
+  return {
+    anamnese: pura.pautaDoDiaPeloRoster(semAnamnese, roster),
+    contrato: pura.CONTRATO_NA_PAUTA ? pura.pautaDoDiaPeloRoster(semContrato, roster) : [],
+    totalUnidade: { anamnese: semAnamnese.length, contrato: semContrato.length, alunos: data.length },
+    motivo: null,
+  };
+}
+
 module.exports = {
+  pendenciasDoDia,
   // varrerPautasVelhas é exportada porque tem DOIS chamadores: o fechamento das 23:00 (aqui) e o
   // bloco das 06:00 do dispatcher, que limpa o entulho da noite anterior ANTES de montar a pauta
   // do dia. Uma implementação só, de propósito — ver o comentário da função.

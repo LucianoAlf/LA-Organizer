@@ -12394,6 +12394,28 @@ async function processMessage(phone, text, raw = {}) {
     if (credBlock) systemPrompt += '\n\n' + credBlock;
   } catch (err) { console.warn('[NOTE_CRED_LOOKUP] failed:', err.message); }
 
+  // DM-ANAMNESE-CONTA-TAREFA (Mayra 30/09 08:32): "me manda a lista de anamneses pendentes de
+  // hoje" -> "só essas duas", com 36 na pauta do grupo. O 1:1 não tinha a fonte e contava a amostra
+  // de tarefas de grupo. Quando a conversa é sobre anamnese/contrato/pauta, injeta os números da
+  // MESMA conta da pauta (services/pauta-dm.js), por unidade da pessoa (grupos + cadastro; unidade
+  // citada na fala vence). Gate barato: sem o assunto na fala, nenhuma leitura. Degrada gracioso.
+  let _pautaDmUnidades = null;
+  try {
+    const _pautaDm = require('./services/pauta-dm');
+    if (_pautaDm.falaDeAnamneseOuContrato(text)) {
+      const { laReportClient: _lrcPauta, isLaReportConfigured: _lrOk } = require('./services/la-report-client');
+      if (_lrOk()) {
+        const _citada = require('./services/pix-consulta').detectarUnidade(text);
+        _pautaDmUnidades = _citada ? [_citada] : await _pautaDm.unidadesDoColaborador({ supabase, collab, incluirCadastro: true });
+        if (!_pautaDmUnidades.length) _pautaDmUnidades = _pautaDm.ORDEM_UNIDADES;
+        const _hojePauta = todaySaoPaulo();
+        const _porUnidade = await _pautaDm.lerPautaDasUnidades({ laReport: _lrcPauta, unidadeIds: _pautaDmUnidades, hoje: _hojePauta });
+        systemPrompt += '\n\n' + _pautaDm.blocoDaPautaDM({ porUnidade: _porUnidade, hoje: _hojePauta });
+        console.log(`[PautaDM] números injetados unidades=${_porUnidade.map((u) => `${u.unidadeNome}:${u.anamnese ? u.anamnese.length : 'falha'}`).join(',')}`);
+      }
+    }
+  } catch (err) { console.warn('[PautaDM] non-fatal:', err.message); }
+
   // Fatia 1: dica de voz da conclusão/desambiguação resolvida acima (mesmo padrão do relayHint).
   if (_remCompleteHint) systemPrompt += '\n\n' + _remCompleteHint;
 
@@ -15462,6 +15484,27 @@ Output AGORA, apenas o marker:`;
     }
   }
 
+  // ---- DM-ANAMNESE-CONTA-TAREFA (30/09) — <<SITUACAO_ALUNO>> no 1:1 ----
+  // O MESMO marcador do grupo: o LLM pede a lista, o CÓDIGO escreve os nomes (services/pauta-dm.js).
+  // Roda ANTES do catch-all (senão o marcador seria removido como desconhecido e sobraria só a
+  // linha de abertura, prometendo uma lista que não veio). Não grava em marker_logs de propósito:
+  // é leitura, e "executed" ali contaria como escrita pro guard de honestidade.
+  try {
+    if (typeof reply === 'string' && /<<SITUACAO_ALUNO>>/i.test(reply)) {
+      const _pautaDm = require('./services/pauta-dm');
+      const { laReportClient: _lrcSit } = require('./services/la-report-client');
+      const _idsSit = _pautaDmUnidades || await _pautaDm.unidadesDoColaborador({ supabase, collab, incluirCadastro: true });
+      const _rSit = await _pautaDm.atenderMarkersPautaDM({ reply, laReport: _lrcSit, unidadeIds: _idsSit, hoje: todaySaoPaulo() });
+      reply = _rSit.reply;
+      console.log(`[PautaDM] marcador SITUACAO_ALUNO atendidos=${_rSit.atendidos} falhas=${_rSit.falhas}`);
+    }
+  } catch (e) {
+    console.warn('[PautaDM] marcador err:', e.message);
+    if (typeof reply === 'string') {
+      reply = reply.replace(/<<SITUACAO_ALUNO>>[\s\S]*?<<END>>/gi, '\n\nNão consegui ler a pauta agora — me pede de novo daqui a pouco.').replace(/\n{3,}/g, '\n\n').trim();
+    }
+  }
+
   // ---- Sprint 28 — Parser <<REACT>>emoji<<END>>
   // TOM reage à mensagem do user com emoji (🚀🔥❤️😂👍...) pra humanizar.
   // Roda ANTES do catch-all stripper (senão <<REACT>> seria removido como unknown).
@@ -15676,6 +15719,21 @@ Output AGORA, apenas o marker:`;
           reply = _ml.reply;
         }
       } catch (mlErr) { console.warn('[Engine] mechanism-leak guard err (non-fatal):', mlErr.message); }
+      // 2c) META-NARRACAO (Kailane 29/09 19:05) — o raciocínio interno em 3ª pessoa ("Kailane
+      // quer que eu avise a Krissya… Vou marcar… mas primeiro preciso confirmar…") chegou no 1:1:
+      // provider claude, sem fallback, sanitizer 0 chars — nenhuma rede olhava prosa de
+      // planejamento em português. Paragraph-level: tira só o parágrafo em que o TOM fala SOBRE a
+      // pessoa (e sobre o que vai fazer). Se esvaziar tudo, o fallback (3) abaixo cobre.
+      try {
+        const { stripMetaNarracao } = require('./lib/meta-narracao');
+        const _mn = stripMetaNarracao(reply, { nomes: [collab.preferred_name, collab.full_name] });
+        if (_mn.fired) {
+          const _mot = _mn.removidos.map((r) => r.motivo).join(',');
+          console.warn(`[Engine] META_NARRACAO stripped (${_mot}) — reply="${reply.slice(0, 120)}"`);
+          try { await logMarker(collab.id, 'LEAK_BLOCKED', 'rejected', `meta_narracao:${_mot}`, reply.slice(0, 500)); } catch (_) {}
+          reply = _mn.reply;
+        }
+      } catch (mnErr) { console.warn('[Engine] meta-narracao guard err (non-fatal):', mnErr.message); }
       // 3) Se reply ficou vazio depois da limpeza, fallback genérico.
       // Sprint 28: EXCETO quando TOM emitiu só <<REACT>>emoji<<END>> — aí
       // reply vazio é intencional (só a reação será enviada), sem fallback.
@@ -16670,6 +16728,21 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
 ---
 
 ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
+
+    // DM-ANAMNESE-CONTA-TAREFA (30/09): o bom dia da Mayra, da Ana, do Clayton e do Jereh disse
+    // "2 anamneses de hoje" — a amostra de tarefas de grupo — com 36 na pauta do CG. O número do bom
+    // dia sai da MESMA conta da pauta (services/pauta-dm.js), pelas unidades dos GRUPOS da pessoa
+    // (só grupos: professor com unit=barra não passa a receber pauta de anamnese no bom dia).
+    try {
+      const _pautaDm = require('./services/pauta-dm');
+      const { laReportClient: _lrcBrief, isLaReportConfigured: _lrOkBrief } = require('./services/la-report-client');
+      const _idsBrief = _lrOkBrief() ? await _pautaDm.unidadesDoColaborador({ supabase, collab }) : [];
+      if (_idsBrief.length) {
+        const _hojeBriefP = todaySaoPaulo();
+        const _porBrief = await _pautaDm.lerPautaDasUnidades({ laReport: _lrcBrief, unidadeIds: _idsBrief, hoje: _hojeBriefP });
+        systemPrompt += '\n\n' + _pautaDm.blocoDaPautaDM({ porUnidade: _porBrief, hoje: _hojeBriefP, ritual: true });
+      }
+    } catch (e) { console.warn('[PautaDM] briefing non-fatal:', e.message); }
   }
 
   const directive = ritualToDirective(ritualType);
@@ -16683,6 +16756,28 @@ ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
     if (_fix.trocas.length) console.warn(`[Saudacao] ${ritualType}: saudação a outra pessoa reescrita (${_fix.trocas.map((t) => `${t.de}→${t.para}`).join(', ')})`);
     finalText = _fix.texto;
   }
+
+  // O ritual sai direto pro WhatsApp, sem o pipeline do processMessage — as duas redes do 30/09
+  // valem aqui também: marcador de lista nunca sai cru, e raciocínio em 3ª pessoa nunca sai.
+  try {
+    if (/<<SITUACAO_ALUNO>>/i.test(finalText)) {
+      const _pautaDm = require('./services/pauta-dm');
+      const { laReportClient: _lrcR } = require('./services/la-report-client');
+      const _idsR = await _pautaDm.unidadesDoColaborador({ supabase, collab });
+      finalText = (await _pautaDm.atenderMarkersPautaDM({ reply: finalText, laReport: _lrcR, unidadeIds: _idsR, hoje: todaySaoPaulo() })).reply;
+    }
+  } catch (e) {
+    console.warn('[PautaDM] ritual marcador err:', e.message);
+    finalText = String(finalText).replace(/<<SITUACAO_ALUNO>>[\s\S]*?<<END>>/gi, '').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  try {
+    const { stripMetaNarracao } = require('./lib/meta-narracao');
+    const _mnR = stripMetaNarracao(finalText, { nomes: [collab.preferred_name, collab.full_name] });
+    if (_mnR.fired && _mnR.reply) {
+      console.warn(`[Ritual] META_NARRACAO stripped (${_mnR.removidos.map((r) => r.motivo).join(',')})`);
+      finalText = _mnR.reply;
+    }
+  } catch (e) { console.warn('[Ritual] meta-narracao err (non-fatal):', e.message); }
 
   await whatsapp.sendMessage(collab.phone, finalText);
   await logConversation(collab.id, 'outbound', finalText);
