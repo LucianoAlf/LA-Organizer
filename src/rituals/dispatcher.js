@@ -2881,41 +2881,25 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       continue;
     }
 
-    // Task 4 — digest do líder filtra pela posse: cada tarefa só aparece para quem
-    // é viewer dela (governanceViewerIdsOf = delegador ou, se NULL, gerente da unidade).
-    let scoped = staleOpen;
-    if (opts.leaderId) {
-      scoped = stale.filter((t) =>
-        governanceViewerIdsOf(t, collabById.get(t.assigned_to), allCollabs).includes(opts.leaderId),
-      );
-    }
-    if (opts.leaderId && scoped.length === 0) {
+    // CARDS-CONTRADITORIOS (30/09) — a COR de cada líder sai de UM veredito
+    // (src/rituals/leader-verdict.js), o MESMO pros dois caminhos (visão do CEO e card do
+    // líder): escopo do líder (viewer + próprias), degrau do líder (>= 3 dias úteis), scorecard
+    // real. Antes o CEO cortava em 6 dias úteis e roteava pelo líder principal ANTES de
+    // classificar — Krissya/Jereh/Juliana/Quintela sairam "no ritmo" as 09:00 e 🔴 no card
+    // deles as 14:00. O CEO segue vendo DETALHE so do que passou de 6 dias úteis (escada da
+    // Fase 8, §2/§3 spec 18/07); o degrau do líder decide so a cor/cabecalho/ritmo.
+    // O caminho do líder agora parte de staleOpen (com o guard de gêmea concluída) — antes
+    // usava `stale` cru e contava a sobra de recorrência que o CEO não contava.
+    const { renderLeaderCard, renderUnassigned } = require('./leader-cards');
+    const { montarVisaoDoCeo, montarCardDoLider, tarefasDoLider, LIMIAR_CEO_DIAS_UTEIS } = require('./leader-verdict');
+    const filteredStale = opts.leaderId
+      ? tarefasDoLider(staleOpen, opts.leaderId, allCollabs, sp.ymd)
+      : staleOpen.filter((t) => businessDaysOverdue(t.due_date, sp.ymd) >= LIMIAR_CEO_DIAS_UTEIS);
+    if (opts.leaderId && filteredStale.length === 0) {
       // Fatia vazia para este líder: retorna silenciosamente (modo returnText).
       if (opts.returnText) return { text: '', staleIds: [] };
       continue;
     }
-
-    // Fase 8 — ESCADA POR DIAS ÚTEIS (§2/§3 spec 18/07). Cada nível só recebe quando o
-    // atraso vira problema DELE: líder a partir de 3 dias úteis, CEO a partir de 6. O
-    // `|| !cobradas24h` antigo deixava tarefa de 1 dia vazar pro CEO (a cobrança individual
-    // ainda não tinha rodado) — era o ruído que o Alf reclamou (18/07). Dias ÚTEIS pulam
-    // domingo (a LA dá aula sábado). A EXIBIÇÃO ("7d") segue corrida no leader-cards — só o
-    // GATE mudou. A cobrança da pessoa (checkOverdueAlerts, 1-5d) é o degrau 1-2 e não muda.
-    const totalCount = scoped.length;
-    const limiarDias = opts.leaderId ? 3 : 6;
-    const filteredStale = scoped.filter(t => businessDaysOverdue(t.due_date, sp.ymd) >= limiarDias);
-    if (filteredStale.length === 0) {
-      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'skipped', `all_recently_asked total=${totalCount}`, ymdRef);
-      continue;
-    }
-
-    // Fase 7 — CARD POR LÍDER. Morre o `days >= 3 → ceoBucket` (a tarefa velha perdia
-    // o líder: quanto pior, menos estrutura) e morrem os 4 blocos que organizavam as
-    // MESMAS tarefas em 4 eixos que não conversam (idade / pessoa+LLM / cobrança /
-    // staleness). Um eixo: o líder. opts.groupByOwner fica sem efeito aqui — buildLeaderCards
-    // já resolve dono→líder sozinha (mesma fonte de verdade do `hasTeam`); segue vivo
-    // no report de EVENTOS (ceoTeamUnclosedEventsReport), que esta task não toca.
-    const { buildLeaderCards, renderLeaderCard, renderUnassigned } = require('./leader-cards');
 
     const scMap = new Map();
     const { data: scLatest } = await supabase
@@ -2959,14 +2943,15 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     // Juliana), e o Quintela recebia um card da Juliana na PRÓPRIA mensagem dele
     // ("Seu time, Quintela" com o card errado dentro). Ausente (CEO) → comportamento
     // de sempre (N cards por líder-principal, ver comentário 6 linhas acima).
-    const built = buildLeaderCards({
-      tasks: filteredStale,
-      events: evData,
-      collabs: allCollabs,
-      scorecards: opts.withScorecard === false ? new Map() : scMap,  // sem scorecard → closurePct null → sem %
-      today: sp.ymd,
-      ...(opts.leaderId ? { forLeaderId: opts.leaderId } : {}),
-    });
+    const built = opts.leaderId
+      ? montarCardDoLider({ tasks: staleOpen, collabs: allCollabs, scorecards: scMap, today: sp.ymd, leaderId: opts.leaderId })
+      : montarVisaoDoCeo({ tasks: staleOpen, events: evData, collabs: allCollabs, scorecards: scMap, today: sp.ymd,
+          mostrarPct: opts.withScorecard !== false });  // sem scorecard → sem % na TELA; a cor usa a taxa real
+    if (!built.cards.length && !built.unassigned.length) {
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'skipped', `all_recently_asked total=${staleOpen.length}`, ymdRef);
+      if (opts.returnText) return { text: '', staleIds: [] };
+      continue;
+    }
 
     // §4 — a função é PURA: o 💡 do LLM é injetado DEPOIS, na estrutura já montada.
     // Mesma regra de hoje (3+ pendências por PESSOA) e mesmo prompt — a voz não muda.
@@ -3009,7 +2994,8 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     // banners/rodapé próprios. Fase 7 — a seção agora É os cards por líder: 1 eixo,
     // não mais 4 blocos organizando as mesmas tarefas por idade/pessoa+LLM/cobrança/staleness.
     if (opts.returnText) {
-      const quantos = built.cards.length;
+      // "N líderes precisam de você" = líderes não-🟢 no veredito (o mesmo que pinta o card deles).
+      const quantos = opts.leaderId ? built.cards.length : built.precisam;
       return {
         text: `_${quantos === 1 ? '1 líder precisa' : `${quantos} líderes precisam`} de você_\n\n${corpo}`,
         staleIds: toStaleCheck.map(t => t.id),
@@ -3037,7 +3023,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
         if (staleTaskErr) console.error(`[CEOTasksReport] staleness mark FAILED: ${staleTaskErr.message}`);
         else console.log(`[CEOTasksReport] staleness marcou ${toStaleCheck.length} task(s)`);
       }
-      console.log(`[CEOTasksReport] sent ${scoped.length} (${built.cards.length} card(s)) → ${String(ceo.phone).slice(-4)}`);
+      console.log(`[CEOTasksReport] sent ${filteredStale.length} (${built.cards.length} card(s)) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[CEOTasksReport] send err ${String(ceo.phone).slice(-4)}:`, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);

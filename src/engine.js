@@ -16522,6 +16522,21 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
   let { systemPrompt, ctx } = await buildSystemPrompt(collab);
   console.log(`[Engine] ritual=${ritualType} system prompt size: ${systemPrompt.length} chars`);
 
+  // SAUDACAO-NOME-ERRADO (Peterson 29/09 19:04): o fechamento dele abriu com "Alf, fechamento."
+  // — o modelo copiou o nome dos EXEMPLOS da skill rituais-diarios (todos com "Alf"). O nome do
+  // destinatário agora é do CÓDIGO: seção no prompt + marcador {NOME} + pós-checagem da saudação
+  // (ver src/lib/saudacao-ritual.js). Vale pra todo ritual deste caminho (briefing tem o mesmo exemplo).
+  const _saud = require('./lib/saudacao-ritual');
+  const _nomeDest = require('./prompts/system').nameFor(collab);
+  const _nomesDest = _saud.nomesDoColaborador(collab);
+  let _outrosNomes = [_saud.NOME_DOS_EXEMPLOS];
+  try {
+    const { data: _todos, error: _eTodos } = await supabase.from('collaborators').select('id, full_name, preferred_name, aliases');
+    if (_eTodos) throw _eTodos;
+    _outrosNomes = _saud.nomesDeTerceiros(_todos || [], collab);
+  } catch (e) { console.warn('[Saudacao] lista de nomes falhou (segue só com o nome dos exemplos):', e.message); }
+  systemPrompt += `\n\n---\n\n${_saud.secaoDoDestinatario(_nomeDest)}`;
+
   // FECHAMENTO-ITEM-NO-ANCHOR (caso Yuri 09/06): ancora as "3 coisas" do fechamento por
   // ITEM. Computa a lista numerada determinística (engine), injeta no prompt pra o LLM
   // usar EXATAMENTE essa numeração, e abre a intent ancorada (payload.closing.items) logo
@@ -16591,6 +16606,11 @@ ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
   // Contas NÃO entram mais no briefing — saem no digest financeiro consolidado, enviado
   // logo depois pelo dispatcher (sendFinanceDigest). Spec: docs/superpowers/specs/2026-06-08-digest-financeiro-matinal-design.md
   let finalText = response.text;
+  if (typeof finalText === 'string' && finalText) {
+    const _fix = _saud.aplicarNomeDoDestinatario(finalText, { nome: _nomeDest, outrosNomes: _outrosNomes, nomesDoDestinatario: _nomesDest });
+    if (_fix.trocas.length) console.warn(`[Saudacao] ${ritualType}: saudação a outra pessoa reescrita (${_fix.trocas.map((t) => `${t.de}→${t.para}`).join(', ')})`);
+    finalText = _fix.texto;
+  }
 
   await whatsapp.sendMessage(collab.phone, finalText);
   await logConversation(collab.id, 'outbound', finalText);
@@ -16626,7 +16646,7 @@ ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
     if (logErr) console.error(`[Ritual] ritual_logs insert err (${ritualType}):`, logErr.message);
   }
   console.log(`[Ritual] ${ritualType} enviado pra ${collab.phone.slice(-4)}`);
-  return response.text;
+  return finalText;
 }
 
 function ritualToDirective(type) {

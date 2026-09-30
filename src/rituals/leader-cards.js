@@ -430,6 +430,8 @@ function renderLeaderCard(card) {
   // o guard fica como defesa, não como caminho exercitado pelos testes atuais.
   if (card.totals.all > 0) linhas.push(`_${card.totals.team} do time · ${plural(card.totals.own, 'própria', 'próprias')}_`);
   for (const line of fmtCoLeaderLines(card.coLeaders)) linhas.push(line);
+  // CARDS-CONTRADITORIOS (30/09): nota do veredito na visão do CEO (ver leader-verdict.js).
+  if (card.nota) linhas.push(card.nota);
   for (const b of card.people) linhas.push(...fmtBlock(b));
   return linhas.join('\n');
 }
