@@ -7324,6 +7324,10 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
   // (15 de 20 tarefas de grupo com remind_at, medido em 30/09). Aqui entra de volta a tarefa de
   // grupo cujo `reminded_at` é ANTERIOR ao `remind_at`: esse carimbo é do T-1, não desta hora.
   // Janela de 2h pra trás: não despeja lembrete velho (lição de 22/09, alerta vencido em lote).
+  // REMARCOU-E-NAO-TOCOU (30/09): o mesmo carimbo velho prende tarefa PESSOAL — o T-1 pessoal
+  // (remindPersonalTasks, "📌 amanhã está marcado") e o disparo do horário ANTERIOR quando a
+  // tarefa é remarcada pelo PWA (o reschedule por marker agora re-arma, lib/rearma-lembrete).
+  // Replay 60d: 28 pessoais presas assim. O resgate vale pra toda tarefa, não só de grupo.
   let due = dueBase || [];
   if (!(_turnoAtual && _turnoAtual.qa === true)) {
     try {
@@ -7331,7 +7335,6 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
       const { data: grp, error: eGrp } = await sb
         .from('tasks')
         .select('id, title, description, assigned_to, assigned_group_id, remind_at, status, context, reminded_at, due_date, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
-        .not('assigned_group_id', 'is', null)
         .not('reminded_at', 'is', null)
         .lte('remind_at', nowIso)
         .gte('remind_at', desde)
@@ -7404,7 +7407,8 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
       .select('id')
       .eq('reference_id', t.id)
       .eq('notification_type', 'task_reminder')
-      .gte('sent_at', cooldownCutoff)
+      // REMARCOU-E-NAO-TOCOU (30/09): aviso anterior ao horário ATUAL é do agendamento velho.
+      .gte('sent_at', require('../lib/rearma-lembrete').pisoDoCooldown(cooldownCutoff, t.remind_at))
       .limit(1);
     if (recent && recent.length) {
       console.log(`[Reminders] skip ${String(t.id).slice(0,8)} — cooldown 6h ainda ativo`);

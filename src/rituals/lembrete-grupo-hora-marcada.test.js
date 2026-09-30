@@ -79,9 +79,12 @@ test('controle: remind_at vencido há mais de 2h não é despejado atrasado', as
   assert.deepStrictEqual(f.updates, []);
 });
 
-test('controle: tarefa INDIVIDUAL com reminded_at segue sem re-disparo (trava original intacta)', async () => {
-  const f = sbFake([{ ...JAIRO, assigned_group_id: null, assigned_to: 'x' }]);
-  await dispatcher.checkReminders(new Date('2026-09-29T18:00:30Z'), { supabase: f.sb });
+// REMARCOU-E-NAO-TOCOU (30/09): o resgate passou a valer pra tarefa INDIVIDUAL também — o T-1
+// pessoal e a remarcação pelo PWA carimbavam reminded_at ANTES do horário (replay 60d: 28 presas).
+// A trava que importa é "já disparou NESTE horário" (reminded_at >= remind_at), abaixo.
+test('controle: tarefa INDIVIDUAL que já disparou NESTE horário não re-dispara', async () => {
+  const f = sbFake([{ ...JAIRO, assigned_group_id: null, assigned_to: 'x', reminded_at: '2026-09-29T18:00:20.000Z' }]);
+  await dispatcher.checkReminders(new Date('2026-09-29T18:05:00Z'), { supabase: f.sb });
   assert.deepStrictEqual(f.updates, []);
 });
 

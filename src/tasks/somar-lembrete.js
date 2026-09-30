@@ -16,7 +16,7 @@ function _iso(v) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-async function somarLembreteNaTarefa({ supabase, taskId, iso }) {
+async function somarLembreteNaTarefa({ supabase, taskId, iso, now = new Date() }) {
   const novo = _iso(iso);
   if (!novo) return { status: "invalido", horarios: [] };
   const { data: t, error: eT } = await supabase
@@ -34,7 +34,8 @@ async function somarLembreteNaTarefa({ supabase, taskId, iso }) {
   const existentes = [...pend].sort();
 
   if (!existentes.length) {
-    const { error } = await supabase.from("tasks").update({ remind_at: novo, reminded_at: null }).eq("id", taskId);
+    const { rearmaAoRemarcar } = require("../lib/rearma-lembrete");
+    const { error } = await supabase.from("tasks").update({ remind_at: novo, ...rearmaAoRemarcar(novo, now) }).eq("id", taskId);
     if (error) return { status: "erro", erro: error.message, titulo: t.title, horarios: [] };
     return { status: "definiu", titulo: t.title, horarios: [novo] };
   }

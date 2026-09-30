@@ -116,7 +116,7 @@ test('teto: 4º horário, ou a menos de 30 min de outro, NÃO é gravado', async
 
 test('remind_at que JÁ disparou não conta: o horário novo re-arma a tarefa', async () => {
   const { T, sb } = banco({ tasks: [{ ...TAREFA, remind_at: '2026-09-26T15:00:00Z', reminded_at: '2026-09-26T15:00:40Z' }] });
-  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: '2026-09-26T23:00:00Z' });
+  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: '2026-09-26T23:00:00Z', now: new Date('2026-09-26T16:00:00Z') });
   assert.strictEqual(r.status, 'definiu');
   assert.strictEqual(T.tasks[0].remind_at, '2026-09-26T23:00:00.000Z');
   assert.strictEqual(T.tasks[0].reminded_at, null);

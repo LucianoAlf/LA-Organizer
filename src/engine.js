@@ -4807,6 +4807,11 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   // DATA-DA-TAREFA-NAO-DITA (Yuri 12/09): a data das tarefas CRIADAS neste lote — o caller anexa
   // "📅 Fica para *segunda, 14/09*" quando a fala do TOM confirma sem dizer o dia.
   const _criadasDatas = [];
+  // CRIADAS-VS-PULADAS (Ana Paula 11/09 00:37): o SELF_RECENT_SKIP conta ok e a fala dizia "Criando
+  // nos 5 dias" com 0 criadas. Cada create vira item {titulo, criada} — o caller diz o que foi
+  // criado e o que foi pulado, e por quê (lib/criadas-vs-puladas).
+  const _itensCriacao = [];
+  const _criadasIdsNoLote = new Set();
   // SOMAR-HORARIO-1A1 (Ana Paula 11/09): horários SOMADOS a tarefas que já existiam, por tarefa.
   // O caller confirma com o que ficou GRAVADO (lib/somar-ou-trocar-lembrete), nunca com a prosa.
   const _somados = new Map();
@@ -5683,6 +5688,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         }
         if (typeof a.new_remind_at === 'string' && isValidRemindAt(a.new_remind_at)) {
           update.remind_at = a.new_remind_at;
+          // REMARCOU-E-NAO-TOCOU (30/09): o reminded_at do lembrete que já disparou travava o
+          // horário novo pra sempre. Re-arma só se o novo é futuro (lib/rearma-lembrete).
+          Object.assign(update, require('./lib/rearma-lembrete').rearmaAoRemarcar(update.remind_at));
         }
         // Sprint 31.13 (Yuri/Kinho 30/05) — reschedule SÓ com new_due_date (sem lembrete
         // novo no marker): o remind_at antigo ficava congelado no passado. O cron disparava
@@ -5696,7 +5704,8 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             const shifted = shiftTaskRemindAt(cur.due_date, update.due_date, cur.remind_at);
             if (shifted) {
               update.remind_at = shifted;
-              update.reminded_at = null; // re-arma o lembrete no horário deslocado
+              // re-arma no horário deslocado — só se ele é futuro (passado = lembrete velho, não reenvia)
+              Object.assign(update, require('./lib/rearma-lembrete').rearmaAoRemarcar(shifted));
             }
           }
         }
@@ -6161,6 +6170,11 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
               } catch (_logErr) {
                 console.error('[IntegrityCheck] SELF_RECENT_SKIP logMarker throw:', _logErr.message);
               }
+              // CRIADAS-VS-PULADAS: re-emit de uma criada NESTE lote não é notícia; o resto é pulado.
+              if (!_criadasIdsNoLote.has(_selfRecent.id)) {
+                _itensCriacao.push({ titulo: a.title.trim(), criada: false, existente: _selfRecent.title || null,
+                  idadeMin: Math.max(0, Math.round((_nowMs - new Date(_selfRecent.created_at).getTime()) / 60000)) });
+              }
               okCount++;
               continue;
             }
@@ -6256,6 +6270,11 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           );
           if (dup) {
             console.warn(`[Task] DEDUPE_SKIP existing=${String(dup.id).slice(0,8)} title="${insertRow.title.slice(0,40)}" (recent <60s)`);
+            // CRIADAS-VS-PULADAS: pulada de verdade só se a existente não nasceu neste mesmo lote.
+            if (!_criadasIdsNoLote.has(dup.id)) {
+              _itensCriacao.push({ titulo: insertRow.title, criada: false, existente: insertRow.title,
+                idadeMin: Math.max(0, Math.round((Date.now() - new Date(dup.created_at).getTime()) / 60000)) });
+            }
             okCount++;
             continue;
           }
@@ -6340,6 +6359,8 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         // pra o caller poder surfacer "🔔 Lembro às HHh" se a fala do TOM não citar a hora.
         if (insertRow.remind_at) createdReminderTimes.push(insertRow.remind_at);
         _criadasDatas.push({ title: insertRow.title, due_date: insertRow.due_date || null });
+        _itensCriacao.push({ titulo: insertRow.title, criada: true });
+        if (taskId) _criadasIdsNoLote.add(taskId);
         if (reminders.length) createdReminderTimes.push(...reminders);
         // Subtarefas/checklist (2026-06-26): create com subtasks:[...] → cria as filhas (helper
         // LITE; herda context/assigned do pai). Best-effort: o pai já persistiu, falha das filhas
@@ -6608,7 +6629,8 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             const shiftedExt = shiftTaskRemindAt(curExt.due_date, a.new_due_date, curExt.remind_at);
             if (shiftedExt) {
               update.remind_at = shiftedExt;
-              update.reminded_at = null; // re-arma pra tocar no horário novo
+              // re-arma pra tocar no horário novo — só se ele é futuro (lib/rearma-lembrete)
+              Object.assign(update, require('./lib/rearma-lembrete').rearmaAoRemarcar(shiftedExt));
             }
           }
           // If task was overdue, reset status to pending.
@@ -7002,7 +7024,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       if (okCount === _okB && failCount > _failB) _falharam.push(a);
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, lembretesSomados: [..._somados.values()], acoesSomadas: _acoesSomadas, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit, criadas: _criadasDatas };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, lembretesSomados: [..._somados.values()], acoesSomadas: _acoesSomadas, itensCriacao: _itensCriacao, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit, criadas: _criadasDatas };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -13400,7 +13422,7 @@ Output AGORA, apenas o marker:`;
       // replyText (CANCELA-SERIE-PROMETE-TODOS): a fala do TOM que acompanha o marker — o executor usa
       // pra não cancelar UMA ocorrência quando ela promete "todos"/"fora do sistema".
       const _falaTomTask = (parsedTask && parsedTask.cleanText) || '';
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, lembretesSomados, acoesSomadas, falharam, awaitingConfirm, retidos, concluidas, criadas } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, lembretesSomados, acoesSomadas, itensCriacao, falharam, awaitingConfirm, retidos, concluidas, criadas } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -13572,6 +13594,19 @@ Output AGORA, apenas o marker:`;
               if (_txtData) base = (_alvoTxtData ? _alvoTxtData + '\n\n' : '') + _txtData;
             }
           } catch (e) { console.warn('[DataCriada] non-fatal:', e.message); }
+        }
+        // CRIADAS-VS-PULADAS (Ana Paula 11/09 00:37 — "✅ Criando nos 5 dias" com as 5 puladas pelo
+        // SELF_RECENT_SKIP): a confirmação diz o que foi criado e o que foi pulado, e por quê.
+        if (Array.isArray(itensCriacao) && itensCriacao.some((i) => !i.criada)) {
+          try {
+            const { relatoCriadasEPuladas } = require('./lib/criadas-vs-puladas');
+            const _antesCP = base;
+            const _cp = relatoCriadasEPuladas(base, itensCriacao);
+            if (_cp.fired) {
+              base = _cp.texto;
+              try { await logMarker(collab.id, 'PARTIAL_HONESTY', 'redirected', `task_create:criadas=${_cp.criadas} puladas=${_cp.puladas}`, _antesCP, { rawLimit: 800 }); } catch (_) {}
+            }
+          } catch (e) { console.warn('[CriadasVsPuladas] non-fatal:', e.message); }
         }
         // SOMAR-HORARIO-1A1 (Ana Paula 11/09 — "Agora sim — 10 registros" com UM horário no banco):
         // horário somado a tarefa existente confirma com o que ficou GRAVADO. Lote só de somas → a
