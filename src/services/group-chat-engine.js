@@ -1231,7 +1231,13 @@ function buildTomContent(rawReply, actions, opts) {
         // + eco do relato do próprio membro (achado a0a688e2) — ver lib/eco-relato-usuario.js.
         const { ecoDoRelatoDoUsuario } = require('../lib/eco-relato-usuario');
         const { linhasAcusadasSaoPergunta } = require('../lib/pergunta-nao-e-afirmacao');
-        const relato = isReportedStateClaim(prose) || ecoDoRelatoDoUsuario((opts && opts.userText) || '', prose) || linhasAcusadasSaoPergunta(prose);
+        // + o membro pediu pra NÃO registrar ("deixa em aberto", "não marca") e a fala só diz que
+        // nada mudou ("nada marcado como concluído") — ver lib/nada-a-registrar.js (35e58476, que
+        // ligou só no 1:1). Aqui não há marker tentado-e-rejeitado: ação que falhou cai em
+        // hasFailure acima e nunca chega nesta porta.
+        const { pedidoDeNadaARegistrar } = require('../lib/nada-a-registrar');
+        const relato = isReportedStateClaim(prose) || ecoDoRelatoDoUsuario((opts && opts.userText) || '', prose) || linhasAcusadasSaoPergunta(prose)
+          || pedidoDeNadaARegistrar((opts && opts.userText) || '', prose);
         if (relato) console.log('[GroupChat] chokepoint VETADO: fala relata estado de terceiro/inferência, não escrita própria');
         prose = enforceNoMarkerHonesty(prose, {
           nothingPersisted: true,
