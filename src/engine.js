@@ -43,6 +43,7 @@ const { findDuplicateNote } = require('./services/note-dedup');
 const recentNoteDupBlocks = new Map(); // key: `${collabId}|${normTitle}` -> ts
 const NOTE_DEDUP_BYPASS_MS = 5 * 60 * 1000;
 const workGroups = require('./services/work-groups');
+const { desdeIsoJanela, filtroOrJanelaShortId } = require('./lib/janela-short-id');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { detectProjectStatusIntent } = require('./lib/detect-project-status-intent');
 const projectStatusLib = require('./lib/project-status');
@@ -4232,15 +4233,16 @@ async function avisarDonoFechadaPeloLider(task, lider) {
 
 async function resolveTaskByShortId(collaboratorId, shortId) {
   if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
-  // uuid não suporta LIKE — fetch todas as tarefas do colab (last 60 dias) e filtra em JS.
+  // uuid não suporta LIKE — fetch as tarefas do colab e filtra em JS.
   // Ainda é defense-in-depth: assigned_to é restrito ao colaborador, então cross-user é impossível.
-  const prefix = String(shortId).toLowerCase();
-  const sinceIso = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  // JANELA-60D (caso Peterson 29/09): ABERTA entra sempre (o TOM lista e cobra vencida de 70+ dias;
+  // tem que dar pra fechar pelo chat). A janela de 60 dias vale só pras FECHADAS — ver lib/janela-short-id.
+  const sinceIso = desdeIsoJanela();
   const { data, error } = await supabase
     .from('tasks')
     .select('id, title, status, due_date, assigned_to, assigned_group_id')
     .eq('assigned_to', collaboratorId)
-    .or(`due_date.gte.${sinceIso},due_date.is.null`) // Item 2: inclui tarefas SEM prazo (null)
+    .or(filtroOrJanelaShortId(sinceIso)) // aberta de qualquer idade | prazo recente | SEM prazo (Item 2)
     .limit(500);
   if (error) {
     console.error('[Task] resolveTaskByShortId err:', error.message);
@@ -4257,7 +4259,7 @@ async function resolveTaskByShortId(collaboratorId, shortId) {
         .from('tasks')
         .select('id, title, status, due_date, assigned_to, assigned_group_id')
         .in('assigned_group_id', gids)
-        .or(`due_date.gte.${sinceIso},due_date.is.null`)
+        .or(filtroOrJanelaShortId(sinceIso))
         .limit(200);
       const seen = new Set(rows.map((t) => t.id));
       for (const t of gTasks || []) if (!seen.has(t.id)) rows.push(t);
