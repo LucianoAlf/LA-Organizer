@@ -834,3 +834,67 @@ test('engine do grupo: TASK_SERIES cai no acharSeriePorTitulo quando o título e
   const ENG = require('node:fs').readFileSync(require('node:path').join(__dirname, 'group-chat-engine.js'), 'utf8');
   assert.match(ENG, /const _achado = acharSeriePorTitulo\(ps\.title, _moldes\);\s*if \(_achado\) templateId = _achado\.id;/);
 });
+
+// ── TITULO-REESCRITO no GRUPO (30/09): dedup usa lib/titulo-mesma-tarefa, não Jaccard >= 0.7 ──
+// Replay dos pares reais de tarefas de grupo (24h ou irmãs do mesmo pacote): o Jaccard dizia
+// "mesma" em 344 pares que são tarefas DIFERENTES (dia 3 × dia 15, digest de 18/09 × 19/09,
+// irmãos com o mesmo sobrenome) — o create virava UPDATE da outra e a tarefa sumia.
+test('grupo: "Dia 3 — …" e "Dia 15 — …" são tarefas diferentes → cria (antes atualizava a do dia 3)', async () => {
+  const events = [];
+  const tasks = [G({ id: 't1', title: 'Dia 3 — conferir débito LJ 172 e LJ 168 antes de pagar', due_date: '2026-10-03' })];
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'create', title: 'Dia 15 — conferir débito LJ 172 e LJ 168 antes de pagar', due_date: '2026-10-15' }],
+  });
+  assert.strictEqual(r.created.length, 1);
+  assert.strictEqual(r.updated.length, 0);
+  assert.strictEqual(tasks[0].due_date, '2026-10-03'); // a do dia 3 intacta
+});
+
+test('grupo: digest de outro dia não é a mesma tarefa', async () => {
+  const events = [];
+  const tasks = [G({ id: 't1', title: '📋 Anamnese — quem tem aula hoje · 18/09', due_date: '2026-09-18' })];
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'create', title: '📋 Anamnese — quem tem aula hoje · 19/09', due_date: '2026-09-19' }],
+  });
+  assert.strictEqual(r.created.length, 1);
+  assert.strictEqual(r.updated.length, 0);
+});
+
+test('grupo: título reescrito da MESMA tarefa atualiza no lugar (antes criava duplicata)', async () => {
+  const events = [];
+  const tasks = [G({ id: 't1', title: 'Ver o vídeo de registro de visitas (postado pela Vitória no grupo)', due_date: '2026-09-30' })];
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'create', title: 'Ver o vídeo da Vitória', due_date: '2026-10-01' }],
+  });
+  assert.strictEqual(events.filter((e) => e.kind === 'insert').length, 0);
+  assert.strictEqual(r.updated.length, 1);
+  assert.strictEqual(r.updated[0].changed.due_date, '2026-10-01');
+});
+
+test('grupo: negação muda a tarefa ("Lead compareceu" × "Lead não compareceu")', async () => {
+  const events = [];
+  const tasks = [G({ id: 't1', title: 'Lead compareceu', due_date: '2026-09-30' })];
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'create', title: 'Lead não compareceu', due_date: '2026-09-30' }],
+  });
+  assert.strictEqual(r.created.length, 1);
+  assert.strictEqual(r.updated.length, 0);
+});
+
+test('findDuplicatePackage / filterNewSubtasks: dia diferente não é o mesmo item', () => {
+  const dia3 = 'Dia 3 — conferir débito LJ 172 e LJ 168 antes de pagar';
+  const dia15 = 'Dia 15 — conferir débito LJ 172 e LJ 168 antes de pagar';
+  assert.strictEqual(findDuplicatePackage([{ id: 'm', title: dia3 }], dia15), null);
+  assert.deepStrictEqual(filterNewSubtasks([dia3], [{ title: dia15 }]).map((s) => s.title), [dia15]);
+  assert.deepStrictEqual(filterNewSubtasks([dia3], [{ title: dia3 }]), []);
+});
+
+test('fonte: dedup do grupo decide por mesmaTarefa (sem limiar de Jaccard)', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, 'group-chat-tasks.js'), 'utf8');
+  assert.match(src, /require\('\.\.\/lib\/titulo-mesma-tarefa'\)/);
+  assert.doesNotMatch(src, /SIM_THRESHOLD/);
+});

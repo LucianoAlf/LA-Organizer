@@ -15,7 +15,23 @@
 const { dropOpenWithDoneTwin, categorize } = require('./group-report-builder');
 
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000; // só dedup contra tarefas recentes (mesma conversa)
-const SIM_THRESHOLD = 0.7;                    // Jaccard mínimo p/ considerar "mesma tarefa"
+// TITULO-REESCRITO (30/09): "é a mesma tarefa?" sai de lib/titulo-mesma-tarefa (fonte única com o
+// 1:1). O Jaccard >= 0.7 que vivia aqui dizia "mesma" em 344 pares reais de tarefas DIFERENTES do
+// grupo (dia 3 × dia 15, digest 18/09 × 19/09, irmãos de mesmo sobrenome) — o create virava UPDATE
+// da outra — e não via título reescrito. titleSimilarity segue exportado só como medida.
+const { mesmaTarefa } = require('../lib/titulo-mesma-tarefa');
+function _melhorMesma(lista, titulo, tituloDe) {
+  let best = null, bestScore = -1;
+  for (const x of lista || []) {
+    const t = tituloDe(x);
+    if (!t) continue;
+    const r = mesmaTarefa(titulo, t);
+    if (!r.mesma) continue;
+    const sc = r.contencao * 10 + r.jaccard; // mais contido primeiro, depois mais parecido
+    if (sc > bestScore) { bestScore = sc; best = x; }
+  }
+  return best;
+}
 const _STOPWORDS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'o', 'a', 'os', 'as', 'para', 'pra', 'pro', 'que', 'esse', 'essa', 'esses', 'essas', 'um', 'uma', 'no', 'na', 'em', 'com', 'ao', 'aos', 'à', 'às', 'the']);
 
 // Conjunto de tokens normalizados (minúsculo, sem acento, sem pontuação, sem stopword).
@@ -176,16 +192,9 @@ function resolveSeriesTemplate(rows) {
 // nova (3x "Conciliação de Cartões" no banco — caso Rose). Estes helpers (puros) deixam o
 // engine MERGEAR só os itens novos no pacote visível em vez de duplicar.
 
-// Pacote-mãe ativo mais parecido (>= threshold) com o título novo, ou null.
-function findDuplicatePackage(mothers, newTitle, threshold = SIM_THRESHOLD) {
-  const tok = _titleTokens(newTitle);
-  if (!tok.size) return null;
-  let best = null, bestSim = 0;
-  for (const m of mothers || []) {
-    const sim = titleSimilarity(tok, _titleTokens(m && m.title));
-    if (sim > bestSim) { bestSim = sim; best = m; }
-  }
-  return bestSim >= threshold ? best : null;
+// Pacote-mãe ativo que é a MESMA tarefa do título novo (lib/titulo-mesma-tarefa), ou null.
+function findDuplicatePackage(mothers, newTitle) {
+  return _melhorMesma(mothers, newTitle, (m) => m && m.title);
 }
 
 // Resolve a INSTÂNCIA visível onde mergear: match já-instância → ela mesma; molde
@@ -204,12 +213,11 @@ function resolveVisibleInstance(mothers, dup) {
 
 // Subtarefas do create que NÃO existem como filha (por título parecido) — evita
 // re-adicionar cartões que já estão no pacote.
-function filterNewSubtasks(existingChildTitles, subtasks, threshold = SIM_THRESHOLD) {
-  const existing = (existingChildTitles || []).map((t) => _titleTokens(t));
+function filterNewSubtasks(existingChildTitles, subtasks) {
+  const existing = existingChildTitles || [];
   return (subtasks || []).filter((s) => {
-    const tok = _titleTokens(s && s.title);
-    if (!tok.size) return false;
-    return !existing.some((et) => titleSimilarity(tok, et) >= threshold);
+    if (!_titleTokens(s && s.title).size) return false;
+    return !existing.some((t) => mesmaTarefa(s.title, t).mesma);
   });
 }
 
@@ -347,17 +355,11 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
       // do label composto contra o banco real: ele resolveu na duplicata cancelada minutos antes.
       .neq('status', 'cancelled')
       .gte('created_at', sinceISO);
-    candidates = (data || []).map((t) => ({ id: t.id, title: t.title, due_date: t.due_date, tokens: _titleTokens(t.title) }));
+    candidates = (data || []).map((t) => ({ id: t.id, title: t.title, due_date: t.due_date }));
   } catch (_) { candidates = []; }
 
   function findDuplicate(title) {
-    const tok = _titleTokens(title);
-    let best = null, bestSim = 0;
-    for (const c of candidates) {
-      const sim = titleSimilarity(tok, c.tokens);
-      if (sim > bestSim) { bestSim = sim; best = c; }
-    }
-    return bestSim >= SIM_THRESHOLD ? best : null;
+    return _melhorMesma(candidates, title, (c) => c.title);
   }
 
   for (const a of actions || []) {
@@ -488,7 +490,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           ? { ...data, lembretes: _horarios.slice(0, 1 + _extrasGravados), lembretesRecusados: _horariosCortados + (_horarios.length - 1 - _extrasGravados) }
           : data);
         // Entra como candidata pra dedup das próximas ações deste mesmo batch.
-        if (data?.id) candidates.push({ id: data.id, title, due_date: wantsDue, tokens: _titleTokens(title) });
+        if (data?.id) candidates.push({ id: data.id, title, due_date: wantsDue });
       } else if (a.action === 'complete') {
         const title = (a.title || '').trim();
         if (!title) { failed.push({ action: a, why: 'title_missing' }); continue; }

@@ -48,6 +48,13 @@ test('um só token de conteúdo em comum não basta ("Ligar pro Norton" × "Fala
   assert.strictEqual(mesmaTarefa('Lembrete 360', 'lembrete 360').mesma, true);
 });
 
+test('negação muda a tarefa (replay de grupo 30/09: "Lead compareceu" × "Lead não compareceu")', () => {
+  assert.strictEqual(mesmaTarefa('Lead compareceu', 'Lead não compareceu').mesma, false);
+  assert.strictEqual(mesmaTarefa('Matricula Realizada', 'Matricula não Realizada').mesma, false);
+  // negação dos DOIS lados não atrapalha
+  assert.strictEqual(mesmaTarefa('Avisar que não vai ter aula de bateria', 'Avisar alunos que não vai ter aula de bateria').mesma, true);
+});
+
 test('entrada vazia/lixo não lança e não casa', () => {
   assert.strictEqual(mesmaTarefa('', 'Ver o vídeo').mesma, false);
   assert.strictEqual(mesmaTarefa(null, undefined).mesma, false);

@@ -84,6 +84,14 @@ const PARES = [
   { mesma: false, a: 'Lembrete — entrega 30/06', b: 'Lembrete 360' },
   { mesma: false, a: 'Jornada Musicalização — Iniciação a inst', b: 'Jornada Musicalização — Musicalização preparatória' },
   { mesma: false, a: 'Ligar pro Norton', b: 'Ligar pro Flávio' },
+  // grupo (replay 30/09 — pares reais de tarefas de grupo criadas em até 24h ou irmãs de pacote)
+  { mesma: false, a: 'Dia 3 — conferir débito LJ 172 e LJ 168 antes de pagar', b: 'Dia 15 — conferir débito LJ 172 e LJ 168 antes de pagar' },
+  { mesma: false, a: '📋 Anamnese — quem tem aula hoje · 18/09', b: '📋 Anamnese — quem tem aula hoje · 19/09' },
+  { mesma: false, a: 'Lead compareceu', b: 'Lead não compareceu' },
+  { mesma: false, a: 'Matricula Realizada', b: 'Matricula não Realizada' },
+  { mesma: false, a: 'Cartão 8641 (Recreio)', b: 'Cartão 8434 (Kids CG)' },
+  { mesma: true, a: 'Anne separar cheque Dev Ch Dep 341 001030 e Alf redepositar', b: 'Anne: separar cheque Dev Ch Dep 341 001030 para Alf redepositar' },
+  { mesma: true, a: 'Pedir nota fiscal ao fornecedor', b: 'Pedir nota fiscal pro fornecedor' },
   { mesma: false, a: 'Revisar contrato', b: 'Reajustar mentoria' },
 ];
 

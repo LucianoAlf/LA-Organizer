@@ -17,6 +17,7 @@
 //   simples reduzido. MESMA quando TODOS os tokens do título menor estão no maior (contenção 1.0)
 //   e o menor tem pelo menos 2 tokens — um nome sozinho ("Norton", "Jereh") não prova nada.
 //   Título idêntico depois de normalizar é sempre MESMA.
+//   Negação de um lado só ("Lead compareceu" × "Lead não compareceu") = DIFERENTE (replay de grupo).
 // Não enxerga sinônimo sem palavra em comum ("folha" × "sistema") — limite declarado no conjunto.
 // Puro, sem I/O, nunca lança.
 
@@ -56,6 +57,10 @@ function _base(s) {
 // a forma da palavra ao reescrever ("que a Vitória postou" → "postado pela Vitória"; "registrar"
 // × "registro"). Só corta se sobrarem ≥ 4 letras.
 const _SUFIXOS = ['ando', 'endo', 'indo', 'aram', 'eram', 'iram', 'ado', 'ada', 'ido', 'ida', 'ou', 'ar', 'er', 'ir'];
+// Polaridade: "não/nunca/nem" some junto com as stopwords, mas inverte a tarefa.
+const _NEGACAO = /(^| )(nao|nunca|nem)( |$)/;
+function _negado(base) { return _NEGACAO.test(base); }
+
 function _radical(w) {
   if (/\d/.test(w) || w.length <= 4) return w;
   let r = w;
@@ -101,7 +106,8 @@ function mesmaTarefa(a, b) {
   const uniao = A.size + B.size - comuns;
   const jaccard = uniao ? comuns / uniao : 0;
   const identico = na === nb;
-  const mesma = identico || (menor.size >= MIN_TOKENS_CONTEUDO && contencao === 1);
+  const mesmaPolaridade = _negado(na) === _negado(nb);
+  const mesma = identico || (mesmaPolaridade && menor.size >= MIN_TOKENS_CONTEUDO && contencao === 1);
   return { mesma, contencao: identico ? 1 : contencao, jaccard: identico ? 1 : jaccard, comuns, menor: menor.size };
 }
 
