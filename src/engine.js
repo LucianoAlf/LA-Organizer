@@ -4807,6 +4807,11 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   // DATA-DA-TAREFA-NAO-DITA (Yuri 12/09): a data das tarefas CRIADAS neste lote — o caller anexa
   // "📅 Fica para *segunda, 14/09*" quando a fala do TOM confirma sem dizer o dia.
   const _criadasDatas = [];
+  // SOMAR-HORARIO-1A1 (Ana Paula 11/09): horários SOMADOS a tarefas que já existiam, por tarefa.
+  // O caller confirma com o que ficou GRAVADO (lib/somar-ou-trocar-lembrete), nunca com a prosa.
+  const _somados = new Map();
+  let _acoesSomadas = 0;
+  const _horarioNoLote = new Set(); // tarefas que já receberam new_remind_at neste lote
   const last4 = String(collaborator.phone || '').slice(-4);
   // Guardrail anti-bomba (BULK-RECUR): se o lote tem >10 creates de título
   // idêntico, bloqueia esse grupo e orienta o caminho recorrente. Backstop
@@ -5615,6 +5620,40 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           console.warn(`[Task] reschedule REJECTED id=${a.id} (not owned by ${last4} or not found)`);
           failCount++;
           continue;
+        }
+        // SOMAR-HORARIO-1A1 (Ana Paula, 1:1, 11/09 00:38): "Me lembra 12h e 20h" virou 5 reschedule
+        // com new_remind_at 20h e cada um SOBRESCREVEU o remind_at — o 12h sumiu, e o TOM ainda disse
+        // "10 registros". Horário A MAIS ("também às 20h", "mais um lembrete", "12h e 20h") agora SOMA
+        // uma linha em task_reminders (teto 3/30 min, como no grupo — 35e58476); "muda/passa pra 20h"
+        // segue trocando. A fala da pessoa decide (lib/somar-ou-trocar-lembrete); no modo soma o prazo
+        // da tarefa NÃO se mexe.
+        if (typeof a.new_remind_at === 'string' && isValidRemindAt(a.new_remind_at)
+            && t.status !== 'done' && t.status !== 'cancelled') {
+          const { decidirHorarioNovo } = require('./lib/somar-ou-trocar-lembrete');
+          const _falaSoma = stripReplyScaffold(String((opts && opts.inboundText) || '')).userText;
+          const _jaNoLote = _horarioNoLote.has(t.id);
+          _horarioNoLote.add(t.id);
+          const _dec = decidirHorarioNovo({ texto: _falaSoma, acao: a, prazoAtual: t.due_date || null, jaReagendadaNoLote: _jaNoLote });
+          if (_dec.modo === 'somar') {
+            _acoesSomadas++;
+            const { somarLembreteNaTarefa } = require('./tasks/somar-lembrete');
+            const _r = await somarLembreteNaTarefa({ supabase, taskId: t.id, iso: a.new_remind_at });
+            const _it = _somados.get(t.id) || { titulo: _r.titulo || t.title, horarios: [], recusados: [], falhas: [] };
+            if (Array.isArray(_r.horarios) && _r.horarios.length) _it.horarios = _r.horarios.slice();
+            if (_r.status === 'teto') _it.recusados.push(a.new_remind_at);
+            else if (!['somou', 'definiu', 'jaTinha'].includes(_r.status)) _it.falhas.push(a.new_remind_at);
+            _somados.set(t.id, _it);
+            console.log(`[Task] reschedule SOMA ${String(t.id).slice(0, 8)} motivo=${_dec.motivo} status=${_r.status} gravados=${(_r.horarios || []).length}`);
+            if (['somou', 'definiu', 'jaTinha'].includes(_r.status)) {
+              okCount++;
+              if (_r.status !== 'jaTinha') {
+                try { await logAgentNote(t.id, `Lembrete a mais (${String(a.new_remind_at).slice(11, 16)}) — ficaram ${_r.horarios.length}`, collaborator.id); } catch (_) {}
+              }
+            } else {
+              failCount++;
+            }
+            continue;
+          }
         }
         // REPLAY-LAB-WEEKDAY-GUARD (06/08, cenario-piso rep 5): o LLM respondeu
         // "sábado (08/08)", mas o marker veio com new_due_date=2026-08-09. Antes o
@@ -6963,7 +7002,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       if (okCount === _okB && failCount > _failB) _falharam.push(a);
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit, criadas: _criadasDatas };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, lembretesSomados: [..._somados.values()], acoesSomadas: _acoesSomadas, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit, criadas: _criadasDatas };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -13361,7 +13400,7 @@ Output AGORA, apenas o marker:`;
       // replyText (CANCELA-SERIE-PROMETE-TODOS): a fala do TOM que acompanha o marker — o executor usa
       // pra não cancelar UMA ocorrência quando ela promete "todos"/"fora do sistema".
       const _falaTomTask = (parsedTask && parsedTask.cleanText) || '';
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam, awaitingConfirm, retidos, concluidas, criadas } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, lembretesSomados, acoesSomadas, falharam, awaitingConfirm, retidos, concluidas, criadas } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -13533,6 +13572,22 @@ Output AGORA, apenas o marker:`;
               if (_txtData) base = (_alvoTxtData ? _alvoTxtData + '\n\n' : '') + _txtData;
             }
           } catch (e) { console.warn('[DataCriada] non-fatal:', e.message); }
+        }
+        // SOMAR-HORARIO-1A1 (Ana Paula 11/09 — "Agora sim — 10 registros" com UM horário no banco):
+        // horário somado a tarefa existente confirma com o que ficou GRAVADO. Lote só de somas → a
+        // prosa do LLM sai inteira (é ela que inventa contagem); lote misto → a verdade vai anexada.
+        if (Array.isArray(lembretesSomados) && lembretesSomados.length) {
+          try {
+            const { textoLembretesSomados } = require('./lib/somar-ou-trocar-lembrete');
+            const _txtSoma = textoLembretesSomados(lembretesSomados);
+            if (_txtSoma) {
+              const _soSomas = acoesSomadas === (parsedTask.actions || []).length;
+              if (_soSomas && base && base !== _txtSoma) {
+                try { await logMarker(collab.id, 'REMINDER_ADD_HONESTY', 'redirected', `somas=${acoesSomadas} tarefas=${lembretesSomados.length}`, base, { rawLimit: 800 }); } catch (_) {}
+              }
+              base = _soSomas ? _txtSoma : ((base ? base + '\n\n' : '') + _txtSoma);
+            }
+          } catch (e) { console.warn('[SomarHorario] non-fatal:', e.message); }
         }
         reply = base || reply;
       }

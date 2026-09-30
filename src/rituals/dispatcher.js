@@ -7155,6 +7155,29 @@ function spYmdLocal(tsLike) {
   } catch { return ''; }
 }
 
+// UM-CANAL-POR-TAREFA-DE-GRUPO (decisão do Alf, 30/09): ÚNICO ponto de entrega do lembrete de
+// HORA MARCADA de tarefa de grupo — tanto o 1º horário (tasks.remind_at, checkReminders) quanto os
+// horários a mais (task_reminders, checkTaskReminders). Antes eram dois caminhos: o 1º ia por DM a
+// cada membro e os outros iam pro grupo. Grupo vinculado ao WhatsApp → um post no grupo por
+// horário; sem vínculo → fan-out por DM (texto `textoDm` preserva a mensagem de sempre).
+async function dispararLembreteDeGrupo(sb, t, { label = null, packageTitle = null, textoDm = null, now = new Date() } = {}) {
+  const wg = require('../services/work-groups');
+  const members = await wg.membersWithPhones(sb, t.assigned_group_id);
+  const { buildGroupTaskReminderText, firstNameOf } = require('../utils/group-task-relay');
+  const dayG = relativeDayFromYmd(t.due_date, now);
+  const whenG = [dayG, (t.due_time || '').slice(0, 5)].filter(Boolean).join(' ');
+  const textG = buildGroupTaskReminderText({ label, title: t.title, when: whenG, creatorFirstName: firstNameOf(t.creator), description: t.description, packageTitle });
+  const { enviarLembreteDeGrupo } = require('./group-task-reminder');
+  return enviarLembreteDeGrupo({
+    supabase: sb, task: t, texto: textG, textoDm: textoDm || textG,
+    deps: {
+      membros: members,
+      isQuietNow: (cid) => isQuietNow(cid, nowSaoPaulo(now), 'work', { defaultNightGate: false }),
+      sendAndLink: (sbx, args) => proactiveLink.sendAndLink(sbx, args),
+    },
+  });
+}
+
 // Multi-reminder: dispara linhas de task_reminders pendentes (sent_at IS NULL,
 // remind_at <= now). Cada linha vira um WA "⏰ <label>: *<task title>*". A tarefa
 // fica intacta (status, due_date) — esses são alertas pré-evento, não one-shots.
@@ -7192,23 +7215,9 @@ async function checkTaskReminders({ supabase: sb = supabase, now = new Date() } 
     // Task de GRUPO (spec 2026-06-10): fan-out do alerta pra todos os membros.
     if (t && t.assigned_group_id && t.status !== 'done' && t.status !== 'cancelled') {
       try {
-        const wg = require('../services/work-groups');
-        const members = await wg.membersWithPhones(sb, t.assigned_group_id);
-        const { buildGroupTaskReminderText, firstNameOf } = require('../utils/group-task-relay');
-        const dayG = relativeDayFromYmd(t.due_date);
-        const whenG = [dayG, (t.due_time || '').slice(0, 5)].filter(Boolean).join(' ');
-        const textG = buildGroupTaskReminderText({ label: r.label, title: t.title, when: whenG, creatorFirstName: firstNameOf(t.creator), description: t.description, packageTitle: pkgMap.get(t.parent_task_id) });
-        // Decisão do Alf (02/09): grupo VINCULADO ao WhatsApp recebe UMA mensagem no grupo
+        // Decisão do Alf (02/09 + 30/09): grupo VINCULADO ao WhatsApp recebe UMA mensagem no grupo
         // (o bridge-out espelha) em vez de N DMs; grupo sem vínculo mantém o fan-out por DM.
-        const { enviarLembreteDeGrupo } = require('./group-task-reminder');
-        const resG = await enviarLembreteDeGrupo({
-          supabase: sb, task: t, texto: textG,
-          deps: {
-            membros: members,
-            isQuietNow: (cid) => isQuietNow(cid, nowSaoPaulo(), 'work', { defaultNightGate: false }),
-            sendAndLink: (sb, args) => proactiveLink.sendAndLink(sb, args),
-          },
-        });
+        const resG = await dispararLembreteDeGrupo(sb, t, { label: r.label, packageTitle: pkgMap.get(t.parent_task_id), now });
         const sentG = resG.enviados;
         await sb.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
         console.log(`[TaskReminders] grupo ${String(r.id).slice(0,8)} task=${String(t.id).slice(0,8)} destino=${resG.destino} enviados=${sentG}`);
@@ -7351,23 +7360,23 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
     // (NÃO marca done — pool fica aberto pra quem pegar).
     if (t.assigned_group_id) {
       try {
-        const wg = require('../services/work-groups');
-        const whatsapp = require('../services/whatsapp'); // escopo local (função pode não ter o require)
-        const members = await wg.membersWithPhones(sb, t.assigned_group_id);
-        const { groupAuthorDescSuffix, firstNameOf } = require('../utils/group-task-relay');
-        const textG = `🔔 *Lembrete (grupo):* ${t.title} — quem puder, pega essa.`
-          + groupAuthorDescSuffix({ creatorFirstName: firstNameOf(t.creator), description: t.description });
-        let sentG = 0;
-        for (const m of members) {
-          const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(now), 'work', { defaultNightGate: false });
-          if (qM.quiet) continue;
-          try {
-            await proactiveLink.sendAndLink(sb, { phone: m.phone, content: textG, collaboratorId: m.collaborator_id, refType: 'task', refId: t.id });
-            sentG++;
-          } catch (eS) { console.error('[Reminders] group send err:', eS.message); }
+        // UM-CANAL-POR-TAREFA-DE-GRUPO (Alf 30/09): este horário tem linha própria em task_reminders
+        // (espelho do create 1:1)? Então a linha entrega — aqui só carimba, senão sai duas vezes.
+        const { horarioCobertoPorLinha } = require('./group-task-reminder');
+        const { data: linhasG } = await sb.from('task_reminders').select('id, remind_at').eq('task_id', t.id);
+        if (horarioCobertoPorLinha(t.remind_at, linhasG)) {
+          await sb.from('tasks').update({ reminded_at: nowIso }).eq('id', t.id);
+          console.log(`[Reminders] group task=${String(t.id).slice(0,8)} — horário já tem linha em task_reminders, não repete`);
+          continue;
         }
+        const { groupAuthorDescSuffix, firstNameOf } = require('../utils/group-task-relay');
+        // Texto de sempre pro fan-out por DM (grupo sem vínculo); no grupo vinculado sai o mesmo
+        // formato dos horários a mais — um canal, um jeito de falar.
+        const textoDm = `🔔 *Lembrete (grupo):* ${t.title} — quem puder, pega essa.`
+          + groupAuthorDescSuffix({ creatorFirstName: firstNameOf(t.creator), description: t.description });
+        const resG = await dispararLembreteDeGrupo(sb, t, { textoDm, now });
         await sb.from('tasks').update({ reminded_at: nowIso }).eq('id', t.id);
-        console.log(`[Reminders] group fan-out task=${String(t.id).slice(0,8)} sent=${sentG}/${members.length}`);
+        console.log(`[Reminders] group task=${String(t.id).slice(0,8)} destino=${resG.destino} enviados=${resG.enviados}`);
       } catch (eG) { console.error('[Reminders] group branch err:', eG.message); }
       continue;
     }
@@ -7414,7 +7423,17 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
       // (SEM due_date). Task com due_date é um afazer real: o lembrete CUTUCA, mas NÃO
       // conclui — senão vira "concluída sem confirmação" (mesma classe do AC-COMPLETE).
       // reminded_at já foi gravado acima, então não re-dispara de qualquer forma.
+      // SOMAR-HORARIO-1A1 (30/09): one-shot com horário A MAIS ainda pendente em task_reminders
+      // ("me lembra 12h e 20h") não conclui às 12h — senão o checkTaskReminders pula o 20h
+      // (tarefa done). Fica pendente, igual à tarefa que já nasce com vários lembretes.
+      let _temHorarioAMais = false;
       if (!t.due_date) {
+        try {
+          const { data: _pend } = await sb.from('task_reminders').select('id').eq('task_id', t.id).is('sent_at', null).limit(1);
+          _temHorarioAMais = Array.isArray(_pend) && _pend.length > 0;
+        } catch (_) { _temHorarioAMais = false; }
+      }
+      if (!t.due_date && !_temHorarioAMais) {
         const { error: upErr } = await sb.from('tasks').update({
           status: 'done',
           completed_at: nowIso,
@@ -8034,4 +8053,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, checkReminders, checkTaskReminders, checkDailyTaskReminders, dispatchScheduledCoordination, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
+module.exports = { run, checkReminders, checkTaskReminders, dispararLembreteDeGrupo, checkDailyTaskReminders, dispatchScheduledCoordination, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };

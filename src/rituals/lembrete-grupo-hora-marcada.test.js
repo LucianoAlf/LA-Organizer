@@ -44,7 +44,10 @@ function sbFake(tasks) {
     };
     return q;
   }
-  const vazio = { select() { return vazio; }, eq() { return Promise.resolve({ data: [], error: null }); }, in() { return Promise.resolve({ data: [], error: null }); } };
+  // eq() devolve algo "thenable" com maybeSingle: o ramo de grupo agora lê work_groups (destino do
+  // lembrete — UM-CANAL-POR-TAREFA-DE-GRUPO, 30/09) e task_reminders (horário já coberto por linha).
+  const nada = () => ({ then: (res, rej) => Promise.resolve({ data: [], error: null }).then(res, rej), maybeSingle: async () => ({ data: null, error: null }) });
+  const vazio = { select() { return vazio; }, eq: nada, in() { return Promise.resolve({ data: [], error: null }); } };
   return { updates, sb: { from(t) { return t === 'tasks' ? consultaTasks() : vazio; } } };
 }
 

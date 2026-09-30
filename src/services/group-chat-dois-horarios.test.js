@@ -125,7 +125,9 @@ test('controle: um horário só → sem linha em task_reminders e chip de sempre
 });
 
 // ── DISPATCHER: cada horário sai na sua hora ──────────────────────────────────
-test('dispatcher: o das 09h sai às 09h (remind_at da tarefa) e o das 15h sai às 15h (task_reminders), uma vez cada', async () => {
+// UM-CANAL-POR-TAREFA-DE-GRUPO (decisão do Alf, 30/09): o das 09h (remind_at) também sai NO GRUPO —
+// antes saía por DM a cada membro e só o das 15h ia pro grupo.
+test('dispatcher: o das 09h sai às 09h (remind_at da tarefa) e o das 15h sai às 15h (task_reminders), uma vez cada, os dois no grupo', async () => {
   const dispatcher = require('../rituals/dispatcher');
   const { T, sb } = banco({ work_groups: [{ id: BARRA, name: 'Administrativo e Comercial Barra', wa_group_jid: 'grupo@g.us' }] });
   await applyGroupChatTaskActions({ supabase: sb, groupId: BARRA, senderCollabId: KAILANE, actions: [
@@ -143,12 +145,15 @@ test('dispatcher: o das 09h sai às 09h (remind_at da tarefa) e o das 15h sai à
   assert.strictEqual(T.task_reminders[0].sent_at, null);
   await dispatcher.checkReminders(new Date('2026-09-29T12:00:30Z'), { supabase: sb });
   assert.ok(tarefa.reminded_at, 'o das 09h não saiu');
+  assert.strictEqual(T.group_chat_messages.length, 1, 'o das 09h não foi pro grupo');
+  await dispatcher.checkReminders(new Date('2026-09-29T12:02:30Z'), { supabase: sb });
+  assert.strictEqual(T.group_chat_messages.length, 1, 'o das 09h saiu duas vezes');
 
   // 15:00:30 BRT — o das 15h sai UMA vez, no grupo
   await dispatcher.checkTaskReminders({ supabase: sb, now: new Date('2026-09-29T18:00:30Z') });
-  assert.strictEqual(T.group_chat_messages.length, 1);
-  assert.ok(T.group_chat_messages[0].content.includes('Jairo'));
+  assert.strictEqual(T.group_chat_messages.length, 2);
+  assert.ok(T.group_chat_messages.every((m) => m.content.includes('Jairo')));
   assert.ok(T.task_reminders[0].sent_at);
   await dispatcher.checkTaskReminders({ supabase: sb, now: new Date('2026-09-29T18:05:00Z') });
-  assert.strictEqual(T.group_chat_messages.length, 1, 'o das 15h saiu duas vezes');
+  assert.strictEqual(T.group_chat_messages.length, 2, 'o das 15h saiu duas vezes');
 });

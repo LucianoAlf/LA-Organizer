@@ -11,6 +11,12 @@
 // DECISÃO DO ALF (02/09): em grupo VINCULADO ao WhatsApp o lembrete é UMA mensagem no grupo —
 // o bridge-out espelha, todo mundo vê, e quem pegar avisa ali mesmo. Grupo SEM vínculo mantém
 // o fan-out por DM que já existia: zero regressão pra quem só usa o app.
+//
+// UM-CANAL-POR-TAREFA-DE-GRUPO (decisão do Alf, 30/09): o 1º horário (tasks.remind_at, via
+// checkReminders) ia por DM pra cada membro e os horários a mais (task_reminders, via
+// checkTaskReminders) iam pro grupo — a mesma tarefa falava por dois canais. Agora TODO lembrete
+// de hora marcada de tarefa de grupo passa por aqui: grupo vinculado → UM post no grupo por
+// horário, zero DM; sem vínculo → o fan-out por DM de sempre (com o texto de sempre, `textoDm`).
 
 function destinoDoLembrete(group) {
   return group && group.wa_group_jid ? 'grupo' : 'dm';
@@ -21,7 +27,7 @@ function destinoDoLembrete(group) {
  * quem chama usa `enviados` pra decidir se houve entrega, e mentir aqui vira "lembrei"
  * sem lembrete.
  */
-async function enviarLembreteDeGrupo({ supabase, task, texto, deps = {} }) {
+async function enviarLembreteDeGrupo({ supabase, task, texto, textoDm = null, deps = {} }) {
   const { membros = [], isQuietNow, sendAndLink } = deps;
   const groupId = task && task.assigned_group_id;
   if (!groupId) return { destino: 'nenhum', enviados: 0, erro: 'sem_grupo' };
@@ -48,7 +54,7 @@ async function enviarLembreteDeGrupo({ supabase, task, texto, deps = {} }) {
         if (q && q.quiet) continue;
       }
       await sendAndLink(supabase, {
-        phone: m.phone, content: texto, collaboratorId: m.collaborator_id,
+        phone: m.phone, content: textoDm || texto, collaboratorId: m.collaborator_id,
         refType: 'task', refId: task.id,
       });
       enviados++;
@@ -59,4 +65,18 @@ async function enviarLembreteDeGrupo({ supabase, task, texto, deps = {} }) {
   return { destino, enviados, membros: membros.length };
 }
 
-module.exports = { destinoDoLembrete, enviarLembreteDeGrupo };
+/**
+ * O horário de `tasks.remind_at` já tem uma linha própria em task_reminders? (o create do 1:1
+ * espelha o remind_at de tarefa de grupo numa linha — GROUP-REMINDAT-IGNORADO, 02/09). Se tem,
+ * a LINHA é quem entrega; o checkReminders não pode entregar de novo o mesmo horário. PURO.
+ */
+function horarioCobertoPorLinha(remindAt, linhas, tolMs = 60000) {
+  const alvo = new Date(remindAt).getTime();
+  if (!Number.isFinite(alvo)) return false;
+  return (Array.isArray(linhas) ? linhas : []).some((l) => {
+    const t = new Date(l && l.remind_at).getTime();
+    return Number.isFinite(t) && Math.abs(t - alvo) <= tolMs;
+  });
+}
+
+module.exports = { destinoDoLembrete, enviarLembreteDeGrupo, horarioCobertoPorLinha };
