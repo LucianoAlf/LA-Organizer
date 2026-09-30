@@ -1616,6 +1616,7 @@ async function fetchCollaboratorContext(collaborator) {
     prefRes,
     weeklyRes,
     recentMediaRes,
+    atribuidasRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('user_preferences').select('*').eq('collaborator_id', id).maybeSingle(),
@@ -1855,6 +1856,17 @@ async function fetchCollaboratorContext(collaborator) {
       .not('media_extracted_text', 'is', null)
       .gte('created_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false }).limit(3),
+    // NOTIFICATIONS-CALADA (30/09): 'task_assigned_by_other' nunca gravou em notifications (CHECK
+    // da tabela recusa o tipo) — o bloco "recém-atribuídas (1/2/3/4)" estava sempre vazio. Lê o
+    // envio real ("abriu uma tarefa pra você", vinculado à tarefa) dos últimos 2 dias.
+    supabase.from('conversation_history')
+      .select('ref_id, content, created_at')
+      .eq('collaborator_id', id)
+      .eq('direction', 'outbound')
+      .eq('ref_type', 'task')
+      .like('content', '%abriu uma tarefa pra você%')
+      .gte('created_at', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false }).limit(5),
   ]);
 
   let activeProjects = [];
@@ -2045,7 +2057,7 @@ async function fetchCollaboratorContext(collaborator) {
     workGroupsCtx,
     checklistTemplates: checklistTemplatesCtx,
     activeProjects,
-    notifications: notificationsRes.data || [],
+    notifications: require('../lib/notificacao').juntaAtribuidas(notificationsRes.data || [], (atribuidasRes && atribuidasRes.data) || []),
     recentMessages: (historyRes.data || []).reverse(),
     recentMedia: recentMediaRes.data || [],
     habits: habitsRes.data || [],

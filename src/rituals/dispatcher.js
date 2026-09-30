@@ -7079,13 +7079,9 @@ async function checkSilentCollaboratorsCheckin(ymdToday) {
     if (convCount && convCount > 0) continue;
 
     // Já fizemos check-in proativo nos últimos 14 dias? skip.
-    const { count: recentCheckin } = await supabase
-      .from('notifications')
-      .select('id', { count: 'exact', head: true })
-      .eq('collaborator_id', c.id)
-      .eq('notification_type', 'silent_checkin')
-      .gt('sent_at', fourteenDaysAgo);
-    if (recentCheckin && recentCheckin > 0) continue;
+    // NOTIFICATIONS-CALADA (30/09): 'silent_checkin' não passa no CHECK de notifications — a trava lia
+    // sempre 0. Lê o próprio check-in enviado (conversation_history) — lib/notificacao.
+    if (await require('../lib/notificacao').jaFezCheckinDesde(supabase, c.id, fourteenDaysAgo)) continue;
 
     // DND ativo? skip.
     const dnd = await getDndState(c.id);
@@ -7103,7 +7099,7 @@ async function checkSilentCollaboratorsCheckin(ymdToday) {
     const text = `Oi ${nick}, aqui é o TOM. Faz uns dias que a gente não conversa — tudo certo aí? Se precisar de algo (organizar a semana, criar tarefa, marcar reunião), é só falar.`;
     try {
       await whatsapp.sendMessage(c.phone, text);
-      await supabase.from('notifications').insert({
+      await require('../lib/notificacao').registrarNotificacao(supabase, {
         collaborator_id: c.id,
         notification_type: 'silent_checkin',
         title: 'Check-in semanal',
@@ -7111,7 +7107,7 @@ async function checkSilentCollaboratorsCheckin(ymdToday) {
         channel: 'whatsapp',
         status: 'sent',
         sent_at: new Date().toISOString(),
-      });
+      }, { onde: 'checkSilentCheckin' });
       await supabase.from('conversation_history').insert({
         collaborator_id: c.id,
         direction: 'outbound',
@@ -7402,15 +7398,13 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
       continue; // não marca reminded_at; volta no próximo tick fora do quiet
     }
     // Cooldown 6h independente de status (defesa contra reaberturas silenciosas).
-    const { data: recent } = await sb
-      .from('notifications')
-      .select('id')
-      .eq('reference_id', t.id)
-      .eq('notification_type', 'task_reminder')
-      // REMARCOU-E-NAO-TOCOU (30/09): aviso anterior ao horário ATUAL é do agendamento velho.
-      .gte('sent_at', require('../lib/rearma-lembrete').pisoDoCooldown(cooldownCutoff, t.remind_at))
-      .limit(1);
-    if (recent && recent.length) {
+    // NOTIFICATIONS-CALADA (30/09): lia `notifications` tipo task_reminder — tipo que o CHECK da
+    // tabela recusa, então 0 linhas em 60 dias e o cooldown nunca segurou nada. Lê o registro do
+    // ENVIO (conversation_history, gravado pelo sendAndLink com ref da tarefa) — lib/notificacao.
+    // REMARCOU-E-NAO-TOCOU (30/09): aviso anterior ao horário ATUAL é do agendamento velho.
+    const { jaAvisouLembreteDesde } = require('../lib/notificacao');
+    const recent = await jaAvisouLembreteDesde(sb, t.id, require('../lib/rearma-lembrete').pisoDoCooldown(cooldownCutoff, t.remind_at));
+    if (recent) {
       console.log(`[Reminders] skip ${String(t.id).slice(0,8)} — cooldown 6h ainda ativo`);
       continue;
     }
@@ -7451,8 +7445,9 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
       } else {
         console.log(`[Reminders] fired ${String(t.id).slice(0,8)} "${t.title.slice(0,40)}" → ${collab.phone.slice(-4)} (mantida pending — tem prazo, não one-shot)`);
       }
-      // Registra no notifications pra cooldown e auditoria de cobranças.
-      await sb.from('notifications').insert({
+      // Registra no notifications pra auditoria de cobranças. O erro é LIDO e contado (lib/notificacao):
+      // enquanto o CHECK não aceitar 'task_reminder' (migration pendente), falha — mas não calada.
+      await require('../lib/notificacao').registrarNotificacao(sb, {
         collaborator_id: collab.id,
         notification_type: 'task_reminder',
         title: `Lembrete: ${t.title}`,
@@ -7462,7 +7457,7 @@ async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}
         channel: 'whatsapp',
         status: 'sent',
         sent_at: nowIso,
-      });
+      }, { onde: 'checkReminders' });
     } catch (err) {
       console.error(`[Reminders] send err for ${String(t.id).slice(0,8)}:`, err.message);
     }

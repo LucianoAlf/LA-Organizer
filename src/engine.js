@@ -6468,7 +6468,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             // CARDAPIO-SEM-EXECUTOR (Rafinha 14/09): sai VINCULADA à tarefa (ref + whatsapp_message_id) — é o
             // que tryCardapioTarefa lê pra saber de qual tarefa é a resposta "1" / "Resolve aí".
             await require('./services/proactive-link').sendAndLink(supabase, { phone: recipient.phone, content: notifText, collaboratorId: recipient.id, refType: 'task', refId: taskId });
-            await supabase.from('notifications').insert({
+            // NOTIFICATIONS-CALADA (30/09): 'task_assigned_by_other' não passa no CHECK — erro agora é
+            // lido e contado; o bloco "recém-atribuídas" do contexto lê o envio acima (lib/notificacao).
+            await require('./lib/notificacao').registrarNotificacao(supabase, {
               collaborator_id: recipient.id,
               notification_type: 'task_assigned_by_other',
               title: `Tarefa atribuída por ${creatorName}`,
@@ -6478,7 +6480,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
               channel: 'whatsapp',
               status: 'sent',
               sent_at: new Date().toISOString(),
-            });
+            }, { onde: 'create_for_other' });
           } catch (err) {
             console.error('[Task] create-for-other notification err:', err.message);
             // task created in DB; notification failure does not flip okCount
@@ -6531,7 +6533,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           ? ` Pediu até ${formatBRDate(a.new_due_date)}.`
           : '';
         const notifBody = `⚠️ ${requesterName} pediu mais prazo na tarefa *${t.title}* (prazo atual: ${dueLabel}).${askText}${reason ? ` Motivo: ${reason}.` : ''}\n\nResponde *aprovar até DD/MM* ou *negar*.`;
-        await supabase.from('notifications').insert({
+        await require('./lib/notificacao').registrarNotificacao(supabase, {
           collaborator_id: supervisor.id,
           notification_type: 'deadline_extension_request',
           title: `${requesterName} pediu mais prazo`,
@@ -6541,7 +6543,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           channel: 'whatsapp',
           status: 'sent',
           sent_at: new Date().toISOString(),
-        });
+        }, { onde: 'extension_request' });
         try {
           await whatsapp.sendMessage(supervisor.phone, notifBody);
           await supabase.from('conversation_history').insert({
@@ -6763,7 +6765,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             message_type: 'text',
             content: notifText,
           });
-          await supabase.from('notifications').insert({
+          await require('./lib/notificacao').registrarNotificacao(supabase, {
             collaborator_id: recipient.id,
             notification_type: 'delegation_notice',
             title: `Tarefa delegada por ${delegatorName}`,
@@ -6773,7 +6775,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             channel: 'whatsapp',
             status: 'sent',
             sent_at: new Date().toISOString(),
-          });
+          }, { onde: 'delegate' });
           console.log(`[Task] delegate ${a.id} ${last4} → ${String(recipient.phone).slice(-4)} (${recipient.full_name})`);
           await logAgentNote(t.id, `Delegada de ${nameForCollab(collaborator)} para ${recipient.full_name}`, collaborator.id);
           okCount++;

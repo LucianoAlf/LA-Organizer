@@ -50,6 +50,8 @@ function banco(inicial) {
         return b;
       },
       lte(c, v) { preds.push((r) => r[c] != null && new Date(r[c]) <= new Date(v)); return b; },
+      // cooldown do checkReminders lê conversation_history com like (NOTIFICATIONS-CALADA, 30/09)
+      like(c, pat) { const re = new RegExp('^' + pat.split('%').map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 's'); preds.push((r) => re.test(String(r[c] || ''))); return b; },
       gte(c, v) { preds.push((r) => r[c] != null && new Date(r[c]) >= new Date(v)); return b; },
       order() { return b; }, limit() { return b; },
       insert(r) { op = 'insert'; payload = r; return b; },
