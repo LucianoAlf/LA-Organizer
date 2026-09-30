@@ -37,4 +37,14 @@ function formatarErrosRecorrentes(recurring) {
   return { status: 'warning', detail: `⚙️ *Erros repetidos no log (24h)*\n${itens.join('\n')}` };
 }
 
-module.exports = { resumirLicoesPendentes, formatarErrosRecorrentes };
+// CHECK — erro de banco repetido no log dos rituais (cron). `recurring` = [[msg, contagem], ...].
+// Nasceu do CHECKLISTS-PESSOAIS-PARADOS (30/09/2026): 3,5 meses de "column ... does not exist" mudo.
+function formatarErrosDeBancoRituais(recurring) {
+  const arr = Array.isArray(recurring) ? recurring : [];
+  if (!arr.length) return { status: 'ok', detail: 'Sem erro de banco nos rituais nas últimas 24h' };
+  const itens = arr.map(([m, c]) => `• ${c}× ${cortarNaPalavra(m, 110)}`);
+  itens.push('• Vem do cron (logs/rituals.log): não aparece em recurring_errors');
+  return { status: 'warning', detail: `🗄️ *Erros de banco nos rituais (24h)*\n${itens.join('\n')}` };
+}
+
+module.exports = { resumirLicoesPendentes, formatarErrosRecorrentes, formatarErrosDeBancoRituais };

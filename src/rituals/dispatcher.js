@@ -3735,55 +3735,57 @@ async function autoArchiveStale(now = new Date()) {
 }
 
 // Sprint 23 — dispatch de listas pessoais recorrentes (sem WhatsApp; só cria
-// completion no banco). Idempotente via UNIQUE (checklist_id, user_id, reference_date).
-// Roda 1× ao redor das 00:30 BRT pra inicializar o "Hoje" da galera.
+// completion no banco). Roda ao redor das 00:30 BRT pra inicializar o "Hoje" da galera.
+// CHECKLISTS-PESSOAIS-PARADOS (30/09/2026): pedia personal_checklists.user_id/archived_at
+// (não existem; é owner_collab_id/is_active) e falhou calado de 11/06 a 30/09. A decisão
+// de QUAIS completions criar mora em ./personal-recurrentes (pura, testada); aqui só I/O.
+// Idempotência: lê o que já existe hoje antes de inserir (não depende só do UNIQUE) e
+// 23505 segue ignorado. Sem backfill — só a data de hoje.
 async function dispatchPersonalRecurrentes() {
-  const today = new Date();
-  const refDate = today.toISOString().slice(0, 10);
-  const dow = today.getDay() + 1; // JS 0-6 (dom-sáb) → app 1-7
-  const dom = today.getDate();
+  const { PERSONAL_RECORRENTES_SELECT, planejarRecorrentesPessoais, MAX_CRIACOES_POR_RODADA } = require("./personal-recurrentes");
+  const { todaySP } = require("../services/personalCompletions");
+  const refDate = todaySP();
 
-  console.log(`[Rituals] dispatchPersonalRecurrentes ref=${refDate} dow=${dow} dom=${dom}`);
+  console.log(`[Rituals] dispatchPersonalRecurrentes ref=${refDate}`);
 
   const { data: lists, error } = await supabase
-    .from('personal_checklists')
-    .select('id, user_id, recurrence_type, days_of_week, day_of_month, name')
-    .neq('recurrence_type', 'once')
-    .is('archived_at', null);
+    .from("personal_checklists")
+    .select(PERSONAL_RECORRENTES_SELECT)
+    .neq("recurrence_type", "once")
+    .eq("is_active", true);
 
   if (error) {
-    console.error('[Rituals] dispatchPersonalRecurrentes erro select:', error.message);
+    console.error("[Rituals] dispatchPersonalRecurrentes erro select:", error.message);
     return { created: 0, errors: 1 };
+  }
+
+  const ids = (lists || []).map((l) => l.id);
+  let jaExistem = new Set();
+  if (ids.length) {
+    const { data: hoje, error: e2 } = await supabase
+      .from("personal_checklist_completions")
+      .select("checklist_id")
+      .eq("reference_date", refDate)
+      .in("checklist_id", ids);
+    if (e2) {
+      console.error("[Rituals] dispatchPersonalRecurrentes erro select completions:", e2.message);
+      return { created: 0, errors: 1 };
+    }
+    jaExistem = new Set((hoje || []).map((r) => r.checklist_id));
+  }
+
+  const rows = planejarRecorrentesPessoais(lists || [], refDate, { jaExistem });
+  if (rows.length >= MAX_CRIACOES_POR_RODADA) {
+    console.error(`[Rituals] dispatchPersonalRecurrentes bateu o teto (${MAX_CRIACOES_POR_RODADA}) — conferir personal_checklists`);
   }
 
   let created = 0;
   let errors = 0;
-
-  for (const l of lists || []) {
-    let shouldDispatch = false;
-    if (l.recurrence_type === 'daily') {
-      shouldDispatch = true;
-    } else if (l.recurrence_type === 'weekly' && Array.isArray(l.days_of_week) && l.days_of_week.includes(dow)) {
-      shouldDispatch = true;
-    } else if (l.recurrence_type === 'monthly' && l.day_of_month === dom) {
-      shouldDispatch = true;
-    }
-    if (!shouldDispatch) continue;
-
-    const { error: insErr } = await supabase
-      .from('personal_checklist_completions')
-      .insert({
-        checklist_id: l.id,
-        user_id: l.user_id,
-        reference_date: refDate,
-        channel: 'cron',
-      });
-
+  for (const row of rows) {
+    const { error: insErr } = await supabase.from("personal_checklist_completions").insert(row);
     if (insErr) {
-      if (insErr.code === '23505') {
-        // duplicate (já existe completion pra hoje) — ignora
-      } else {
-        console.error(`[Rituals] erro insert pcc list=${l.id}:`, insErr.message);
+      if (insErr.code !== "23505") { // 23505 = já existe (corrida com PWA/rodada anterior)
+        console.error(`[Rituals] erro insert pcc list=${row.checklist_id}:`, insErr.message);
         errors++;
       }
     } else {
@@ -3791,7 +3793,7 @@ async function dispatchPersonalRecurrentes() {
     }
   }
 
-  console.log(`[Rituals] dispatchPersonalRecurrentes done: created=${created} errors=${errors}`);
+  console.log(`[Rituals] dispatchPersonalRecurrentes done: listas=${ids.length} created=${created} errors=${errors}`);
   return { created, errors };
 }
 

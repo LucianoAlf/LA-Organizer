@@ -19,6 +19,7 @@ const { selectEventsWithoutReminder } = require('./event-reminder-audit');
 const { classificarActionable } = require('../lib/actionable-triage');
 
 const ERROR_LOG_PATH = '/opt/LA-Organizer/logs/tom-error.log';
+const RITUALS_LOG_PATH = '/opt/LA-Organizer/logs/rituals.log';
 const WARN_THRESHOLDS = {
   rejectedMarkers: 5,
   unknownMarkers: 3,
@@ -566,6 +567,32 @@ async function checkRecurringErrors() {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// CHECK — Erro de BANCO repetido no log dos rituais (cron do dispatcher).
+// CHECKLISTS-PESSOAIS-PARADOS (30/09/2026): dispatchPersonalRecurrentes falhou ~1120× de 11/06
+// a 30/09 com "column personal_checklists.user_id does not exist" e ninguém viu — o dispatcher
+// roda por cron e escreve só em logs/rituals.log, que o recurring_errors (tom-error.log) não lê.
+// Lê só o RABO do arquivo (o log tem dezenas de MB; ~2 mil linhas/dia).
+// ─────────────────────────────────────────────────────────────────
+function lerRaboDoArquivo(caminho, bytes = 4 * 1024 * 1024) {
+  const fd = fs.openSync(caminho, 'r');
+  try {
+    const { size } = fs.fstatSync(fd);
+    const len = Math.min(size, bytes);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    const linhas = buf.toString('utf8').split('\n');
+    if (len < size) linhas.shift(); // 1ª linha pode ter vindo cortada
+    return linhas;
+  } finally { fs.closeSync(fd); }
+}
+
+async function checkRitualDbErrors() {
+  if (!fs.existsSync(RITUALS_LOG_PATH)) return { status: 'ok', detail: 'rituals.log não encontrado (skipped)' };
+  const { contarErrosDeBancoNoRitualLog } = require('./ritual-log-erros-banco');
+  return formatarErrosDeBancoRituais(contarErrosDeBancoNoRitualLog(lerRaboDoArquivo(RITUALS_LOG_PATH), Date.now()));
+}
+
+// ─────────────────────────────────────────────────────────────────
 // CHECK 12 — Regressão de incidentes conhecidos (tom_known_issues) — Sprint 31.7
 // Chama a RPC evaluate_known_issues(), que (a) bumpa contadores dos incidentes com
 // sinal em marker_logs e (b) retorna os que regrediram (corrigido mas voltou a
@@ -867,6 +894,7 @@ const ALL_CHECKS = [
   ['stale_profiles',         checkStaleProfiles],
   ['events_without_reminders', checkEventsWithoutReminders],
   ['recurring_errors',       checkRecurringErrors],
+  ['ritual_db_errors',       checkRitualDbErrors],
   ['known_issues_regression', checkKnownIssuesRegression],
   ['sensores_regressao',      checkSensoresDeRegressao],
   ['membros_fantasma',       checkMembrosFantasma],
@@ -905,7 +933,7 @@ function formatarLinhaGrupo({ nome, fichas, abertas, claims, memorias = 0 }) {
 // sempre — a fila cresce e o número fica parado, que é a forma mais silenciosa de um
 // instrumento mentir: ele não erra, ele satura. Amostra e total entram separados.
 // Texto mora em health-check-format.js (puro, testável fora da VPS).
-const { resumirLicoesPendentes, formatarErrosRecorrentes } = require('./health-check-format');
+const { resumirLicoesPendentes, formatarErrosRecorrentes, formatarErrosDeBancoRituais } = require('./health-check-format');
 
 async function checkLicoesPendentes() {
   // Sem `.eq('memory_type', ...)`: o aviso e "tudo que nasceu inativo e ninguem decidiu".
@@ -1047,4 +1075,4 @@ async function checkSeriesFamintas() {
   return { status: 'warning', detail: `${famintas.length} série(s) recorrente(s) sem as próximas datas — o gerador não está criando: ${nomes}` };
 }
 
-module.exports = { runHealthCheck, checkPortasCredenciais, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes, checkStaleProfiles, classificarPerfisParados };
+module.exports = { runHealthCheck, checkRitualDbErrors, checkPortasCredenciais, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes, checkStaleProfiles, classificarPerfisParados };
