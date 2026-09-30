@@ -143,8 +143,7 @@ async function montarPautaDaUnidade({ supabase, laReport, unidadeId, groupId, cr
 
   // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria
   // "zero linhas" silencioso (já custou dois diagnósticos errados nesta casa em 03/09).
-  const { data, error } = await consultaComRetry(() => laReport.rpc('get_situacao_alunos_v1',
-    { p_unidade_id: unidadeId, p_apenas_pendentes: false }));
+  const { data, error } = await consultaComRetry(() => situ.rpcBaseDeAlunos(laReport, unidadeId));
   if (error) {
     // FALHA-FECHADA #1: RPC não respondeu → não cria NADA. Motivo tem sensor próprio (menciona
     // a consulta/o erro) pra nunca sair idêntico ao motivo de "pauta vazia por saúde".
@@ -544,8 +543,7 @@ async function fecharPautaDaUnidade({ supabase, laReport, unidadeId, groupId, ho
 
   // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
   // linhas" silencioso.
-  const { data, error } = await consultaComRetry(() => laReport.rpc('get_situacao_alunos_v1',
-    { p_unidade_id: unidadeId, p_apenas_pendentes: false }));
+  const { data, error } = await consultaComRetry(() => situ.rpcBaseDeAlunos(laReport, unidadeId));
 
   // Dia que a NOSSA infra derrubou não conta contra o aluno: senão a 3ª aparição da escada
   // chega por culpa nossa e a equipe cobra quem já tinha preenchido. FALHA-FECHADA: sem fonte
@@ -715,8 +713,7 @@ async function atualizarPautaDaUnidade({ supabase, laReport, unidadeId, groupId,
     // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
     // linhas" silencioso — aqui isso significaria "ninguém está mais pendente", ou seja, fechar a
     // pauta INTEIRA como feita. É o pior caminho desta função; por isso o `error` vem antes.
-    const { data, error } = await consultaComRetry(() => laReport.rpc('get_situacao_alunos_v1',
-      { p_unidade_id: unidadeId, p_apenas_pendentes: false }));
+    const { data, error } = await consultaComRetry(() => situ.rpcBaseDeAlunos(laReport, unidadeId));
     if (error) {
       // FALHA-FECHADA: sem a fonte não dá pra AFIRMAR que alguém preencheu, e `done` no meio do
       // dia tira o aluno da tela — ou seja, tira da cobrança. Sensor próprio, textualmente
@@ -905,8 +902,7 @@ async function relatorioDeFimDeDia({ supabase, laReport, unidadeId, hoje, deps =
   // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
   // linhas" silencioso — aqui isso sairia como "todo mundo preencheu, dia bom", uma mentira
   // simpática no grupo da unidade.
-  const { data, error } = await consultaComRetry(() => laReport.rpc('get_situacao_alunos_v1',
-    { p_unidade_id: unidadeId, p_apenas_pendentes: false }));
+  const { data, error } = await consultaComRetry(() => situ.rpcBaseDeAlunos(laReport, unidadeId));
   if (error) {
     return {
       ...vazio,
@@ -1082,8 +1078,7 @@ async function lembreteDaProximaHora({ laReport, unidadeId, hoje, hora, recupera
     // Sempre checar `error`: consulta com coluna errada devolve {data:null,error} e viraria "zero
     // linhas" silencioso — aqui isso significaria "ninguém chegando na próxima hora", uma
     // afirmação que ninguém mediu, repetida 11 vezes por dia em três grupos reais.
-    const r = await consultaComRetry(() => laReport.rpc('get_situacao_alunos_v1',
-      { p_unidade_id: unidadeId, p_apenas_pendentes: false }));
+    const r = await consultaComRetry(() => situ.rpcBaseDeAlunos(laReport, unidadeId));
     if (r.error) {
       // Sensor PRÓPRIO: textualmente distinto dos outros três "consulta do LA Report falhou"
       // deste arquivo (manhã, meio do dia, noite). Quem audita marker_logs precisa saber QUAL

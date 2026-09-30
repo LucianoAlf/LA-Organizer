@@ -4639,8 +4639,7 @@ async function run(opts = {}) {
             let contratoNaoConferidos = 0;
             if (pura.CONTRATO_NA_PAUTA) {
               try {
-                const { data: baseContrato, error: erroContrato } = await laReportClient.rpc(
-                  'get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: false });
+                const { data: baseContrato, error: erroContrato } = await situAl.rpcBaseDeAlunos(laReportClient, unidadeId);
                 if (erroContrato) {
                   contratoErro = erroContrato.message;
                   console.error(`[Pauta] fala: consulta de contrato falhou (${situAl.nomeDaUnidade(unidadeId)}): ${erroContrato.message}`);

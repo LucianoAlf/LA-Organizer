@@ -182,6 +182,19 @@ function rotuloPeriodo({ de, ate, criterio = 'entrada' } = {}) {
   return `${eixo} até ${br(ate)}`;
 }
 
+// ── UM NÚMERO SÓ (30/09) ────────────────────────────────────────────────────────────────────
+// Na Barra, a mesma pergunta ("quem está sem contrato?") dava 41 no card <<SITUACAO_ALUNO>> e 56 na
+// lista do grupo. O recorte era o MESMO (esta função); a BASE não: o card lia a RPC com
+// p_apenas_pendentes=true, e esse filtro do LA Report olha só o array `pendencias` (cadastro),
+// que NÃO conhece assinatura de contrato. Quem tinha o contrato como ÚNICA pendência sumia do card
+// (Barra 15, Campo Grande 18; Recreio 0). Regra do dono: um número só.
+// Por isso: TODO caminho (card, lista do grupo, números do prompt, pautas e lembretes) lê a base
+// INTEIRA por esta função, e quem decide o que é pendência é filtrarPorRecorte — nunca a RPC.
+// Um teste de âncora prende que ninguém mais chama get_situacao_alunos_v1 por fora daqui.
+function rpcBaseDeAlunos(client, unidadeId) {
+  return client.rpc('get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: false });
+}
+
 function filtrarPorRecorte(pessoas, recorte) {
   const f = PENDENCIA[normalizarRecorte(recorte)];
   return f ? (pessoas || []).filter(f) : (pessoas || []);
@@ -454,13 +467,15 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNo
 //   lista (os NOMES) → 10 min, e agora por CONSISTÊNCIA, não por performance: a paginação
 //     precisa de uma foto estável, senão a página 2 pula ou repete nome que mudou no meio.
 const TTL_MS = 10 * 60 * 1000;
-// 'ficha' e a base INTEIRA (inclusive quem esta com tudo em ordem); 'lista' e so quem tem
-// pendencia. Perguntar do aluno certinho e o caso mais comum — se ele nao estivesse na base
-// consultada, o TOM responderia "nao achei" sobre alguem que existe.
+// 'ficha' e 'lista' leem a base INTEIRA (inclusive quem esta com tudo em ordem): a ficha porque
+// perguntar do aluno certinho e o caso mais comum, a lista porque desde 30/09 quem decide o que e
+// pendencia e filtrarPorRecorte, nao o filtro da RPC (ver UM NUMERO SO).
 const TTL_POR_TIPO = { resumo: 60 * 1000, lista: TTL_MS, ficha: TTL_MS };
 const _cache = new Map();
 
-function _chave(tipo, unidadeId) { return `${tipo}:${unidadeId}`; }
+// 'lista' e 'ficha' são a MESMA base inteira (ver UM NÚMERO SÓ) — uma foto só, uma leitura só.
+const _FOTO = { lista: 'base', ficha: 'base' };
+function _chave(tipo, unidadeId) { return `${_FOTO[tipo] || tipo}:${unidadeId}`; }
 
 function ttlDoTipo(tipo) {
   return TTL_POR_TIPO[tipo] != null ? TTL_POR_TIPO[tipo] : TTL_MS;
@@ -474,7 +489,7 @@ async function consultarComCache({ tipo, unidadeId, client, agora = Date.now(), 
 
   const chamar = () => (tipo === 'resumo'
     ? client.rpc('get_situacao_alunos_resumo_v1', { p_unidade_id: unidadeId })
-    : client.rpc('get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: tipo !== 'ficha' }));
+    : rpcBaseDeAlunos(client, unidadeId));
 
   let { data, error } = await chamar();
   if (error) {
@@ -613,7 +628,7 @@ module.exports = {
   UNIDADES_IDS, nomeDaUnidade, buscarAlunoNasUnidades, conjuntoDeProfessores, tambemDaAula,
   rotuloPendencia, responsavelDistinto,
   resolverAluno, tempoDeCasa, renderFicha, renderAmbiguo,
-  normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, filtrarPorPeriodo, rotuloPeriodo,
+  normalizarRecorte, ordenarPessoas, fatiar, filtrarPorRecorte, rpcBaseDeAlunos, filtrarPorPeriodo, rotuloPeriodo,
   contratoConferidoHoje, naoVerificadosDeContrato,
   renderResumo, renderLista, linhaComunidade,
   // Exportada pro TESTE poder travar o texto byte a byte sem redigitá-lo: duas cópias da mesma

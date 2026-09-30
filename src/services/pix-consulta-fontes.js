@@ -14,7 +14,7 @@
 
 const pura = require('./pix-consulta');
 const { ordenarPorPrioridade, fatiaDoCliente, FATIAS, ROTULO, bloqueadoNoEmusys, nomeComMarca, LEGENDA_BLOQUEIO, MARCA_BLOQUEIO, dadosDaUnidadeParaRelatorio, cartaoCadastradoPagandoPix, MARCA_CARTAO } = require('./pix-migracao');
-const { filtrarPorRecorte, nomeDaUnidade, resolverUnidade } = require('./situacao-aluno');
+const { filtrarPorRecorte, nomeDaUnidade, resolverUnidade, rpcBaseDeAlunos } = require('./situacao-aluno');
 const { consultaComRetry } = require('../lib/consulta-com-retry');
 
 // Categorias que a fonte devolve hoje (medidas em 17/09 nas três unidades). Categoria NOVA que a
@@ -33,7 +33,7 @@ const ORDEM_UNIDADES = ['campo grande', 'recreio', 'barra'].map((apelido) => res
 function _rpcs({ laReport, unidadeId, deps }) {
   const retry = deps.retry || ((c) => consultaComRetry(c, { esperaMs: deps.esperaMs, sleep: deps.sleep }));
   const rpcPix = deps.rpcPix || (() => laReport.rpc('get_pix_migracao_v1', { p_unidade_id: unidadeId, p_fatia: null }));
-  const rpcSituacao = deps.rpcSituacao || (() => laReport.rpc('get_situacao_alunos_v1', { p_unidade_id: unidadeId, p_apenas_pendentes: false }));
+  const rpcSituacao = deps.rpcSituacao || (() => rpcBaseDeAlunos(laReport, unidadeId));
   return { retry, rpcPix, rpcSituacao };
 }
 

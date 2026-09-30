@@ -55,8 +55,11 @@ test('espera entre tentativas é a combinada, e só entre elas', async () => {
 
 const FONTE = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'rituals', 'anamnese-pauta.js'), 'utf8');
 test('a pauta consulta o LA Report SEMPRE com retry — nenhuma chamada crua sobrou', () => {
-  const total = FONTE.split('laReport.rpc(').length - 1;
-  const comRetry = FONTE.split('consultaComRetry(() => laReport.rpc(').length - 1;
+  // 30/09: a base dos alunos passou a ser lida por situ.rpcBaseDeAlunos (um número só) — conta as
+  // duas formas, e as duas têm que estar embrulhadas no retry.
+  const conta = (pedaco) => FONTE.split(pedaco).length - 1;
+  const total = conta('laReport.rpc(') + conta('rpcBaseDeAlunos(laReport');
+  const comRetry = conta('consultaComRetry(() => laReport.rpc(') + conta('consultaComRetry(() => situ.rpcBaseDeAlunos(laReport');
   assert.strictEqual(total, comRetry, `${total - comRetry} consulta(s) ao LA Report ainda desistem na primeira falha`);
   assert.ok(comRetry >= 5, `esperava as 5 consultas da pauta com retry (achei ${comRetry})`);
 });
