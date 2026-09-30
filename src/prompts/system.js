@@ -448,9 +448,10 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       preferenceMemories.forEach(m => lines.push(`• ${_mem(m)}`));
     }
 
+    // RESUMO-SEMANAL-VIROU-AGENDA (Alf 30/09): retrato com data + sem compromisso futuro. É o ÚNICO
+    // lugar onde o resumo entra no prompt (a 2ª injeção depois do perfil foi removida).
     if (weeklySummary && weeklySummary.summary) {
-      const wk = weeklySummary.week_start || '';
-      lines.push('', `**Semana passada (a partir de ${wk}):**`, weeklySummary.summary);
+      lines.push('', ...require('../lib/resumo-semanal').renderResumoSemanal(weeklySummary));
     }
 
     if (recentContextMemories && recentContextMemories.length) {
@@ -1843,7 +1844,7 @@ async function fetchCollaboratorContext(collaborator) {
       .order('created_at', { ascending: false }).limit(5),
     // Weekly summary (último, se existir)
     supabase.from('collaborator_weekly_summaries')
-      .select('summary, week_start')
+      .select('summary, week_start, created_at')
       .eq('collaborator_id', id)
       .order('week_start', { ascending: false }).limit(1).maybeSingle(),
     // MEDIA-IMG-CONTEXT-LOST (Rose 11/06): mídias recentes que o usuário enviou, com a
@@ -2083,17 +2084,8 @@ async function fetchCollaboratorContext(collaborator) {
     eventTypes: eventTypesRes.data || [],
     todayDate: today,
   };
-  // Sprint 23.5+ — médio prazo: resumo da semana passada (fail-silent)
-  try {
-    const { data: weeklySummary } = await supabase
-      .from('collaborator_weekly_summaries')
-      .select('summary, week_start')
-      .eq('collaborator_id', id)
-      .order('week_start', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (weeklySummary?.summary) ctx.weeklySummary = weeklySummary;
-  } catch (_) {}
+  // (RESUMO-SEMANAL-VIROU-AGENDA 30/09: a 2ª leitura do resumo semanal que ficava aqui foi removida —
+  // o weeklyRes do Promise.all acima já traz a mesma linha.)
   return ctx;
 }
 
@@ -3465,11 +3457,8 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  // Sprint 23.5+ — médio prazo: resumo da semana passada (quando disponível)
-  if (ctx.weeklySummary) {
-    const ws = ctx.weeklySummary;
-    systemPrompt += `\n\n---\n\n📋 **Semana passada (${ws.week_start}):**\n${ws.summary}`;
-  }
+  // (RESUMO-SEMANAL-VIROU-AGENDA 30/09: o resumo semanal entrava 2× no prompt — aqui e em "O que sei
+  // sobre". Fica só lá, como retrato datado; ver lib/resumo-semanal.js.)
 
   // Histórico de desempenho — injetado apenas nos rituais que precisam de contexto histórico.
   // Fechamento (dia+semana), planejamento semanal (semana+mês), fechamento/planejamento mensal (mês+mês anterior).

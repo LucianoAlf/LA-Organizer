@@ -16871,6 +16871,16 @@ ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
     }
   } catch (e) { console.warn('[Ritual] meta-narracao err (non-fatal):', e.message); }
 
+  // RITUAL-AGENDA-GUARD (Alf 30/09 19:04): o fechamento perguntou "🗓️ *Jornada de Cordas* (13h–17h)
+  // — rolou?" com a agenda do dia VAZIA (evento cancelado em 29/09, remarcado pra 07/10). A linha veio
+  // do resumo semanal, não da agenda. Toda linha de evento "de hoje" do briefing/fechamento tem que
+  // casar com a agenda REAL de hoje; o que não casa sai (e vai pro marker_logs). Ver lib/ritual-agenda-guard.js.
+  if (['fechamento', 'briefing_diario', 'briefing_pessoal', 'briefing_trabalho'].includes(ritualKey)) {
+    const { aplicarGuardaDeAgenda } = require('./lib/ritual-agenda-guard');
+    const _rag = await aplicarGuardaDeAgenda({ supabase, collaboratorId: collab.id, ritual: ritualKey, texto: finalText, hojeYmd: todaySaoPaulo() });
+    finalText = _rag.texto;
+  }
+
   await whatsapp.sendMessage(collab.phone, finalText);
   await logConversation(collab.id, 'outbound', finalText);
 
@@ -17328,20 +17338,12 @@ async function generateWeeklySummaryFor(collab) {
 
   if (historyText.length < 100) return { collab: collab.full_name, skipped: 'too_thin' };
 
-  const prompt = `Você é um assistente que cria resumos semanais de contexto para ${collab.full_name}.
-
-Com base no histórico de conversa abaixo (última semana), escreva um resumo conciso em português (máximo 300 palavras) cobrindo:
-- Principais tarefas e compromissos que surgiram
-- Decisões importantes tomadas
-- Contexto pessoal relevante mencionado
-- Padrões ou temas recorrentes
-
-NÃO invente informações. Se algo não ficou claro, omita. Seja direto e útil.
-
-HISTÓRICO:
-${historyText}
-
-RESUMO:`;
+  // RESUMO-SEMANAL-VIROU-AGENDA (Alf 30/09): o resumo guardava "remarcada para 30/09, 13h–17h" como
+  // fato e virou "rolou?" num fechamento depois que o evento foi cancelado. O prompt agora proíbe
+  // compromisso futuro, e o texto passa pelo filtro determinístico antes de gravar (lib/resumo-semanal.js).
+  const _rs = require('./lib/resumo-semanal');
+  const _hojeResumo = todaySaoPaulo();
+  const prompt = _rs.promptDoResumoSemanal({ nome: collab.full_name, historyText, hojeYmd: _hojeResumo });
 
   let summary;
   try {
@@ -17353,6 +17355,11 @@ RESUMO:`;
     return { collab: collab.full_name, skipped: 'ai_error' };
   }
 
+  if (summary) {
+    const _neu = _rs.neutralizarCompromissosFuturos(summary, _hojeResumo);
+    if (_neu.removidas.length) console.warn(`[WeeklySummary] ${collab.full_name}: ${_neu.removidas.length} linha(s) com compromisso futuro tirada(s) antes de gravar`);
+    summary = _neu.texto;
+  }
   if (!summary || summary.length < 20) return { collab: collab.full_name, skipped: 'empty_summary' };
 
   const { error: insErr } = await supabase.from('collaborator_weekly_summaries').upsert({
