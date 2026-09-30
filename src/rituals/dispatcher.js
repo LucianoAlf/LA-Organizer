@@ -3284,7 +3284,7 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
 // opts.dryRun monta e retorna sem enviar. Substitui perLeaderUnclosedTasksReport
 // + o scorecard-do-líder de segunda.
 async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
-  const { assembleDigest, formatScorecardSection } = require('./governance-digest');
+  const { assembleDigest, formatSeuScorecard } = require('./governance-digest');
   const { resolveLeaderIdsOf } = require('../services/leader-routing');
   const whatsapp = require('../services/whatsapp');
   const sp = nowSaoPaulo();
@@ -3346,11 +3346,12 @@ async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
     let scoreSec = '';
     const myScore = scByLeader.get(leaderId);
     if (prefs.show_scorecard && myScore) {
-      scoreSec = formatScorecardSection([{
+      // SCORECARD-CONTRADIZ-CARD (30/09): sem o semáforo semanal — a cor do dia é só a do card
+      // (leader-verdict.js), a mesma que o Alf vê. Ver formatSeuScorecard.
+      scoreSec = formatSeuScorecard({
         leader_name: myScore.collaborators?.full_name || leader.full_name,
-        closure_rate: myScore.closure_rate, tasks_overdue: myScore.tasks_overdue,
-        tasks_stuck: myScore.tasks_stuck, tasks_closed: myScore.tasks_closed, delta_closure: null,
-      }]).replace('🏆 *Scorecard da semana*', '🏆 *Seu scorecard*');
+        closure_rate: myScore.closure_rate,
+      });
     }
 
     if (!eventsSec && !tasksSec && !scoreSec) continue;

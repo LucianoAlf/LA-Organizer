@@ -59,6 +59,19 @@ function formatScorecardSection(scorecards) {
   return `🏆 *Scorecard da semana*\n${lines.join('\n')}`;
 }
 
+// ── "Seu scorecard" do digest do LÍDER — retrato da SEMANA PASSADA, sem cor ────
+// SCORECARD-CONTRADIZ-CARD (30/09): Clayton/Rafinha leram "🔴 90% · 4 atras." (semáforo do
+// retrato semanal, badgeForScorecard) enquanto o veredito do DIA (leader-verdict.js) os punha
+// "no ritmo" — no digest do Alf e sem card no deles. São relógios diferentes de propósito (o
+// retrato fecha a semana; o veredito conta o que está atrasado HOJE), então a linha diz
+// "semana passada" e carrega SÓ a taxa — que é exatamente o termo que o veredito já usa. Sem
+// cor e sem contagem própria: a única cor/nº do dia no digest é a do card (o mesmo do Alf).
+function formatSeuScorecard(sc) {
+  if (!sc || sc.closure_rate === null || sc.closure_rate === undefined) return '';
+  const name = String(sc.leader_name || '—').split(' ')[0];
+  return `🏆 *Seu scorecard* · _semana passada_\n*${name}* — ${Math.round(sc.closure_rate * 100)}% das tarefas fechadas`;
+}
+
 // ── Montagem do digest — PRESERVA toda a riqueza, divide se precisar ─────────
 // header/footer: strings (sempre mantidos). sections: [{ text }] na ORDEM de
 // exibição, JÁ formatadas e ricas (a de tarefas é a atual, intacta). NADA é
@@ -97,4 +110,4 @@ function assembleDigest({ header, sections, footer, maxChars = DEFAULT_MAX } = {
   return { messages, parts: n };
 }
 
-module.exports = { badgeForScorecard, formatScorecardSection, assembleDigest, HR, DEFAULT_MAX };
+module.exports = { badgeForScorecard, formatScorecardSection, formatSeuScorecard, assembleDigest, HR, DEFAULT_MAX };
