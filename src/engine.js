@@ -11591,6 +11591,21 @@ async function processMessage(phone, text, raw = {}) {
         try { await whatsapp.sendMessage(phone, _outD); await logConversation(collab.id, 'outbound', _outD); } catch (_) { /* já persistiu */ }
         console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (delegate_confirm_${_rd.okCount || 0})`);
         return;
+      } else if (userConfirm === 'yes' && target.payload?.delegacao_ambigua
+                 && Array.isArray(target.payload.delegacao_ambigua.itens) && target.payload.delegacao_ambigua.itens.length) {
+        // CONFIRM-DELEG-LISTA-SEM-NEGRITO (auditoria 30/09): o hook achou tarefa aberta parecida com
+        // algum item (fragmento, linhagens distintas, item de lista que já existe). Delegar a tarefa
+        // errada — ou duplicar a que já existe — é pior que perguntar. Não emite marker, não chama LLM.
+        const { perguntaDelegacaoAmbigua } = require('./utils/delegacao-itens-resolve');
+        const _outA = perguntaDelegacaoAmbigua(target.payload.delegacao_ambigua);
+        await pendingIntents.resolveIntent(target.id, 'superseded', `delegacao ambigua — perguntou qual (engine) itens=${target.payload.delegacao_ambigua.itens.length}`);
+        try {
+          await whatsapp.sendMessage(phone, _outA);
+          await logConversation(collab.id, 'outbound', _outA);
+          await logMarker(collab.id, 'CONFIRM_DELEG_AMBIGUA', 'redirected', `itens=${target.payload.delegacao_ambigua.itens.length}`, null);
+        } catch (_) { /* já persistiu */ }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (delegate_ambigua_perguntou)`);
+        return;
       } else if (userConfirm === 'yes' && target.payload?.create_habit_daily?.name) {
         // T2H-ONEOFF-OFFER (Dudu 21/08): "sim" à oferta de virar uma tarefa ÚNICA em hábito diário.
         // Executa determinístico via applyHabitActions create (capacidade que já existe), sem
@@ -11693,6 +11708,13 @@ async function processMessage(phone, text, raw = {}) {
             : (_liberaRecado
               ? 'O payload não tem ids, MAS a pergunta acima é um RECADO/aviso que VOCÊ mesmo propôs e o usuário aprovou. Emita <<COORDINATION_REQUEST>> para o destinatário que você citou ali, compondo a mensagem FIEL à intenção que você propôs — mesmo destinatário, mesmo teor. NÃO invente destinatário nem mude o assunto. NÃO edite, reagende, conclua, delegue nem apague NENHUM item existente.'
               : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.')));
+
+        // CONFIRM-DELEG-LISTA-SEM-NEGRITO (auditoria 30/09): criação liberada por delegação nova só vale
+        // para os itens que o banco provou novos — nada além (a pergunta pode citar outras).
+        if (_liberaCriacao && target.payload && target.payload.delegacao_nova) {
+          const { regraDelegacaoNova } = require('./utils/delegacao-itens-resolve');
+          markerRule += regraDelegacaoNova(target.payload.delegacao_nova);
+        }
 
         // TASK-HONESTY-NEGA-BAIXA-FEITA (Kailane 12/08 19:21) — irmão do COORD-HONESTY nas TAREFAS.
         // A instrução acima afirma o ABSOLUTO "você NÃO consegue executar isso agora", mas sua
@@ -16028,42 +16050,41 @@ Output AGORA, apenas o marker:`;
           // coord/complete já estagiaram (uma pergunta não é duas coisas). FAIL-CLOSED total.
           if (!payload.coordination && !payload.batch_complete) {
             try {
-              const { parseDelegateConfirmQuestion } = require('./utils/delegate-question-parse');
-              const _deleg = parseDelegateConfirmQuestion(reply);
-              if (_deleg) {
-                const { resolveTitlesToBatchComplete } = require('./utils/complete-titles-resolve');
+              // CONFIRM-DELEG-LISTA-SEM-NEGRITO (auditoria 30/09 do d872532e): a pergunta pode ter VÁRIOS
+              // itens (lista numerada, com ou sem negrito — Krissya 29/09, 71086cf0/3a03bfa2). Cada item
+              // é provado no banco POR SI: só libera criação quando TODOS são novos; repasse de tarefa
+              // existente só com título INTEIRO de UMA tarefa minha; o resto vira pergunta no "sim".
+              const { parseDelegateConfirmItems } = require('./utils/delegate-question-parse');
+              const _itensD = parseDelegateConfirmItems(reply);
+              if (_itensD) {
+                const { classificarItensDelegacao } = require('./utils/delegacao-itens-resolve');
                 const { resolveTaskTarget } = require('./lib/task-target');
-                const _qCandD = async (title) => {
-                  const { data } = await supabase.from('tasks')
-                    .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at')
-                    .eq('assigned_to', collab.id)
+                const _selD = 'id, title, due_date, recurrence_rule, recurrence_parent_id, created_at';
+                const _abertasD = async (col, title) => {
+                  const { data, error } = await supabase.from('tasks').select(_selD)
+                    .eq(col, collab.id)
                     .ilike('title', `%${String(title).slice(0, 60)}%`)
                     .not('status', 'in', '("done","cancelled")')
                     .order('due_date', { ascending: true, nullsFirst: false })
                     .limit(100);
+                  if (error) throw new Error(error.message); // fail-closed: sem leitura, sem prova
                   return data || [];
                 };
-                const _resD = await resolveTitlesToBatchComplete({ queryCandidatos: _qCandD, resolveTaskTarget, titles: [_deleg.task_title] });
-                if (_resD && _resD.ids.length === 1) {
-                  payload.delegation = { task_id: _resD.ids[0], to_name: _deleg.to_name };
+                const _clD = await classificarItensDelegacao({
+                  itens: _itensD,
+                  queryDono: (t) => _abertasD('assigned_to', t),
+                  queryCriadas: (t) => _abertasD('created_by', t),
+                  resolveTaskTarget,
+                });
+                if (_clD && _clD.tipo === 'existente') {
+                  payload.delegation = _clD.delegation;
                   _metrics.confirm_parse_deleg = 1;
-                } else {
-                  // CONFIRM-DELEG-NOVA-SEM-PORTA (Krissya 29/09): "delegar pra Kailane: *ver o
-                  // vídeo…*" era tarefa NOVA — não há alvo existente, e o create-gate vetava pelo
-                  // "deleg". Só marca como nova com PROVA: zero tarefas abertas com esse título
-                  // atribuídas A ou criadas POR quem pediu. Leitura com erro → não marca (fail-closed).
-                  const _t = String(_deleg.task_title).slice(0, 60);
-                  const [_a, _c] = await Promise.all([
-                    supabase.from('tasks').select('id').eq('assigned_to', collab.id).ilike('title', `%${_t}%`)
-                      .not('status', 'in', '("done","cancelled")').limit(1),
-                    supabase.from('tasks').select('id').eq('created_by', collab.id).ilike('title', `%${_t}%`)
-                      .not('status', 'in', '("done","cancelled")').limit(1),
-                  ]);
-                  if (!_a.error && !_c.error && Array.isArray(_a.data) && Array.isArray(_c.data)
-                      && !_a.data.length && !_c.data.length) {
-                    payload.delegacao_nova = { task_title: _deleg.task_title, to_name: _deleg.to_name };
-                    _metrics.confirm_parse_deleg_nova = 1;
-                  }
+                } else if (_clD && _clD.tipo === 'nova') {
+                  payload.delegacao_nova = _clD.delegacao_nova;
+                  _metrics.confirm_parse_deleg_nova = _clD.delegacao_nova.itens.length;
+                } else if (_clD && _clD.tipo === 'ambigua') {
+                  payload.delegacao_ambigua = _clD.delegacao_ambigua;
+                  _metrics.confirm_parse_deleg_ambigua = _clD.delegacao_ambigua.itens.length;
                 }
               }
             } catch (e) { console.warn('[PendingIntents] delegate parse-on-open err (non-fatal):', e.message); }
