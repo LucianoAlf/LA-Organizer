@@ -36,6 +36,7 @@ const verbatimNote = require('./services/verbatim-note');
 const notesService = require('./services/notes');
 const taskReturn = require('./services/task-return');
 const { jaroWinkler, normalizeForSim } = require('./services/text-similarity');
+const { mesmaTarefa } = require('./lib/titulo-mesma-tarefa'); // TITULO-REESCRITO (29/09)
 const { findDuplicateNote } = require('./services/note-dedup');
 // NOTE-DEDUP: bypass de re-tentativa. Se o usuário insistir ("cria outra mesmo") logo após
 // um bloqueio, a 2ª tentativa do MESMO título passa. Em memória (espelha pendingDupTasks);
@@ -6481,33 +6482,51 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           failCount++;
           continue;
         }
-        const sinceIso = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-        // Find the task by prefix — but ANY assigned_to (since we're deciding, not editing our own).
-        // Restrict by matching a recent extension_request notification to this collaborator.
-        const { data: tasksMatching } = await supabase
+        // DECISAO-PRAZO-ALVO (30/09): o alvo sai dos PEDIDOS de prazo endereçados a quem decide
+        // (é de lá que vem o [id=…] mostrado ao gestor). Antes: busca GLOBAL em tasks, só prazo dos
+        // últimos 60 dias, limit 500 sem ordem, 1º match — tarefa vencida há > 60 dias não era
+        // achada (mesma raiz de bf173ead), das 4.243 elegíveis o banco devolvia 500 quaisquer, e
+        // prefixo ambíguo decidia a 1ª que viesse. Ver lib/decisao-prazo-alvo.
+        const { resolverAlvoDecisaoPrazo } = require('./lib/decisao-prazo-alvo');
+        const { data: _pedidosExt, error: _ePedExt } = await supabase
+          .from('notifications')
+          .select('id, reference_id, status, created_at')
+          .eq('collaborator_id', collaborator.id)
+          .eq('notification_type', 'deadline_extension_request')
+          .eq('reference_type', 'task')
+          .order('created_at', { ascending: false })
+          .limit(200);
+        if (_ePedExt) {
+          console.error('[Task] extension_decision pedidos err:', _ePedExt.message);
+          failCount++;
+          continue;
+        }
+        const _alvoExt = resolverAlvoDecisaoPrazo(_pedidosExt || [], shortId);
+        if (_alvoExt.status === 'nao_achou') {
+          console.warn(`[Task] extension_decision REJECTED — no pending request for ${last4} on task ${shortId}`);
+          failCount++;
+          continue;
+        }
+        if (_alvoExt.status === 'ambiguo') {
+          // Prefixo que cai em 2+ tarefas com pedido: pergunta, não decide.
+          const { data: _ambExt } = await supabase.from('tasks').select('id, title').in('id', _alvoExt.taskIds);
+          const _listaExt = (_ambExt || []).slice(0, 4).map((x) => `• *${x.title}* [id=${String(x.id).slice(0, 8)}]`).join('\n');
+          failMessages.push(`Tem mais de um pedido de prazo com esse código — qual deles você está decidindo?\n${_listaExt}`);
+          console.warn(`[Task] extension_decision AMBIGUO ${shortId} (${_alvoExt.taskIds.length} tarefas) — perguntando`);
+          failCount++;
+          continue;
+        }
+        const { data: candidate } = await supabase
           .from('tasks')
-          .select('id, title, due_date, assigned_to, projects(name)')
-          .gte('due_date', sinceIso)
-          .limit(500);
-        const candidate = matchRowsByShortId(tasksMatching, shortId)[0]; // tolerante a UUID alucinado (Sprint 31.14)
+          .select('id, title, due_date, assigned_to')
+          .eq('id', _alvoExt.taskId)
+          .maybeSingle();
         if (!candidate) {
           console.warn(`[Task] extension_decision REJECTED — task ${shortId} not found`);
           failCount++;
           continue;
         }
-        // Verify the deciding user actually has a pending extension_request notification for this task.
-        const { data: notifs } = await supabase
-          .from('notifications')
-          .select('id, created_at')
-          .eq('collaborator_id', collaborator.id)
-          .eq('notification_type', 'deadline_extension_request')
-          .eq('reference_id', candidate.id)
-          .order('created_at', { ascending: false }).limit(1);
-        if (!notifs || !notifs.length) {
-          console.warn(`[Task] extension_decision REJECTED — no pending request for ${last4} on task ${shortId}`);
-          failCount++;
-          continue;
-        }
+        const notifs = [{ id: _alvoExt.notifId }]; // pedido que esta decisão fecha (marcado read abaixo)
         // If approved, must include new_due_date.
         if (approved && (!a.new_due_date || !isValidISODate(a.new_due_date))) {
           console.warn('[Task] extension_decision approved but bad new_due_date');
@@ -8196,7 +8215,8 @@ async function detectDuplicateSemanticTask(collab, candidate) {
       .eq('assigned_to', candidate.assigned_to || collab.id)
       .not('status', 'in', '("done","cancelled")')
       .gte('created_at', cutoff)
-      .limit(50);
+      .order('created_at', { ascending: false }) // antes: limit 50 sem ordem = amostra arbitrária
+      .limit(200);
     if (error) {
       console.error('[detectDuplicateSemanticTask] query err:', error.message);
       return { probable: [], possible: [] };
@@ -8240,7 +8260,13 @@ async function detectDuplicateSemanticTask(collab, candidate) {
       // na planilha" passava: ambos compartilham 1 keyword ("planilha") + boost de
       // strip-verbo gera 0.86. Agora: probable exige 2+ keywords compartilhadas
       // OU score muito alto (>=0.95). Reduz falso positivo sem perder duplicatas reais.
-      let isDupProbable = (score >= 0.95 && shared.length > 0) || (score > 0.85 && shared.length >= 2);
+      // TITULO-REESCRITO (29/09): o 'probable' (barra a criação e abre o menu 1/2/3) não sai mais do
+      // JW+keyword acima — prefixo genérico + palavra genérica davam 1.00 pra tarefas distintas
+      // ("Follow Up Eventos Jordan (…)" × "Follow up L.A Session com Jereh (…)", Yuri 29/09) e o
+      // título reescrito pelo TOM passava. Regra por conteúdo em lib/titulo-mesma-tarefa (conjunto
+      // rotulado real: precisão 30%→100%, recall 48%→92%). O score JW segue só pro 'possible'.
+      const _mt = mesmaTarefa(candidate.title, task.title);
+      let isDupProbable = _mt.mesma;
       if (isDupProbable && candidate.due_date && task.due_date) {
         const diffDays = Math.abs(new Date(candidate.due_date) - new Date(task.due_date)) / 86400000;
         if (diffDays > 3) isDupProbable = false; // prazos diferentes → não é dup
@@ -8253,7 +8279,7 @@ async function detectDuplicateSemanticTask(collab, candidate) {
         const taskSuffixNorm = normalizeForSim(extractSuffix(task.title));
         if (taskSuffixNorm && taskSuffixNorm !== candSuffixNorm) isDupProbable = false;
       }
-      if (isDupProbable) probable.push({ ...task, _score: score });
+      if (isDupProbable) probable.push({ ...task, _score: _mt.contencao });
       else if (score > 0.6) possible.push({ ...task, _score: score });
     }
     probable.sort((a, b) => b._score - a._score);
@@ -16060,13 +16086,17 @@ Output AGORA, apenas o marker:`;
                 const { classificarItensDelegacao } = require('./utils/delegacao-itens-resolve');
                 const { resolveTaskTarget } = require('./lib/task-target');
                 const _selD = 'id, title, due_date, recurrence_rule, recurrence_parent_id, created_at';
-                const _abertasD = async (col, title) => {
+                // TITULO-REESCRITO (29/09): SEM ilike no título. O TOM reescreve ao gravar ("ver o vídeo da
+                // Vitória" → "Ver o vídeo de registro de visitas (postado pela Vitória no grupo)") e o
+                // trecho não aparece contíguo → a existente virava "nova" e o "sim" criava outra. Busca
+                // as abertas da pessoa (máx. 142 por pessoa em 30/09) e o classificador filtra por
+                // tarefasParecidas (trecho OU mesma tarefa por conteúdo).
+                const _abertasD = async (col) => {
                   const { data, error } = await supabase.from('tasks').select(_selD)
                     .eq(col, collab.id)
-                    .ilike('title', `%${String(title).slice(0, 60)}%`)
                     .not('status', 'in', '("done","cancelled")')
                     .order('due_date', { ascending: true, nullsFirst: false })
-                    .limit(100);
+                    .limit(500);
                   if (error) throw new Error(error.message); // fail-closed: sem leitura, sem prova
                   return data || [];
                 };

@@ -16,8 +16,13 @@
 // qualquer. "delegar pra Kailane: *Ligar pro lead*" com uma "Ligar pro lead da Ana — matrícula" aberta
 // repassava a da Ana — tarefa que ninguém citou. Delegar a tarefa errada é pior que perguntar.
 //
-// Puro: as consultas são INJETADAS (engine: tasks abertas, ilike no título, por assigned_to e por
-// created_by de quem pediu).
+// Puro: as consultas são INJETADAS (engine: tasks abertas por assigned_to e por created_by de quem
+// pediu). TITULO-REESCRITO (29/09): o engine não filtra mais por ilike — o filtro é aqui, por
+// tarefasParecidas (lib/titulo-mesma-tarefa): contém o trecho OU é a mesma tarefa por conteúdo.
+// Sem isso, título reescrito pelo TOM ("ver o vídeo da Vitória" × "Ver o vídeo de registro de
+// visitas (postado pela Vitória no grupo)") virava 'nova' e o "sim" criava duplicata.
+
+const { tarefasParecidas } = require('../lib/titulo-mesma-tarefa');
 
 function _short(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
@@ -55,6 +60,8 @@ async function classificarItensDelegacao({ itens, queryDono, queryCriadas, resol
       return null; // leitura falhou → não prova nada
     }
     if (!Array.isArray(dono) || !Array.isArray(criadas)) return null;
+    dono = tarefasParecidas(dono, it.task_title);
+    criadas = tarefasParecidas(criadas, it.task_title);
     const porId = new Map();
     for (const t of [...dono, ...criadas]) if (t && t.id) porId.set(t.id, t);
     avaliados.push({
