@@ -652,7 +652,9 @@ test('fim de lista não estampa "Essa foi a lista toda"', () => {
 });
 
 // "Começando pelas crianças" explica a ORDEM. Com um adulto sozinho não explica nada.
-test('a dica de ordem só sai quando há criança E mais de um nome', () => {
+// 30/09: a ordem (crianças primeiro) passou a ser dita pelas SEÇÕES 🧒/🎓 — a dica "Começando pelas
+// crianças" repetiria o mesmo recado, então ela saiu nos dois casos.
+test('a ordem crianças-primeiro sai pelas seções, sem a dica e sem ponto duplicado', () => {
   const so1 = renderLista({
     recorte: 'anamnese', total: 1, unidadeNome: 'Recreio',
     pessoas: [{ nome: 'Gabriel', classificacao: 'EMLA' }],
@@ -664,7 +666,8 @@ test('a dica de ordem só sai quando há criança E mais de um nome', () => {
     recorte: 'foto', total: 2, unidadeNome: 'Barra',
     pessoas: [{ nome: 'Bento', classificacao: 'LAMK' }, { nome: 'Ana', classificacao: 'LA' }],
   });
-  assert.match(comCrianca, /Começando pelas crianças/);
+  assert.doesNotMatch(comCrianca, /Começando pelas crianças/);
+  assert.match(comCrianca, /🧒 <b>Crianças<\/b> \(1\)<\/p><ul><li>Bento<\/li><\/ul><p>🎓 <b>Adultos<\/b> \(1\)<\/p><ul><li>Ana<\/li>/);
 });
 
 // ── NOME DE COLUNA NÃO É PALAVRA DE GENTE ─────────────────────────────────────────────────

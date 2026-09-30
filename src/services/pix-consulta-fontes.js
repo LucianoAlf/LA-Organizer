@@ -113,12 +113,20 @@ async function numerosDaUnidade({ laReport, unidadeId, unidadeNome, hoje, deps =
 // outra roupa. Agora cada família lê a SUA fonte.
 // O item traz o RESPONSÁVEL na frente (é quem a escola cobra) e o aluno ao lado; aluno sem
 // responsável cadastrado aparece com o próprio nome nos dois lugares — some ninguém.
-async function _itensDeAluno({ retry, rpcSituacao, recorte }) {
+async function _pessoasDaSituacao({ retry, rpcSituacao }) {
   const r = await retry(rpcSituacao);
   if (r && r.error) throw new Error(`get_situacao_alunos_v1: ${r.error.message}`);
-  return filtrarPorRecorte((r && r.data) || [], recorte)
+  return (r && r.data) || [];
+}
+async function _itensDeAluno({ retry, rpcSituacao, recorte }) {
+  return filtrarPorRecorte(await _pessoasDaSituacao({ retry, rpcSituacao }), recorte)
     .map((p) => ({ pagador: p.responsavel_nome || p.nome, alunos: [p.nome] }))
     .sort((a, b) => String(a.pagador).localeCompare(String(b.pagador), 'pt-BR'));
+}
+// 30/09: a MENSAGEM do grupo sai organizada (seções 🧒/🎓, resumo no topo, responsável só quando é
+// outra pessoa) — ver pura.listaDeAlunosOrganizada. `_itensDeAluno` acima segue sendo a API pública.
+async function _lerAlunos({ retry, rpcSituacao, recorte }) {
+  return pura.listaDeAlunosOrganizada({ recorte, pessoas: await _pessoasDaSituacao({ retry, rpcSituacao }) });
 }
 
 // Seção de cada cliente na lista ORGANIZADA (pix-consulta.mensagensDeVariasListas): a forma de
@@ -196,8 +204,8 @@ async function blocosDaLista({ laReport, unidadeId, alvo, deps = {} }) {
   for (const p of pedidos) {
     try {
       if (FAMILIA_ALUNO.has(p)) {
-        const itens = await _itensDeAluno({ retry, rpcSituacao, recorte: p });
-        blocos.push({ titulo: pura.tituloDoAlvo(p), substantivo: pura.substantivoDoAlvo(p), itens });
+        const { itens, resumo } = await _lerAlunos({ retry, rpcSituacao, recorte: p });
+        blocos.push({ titulo: pura.tituloDoAlvo(p), substantivo: pura.substantivoDoAlvo(p), itens, resumo });
       } else {
         const { itens, resumo } = await _lerPix({ retry, rpcPix, alvo: p, hoje: deps.hoje });
         blocos.push({ titulo: pura.tituloDoAlvo(p), substantivo: pura.substantivoDoAlvo(p), itens, resumo });

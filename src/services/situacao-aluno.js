@@ -378,10 +378,10 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNo
     // assinou", que é uma afirmação que ninguém mediu. A ressalva vale aqui mais que nos outros.
     return `<h3>👥 ${nome}</h3><p>Ninguém ${rotulo}${esc(per)}.</p>${ressalvaRecorte}`;
   }
-  const { itens, restam } = fatiar(ordenarPessoas(pessoas), pagina);
-  const li = itens.map((p) => {
+  const ordenadas = ordenarPessoas(pessoas);
+  const { itens, restam } = fatiar(ordenadas, pagina);
+  const itemLi = (p) => {
     const ehCrianca = String(p.classificacao).toUpperCase() === 'LAMK';
-    const faixa = ehCrianca ? '🧒' : '🎓';
     const ressalva = p.anamnese_flag_sem_registro
       ? ' <i>(marcada como preenchida, mas sem registro hoje — conferir)</i>' : '';
     // Na comunidade, quem entra no grupo é o RESPONSÁVEL — então é o nome dele que serve pra
@@ -393,8 +393,27 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNo
     // Quem tambem da aula na escola sai marcado: sem isso, o nome de um professor numa lista
     // de pendencia parece erro da base e alguem vai gastar meia hora conferindo (Alf, 02/09).
     const daAula = tambemDaAula(p.nome, professores) ? ' <i>(também dá aula aqui)</i>' : '';
-    return `<li>${faixa} ${esc(p.nome)}${resp}${daAula}${ressalva}</li>`;
-  }).join('');
+    return `<li>${esc(p.nome)}${resp}${daAula}${ressalva}</li>`;
+  };
+  // SEÇÕES (30/09, regra permanente do dono: título → resumo → seções com contagem → nomes
+  // recuados). Antes a faixa ia colada em cada nome (🧒/🎓) e a fatia saía como uma lista corrida;
+  // agora cada faixa é uma seção com a contagem da lista INTEIRA (não só da fatia). Página que
+  // começa no meio de uma seção repete o cabeçalho com "(continuação)" — igual à lista do PIX.
+  const faixaDe = (p) => (String(p && p.classificacao).toUpperCase() === 'LAMK' ? 'crianca' : 'adulto');
+  const nFaixa = { crianca: 0, adulto: 0 };
+  ordenadas.forEach((p) => { nFaixa[faixaDe(p)] += 1; });
+  const CAB = { crianca: '🧒 <b>Crianças</b>', adulto: '🎓 <b>Adultos</b>' };
+  const ini = pagina > 0 ? PAGINA_INICIAL + (pagina - 1) * PAGINA_SEGUINTE : 0;
+  const secoes = [];
+  itens.forEach((p, i) => {
+    const fx = faixaDe(p);
+    if (!secoes.length || secoes[secoes.length - 1].fx !== fx) {
+      const cont = i === 0 && ini > 0 && faixaDe(ordenadas[ini - 1]) === fx ? ' <i>(continuação)</i>' : '';
+      secoes.push({ fx, cab: `<p>${CAB[fx]} (${nFaixa[fx]})${cont}</p>`, lis: [] });
+    }
+    secoes[secoes.length - 1].lis.push(itemLi(p));
+  });
+  const li = secoes.map((s) => `${s.cab}<ul>${s.lis.join('')}</ul>`).join('');
   // COMUNIDADE + CRIANÇA: a criança não entra em grupo de WhatsApp, o responsável entra. O dado
   // já considera isso (a RPC casa telefone do aluno, do responsável e dos contatos), mas quem lê
   // a lista precisa saber COM QUEM falar — senão sai convidando a pessoa errada.
@@ -403,11 +422,10 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNo
     ? '<p><i>Nas crianças (🧒) quem precisa entrar é o responsável — o convite vai pra ele, não pra ela.</i></p>'
     : '';
   const per = periodo ? ` <i>(${esc(rotuloPeriodo(periodo))})</i>` : '';
-  // A dica de ordem so serve se houver crianca na fatia E mais de um nome: com um adulto
-  // sozinho, "Começando pelas crianças" nao explica ordem nenhuma — e so barulho.
-  const dicaOrdem = (temCrianca && itens.length > 1) ? '. Começando pelas crianças:' : ':';
+  // A ordem (crianças primeiro) agora se explica pelas SEÇÕES — a antiga dica "Começando pelas
+  // crianças" viraria o mesmo recado duas vezes.
   const cabeca = pagina === 0
-    ? `<p><b>${total}</b> ${rotulo}${per}${dicaOrdem}</p>${nota}`
+    ? `<p><b>${total}</b> ${rotulo}${per}:</p>${nota}`
     : `<p>Continuando — <b>${total}</b> ${rotulo}${per}:</p>${nota}`;
   // O convite tem que caber no que SOBROU. Com 5 restando, "mando os próximos 30" e depois
   // vêm 5 faz o número parecer inventado — e o número é a coisa que eles mais olham.
@@ -419,7 +437,8 @@ function renderLista({ recorte, pessoas, total, pagina = 0, grupoNome, unidadeNo
   // A ressalva entra ENTRE a linha do número e os nomes: é onde o olho passa obrigatoriamente
   // depois de ler a contagem. No rodapé, embaixo de 15 nomes, ela vira nota de rodapé — e nota
   // de rodapé não é ressalva, é álibi.
-  return `<h3>👥 ${nome}</h3>${cabeca}${ressalvaRecorte}<ul>${li}</ul>${rodape}`;
+  // O <br> separa o número das seções (no WhatsApp, linha em branco entre o resumo e a 1ª seção).
+  return `<h3>👥 ${nome}</h3>${cabeca}${ressalvaRecorte}<br>${li}${rodape}`;
 }
 
 // ── CACHE CURTO + RETRY ────────────────────────────────────────────────────────────────────

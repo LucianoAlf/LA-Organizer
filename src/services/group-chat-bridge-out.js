@@ -20,12 +20,16 @@ function htmlToWhatsapp(html) {
     .replace(/<\s*(em|i)\b[^>]*>/gi, '_').replace(/<\s*\/\s*(em|i)\s*>/gi, '_')
     .replace(/<\s*li[^>]*>/gi, '\n• ').replace(/<\s*\/\s*li\s*>/gi, '')
     .replace(/<\s*br\s*\/?\s*>/gi, '\n')
-    .replace(/<\s*\/\s*p\s*>/gi, '\n').replace(/<\s*\/\s*(ul|ol|div)\s*>/gi, '\n')
+    // Fim de lista = linha em branco: é o que separa uma seção da próxima no WhatsApp.
+    .replace(/<\s*\/\s*p\s*>/gi, '\n').replace(/<\s*\/\s*(ul|ol)\s*>/gi, '\n\n').replace(/<\s*\/\s*div\s*>/gi, '\n')
     .replace(/<\s*hr\s*\/?\s*>/gi, '\n──────────\n') // separador de blocos vira linha
     .replace(/<[^>]+>/g, ''); // tira o resto das tags
   t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'");
-  return t.split('\n').map((l) => l.trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  // Regra do dono (30/09): título → seções → nomes RECUADOS ("   • Nome"), o item colado no
+  // cabeçalho da seção dele (sem linha em branco entre os dois) e linha em branco entre seções.
+  return t.split('\n').map((l) => (/^\s*•/.test(l) ? `   ${l.trim()}` : l.trim())).join('\n')
+    .replace(/\n{3,}/g, '\n\n').replace(/\n\n(?= {3}• )/g, '\n').trim();
 }
 
 // Converte uma row de group_chat_messages (channel='app') no texto a postar no WhatsApp.

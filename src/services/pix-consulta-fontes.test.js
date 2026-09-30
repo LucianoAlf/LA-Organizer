@@ -356,7 +356,9 @@ test('C2: pedido de lista de ANAMNESE posta os alunos, com título e substantivo
   assert.strictEqual(p.length, 1);
   assert.match(p[0], /Anamnese — quem falta preencher — Barra\* \(2 alunos\)/);
   assert.ok(!/clientes/.test(p[0]));
-  assert.match(p[0], /• Resp Um — Aluno 1/);
+  // 30/09: organizada — o aluno na linha, o responsável entre parênteses só quando é outra pessoa.
+  assert.match(p[0], /\n   • Aluno 1 \(responsável: Resp Um\)/);
+  assert.ok(!/— Aluno 1/.test(p[0]), 'nunca mais "Responsável — Aluno" plano');
   assert.ok(!/Dora|Caio/.test(p[0]), 'nenhum pagador do PIX na lista de anamnese');
 });
 

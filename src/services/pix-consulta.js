@@ -215,7 +215,9 @@ function mensagensDeVariasListas({
     const mostrados = Math.min(itens.length, partes * lim);
     fora += itens.length - mostrados;
     if (!partes) continue;
-    if (!itens.length) { out.push(`💠 *${rotulo(b.titulo)}* (0 ${subst}) — parte 1/1\nNinguém nesta lista agora.`); continue; }
+    // Lista vazia também leva o resumo: é nele que mora o "a conferência de hoje não rodou" do
+    // contrato — sem ele, vazio por FALHA sairia idêntico a vazio por SAÚDE.
+    if (!itens.length) { out.push(`💠 *${rotulo(b.titulo)}* (0 ${subst}) — parte 1/1${b.resumo ? `\n${b.resumo}` : ''}\nNinguém nesta lista agora.`); continue; }
     for (let k = 0; k < partes; k++) {
       const fatia = itens.slice(k * lim, Math.min((k + 1) * lim, mostrados));
       const corpo = _corpoDaParte(fatia, k > 0 ? itens[k * lim - 1] : null);
@@ -235,7 +237,8 @@ function mensagensDeVariasListas({
 // lista de quem falta migrar saía como 43 linhas corridas (Barra, pedido do Arthur). Item com
 // `secao` ganha cabeçalho da seção (a mesma forma de pagamento da pauta das 9h), linha em branco
 // entre seções e nome recuado — igual à pauta. Parte que começa no meio de uma seção repete o
-// cabeçalho com "(continuação)". Item SEM `secao` (anamnese, contrato, já migraram) sai como antes.
+// cabeçalho com "(continuação)". Item SEM `secao` sai plano, como antes (desde 30/09 anamnese e
+// contrato também têm seção — ver listaDeAlunosOrganizada, logo abaixo).
 function _linhaPlana(it) {
   return `• ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`;
 }
@@ -250,9 +253,64 @@ function _corpoDaParte(fatia, anterior) {
       if (it.secao) linhas.push(`${it.secao}${cont}`);
       atual = it.secao;
     }
-    linhas.push(`   • ${it.pagador}${(it.alunos || []).length ? ` (${it.alunos.join(', ')})` : ''}`);
+    // `detalhe` (anamnese/contrato: "responsável: X") vence a lista de alunos — no aluno, o nome
+    // já é a linha; repetir o próprio nome entre parênteses é o "Nome — Nome" de 30/09.
+    const extra = it.detalhe || ((it.alunos || []).length ? it.alunos.join(', ') : '');
+    linhas.push(`   • ${it.pagador}${extra ? ` (${extra})` : ''}`);
   });
   return { texto: linhas.join('\n'), secionado: true };
+}
+
+// ── ANAMNESE E CONTRATO ORGANIZADOS (Arthur, Barra, 30/09 16:23) ──────────────────────────────
+// A lista de contrato chegou como 56 linhas "• Nome — Nome": o item levava o responsável na frente
+// e o aluno ao lado, e na Barra 55 de 56 têm `responsavel_nome` = o próprio aluno (a RPC cai pro
+// nome da pessoa quando não há responsável). Agora cada aluno é UMA linha com o nome dele, e
+// "(responsável: X)" só aparece quando X é outra pessoa (situacao-aluno.responsavelDistinto).
+// SEÇÕES: 🧒 Crianças (LAMK, ≤11 anos — a mesma regra dos cards de situacao-aluno.js, onde quem
+// resolve é o responsável) e 🎓 Adultos. No contrato, quando a fonte separa "não assinado" de "sem
+// contrato no Emusys", a seção separa também — são conversas diferentes com a família.
+// `nao_verificado` NUNCA vira cobrança (ver COMO O CONTRATO E MEDIDO em situacao-aluno.js), mas
+// também não some: vira linha do resumo, com a quantidade.
+// -> { itens: [{ pagador, alunos: [], detalhe?, secao }], resumo }
+const ROTULO_STATUS_CONTRATO = { nao_assinado: 'não assinado', sem_contrato: 'sem contrato no Emusys' };
+const ORDEM_STATUS_CONTRATO = ['nao_assinado', 'sem_contrato'];
+const _ehCrianca = (p) => String(p && p.classificacao).toUpperCase() === 'LAMK';
+function listaDeAlunosOrganizada({ recorte, pessoas }) {
+  const todas = pessoas || [];
+  const pend = situ.filtrarPorRecorte(todas, recorte);
+  const ehContrato = recorte === 'contrato';
+  const status = (p) => (ORDEM_STATUS_CONTRATO.includes(p.contrato_assinatura_status) ? p.contrato_assinatura_status : 'nao_assinado');
+  const porStatus = ehContrato && new Set(pend.map(status)).size > 1;
+  const chave = (p) => `${_ehCrianca(p) ? 0 : 1}|${porStatus ? ORDEM_STATUS_CONTRATO.indexOf(status(p)) : 0}`;
+  const ordenadas = [...pend].sort((a, b) => {
+    const d = chave(a).localeCompare(chave(b));
+    return d || String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR');
+  });
+  const conta = new Map();
+  for (const p of ordenadas) conta.set(chave(p), (conta.get(chave(p)) || 0) + 1);
+  const rotuloSecao = (p) => {
+    const faixa = _ehCrianca(p) ? '🧒 *Crianças' : '🎓 *Adultos';
+    const st = porStatus ? ` · ${ROTULO_STATUS_CONTRATO[status(p)]}` : '';
+    return `${faixa}${st}* (${conta.get(chave(p))})${_ehCrianca(p) ? ' — quem resolve é o responsável' : ''}`;
+  };
+  const itens = ordenadas.map((p) => {
+    const resp = situ.responsavelDistinto(p);
+    const it = { pagador: p.nome, alunos: [], secao: rotuloSecao(p) };
+    if (resp) it.detalhe = `responsável: ${resp}`;
+    return it;
+  });
+
+  const oQue = ehContrato ? 'sem contrato assinado' : 'sem anamnese';
+  const resumo = [`📋 *${pend.length} de ${todas.length} alunos ativos ${oQue}*`];
+  if (ehContrato) {
+    if (situ.contratoConferidoHoje(todas) === false) {
+      resumo.push('⚠️ *A conferência de contrato de hoje não rodou* — não dá pra dizer quem falta assinar agora');
+    } else {
+      const nv = situ.naoVerificadosDeContrato(todas).length;
+      if (nv) resumo.push(`❔ ${nv} não deu pra conferir hoje — fica${nv > 1 ? 'm' : ''} fora da lista (conferir no Emusys antes de cobrar)`);
+    }
+  }
+  return { itens, resumo: resumo.join('\n') };
 }
 
 // Topo da lista do PIX: onde a unidade está e quanto tempo falta. Mesma conta do relatório de
@@ -416,5 +474,5 @@ module.exports = {
   LIMITE_POR_MENSAGEM, TETO_MENSAGENS, TEXTO_SEM_UNIDADE, TEXTO_FONTE_FORA, RECORTE_ALUNOS,
   detectarPedido, precisaDeNumeros, detectarUnidade, tituloDoAlvo, substantivoDoAlvo,
   mensagensDaLista, mensagensDeVariasListas, blocoDeNumeros, blocoDeNumerosTodasUnidades,
-  alvosDoMarker, resumoDaMigracao, assuntoPixRecente,
+  alvosDoMarker, resumoDaMigracao, assuntoPixRecente, listaDeAlunosOrganizada,
 };
