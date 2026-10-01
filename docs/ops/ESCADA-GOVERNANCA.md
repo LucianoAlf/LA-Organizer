@@ -2990,3 +2990,32 @@ nunca alcançou tarefa com prazo a partir de amanhã. Medido: **15 de 20** taref
 O tell é barato e vale para qualquer coluna de idempotência: **`grep` quem ESCREVE a coluna que a
 trava lê.** Se for mais de uma rotina, a trava de uma é o apagador da outra. A query de população
 (`reminded_at < remind_at`) custou uma linha e transformou um achado de grupo em defeito medido.
+
+### ETAPA 3 — o TOM "acerta de manhã e erra de noite": a data veio da PRÓPRIA fala, não do banco
+
+**Ocorrência:** 1 (01/10), achado `0aea318b` (Leo, Recital 2026). Virou pergunta de desenho, não conserto.
+
+O sintoma parecia aritmética de data do LLM. A pergunta que desempatou foi a da regra de 27/08
+(*reconstrua a JANELA de contexto antes de tratar como confabulação*), feita ao contrário: **de
+onde o TOM tirou "29/09"?** Nenhum contexto de ritual carrega data de checkpoint — o projeto entra
+como `• nome (N%)` (`prompts/system.js:716`). A data só existiu UMA vez no contexto, em 11/09,
+quando o Leo perguntou do recital e a skill `consultar-projeto` montou o bloco. Desde então foram
+**28 menções em 20 dias**, cada uma recalculando o prazo a partir da mensagem anterior do próprio
+TOM. Telefone sem fio consigo mesmo: acerta enquanto a fala anterior tem a data absoluta, erra
+quando a anterior só tinha "amanhã".
+
+Regra: **quando o TOM repete um fato por dias, procure a ÚLTIMA vez que esse fato esteve no
+contexto vindo do banco.** Se foi há semanas, o fato está sendo carregado pelo histórico — e o
+conserto não é guard de data, é decidir se o fato deve entrar no contexto (ou sair da fala).
+É a porta 1:1 da família `GROUPCHAT-CLOSING-EMABERTO-CONFAB` (19/06).
+
+### ETAPA 2 — os dois achados abertos já tinham conserto em produção, e o acervo não sabia
+
+**Ocorrência:** 1 (01/10).
+
+`ae5f4b42` (alto) e `3b33aa68` foram corrigidos em `35e58476` (30/09 19:20 BRT) por uma sessão
+fora do ciclo de governança — o commit cita os dois achados pelo id — e nenhum KI foi gravado,
+então os dois amanheceram `confirmado` com nota "NÃO corrigido". O briefing contou o alto como
+aberto. Custo: uma prova de cada (barata, as funções são puras). Proposta: o `gov-runner` lista,
+no início da rodada, os achados abertos cujo id (8 hex) aparece em `git log --since=7.days`; é
+um `grep` e evita reinvestigar o que já foi consertado.
