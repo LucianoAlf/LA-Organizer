@@ -3019,3 +3019,36 @@ então os dois amanheceram `confirmado` com nota "NÃO corrigido". O briefing co
 aberto. Custo: uma prova de cada (barata, as funções são puras). Proposta: o `gov-runner` lista,
 no início da rodada, os achados abertos cujo id (8 hex) aparece em `git log --since=7.days`; é
 um `grep` e evita reinvestigar o que já foi consertado.
+
+### ETAPA 3 — o mecanismo existia só para AMPLIAR a janela; faltava o avesso, dentro dela
+
+**Ocorrência:** 1 (02/10), e é a correção da rodada.
+
+`perguntaFoiAUltimaFala` (10/09) aceita o "sim" depois dos 20 min quando a última fala do TOM era
+a pergunta. O caso inverso não tinha regra: **dentro** dos 20 min, o "sim" amarrava na intent
+aberta mesmo depois de a pessoa mudar de assunto e o TOM propor outra coisa. Rafinha 01/10 13:26:
+"Isso aí" aos 5 lembretes foi amarrado à pergunta da foto, aberta às 13:19. Como a intent não tinha
+executor, o ramo proibitivo mandou o LLM negar ("Confirmei a foto aqui, mas não ficou gravado").
+
+Medido antes de embarcar: 9 de 37 confirmações sem executor em 90 dias chegaram com a conversa já
+em outro assunto. Em 8 delas a pessoa respondia à fala nova, e a 9ª citava a pergunta, que continua
+amarrando por citação. O recorte ficou só no ramo proibitivo porque ali o "sim" amarrado não executa
+nada, só nega. Nas famílias com executor (fatura, recado), a pessoa costuma corrigir no meio e
+depois confirmar a mesma coisa. Medido: são a maioria dos 33 "moved-on" confirmados, e lá a regra
+quebraria fluxo bom.
+
+🔑 Regra: **quando um mecanismo de janela tem exceção para um lado, pergunte se falta o avesso.**
+Uma janela temporal que só cresce por evidência nunca encolhe por evidência.
+
+### ETAPA 1 — o `confere-numero` emitiu o 5º alarme falso, e no próprio relatório do agente
+
+**Ocorrência:** 1 (02/10). Trava de commits: `src/lib/confere-numero.js` tem 4 commits em 60 dias.
+
+O relatório de 01/10 escreveu "Os 3 achados abertos foram fechados", o que era verdade. O rodapé
+acusou "o texto diz 3, a fonte tem 0" e o auditor abriu achado de confabulação em cima disso. A
+âncora de totalidade `abertos` não distingue "estavam abertos" de "estão abertos". Esta é a 5ª
+porta de alarme falso da mesma trava (KIs `GOVAGENT-CONFERE-*`, 15/08, 16/08 e 19/08 ×2).
+
+Não remendei. Cada porta foi fechada por sintaxe e o escopo de uma contagem é semântico, como já
+dizia o comentário de 19/08. Até haver decisão, a defesa prática fica do lado de quem escreve:
+**no relatório, não escreva "N achados abertos" para falar dos que você fechou.**
