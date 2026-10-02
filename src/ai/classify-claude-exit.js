@@ -33,7 +33,10 @@ function classifyClaudeExit(code, stdout, stderr) {
   // AUTH primeiro (mais específico + acionável): token OAuth morto/expirado/revogado, 401,
   // "please run /login". Não se cura sozinho → a Sentinela paga o dono na hora (re-login).
   // Incidente 20/06: refresh token morreu → 401 das 09h às 22h, TOM ~13h no Codex sem alerta.
-  if (/\b401\b|invalid[ _-]?authentication|authentication_error|\bunauthorized\b|oauth[^a-z]{0,12}(?:token)?[^a-z]{0,12}(?:expired|revoked|invalid)|token (?:expired|revoked|has expired)|invalid api key|invalid bearer|not (?:logged in|authenticated)|please (?:run )?\/?login|run \/login|login (?:expired|required)|credentials? (?:expired|invalid|revoked)/.test(probe)) {
+  // 01/10: "Failed to authenticate: OAuth session expired and could not be refreshed" caía em
+  // exit_unavailable ("session" entre oauth e expired furava o regex) → a Sentinela tratou como
+  // passageiro: avisou 35 min depois, sem o comando de re-login, e o TOM ficou ~7h no Codex.
+  if (/failed to authenticate|oauth[^.]{0,40}(?:expired|revoked|invalid)|could not be refreshed|\b401\b|invalid[ _-]?authentication|authentication_error|\bunauthorized\b|oauth[^a-z]{0,12}(?:token)?[^a-z]{0,12}(?:expired|revoked|invalid)|token (?:expired|revoked|has expired)|invalid api key|invalid bearer|not (?:logged in|authenticated)|please (?:run )?\/?login|run \/login|login (?:expired|required)|credentials? (?:expired|invalid|revoked)/.test(probe)) {
     kind = 'exit_auth';
   } else if (/rate_limit_error|rate[ _-]?limit|too many requests|\b429\b/.test(probe)) {
     kind = 'exit_rate_limit';

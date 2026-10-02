@@ -91,3 +91,11 @@ test('auth NÃO captura overloaded/rate-limit (precedência correta)', () => {
   // invalid_request_error (400) não é auth
   assert.strictEqual(classifyClaudeExit(1, 'invalid_request_error: bad param', '').kind, 'exit');
 });
+
+test('auth: "OAuth session expired and could not be refreshed" (incidente 01/10) → exit_auth', () => {
+  const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Failed to authenticate: OAuth session expired and could not be refreshed' });
+  assert.strictEqual(classifyClaudeExit(1, stdout, '').kind, 'exit_auth');
+});
+test('auth tem precedência mesmo com 5xx no mesmo texto', () => {
+  assert.strictEqual(classifyClaudeExit(1, 'Failed to authenticate. API Error: 503 service unavailable', '').kind, 'exit_auth');
+});
