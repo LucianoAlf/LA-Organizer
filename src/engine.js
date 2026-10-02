@@ -11859,7 +11859,26 @@ async function processMessage(phone, text, raw = {}) {
         // guarda a pergunta (que identifica a superfície), pra priorizar o staging por dado.
         // Cruzamento: CONFIRM_NOEXEC alto + CHOKEPOINT confab:unknown baixo = Camada 1 pegou
         // (dano virou fricção); ambos altos = o LLM ainda mente e o staging é urgente.
-        if (!hasConcrete) {
+        // CONFIRM-NOEXEC-ASSUNTO-MUDOU (Rafinha 01/10, achado 97588478): no ramo proibitivo o
+        // "sim" só serve pra mandar o LLM negar. Se a pessoa já mudou de assunto e o TOM propôs
+        // outra coisa, o "sim" é da fala nova — não amarra: fecha a intent velha e deixa o turno
+        // seguir normal. Citação explícita da pergunta (_citada) continua amarrando.
+        let _assuntoMudou = false;
+        if (!hasConcrete && !_liberaCriacao && !_liberaCredencial && !_liberaRecado && !_citada) {
+          try {
+            const { conversaSeguiuOutroAssunto } = require('./lib/confirmacao-atrasada');
+            const { data: _hist } = await supabase.from('conversation_history')
+              .select('direction, content, created_at').eq('collaborator_id', collab.id)
+              .gt('created_at', target.asked_at).order('created_at', { ascending: true }).limit(40);
+            _assuntoMudou = conversaSeguiuOutroAssunto({ pergunta: target.question_text, askedAt: target.asked_at, historico: _hist || [] });
+          } catch (e) { console.warn('[PendingIntents] checagem de assunto falhou (segue amarrando):', e.message); }
+        }
+        if (_assuntoMudou) {
+          _pendingIntentToResolve = { intent: target, resolution: 'superseded' };
+          try { await logMarker(collab.id, 'CONFIRM_ASSUNTO_MUDOU', 'skipped', `kind=${target.kind}`, String(target.question_text || '').slice(0, 200)); } catch (_) { /* telemetria */ }
+          console.log(`[PendingIntents] assunto mudou desde a pergunta — "sim" não amarra (intent=${target.id.slice(0, 8)})`);
+        }
+        if (!hasConcrete && !_assuntoMudou) {
           try {
             // CONFIRM_NOEXEC segue contando SÓ o que continua bloqueado, pra série histórica
             // (15 casos de 16/07 a 07/08) permanecer comparável e CAIR quando o gate pegar.
@@ -11880,8 +11899,10 @@ async function processMessage(phone, text, raw = {}) {
           } catch (_) { /* telemetria nunca quebra o turno */ }
         }
         const ctxHint = `\n\n[CONTEXTO INTERNO — não verbalize ao usuário]\nVocê tinha aberto uma intent (${target.kind}) com a pergunta: "${(target.question_text || '').slice(0, 200)}".\nPayload pendente: ${payloadStr}\nO usuário CONFIRMOU. ${markerRule}`;
-        text = String(text || '') + ctxHint;
-        console.log(`[PendingIntents] auto-resolve YES — intent=${target.id.slice(0,8)} kind=${target.kind}`);
+        if (!_assuntoMudou) {
+          text = String(text || '') + ctxHint;
+          console.log(`[PendingIntents] auto-resolve YES — intent=${target.id.slice(0,8)} kind=${target.kind}`);
+        }
       } else if (userConfirm === 'no') {
         _pendingIntentToResolve = { intent: target, resolution: 'denied' };
         console.log(`[PendingIntents] auto-resolve NO — intent=${target.id.slice(0,8)} kind=${target.kind}`);

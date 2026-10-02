@@ -38,4 +38,27 @@ function perguntaFoiAUltimaFala({ pergunta, ultimaFala, askedAt, agoraMs = Date.
   return u.startsWith(cabeca) || u.includes(cabeca);
 }
 
-module.exports = { perguntaFoiAUltimaFala, MAX_HORAS };
+// CONFIRM-NOEXEC-ASSUNTO-MUDOU (Rafinha 01/10 13:26 BRT, achado 97588478) — o avesso da regra
+// acima, DENTRO da janela de 20 min. A Rafinha mudou de assunto depois da pergunta da foto, o TOM
+// propôs outra coisa e o "Isso aí" dela foi amarrado à foto; o ramo sem executor mandou o LLM negar
+// ("Confirmei a foto aqui, mas na verdade isso não ficou gravado"). Medido em 90 dias: 9 de 37
+// confirmações sem executor chegaram assim, e em 8 a pessoa respondia à fala mais recente.
+// Só vale quando a PESSOA falou no meio (ritual sozinho não muda de assunto) e a última fala do TOM
+// não é a pergunta. `historico` = conversation_history depois da pergunta, em ordem, com a fala
+// atual por último. Fail-closed: sem histórico, false (comportamento de antes).
+function conversaSeguiuOutroAssunto({ pergunta, askedAt, historico } = {}) {
+  const h = Array.isArray(historico) ? historico : [];
+  const t0 = Date.parse(askedAt);
+  if (!Number.isFinite(t0) || !h.length) return false;
+  const depois = h.filter((m) => Date.parse(m.created_at) > t0);
+  const atual = depois[depois.length - 1];
+  if (!atual || atual.direction !== 'inbound') return false;
+  const antes = depois.slice(0, -1);
+  if (!antes.some((m) => m.direction === 'inbound')) return false;
+  const falas = antes.filter((m) => m.direction === 'outbound');
+  const ultima = falas[falas.length - 1];
+  if (!ultima) return false;
+  return !perguntaFoiAUltimaFala({ pergunta, ultimaFala: ultima.content, askedAt, agoraMs: Date.parse(atual.created_at) });
+}
+
+module.exports = { perguntaFoiAUltimaFala, conversaSeguiuOutroAssunto, MAX_HORAS };
