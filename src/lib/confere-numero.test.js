@@ -1,7 +1,7 @@
 // src/lib/confere-numero.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { conferirNumerosAfirmados, extrairAfirmacoes } = require('./confere-numero');
+const { conferirNumerosAfirmados, extrairAfirmacoes, linhaDoAcervo } = require('./confere-numero');
 
 // GOVAGENT-CONFERE-ESCOPO-ABERTO (medido 19/08) — a fonte de `achados` é o acervo GLOBAL
 // (status novo+confirmado). O relatório, porém, escopa de todo jeito que a prosa permite:
@@ -19,14 +19,26 @@ test('ESCOPO: "(23 achados)" abstém — recorte por parêntese (19/08)', () => 
   const r = conferirNumerosAfirmados('o maior grupo do acervo (23 achados) não dá pra provar', { achados: 157 });
   assert.strictEqual(r.divergiu, false);
 });
-test('ESCOPO: "10 achados no acervo" CONFERE — incidente de 10/08 segue coberto', () => {
-  const r = conferirNumerosAfirmados('Fechei 10 achados no acervo.', { achados: 11 });
-  assert.strictEqual(r.divergiu, true);
+// 02/10 (5º alarme falso): prosa não confere mais — só o rótulo "Acervo:" no início da linha.
+test('SÓ CAMPO: "Os 3 achados abertos foram fechados" abstém (relatório real de 01/10)', () => {
+  const r = conferirNumerosAfirmados('Os 3 achados abertos foram fechados.', { achados: 0 });
+  assert.strictEqual(r.divergiu, false);
+  assert.deepStrictEqual(r.abstidas, [{ chave: 'achados', n: 3 }]);
+});
+test('SÓ CAMPO: "10 achados no acervo" em prosa abstém', () => {
+  assert.strictEqual(conferirNumerosAfirmados('Fechei 10 achados no acervo.', { achados: 11 }).divergiu, false);
+  assert.strictEqual(conferirNumerosAfirmados('São 10 achados abertos.', { achados: 11 }).divergiu, false);
+});
+test('SÓ CAMPO: rótulo "Acervo aberto agora: N" confere (incidente de 10/08)', () => {
+  const r = conferirNumerosAfirmados('Rodada fechada.\n*Acervo aberto agora:* 10', { achados: 11 });
   assert.deepStrictEqual(r.conflitos, [{ chave: 'achados', afirmado: 10, real: 11 }]);
 });
-test('ESCOPO: "10 achados abertos" CONFERE — adjetivo de totalidade', () => {
-  const r = conferirNumerosAfirmados('São 10 achados abertos.', { achados: 11 });
-  assert.strictEqual(r.divergiu, true);
+test('linhaDoAcervo: total do banco; fonte falhou → vazio', () => {
+  assert.match(linhaDoAcervo(0), /Acervo aberto agora \(contado no banco\): 0/);
+  assert.strictEqual(linhaDoAcervo(null), '');
+});
+test('a linha do runner, se reconferida, bate com a própria fonte', () => {
+  assert.strictEqual(conferirNumerosAfirmados(linhaDoAcervo(7), { achados: 7 }).divergiu, false);
 });
 test('ESCOPO: corrigidos segue conferindo sem âncora — a fonte dele já é o ciclo', () => {
   const r = conferirNumerosAfirmados('*Correção (1, dentro do teto):* CHOKEPOINT...', { corrigidos: 0 });
@@ -38,14 +50,14 @@ test('ESCOPO: corrigidos segue conferindo sem âncora — a fonte dele já é o 
 // número que o agente afirma — a trava textual não pega, porque ele não declara cegueira,
 // simplesmente afirma errado com confiança.
 test('acusa divergência entre o afirmado e a fonte', () => {
-  const r = conferirNumerosAfirmados('Fechei o ciclo: 10 achados no acervo.', { achados: 11 });
+  const r = conferirNumerosAfirmados('Fechei o ciclo.\nAcervo: 10 achados.', { achados: 11 });
   assert.strictEqual(r.divergiu, true);
   assert.match(r.texto, /11/);
   assert.match(r.texto, /confere/i);
 });
 
 test('bate com a fonte → texto intacto', () => {
-  const t = 'Fechei o ciclo: 11 achados no acervo.';
+  const t = 'Fechei o ciclo.\nAcervo: 11 achados.';
   const r = conferirNumerosAfirmados(t, { achados: 11 });
   assert.strictEqual(r.divergiu, false);
   assert.strictEqual(r.texto, t);
@@ -65,12 +77,12 @@ test('fonte indisponível NÃO vira conferido', () => {
 // ou um recorte, e a fonte só sabe medir o acervo. As frases ganharam a âncora para seguirem
 // testando o que sempre testaram (filtro de ruído e cobertura das formas), não o escopo.
 test('não confunde data, dinheiro, percentual e hora com contagem', () => {
-  const achados = extrairAfirmacoes('Em 13/08 gastei R$ 250,00 (12% do teto) às 14h. Total: 3 achados.');
+  const achados = extrairAfirmacoes('Em 13/08 gastei R$ 250,00 (12% do teto) às 14h.\nAcervo: 3 achados.');
   assert.deepStrictEqual(achados.map((a) => a.n), [3]);
 });
 
 test('pega as formas comuns: "N achados", "corrigi N", "N corrigidos"', () => {
-  assert.strictEqual(extrairAfirmacoes('7 achados no acervo').length, 1);
+  assert.strictEqual(extrairAfirmacoes('Acervo: 7 achados').length, 1);
   assert.strictEqual(extrairAfirmacoes('corrigi 2 known issues')[0].n, 2);
   assert.strictEqual(extrairAfirmacoes('2 corrigidos hoje')[0].n, 2);
 });
@@ -110,7 +122,7 @@ test('continua acusando o total afirmado sem recorte', () => {
 });
 
 test('recorte não contamina outra afirmação no mesmo texto', () => {
-  const r = conferirNumerosAfirmados('Sobraram 65 achados de frustration. Total: 10 achados.', { achados: 159 });
+  const r = conferirNumerosAfirmados('Sobraram 65 achados de frustration.\nAcervo: 10 achados.', { achados: 159 });
   assert.strictEqual(r.divergiu, true);
   assert.strictEqual(r.conflitos.length, 1);
   assert.strictEqual(r.conflitos[0].afirmado, 10);

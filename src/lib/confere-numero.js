@@ -19,6 +19,7 @@ const RUIDO = /(?:\d{1,2}\/\d{1,2}|R\$\s*[\d.,]+|\d+\s*%|\d{1,2}\s*h\b|\d{1,2}:\
 const FORMAS = [
   { chave: 'achados', re: /(\d+)\s+achad[oa]s?\b/gi },
   { chave: 'achados', re: /\bachad[oa]s?:\s*(\d+)/gi },
+  { chave: 'achados', re: /\bacervo(?:\s+aberto)?(?:\s+agora)?\s*:\s*\**\s*(\d+)/gi },
   { chave: 'corrigidos', re: /(\d+)\s+corrigid[oa]s?\b/gi },
   { chave: 'corrigidos', re: /\bcorrigi\s+(\d+)/gi },
   { chave: 'corrigidos', re: /(\d+)\s+known\s+issues?\b/gi },
@@ -74,9 +75,28 @@ function _temAncoraDeTotalidade(antes, depois) {
   return !!a && TOTALIDADE.test(a[1]);
 }
 
-/** Decide se a afirmação tem fonte comparável. `achados` exige âncora; `corrigidos` só evita recorte. */
-function _confereEsta(chave, antes, depois) {
-  if (chave === 'achados') return _temAncoraDeTotalidade(antes, depois);
+// GOVAGENT-CONFERE-ACHADOS-SO-CAMPO (02/10, 5º alarme falso; decisão: só campo estruturado).
+// "Os 3 achados abertos foram fechados" casou a âncora "abertos" e virou "3 abertos agora"
+// contra a fonte 0. A âncora por palavra (15/08, 19/08) é adivinhar escopo por regex — cada
+// remendo abriu outra porta. Agora `achados` só confere no RÓTULO que abre a linha
+// ("Acervo: 10 achados", "Acervo aberto agora: 0"); prosa abstém. O total verdadeiro sai
+// do próprio runner (linhaDoAcervo), contado no banco — o incidente de 10/08 (somou 1+9=10,
+// eram 11) fica visível ao lado do número do agente, sem a trava precisar ler prosa.
+const ROTULO_ACERVO = /(?:^|\n)[\s*_•\-📊]*acervo(?:\s+aberto)?(?:\s+agora)?\s*:\s*\**\s*$/iu;
+const INICIO_DE_LINHA = /(?:^|\n)[\s*_•\-📊]*$/u;
+function _rotuloDeAcervo(antes, casado) {
+  return ROTULO_ACERVO.test(antes) || (/^acervo/i.test(casado || '') && INICIO_DE_LINHA.test(antes));
+}
+
+/** Linha determinística do runner com o total contado no banco; '' se a fonte falhou. Pura. */
+function linhaDoAcervo(n) {
+  if (n == null || !Number.isFinite(n)) return '';
+  return `📊 _Acervo aberto agora (contado no banco): ${n}_`;
+}
+
+/** Decide se a afirmação tem fonte comparável. `achados` exige rótulo; `corrigidos` só evita recorte. */
+function _confereEsta(chave, antes, depois, casado) {
+  if (chave === 'achados') return _rotuloDeAcervo(antes, casado);
   return !_ehRecorte(depois);
 }
 
@@ -99,7 +119,7 @@ function _separarAfirmacoes(texto) {
       if (vistos.has(k)) continue;
       vistos.add(k);
       // Subconjunto/recorte: a fonte não sabe medir esse universo — abstém em vez de acusar.
-      if (!_confereEsta(f.chave, t.slice(0, m.index), t.slice(m.index + m[0].length))) {
+      if (!_confereEsta(f.chave, t.slice(0, m.index), t.slice(m.index + m[0].length), m[0])) {
         abstidas.push({ chave: f.chave, n });
         continue;
       }
@@ -152,4 +172,4 @@ function conferirNumerosAfirmados(texto, fontes = {}) {
   };
 }
 
-module.exports = { conferirNumerosAfirmados, extrairAfirmacoes };
+module.exports = { conferirNumerosAfirmados, extrairAfirmacoes, linhaDoAcervo, _temAncoraDeTotalidade };

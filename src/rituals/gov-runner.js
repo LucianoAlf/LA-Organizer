@@ -164,7 +164,7 @@ async function main() {
       return count || 0;
     } catch (_) { return 0; }
   };
-  const { conferirNumerosAfirmados } = require('../lib/confere-numero');
+  const { conferirNumerosAfirmados, linhaDoAcervo } = require('../lib/confere-numero');
   const { tirarFalaDeRestart } = require('../lib/restart-so-do-runner');
   const { contarCorrigidosDesde, contarAcervoAberto } = require('../lib/confere-fontes');
 
@@ -199,7 +199,8 @@ async function main() {
     const cegos = await contarCegueira(cicloInicio);
     const cg = rebaixarNadaNovoComCegueira(g.texto, cegos);
     if (cg.rebaixou) console.log(`[GovRunner] relatorio rebaixado: ${cegos} conversa(s) que a auditoria NAO conseguiu ler`);
-    const c = conferirNumerosAfirmados(cg.texto, await fontesDeControle());
+    const fontes = await fontesDeControle();
+    const c = conferirNumerosAfirmados(cg.texto, fontes);
     if (c.divergiu) {
       console.log(`[GovRunner] CONFERE NÃO BATEU: ${c.conflitos.map((x) => `${x.chave} ${x.afirmado}≠${x.real}`).join(' · ')}`);
     }
@@ -210,7 +211,10 @@ async function main() {
     if (c.abstidas && c.abstidas.length) {
       console.log(`[GovRunner] confere ABSTEVE (recorte sem fonte): ${c.abstidas.map((x) => `${x.chave}=${x.n}`).join(' · ')}`);
     }
-    return postOpsResult(supabase, grupo, c.texto);
+    // 02/10: o total do acervo sai daqui, contado — não da prosa do agente (GOVAGENT-CONFERE-ACHADOS-SO-CAMPO).
+    // Só no relatório final (o que fala de rodada/acervo); avisos curtos não ganham rodapé.
+    const rodape = /acervo|rodada|achado/i.test(c.texto) ? linhaDoAcervo(fontes.achados) : '';
+    return postOpsResult(supabase, grupo, rodape ? `${c.texto}\n\n${rodape}` : c.texto);
   };
   instalarAvisoDeInterrupcao(postar);
   const force = process.argv.includes('--force');
