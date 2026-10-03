@@ -3052,3 +3052,28 @@ porta de alarme falso da mesma trava (KIs `GOVAGENT-CONFERE-*`, 15/08, 16/08 e 1
 Não remendei. Cada porta foi fechada por sintaxe e o escopo de uma contagem é semântico, como já
 dizia o comentário de 19/08. Até haver decisão, a defesa prática fica do lado de quem escreve:
 **no relatório, não escreva "N achados abertos" para falar dos que você fechou.**
+
+### ETAPA 3 — o guard de recado julgava texto que o ENGINE escreveu depois de enviar
+
+**Ocorrência:** 1 (03/10), e é a correção da rodada. 3ª porta da família do veto cego
+(05/08 Leo, 06/09 Rafinha), com raiz diferente das duas.
+
+Rafinha, 02/10 16:18. O `INVENTORY_ACTION maintenance` mandou o card MANUT-E6D5 pro Luciano e
+anexou `🔧 Pedido enviado para *Luciano Alf* aprovar`. O `enforceSendHonesty` não achou
+`coordination_requests` e trocou a resposta inteira por "NÃO avisei ninguém". O Luciano aprovou
+2min36s depois. As duas correções anteriores somavam LEDGERS ao veto. Esta não precisava de
+ledger: a linha é do engine, e quem a escreve acabou de enviar. Agora o envio fica registrado em
+`_metrics.envio_deterministico` (canal `engine_turno`). O teste faz o censo dos templates
+(`reply = ...\`...\`` que `lineIsSendClaim` casa) e encontrou 3. Os dois de aprovação de projeto
+tinham o mesmo furo, ainda sem incidente.
+
+🔑 Regra: **antes de dar mais evidência a um guard de fala, confira se o texto que ele julga é
+fala do LLM.** Linha determinística montada depois do efeito é verdadeira por construção.
+
+### ETAPA 1 — a oferta condicional voltou pela 3ª porta: trava respeitada
+
+**Ocorrência:** 1 (03/10). No mesmo turno da Rafinha (16:21), *"Confirma esse que eu registro o
+defeito…?"* foi rebaixada por `downgradeEmptyPromise`. A reprodução de hoje sai byte a byte igual.
+É a 3ª porta da oferta condicional (16/08, 31/08), e `promise-honesty.js` tem 9 commits em 60 dias.
+Não remendei. Faltam na porta de cima os vetos de pergunta/`awaitingConfirm` que a de baixo tem,
+e isso é a fronteira de 09/09. O caso foi ao grupo como pergunta de desenho.
