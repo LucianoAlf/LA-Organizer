@@ -43,6 +43,7 @@ test('"paro de te cobrar" e "vou parar de cobrar" são promessa; "não vou parar
 
 const ENG = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'engine.js'), 'utf8');
 test('engine: o guard recebe se houve marcador tentado (é o que escolhe a nota)', () => {
-  assert.ok(ENG.includes('downgradeEmptyPromise(reply, { markerAttempted: !!_metrics.marker_attempted })'));
-  assert.ok(ENG.includes('downgradeEmptyPromise(reply, { restatesRecentWrite: true, markerAttempted: !!_metrics.marker_attempted })'));
+  // DECISAO-UNICA-DO-VETO-DE-PERGUNTA (03/10): o awaitingConfirm entrou ao lado do markerAttempted.
+  assert.ok(ENG.includes('downgradeEmptyPromise(reply, { markerAttempted: !!_metrics.marker_attempted, awaitingConfirm: !!_metrics.awaiting_user_confirm })'));
+  assert.ok(ENG.includes('downgradeEmptyPromise(reply, { restatesRecentWrite: true, markerAttempted: !!_metrics.marker_attempted, awaitingConfirm: !!_metrics.awaiting_user_confirm })'));
 });

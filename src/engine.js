@@ -58,6 +58,8 @@ const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply, restatesRecentWrite } = require('./lib/optimistic-confirm');
 const { ecoDoRelatoDoUsuario } = require('./lib/eco-relato-usuario');
 const { linhasAcusadasSaoPergunta } = require('./lib/pergunta-nao-e-afirmacao');
+// DECISAO-UNICA-DO-VETO-DE-PERGUNTA (03/10): a régua de "é pergunta, não acusa" das DUAS portas.
+const { vetoDePergunta } = require('./lib/veto-pergunta');
 const { pedidoDeNadaARegistrar } = require('./lib/nada-a-registrar');
 const { normalizarAcaoDeTarefa } = require('./lib/acao-de-tarefa');
 const { fundeBlocosRepetidos } = require('./lib/funde-blocos-repetidos');
@@ -16120,7 +16122,10 @@ Output AGORA, apenas o marker:`;
           // contradição). AUTO_RETRY_DUP_EXISTS seta auto_retry_succeeded (estado desejado já
           // existe) → NÃO rebaixa (lição 27/06, confab inverso).
           if (!_metrics.auto_retry_succeeded) {
-            let _pd = downgradeEmptyPromise(reply, { markerAttempted: !!_metrics.marker_attempted });
+            // DECISAO-UNICA-DO-VETO-DE-PERGUNTA (Rafinha 02/10 19:21 UTC): awaitingConfirm entra aqui
+            // pelo MESMO opt da porta de baixo. O bloco já é pulado com awaiting_user_confirm, mas o veto
+            // passa a morar na decisão (veto-pergunta.js), não na coincidência do gate de fora.
+            let _pd = downgradeEmptyPromise(reply, { markerAttempted: !!_metrics.marker_attempted, awaitingConfirm: !!_metrics.awaiting_user_confirm });
             // PROMISE-NOMARKER-CEGO-PRA-ESCRITA-RECENTE (Rafinha 08/09 11:11 BRT): esta porta
             // roda ANTES do enforceNoMarkerHonesty e reescreve o `reply` — a porta de baixo
             // nunca vê o original, então nenhum veto dela alcança este ponto. Reafirmar escrita
@@ -16140,7 +16145,7 @@ Output AGORA, apenas o marker:`;
                 _pdRestates = restatesRecentWrite(reply, _pdRw);
               } catch (_) {}
               if (_pdRestates) {
-                _pd = downgradeEmptyPromise(reply, { restatesRecentWrite: true, markerAttempted: !!_metrics.marker_attempted });
+                _pd = downgradeEmptyPromise(reply, { restatesRecentWrite: true, markerAttempted: !!_metrics.marker_attempted, awaitingConfirm: !!_metrics.awaiting_user_confirm });
                 console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → VETADO (reafirma escrita recente)`);
               }
             }
@@ -16151,8 +16156,11 @@ Output AGORA, apenas o marker:`;
               // nao conseguia provar nem refutar conserto nenhum. Ver PROVA-CURTA-DEMAIS.
               const _origPd = String(reply).slice(0, 800);
               reply = _pd.reply;
-              console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → rebaixado (promessa sem persistência)`);
-              try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:promise_nomarker', _origPd, { rawLimit: 800 }); } catch (_) {}
+              // PERGUNTA-NAO-MANDA-REPETIR (Rafinha 01/10): `neutraliza` = saiu a frase falsa, ficaram as
+              // perguntas, e a nota não manda repetir. Motivo próprio no log pra governança separar os dois.
+              const _pdNeutraliza = _pd.modo === 'neutraliza';
+              console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → ${_pdNeutraliza ? 'neutralizado (afirmação falsa sai, pergunta fica)' : 'rebaixado (promessa sem persistência)'}`);
+              try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', _pdNeutraliza ? 'confab:promise_nomarker_pergunta' : 'confab:promise_nomarker', _origPd, { rawLimit: 800 }); } catch (_) {}
             }
           }
         }
@@ -16507,7 +16515,10 @@ Output AGORA, apenas o marker:`;
       // + a linha acusada é PERGUNTA/proposta ('Salvo como X ou Y?', 'Fechando: … Confirma?') — ver lib/pergunta-nao-e-afirmacao.js.
       // + a pessoa pediu pra NÃO registrar e o TOM só disse que nada mudou ('deixa tudo em aberto' →
       //   'nenhuma foi marcada como paga', achado 3b33aa68 Matheus 28/09) — ver lib/nada-a-registrar.js.
+      // + DECISAO-UNICA-DO-VETO-DE-PERGUNTA (03/10): a mesma régua da porta de cima, por FRASE acusada —
+      //   pedido de confirmação sem "?" ("Confirma que eu registro…") também não é afirmação. Ver lib/veto-pergunta.js.
       reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply, { relatosRecentes: _relatosRecentes }) || linhasAcusadasSaoPergunta(reply)
+        || vetoDePergunta(reply, { ehAcusada: (f) => !!(hasCompletionClaim(f) || hasWeakCompletionClaim(f)) }).veto
         || pedidoDeNadaARegistrar(stripReplyScaffold(String(text || '')).userText, reply),
     }, { meta: true });
     // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08) — este é O ponto que cega o maior cluster do

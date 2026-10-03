@@ -86,6 +86,19 @@ const NEGACAO_ANTES_RE =
 // bullet abriria a porta pra mentira embalada em lista.
 const LINHA_DE_LISTA_RE = /^\s*(?:[•▪◦‣·]|[-*+]\s|\d+[.)]\s|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\s*\*)/u;
 
+// PERGUNTA-NAO-MANDA-REPETIR (Rafinha 01/10 16:25 UTC e 02/10 19:21 UTC — a 3ª porta da oferta
+// condicional). Duas notas a mais, para quando o rebaixamento acontece numa fala que AINDA PERGUNTA
+// algo: "Me diz de novo o que você quer que eu faça" logo abaixo de uma pergunta do TOM manda a
+// pessoa se repetir em vez de responder. A afirmação falsa sai do mesmo jeito; a nota só não pede
+// pra repetir — pede a resposta, que é o que destrava a escrita. Sem particípio e sem verbo de
+// conclusão afirmado: a porta de baixo roda DEPOIS sobre este texto e não pode acusar a própria nota.
+// "…que eu sigo", não "…que eu registro": a pergunta que sobra nem sempre é de registro (Clayton 25/09:
+// "Mando pro Luciano? *Sim* ou *não*") — a nota não pode prometer a ação errada.
+const PROMISE_PERGUNTA_DISCLAIMER = '_⚠️ Na real: ainda não registrei nada por aqui — me responde aí em cima que eu sigo._';
+const PROMISE_PERGUNTA_FALHOU_DISCLAIMER = '_⚠️ Na real: deu um problema técnico e ainda não registrei nada — me responde aí em cima que eu tento de novo._';
+
+const { vetoDePergunta, fraseEhPedidoDeConfirmacao, textoTemPergunta } = require('./veto-pergunta');
+
 // Rebaixa promessa comprovadamente vazia: remove a(s) linha(s) de promessa e anexa o aviso
 // honesto (lição Ana 30/06: anexar SEM remover = contradição intra-mensagem). Puro; o engine
 // só chama quando JÁ PROVOU o vazio (actionable + zero markers + retry não persistiu).
@@ -96,9 +109,20 @@ const LINHA_DE_LISTA_RE = /^\s*(?:[•▪◦‣·]|[-*+]\s|\d+[.)]\s|[\u{1F300}-
 // virava "essa ação NÃO foi executada", com as 3 tarefas já no banco havia 4 minutos.
 // O mecanismo que separa reafirmação de promessa já existe desde 19/08 (restatesRecentWrite,
 // optimistic-confirm.js) — o que faltava era estar ligado nesta porta. Opt AUSENTE ⇒ inerte.
-function downgradeEmptyPromise(text, opts = {}) {
+//
+// DECISAO-UNICA-DO-VETO-DE-PERGUNTA (03/10): o veto de pergunta/awaitingConfirm que a porta de
+// baixo tinha e esta não tinha agora vem de UM lugar só (veto-pergunta.js), usado pelas duas.
+// Três saídas, e só elas:
+//   intocado  — nada acusado, ou TODA frase acusada é pedido de confirmação ("Confirma esse que
+//               eu registro…", Rafinha 02/10), ou o turno está em awaitingConfirm;
+//   neutraliza — afirmação/promessa falsa + pergunta de verdade sobrando: sai a frase falsa, ficam
+//               as perguntas, e a nota NÃO manda repetir (Rafinha 01/10);
+//   rebaixa   — afirmação/promessa falsa sem pergunta: exatamente o comportamento de antes.
+// Opts ausentes ⇒ mesmo comportamento de antes em tudo que não é pergunta.
+function decidirPromessaSemMarcador(text, opts = {}) {
   const s = String(text || '');
-  if (opts && opts.restatesRecentWrite) return { reply: s, fired: false };
+  const o = opts || {};
+  if (o.restatesRecentWrite) return { reply: s, fired: false, modo: 'intocado', veto: 'reafirma_escrita' };
   const ehPromessaFrase = (f) => {
     if (OFERTA_CONDICIONAL_RE.test(f) || OFERTA_E_SO_ME_DIZER_RE.test(f)) return false;
     const re = new RegExp(REPLY_PROMISE_RE.source, 'gi');
@@ -109,15 +133,19 @@ function downgradeEmptyPromise(text, opts = {}) {
     }
     return false;
   };
-  const ehPromessa = (t) => {
-    // Item de lista: o TOM está mostrando o que existe, não prometendo agir.
-    if (LINHA_DE_LISTA_RE.test(t)) return false;
-    // VETO POR FRASE (Juliana 14/09): a oferta vetava a LINHA inteira — uma promessa falsa na mesma
-    // linha ("Vou parar de cobrar. Quando quiser…, é só me dizer.") passava protegida por ela.
-    return String(t).split(/(?<=[.!?…])\s+/).some(ehPromessaFrase);
-  };
+  // Item de lista: o TOM está mostrando o que existe, não prometendo agir.
+  const ehAcusada = (frase, linha) => !LINHA_DE_LISTA_RE.test(linha) && ehPromessaFrase(frase);
+  const vp = vetoDePergunta(s, { awaitingConfirm: !!o.awaitingConfirm, ehAcusada });
+  if (vp.veto) return { reply: s, fired: false, modo: 'intocado', veto: vp.motivo };
+  // Frase acusada que é pedido de confirmação fica (veto por FRASE, como a oferta condicional):
+  // só a afirmação/promessa de verdade sai.
+  const fraseCai = (frase, linha) => ehAcusada(frase, linha) && !fraseEhPedidoDeConfirmacao(frase);
+  const SPLIT_FRASE = /(?<=[.!?…])\s+/;
+  // VETO POR FRASE (Juliana 14/09): a oferta vetava a LINHA inteira — uma promessa falsa na mesma
+  // linha ("Vou parar de cobrar. Quando quiser…, é só me dizer.") passava protegida por ela.
+  const linhaCai = (linha) => String(linha).split(SPLIT_FRASE).some((f) => fraseCai(f, linha));
   const linhas = s.split('\n');
-  if (!linhas.some(ehPromessa)) return { reply: s, fired: false };
+  if (!linhas.some(linhaCai)) return { reply: s, fired: false, modo: 'intocado', veto: null };
   // Dropar TODA linha em branco (como era) colapsa também o separador entre duas linhas
   // MANTIDAS. O reply segue daqui para o chokepoint (engine ~13946), que remove a claim junto
   // com o parágrafo dela — sem o separador, o bloco de conteúdo vira parte da claim e some.
@@ -130,18 +158,29 @@ function downgradeEmptyPromise(text, opts = {}) {
   // já pegava escapa.
   const kept = [];
   for (const line of linhas) {
-    if (!ehPromessa(line)) { kept.push(line); continue; }
-    const resto = line.split(/(?<=[.!?…])\s+/).filter((frase) => !ehPromessa(frase)).join(' ').trim();
+    if (!linhaCai(line)) { kept.push(line); continue; }
+    const resto = line.split(SPLIT_FRASE).filter((frase) => !fraseCai(frase, frase)).join(' ').trim();
     if (resto) kept.push(resto);
   }
   const stripped = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  // A pergunta que sobra é medida no texto JÁ limpo: "Registrei tudo, certo?" some inteira e não
+  // deixa pergunta nenhuma — ali a nota é a de sempre.
+  const neutraliza = !!stripped && textoTemPergunta(stripped);
+  // NOTA-MENTE-A-CAUSA (Juliana 14/09): "deu problema técnico" só quando um marcador foi tentado.
+  const nota = neutraliza
+    ? (o.markerAttempted ? PROMISE_PERGUNTA_FALHOU_DISCLAIMER : PROMISE_PERGUNTA_DISCLAIMER)
+    : (o.markerAttempted ? PROMISE_FALHOU_DISCLAIMER : PROMISE_NOMARKER_DISCLAIMER);
   return {
-    // NOTA-MENTE-A-CAUSA (Juliana 14/09): "deu problema técnico" só quando um marcador foi tentado.
-    reply: stripped
-      ? `${stripped}\n\n${opts && opts.markerAttempted ? PROMISE_FALHOU_DISCLAIMER : PROMISE_NOMARKER_DISCLAIMER}`
-      : (opts && opts.markerAttempted ? PROMISE_FALHOU_DISCLAIMER : PROMISE_NOMARKER_DISCLAIMER),
+    reply: stripped ? `${stripped}\n\n${nota}` : nota,
     fired: true,
+    modo: neutraliza ? 'neutraliza' : 'rebaixa',
+    veto: null,
   };
 }
 
-module.exports = { downgradeEmptyPromise, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER, PROMISE_FALHOU_DISCLAIMER, OFERTA_E_SO_ME_DIZER_RE, OFERTA_CONDICIONAL_RE, LINHA_DE_LISTA_RE };
+// Nome antigo, mesmo contrato ({ reply, fired }) — testes e chamadores antigos seguem valendo.
+function downgradeEmptyPromise(text, opts = {}) {
+  return decidirPromessaSemMarcador(text, opts);
+}
+
+module.exports = { downgradeEmptyPromise, decidirPromessaSemMarcador, REPLY_PROMISE_RE, PROMISE_NOMARKER_DISCLAIMER, PROMISE_FALHOU_DISCLAIMER, PROMISE_PERGUNTA_DISCLAIMER, PROMISE_PERGUNTA_FALHOU_DISCLAIMER, OFERTA_E_SO_ME_DIZER_RE, OFERTA_CONDICIONAL_RE, LINHA_DE_LISTA_RE };
