@@ -13286,6 +13286,7 @@ Output AGORA, apenas o marker:`;
         reply = (base ? base + '\n\n' : '') + (r.userMsg || '_não consegui aprovar agora_');
       } else {
         await logMarker(collab.id, 'PROJECT_APPROVE', 'executed', `name:${r.project.name}`, null);
+        _metrics.envio_deterministico = (_metrics.envio_deterministico || 0) + 1; // avisou o criador (veto do SendHonesty)
         const base = parsedAp.cleanText || '';
         reply = base || `✅ *${r.project.name}* aprovado. Avisei quem criou.`;
       }
@@ -13314,6 +13315,7 @@ Output AGORA, apenas o marker:`;
         reply = (base ? base + '\n\n' : '') + (r.userMsg || '_não consegui rejeitar agora_');
       } else {
         await logMarker(collab.id, 'PROJECT_REJECT', 'executed', `name:${r.project.name}`, null);
+        _metrics.envio_deterministico = (_metrics.envio_deterministico || 0) + 1; // avisou o criador (veto do SendHonesty)
         const base = parsedRj.cleanText || '';
         reply = base || `❌ *${r.project.name}* rejeitado. Avisei quem criou.`;
       }
@@ -14761,6 +14763,7 @@ Output AGORA, apenas o marker:`;
                       const _custoStr = p.custo ? ` — R$${p.custo}` : '';
                       const _maintNotif = `🔧 *${userName}* quer registrar manutenção em *${_maintItemNome || 'item'}*${_custoStr}: ${p.descricao || p.tipo || 'sem descrição'}.\n\n*APROVA ${_maintToken}* ou *REJEITA ${_maintToken}*`;
                       try { await whatsapp.sendMessage(_maintApprover.phone, _maintNotif); } catch (_) {}
+                      _metrics.envio_deterministico = (_metrics.envio_deterministico || 0) + 1; // veto do SendHonesty (Rafinha 02/10)
                       reply = (reply ? reply + '\n\n' : '') + `🔧 Pedido enviado para *${_maintApprover.full_name}* aprovar. Você será avisado.`;
                     }
                   }
@@ -15094,7 +15097,11 @@ Output AGORA, apenas o marker:`;
       // o recado às 17:13:04, o TOM confirmou às 17:13:05 e 85s depois o guard anexou "nenhuma
       // mensagem chegou a ser enviada". A linha do broadcast fica sob o DESTINATÁRIO, então a
       // busca é pela assinatura do template com o ator, não por collaborator_id.
-      const _sendEvidence = { coordination_request: 0, task_return: 0 };
+      // COORD-HONESTY-NEGA-ENVIO-DO-PROPRIO-ENGINE (Rafinha 02/10 16:18:05): o pedido de
+      // manutenção foi pro Luciano às 16:18:03 e o engine anexou "🔧 Pedido enviado para *Luciano
+      // Alf* aprovar". O guard trocou a resposta inteira por "NÃO avisei ninguém". Texto que o
+      // ENGINE escreve depois de enviar não é fala do LLM: quem enviou registra em _metrics.
+      const _sendEvidence = { coordination_request: 0, task_return: 0, engine_turno: _metrics.envio_deterministico || 0 };
       const _cutoffSend = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
       try {
         const { data: _sentRows } = await supabase
