@@ -97,7 +97,7 @@ const LINHA_DE_LISTA_RE = /^\s*(?:[•▪◦‣·]|[-*+]\s|\d+[.)]\s|[\u{1F300}-
 const PROMISE_PERGUNTA_DISCLAIMER = '_⚠️ Na real: ainda não registrei nada por aqui — me responde aí em cima que eu sigo._';
 const PROMISE_PERGUNTA_FALHOU_DISCLAIMER = '_⚠️ Na real: deu um problema técnico e ainda não registrei nada — me responde aí em cima que eu tento de novo._';
 
-const { vetoDePergunta, fraseEhPedidoDeConfirmacao, textoTemPergunta } = require('./veto-pergunta');
+const { vetoDePergunta, fraseEhPedidoDeConfirmacao, textoTemPergunta, segmentar } = require('./veto-pergunta');
 
 // Rebaixa promessa comprovadamente vazia: remove a(s) linha(s) de promessa e anexa o aviso
 // honesto (lição Ana 30/06: anexar SEM remover = contradição intra-mensagem). Puro; o engine
@@ -140,11 +140,13 @@ function decidirPromessaSemMarcador(text, opts = {}) {
   // Frase acusada que é pedido de confirmação fica (veto por FRASE, como a oferta condicional):
   // só a afirmação/promessa de verdade sai.
   const fraseCai = (frase, linha) => ehAcusada(frase, linha) && !fraseEhPedidoDeConfirmacao(frase);
-  const SPLIT_FRASE = /(?<=[.!?…])\s+/;
   // VETO POR FRASE (Juliana 14/09): a oferta vetava a LINHA inteira — uma promessa falsa na mesma
   // linha ("Vou parar de cobrar. Quando quiser…, é só me dizer.") passava protegida por ela.
-  const linhaCai = (linha) => String(linha).split(SPLIT_FRASE).some((f) => fraseCai(f, linha));
-  const linhas = s.split('\n');
+  // CITACAO-NAO-E-AFIRMACAO (Clayton 25/09): linha e frase vêm de `segmentar`, que corta na
+  // MÁSCARA (miolo de aspas apagado): o detector não lê o rascunho entre aspas, e o corte nunca
+  // cai dentro de uma citação. Sem aspas é o mesmo split de antes, byte a byte.
+  const linhaCai = (L) => L.frases.some((f) => fraseCai(f.mask, L.mask));
+  const linhas = segmentar(s);
   if (!linhas.some(linhaCai)) return { reply: s, fired: false, modo: 'intocado', veto: null };
   // Dropar TODA linha em branco (como era) colapsa também o separador entre duas linhas
   // MANTIDAS. O reply segue daqui para o chokepoint (engine ~13946), que remove a claim junto
@@ -157,9 +159,9 @@ function decidirPromessaSemMarcador(text, opts = {}) {
   // frase e linha de frase única com promessa seguem caindo inteiras: nenhum caso que o guard
   // já pegava escapa.
   const kept = [];
-  for (const line of linhas) {
-    if (!linhaCai(line)) { kept.push(line); continue; }
-    const resto = line.split(SPLIT_FRASE).filter((frase) => !fraseCai(frase, frase)).join(' ').trim();
+  for (const L of linhas) {
+    if (!linhaCai(L)) { kept.push(L.orig); continue; }
+    const resto = L.frases.filter((f) => !fraseCai(f.mask, f.mask)).map((f) => f.orig).join(' ').trim();
     if (resto) kept.push(resto);
   }
   const stripped = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();

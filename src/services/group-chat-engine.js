@@ -1087,7 +1087,11 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   // O `onResidual` fecha o par do raspador: ele arranca, isto REGISTRA. Sem a linha em
   // marker_logs, "nenhum marcador vazou hoje" e "vazou e foi raspado 40 vezes" ficam iguais.
   const residuaisDoTurno = [];
-  const content = buildTomContent(reply, actions, { onResidual: (n) => residuaisDoTurno.push(...n), userText: text });
+  // GRUPO-SENSOR-SEM-PROVA (03/10): a fala ORIGINAL que o chokepoint rebaixou. O CONFAB do grupo só
+  // gravava o id do grupo — no replay de 03/10 nenhum dos 21 disparos de 60 dias tinha o texto que
+  // a porta julgou, e não dava pra dizer quais eram guard certo e quais eram alarme falso.
+  let chokepointAntes = null;
+  const content = buildTomContent(reply, actions, { onResidual: (n) => residuaisDoTurno.push(...n), onChokepoint: (a) => (chokepointAntes = a), userText: text });
   if (residuaisDoTurno.length) {
     try {
       const { error: _e } = await supabase.from('marker_logs').insert({
@@ -1109,6 +1113,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       await supabase.from('marker_logs').insert({
         marker_type: 'CONFAB', result: 'fallback',
         reason: `grupo_claim_sem_marker: ${groupId}`.slice(0, 120),
+        raw_excerpt: chokepointAntes ? String(chokepointAntes).slice(0, 800) : null,
       });
     }
   } catch (_) { /* sensor é best-effort; nunca derruba a resposta */ }
@@ -1236,7 +1241,14 @@ function buildTomContent(rawReply, actions, opts) {
         // ligou só no 1:1). Aqui não há marker tentado-e-rejeitado: ação que falhou cai em
         // hasFailure acima e nunca chega nesta porta.
         const { pedidoDeNadaARegistrar } = require('../lib/nada-a-registrar');
+        // + DECISAO-UNICA-DO-VETO-DE-PERGUNTA / CITACAO-NAO-E-AFIRMACAO (03/10): a MESMA régua das duas
+        // portas do 1:1 (lib/veto-pergunta.js) — pedido de confirmação sem "?" não é afirmação, e claim que
+        // só existe DENTRO de aspas é rascunho/recado, não escrita do TOM. awaitingConfirm não tem par
+        // aqui: ação 'pending'/'ask' já pula esta porta (persistiuOuVaiPersistir).
+        const { vetoDePergunta } = require('../lib/veto-pergunta');
+        const _ocV = require('../lib/optimistic-confirm');
         const relato = isReportedStateClaim(prose) || ecoDoRelatoDoUsuario((opts && opts.userText) || '', prose) || linhasAcusadasSaoPergunta(prose)
+          || vetoDePergunta(prose, { ehAcusada: (f) => !!(_ocV.hasCompletionClaim(f) || _ocV.hasWeakCompletionClaim(f)) }).veto
           || pedidoDeNadaARegistrar((opts && opts.userText) || '', prose);
         if (relato) console.log('[GroupChat] chokepoint VETADO: fala relata estado de terceiro/inferência, não escrita própria');
         prose = enforceNoMarkerHonesty(prose, {
@@ -1249,6 +1261,7 @@ function buildTomContent(rawReply, actions, opts) {
         });
         if (prose !== antes) {
           console.log('[GroupChat] chokepoint DISPAROU e rebaixou a fala');
+          if (opts && typeof opts.onChokepoint === 'function') { try { opts.onChokepoint(antes); } catch (_) {} }
           const _oc = require('../lib/optimistic-confirm');
           String(antes).split(String.fromCharCode(10)).filter((l) => l.trim()).forEach((l) => {
             const forte = _oc.hasCompletionClaim(l);

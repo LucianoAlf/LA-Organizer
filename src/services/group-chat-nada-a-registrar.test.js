@@ -43,5 +43,5 @@ test('grupo: ação que FALHOU no turno não é mascarada pelo veto (a falha ree
 const grupo = fs.readFileSync(path.join(__dirname, 'group-chat-engine.js'), 'utf8');
 test('âncora: porta reportedState do grupo inclui pedidoDeNadaARegistrar(userText, prose)', () => {
   assert.match(grupo, /require\('\.\.\/lib\/nada-a-registrar'\)/);
-  assert.match(grupo, /\|\| linhasAcusadasSaoPergunta\(prose\)\s*\|\| pedidoDeNadaARegistrar\(\(opts && opts\.userText\) \|\| '', prose\);/);
+  assert.match(grupo, /\|\| linhasAcusadasSaoPergunta\(prose\)(?:\s*\|\| vetoDePergunta\(prose, [^\n]*\)\.veto)?\s*\|\| pedidoDeNadaARegistrar\(\(opts && opts\.userText\) \|\| '', prose\);/);
 });

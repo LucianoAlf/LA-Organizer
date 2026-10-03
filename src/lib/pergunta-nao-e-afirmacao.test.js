@@ -49,5 +49,5 @@ const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
 const grupo = fs.readFileSync(path.join(__dirname, '..', 'services', 'group-chat-engine.js'), 'utf8');
 test('ligado no 1:1 e no grupo, somado ao veto de eco', () => {
   assert.match(engine, /reportedState: ecoDoRelatoDoUsuario\([^\n]*\) \|\| linhasAcusadasSaoPergunta\(reply\)(?:\s*\|\| vetoDePergunta\(reply, [^\n]*\)\.veto)?(?:\s*\|\| pedidoDeNadaARegistrar\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply\))?,/);
-  assert.match(grupo, /\|\| linhasAcusadasSaoPergunta\(prose\)(?:\s*\|\| pedidoDeNadaARegistrar\(\(opts && opts\.userText\) \|\| '', prose\))?;/);
+  assert.match(grupo, /\|\| linhasAcusadasSaoPergunta\(prose\)(?:\s*\|\| vetoDePergunta\(prose, [^\n]*\)\.veto)?(?:\s*\|\| pedidoDeNadaARegistrar\(\(opts && opts\.userText\) \|\| '', prose\))?;/);
 });

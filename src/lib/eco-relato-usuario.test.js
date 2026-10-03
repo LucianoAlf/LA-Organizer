@@ -82,7 +82,7 @@ test('1:1: o engine passa a fala DA PESSOA (sem o scaffold de citação) pro det
 
 test('grupo: a fala do membro chega ao buildTomContent e soma ao veto de relato', () => {
   assert.match(grupo, /buildTomContent\(reply, actions, \{ onResidual: [^}]*userText: text \}\)/);
-  assert.match(grupo, /const relato = isReportedStateClaim\(prose\) \|\| ecoDoRelatoDoUsuario\(\(opts && opts\.userText\) \|\| '', prose\)( \|\| linhasAcusadasSaoPergunta\(prose\))?(?:\s*\|\| pedidoDeNadaARegistrar\(\(opts && opts\.userText\) \|\| '', prose\))?;/);
+  assert.match(grupo, /const relato = isReportedStateClaim\(prose\) \|\| ecoDoRelatoDoUsuario\(\(opts && opts\.userText\) \|\| '', prose\)( \|\| linhasAcusadasSaoPergunta\(prose\))?(?:\s*\|\| vetoDePergunta\(prose, [^\n]*\)\.veto)?(?:\s*\|\| pedidoDeNadaARegistrar\(\(opts && opts\.userText\) \|\| '', prose\))?;/);
 });
 
 test('optimistic-confirm.js (em parada por 23 commits em 60 dias) NÃO conhece o detector novo', () => {
