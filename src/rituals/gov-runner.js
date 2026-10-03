@@ -164,7 +164,8 @@ async function main() {
       return count || 0;
     } catch (_) { return 0; }
   };
-  const { conferirNumerosAfirmados, linhaDoAcervo } = require('../lib/confere-numero');
+  const { conferirNumerosAfirmados, linhaDoAcervo, levaRodapeDoAcervo } = require('../lib/confere-numero');
+  let _rodapeAcervoSaiu = false; // uma vez por rodada (03/10 saiu duplicado em 2 mensagens)
   const { tirarFalaDeRestart } = require('../lib/restart-so-do-runner');
   const { contarCorrigidosDesde, contarAcervoAberto } = require('../lib/confere-fontes');
 
@@ -213,7 +214,8 @@ async function main() {
     }
     // 02/10: o total do acervo sai daqui, contado — não da prosa do agente (GOVAGENT-CONFERE-ACHADOS-SO-CAMPO).
     // Só no relatório final (o que fala de rodada/acervo); avisos curtos não ganham rodapé.
-    const rodape = /acervo|rodada|achado/i.test(c.texto) ? linhaDoAcervo(fontes.achados) : '';
+    const rodape = levaRodapeDoAcervo(c.texto, _rodapeAcervoSaiu) ? linhaDoAcervo(fontes.achados) : '';
+    if (rodape) _rodapeAcervoSaiu = true;
     return postOpsResult(supabase, grupo, rodape ? `${c.texto}\n\n${rodape}` : c.texto);
   };
   instalarAvisoDeInterrupcao(postar);

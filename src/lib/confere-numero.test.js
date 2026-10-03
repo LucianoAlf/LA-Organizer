@@ -1,7 +1,7 @@
 // src/lib/confere-numero.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { conferirNumerosAfirmados, extrairAfirmacoes, linhaDoAcervo } = require('./confere-numero');
+const { conferirNumerosAfirmados, extrairAfirmacoes, linhaDoAcervo, levaRodapeDoAcervo } = require('./confere-numero');
 
 // GOVAGENT-CONFERE-ESCOPO-ABERTO (medido 19/08) — a fonte de `achados` é o acervo GLOBAL
 // (status novo+confirmado). O relatório, porém, escopa de todo jeito que a prosa permite:
@@ -126,4 +126,10 @@ test('recorte não contamina outra afirmação no mesmo texto', () => {
   assert.strictEqual(r.divergiu, true);
   assert.strictEqual(r.conflitos.length, 1);
   assert.strictEqual(r.conflitos[0].afirmado, 10);
+});
+
+test('rodapé do acervo: uma vez por rodada (03/10 saiu nas 2 mensagens)', () => {
+  assert.strictEqual(levaRodapeDoAcervo('Rodada de 03/10 concluída', false), true);
+  assert.strictEqual(levaRodapeDoAcervo('Não corrigido de propósito… achado aberto', true), false);
+  assert.strictEqual(levaRodapeDoAcervo('♻️ TOM reiniciado', false), false);
 });

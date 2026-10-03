@@ -88,6 +88,14 @@ function _rotuloDeAcervo(antes, casado) {
   return ROTULO_ACERVO.test(antes) || (/^acervo/i.test(casado || '') && INICIO_DE_LINHA.test(antes));
 }
 
+/**
+ * Decide se ESTA postagem leva a linha do acervo. 03/10: o relatório saiu em 2 mensagens, as duas
+ * falavam de acervo/rodada e a linha saiu duas vezes. Uma vez por rodada. Pura.
+ */
+function levaRodapeDoAcervo(texto, jaSaiu) {
+  return !jaSaiu && /acervo|rodada|achado/i.test(String(texto || ''));
+}
+
 /** Linha determinística do runner com o total contado no banco; '' se a fonte falhou. Pura. */
 function linhaDoAcervo(n) {
   if (n == null || !Number.isFinite(n)) return '';
@@ -172,4 +180,4 @@ function conferirNumerosAfirmados(texto, fontes = {}) {
   };
 }
 
-module.exports = { conferirNumerosAfirmados, extrairAfirmacoes, linhaDoAcervo, _temAncoraDeTotalidade };
+module.exports = { conferirNumerosAfirmados, extrairAfirmacoes, linhaDoAcervo, levaRodapeDoAcervo, _temAncoraDeTotalidade };
