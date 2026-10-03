@@ -119,7 +119,9 @@ function blocoDaPautaDM({ porUnidade, hoje, ritual = false }) {
   L.push('REGRAS:');
   L.push('- Número de anamnese/contrato "de hoje" = SOMENTE os números acima, por unidade. NUNCA conte tarefas "HH:MM Anamnese — …" nem qualquer tarefa de grupo pra chegar nesse número.');
   if (ritual) {
-    L.push('- No bom dia: UMA linha por unidade com o número de hoje (ex.: "📋 26 anamneses pendentes hoje no Campo Grande"). Sem nomes, sem marcador — quem quiser a lista pede.');
+    // 03/10: o exemplo trazia "26" e o bom dia da Kailane disse "26 anamneses… na Barra" com 19 na
+    // fonte (o modelo copiou o exemplo). Exemplo sem número + a trava lib/pauta-numero-guard.js.
+    L.push('- No bom dia: UMA linha por unidade com o número DA LINHA DESSA UNIDADE acima (formato: "📋 <número> anamneses pendentes hoje no/na <unidade>"). Sem nomes, sem marcador — quem quiser a lista pede.');
   } else {
     L.push('- Se pedirem os NOMES/a lista de hoje, escreva UMA linha curta de abertura e emita <<SITUACAO_ALUNO>>{"recorte":"anamnese|contrato|tudo","hoje":true,"unidade":"campo grande|recreio|barra"}<<END>> — o sistema escreve a lista organizada por horário. NÃO escreva os nomes você mesmo.');
     L.push('- Lista da unidade INTEIRA (não só quem tem aula hoje): o mesmo marcador com "hoje":false.');

@@ -16757,6 +16757,7 @@ Output AGORA, apenas o marker:`;
 }
 
 async function sendRitual(collaboratorId, ritualType, opts = {}) {
+  let _pautaDoBomDia = null; // leitura da pauta que foi pro prompt do bom dia (trava de número)
   const { data: collab } = await supabase
     .from('collaborators')
     .select('*, user_preferences(*), collaborator_profiles(*)')
@@ -16851,6 +16852,7 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
 
 ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
 
+    // (_pautaDoBomDia: a mesma leitura confere o número depois — lib/pauta-numero-guard.js)
     // DM-ANAMNESE-CONTA-TAREFA (30/09): o bom dia da Mayra, da Ana, do Clayton e do Jereh disse
     // "2 anamneses de hoje" — a amostra de tarefas de grupo — com 36 na pauta do CG. O número do bom
     // dia sai da MESMA conta da pauta (services/pauta-dm.js), pelas unidades dos GRUPOS da pessoa
@@ -16862,6 +16864,7 @@ ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
       if (_idsBrief.length) {
         const _hojeBriefP = todaySaoPaulo();
         const _porBrief = await _pautaDm.lerPautaDasUnidades({ laReport: _lrcBrief, unidadeIds: _idsBrief, hoje: _hojeBriefP });
+        _pautaDoBomDia = _porBrief;
         systemPrompt += '\n\n' + _pautaDm.blocoDaPautaDM({ porUnidade: _porBrief, hoje: _hojeBriefP, ritual: true });
       }
     } catch (e) { console.warn('[PautaDM] briefing non-fatal:', e.message); }
@@ -16877,6 +16880,20 @@ ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
     const _fix = _saud.aplicarNomeDoDestinatario(finalText, { nome: _nomeDest, outrosNomes: _outrosNomes, nomesDoDestinatario: _nomesDest });
     if (_fix.trocas.length) console.warn(`[Saudacao] ${ritualType}: saudação a outra pessoa reescrita (${_fix.trocas.map((t) => `${t.de}→${t.para}`).join(', ')})`);
     finalText = _fix.texto;
+  }
+
+  // PAUTA-BOMDIA-NUMERO-DO-EXEMPLO (Kailane 03/10): número de anamnese/contrato do bom dia
+  // conferido contra a MESMA leitura que foi pro prompt; divergiu, o código troca.
+  if (_pautaDoBomDia && typeof finalText === 'string' && finalText) {
+    try {
+      const { corrigirNumerosDaPauta } = require('./lib/pauta-numero-guard');
+      const _pn = corrigirNumerosDaPauta(finalText, _pautaDoBomDia);
+      if (_pn.trocas.length) {
+        console.warn(`[PautaDM] bom dia com número fora da fonte: ${_pn.trocas.map((t) => `${t.unidade} ${t.campo} ${t.de}→${t.para}`).join(', ')}`);
+        try { await logMarker(collab.id, 'PAUTA_NUMERO_GUARD', 'redirected', _pn.trocas.map((t) => `${t.unidade}:${t.campo}:${t.de}->${t.para}`).join(',').slice(0, 200), null); } catch (_) {}
+        finalText = _pn.texto;
+      }
+    } catch (e) { console.warn('[PautaDM] trava de número err:', e.message); }
   }
 
   // O ritual sai direto pro WhatsApp, sem o pipeline do processMessage — as duas redes do 30/09
