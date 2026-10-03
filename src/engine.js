@@ -1092,6 +1092,7 @@ async function notifyCoordinatorOfDecision(ann, director, action, reason) {
   }
   try {
     await whatsapp.sendMessage(coord.phone, msg);
+    await _registrarAvisoNoHistorico(ann.created_by, msg);
     await supabase
       .from('announcements')
       .update({ coordinator_notified_at: new Date().toISOString() })
@@ -3238,7 +3239,7 @@ async function applyProjectApprove(collab, body) {
     .from('collaborators').select('phone, full_name').eq('id', project.created_by).single();
   if (creator?.phone) {
     const msg = `🎉 *${project.name}* foi aprovado por *${collab.full_name}*!\n\nO TOM já vai começar a estruturar e distribuir as tarefas.`;
-    whatsapp.sendMessage(creator.phone, msg).catch(e => console.error(`[Project] APPROVE WA creator err: ${e.message}`));
+    whatsapp.sendMessage(creator.phone, msg).then(() => _registrarAvisoNoHistorico(project.created_by, msg)).catch(e => console.error(`[Project] APPROVE WA creator err: ${e.message}`));
   }
   return { ok: true, project };
 }
@@ -3286,7 +3287,7 @@ async function applyProjectReject(collab, body) {
     .from('collaborators').select('phone, full_name').eq('id', project.created_by).single();
   if (creator?.phone) {
     const msg = `❌ Seu projeto *${project.name}* foi rejeitado por *${collab.full_name}*.\n\n_Motivo:_ ${reason}\n\nSe quiser ajustar e tentar de novo, é só me chamar.`;
-    whatsapp.sendMessage(creator.phone, msg).catch(e => console.error(`[Project] REJECT WA creator err: ${e.message}`));
+    whatsapp.sendMessage(creator.phone, msg).then(() => _registrarAvisoNoHistorico(project.created_by, msg)).catch(e => console.error(`[Project] REJECT WA creator err: ${e.message}`));
   }
   return { ok: true, project };
 }
@@ -5747,10 +5748,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
                 .eq('id', fullTaskR.assigned_to).maybeSingle();
               if (assignee && assignee.phone) {
                 const quemRemarcou = String(collaborator.full_name || 'Alguém').split(' ')[0];
-                await whatsapp.sendMessage(
-                  assignee.phone,
-                  `📅 *${quemRemarcou}* remarcou uma tarefa sua: _"${fullTaskR.title}"_ — novo prazo *${newDue}*.`,
-                );
+                const _avisoRemarcou = `📅 *${quemRemarcou}* remarcou uma tarefa sua: _"${fullTaskR.title}"_ — novo prazo *${newDue}*.`;
+                await whatsapp.sendMessage(assignee.phone, _avisoRemarcou);
+                await _registrarAvisoNoHistorico(fullTaskR.assigned_to, _avisoRemarcou);
               }
             }
           } catch (e) { console.warn('[Task] reschedule notify-assignee err (non-fatal):', e.message); }
@@ -10419,13 +10419,13 @@ async function processMessage(phone, text, raw = {}) {
               }, `solicitado por ${mp.requester_name || 'desconhecido'}, aprovado por ${collab.full_name}`);
               await approvalsService.resolveApprovalByRef(supabase, mp.ref_id, 'confirmed', `aprovado por ${collab.full_name}`);
               if (mp.requester_phone) {
-                try { await whatsapp.sendMessage(mp.requester_phone, `✅ Sua solicitação de manutenção em *${mp.item_nome || 'item'}* foi aprovada por ${collab.full_name}.`); } catch (_) {}
+                try { const _av = `✅ Sua solicitação de manutenção em *${mp.item_nome || 'item'}* foi aprovada por ${collab.full_name}.`; await whatsapp.sendMessage(mp.requester_phone, _av); await _registrarAvisoNoHistorico(mp.requester_id || null, _av, mp.requester_phone); } catch (_) {}
               }
               aprReply = `✅ Manutenção em *${mp.item_nome || 'item'}* registrada (pedido de *${mp.requester_name || 'quem solicitou'}*). ${mp.requester_phone ? `Avisei o *${mp.requester_name || 'solicitante'}*.` : 'Solicitante sem WhatsApp pra avisar.'}`;
             } else {
               await approvalsService.resolveApprovalByRef(supabase, mp.ref_id, 'denied', `rejeitado por ${collab.full_name}: ${apr.reason || ''}`);
               if (mp.requester_phone) {
-                try { await whatsapp.sendMessage(mp.requester_phone, `❌ Solicitação de manutenção em *${mp.item_nome || 'item'}* rejeitada por ${collab.full_name}${apr.reason ? `: ${apr.reason}` : ''}.`); } catch (_) {}
+                try { const _av = `❌ Solicitação de manutenção em *${mp.item_nome || 'item'}* rejeitada por ${collab.full_name}${apr.reason ? `: ${apr.reason}` : ''}.`; await whatsapp.sendMessage(mp.requester_phone, _av); await _registrarAvisoNoHistorico(mp.requester_id || null, _av, mp.requester_phone); } catch (_) {}
               }
               aprReply = `❌ Manutenção *${mp.item_nome || 'item'}* rejeitada (pedido de *${mp.requester_name || 'quem solicitou'}*). ${mp.requester_phone ? `Avisei o *${mp.requester_name || 'solicitante'}*.` : ''}`.trim();
             }
@@ -14755,15 +14755,17 @@ Output AGORA, apenas o marker:`;
                       const _maintToken = `MANUT-${require('crypto').randomBytes(2).toString('hex').toUpperCase()}`;
                       await approvalsService.openMaintenanceApproval(supabase, {
                         approverId: _maintApprover.id, shortId: _maintToken,
-                        requesterName: userName, requesterPhone: phone,
+                        requesterName: userName, requesterPhone: phone, requesterId: collab.id,
                         itemId, itemNome: _maintItemNome,
                         tipo: p.tipo || 'corretiva', descricao: p.descricao,
                         custo: p.custo ?? null, fornecedor_servico: p.fornecedor_servico,
                       });
                       const _custoStr = p.custo ? ` — R$${p.custo}` : '';
                       const _maintNotif = `🔧 *${userName}* quer registrar manutenção em *${_maintItemNome || 'item'}*${_custoStr}: ${p.descricao || p.tipo || 'sem descrição'}.\n\n*APROVA ${_maintToken}* ou *REJEITA ${_maintToken}*`;
-                      try { await whatsapp.sendMessage(_maintApprover.phone, _maintNotif); } catch (_) {}
-                      _metrics.envio_deterministico = (_metrics.envio_deterministico || 0) + 1; // veto do SendHonesty (Rafinha 02/10)
+                      let _maintEnviado = false;
+                      try { await whatsapp.sendMessage(_maintApprover.phone, _maintNotif); _maintEnviado = true; await _registrarAvisoNoHistorico(_maintApprover.id, _maintNotif); } catch (_) {}
+                      // veto do SendHonesty (Rafinha 02/10): só conta envio que SAIU — falha muda não vira "enviei".
+                      if (_maintEnviado) _metrics.envio_deterministico = (_metrics.envio_deterministico || 0) + 1;
                       reply = (reply ? reply + '\n\n' : '') + `🔧 Pedido enviado para *${_maintApprover.full_name}* aprovar. Você será avisado.`;
                     }
                   }
@@ -16978,6 +16980,18 @@ function brtDateOf(isoStr) {
 // torna a resposta CITÁVEL — o reply-quote procura o outbound por esse id exato
 // (engine.js ~9800). Parâmetro opcional de propósito: os 100+ call sites que não passam
 // continuam idênticos ao que eram.
+// AVISO-A-TERCEIRO-FORA-DO-HISTORICO (Rafinha 02/10): o Luciano aprovou a manutenção às 16:20 e o
+// "✅ Sua solicitação… foi aprovada" chegou no WhatsApp dela — mas não no histórico. O TOM dela não
+// sabia do aprovado e seguiu tentando registrar o mesmo piano (lista de 5 pianos de outras salas,
+// "item não encontrado", tarefa duplicada). Todo aviso que o TOM manda pra OUTRA pessoa entra no
+// histórico de quem recebe. Nunca derruba quem chamou (o aviso já saiu).
+async function _registrarAvisoNoHistorico(collaboratorId, content, phone = null) {
+  return require('./lib/aviso-terceiro').registrarAviso(
+    { log: logConversation, idPorTelefone: async (p) => { const c = await findCollaboratorByPhone(p); return c && c.id; } },
+    { collaboratorId, content, phone },
+  );
+}
+
 async function logConversation(collaboratorId, direction, content, waMessageId = null) {
   const row = {
     collaborator_id: collaboratorId,

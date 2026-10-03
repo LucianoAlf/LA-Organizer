@@ -52,7 +52,7 @@ function openAnnouncementApproval(supabase, { approverId, announcementId, shortI
 // BUG-8 (11/06): abre pedido de aprovação de manutenção para o aprovador da matriz.
 // Guarda todos os params de execução no payload para que o dispatcher possa executar
 // registrarManutencao quando o aprovador responder APROVA <token>.
-async function openMaintenanceApproval(supabase, { approverId, shortId, requesterName, requesterPhone, itemId, itemNome, tipo, descricao, custo, fornecedor_servico }) {
+async function openMaintenanceApproval(supabase, { approverId, shortId, requesterName, requesterPhone, requesterId, itemId, itemNome, tipo, descricao, custo, fornecedor_servico }) {
   if (!approverId || !shortId) return null;
   try {
     await supabase.from('pending_intents')
@@ -65,7 +65,7 @@ async function openMaintenanceApproval(supabase, { approverId, shortId, requeste
       kind: KIND,
       payload: {
         domain: 'maintenance', ref_id: shortId, short_id: shortId,
-        requester_phone: requesterPhone, requester_name: requesterName,
+        requester_phone: requesterPhone, requester_name: requesterName, requester_id: requesterId || null,
         item_id: itemId, item_nome: itemNome,
         tipo: tipo || 'corretiva', descricao: descricao || null,
         custo: custo ?? null, fornecedor_servico: fornecedor_servico || null,
