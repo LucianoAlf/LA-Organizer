@@ -31,9 +31,13 @@ function fmtPoolLine(t, todayYmd) {
 // prompt que ele ignore não bastou (ele contradisse até o "(HOJE)" explícito do pool), então
 // aqui a data simplesmente não é reapresentada: a âncora vira a única fonte de "hoje".
 // Fala de PESSOA fica intacta — é dado do que o humano disse, não se adultera.
+// RECIBO-DE-ACAO-FORJADO-PELO-MODELO (Barra 03/10): o bloco ‹‹ACTIONS›› é recibo do motor para o
+// app, não fala. Reapresentado aqui, ele ensinava o modelo a escrever o recibo em vez do marcador.
+// Mesmo corte do espelho do WhatsApp (group-chat-bridge-out.js).
+const ACTIONS_DELIM = '‹‹ACTIONS››';
 function fmtHistoryLine(m) {
   const who = m.role === 'tom' ? 'TOM' : (m.who || 'alguém');
-  const content = m.role === 'tom' ? neutralizaDataAfirmada(m.content) : (m.content || '');
+  const content = m.role === 'tom' ? neutralizaDataAfirmada(String(m.content || '').split(ACTIONS_DELIM)[0].trim()) : (m.content || '');
   return `${who}: ${content}`;
 }
 

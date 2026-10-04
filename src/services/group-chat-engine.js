@@ -1167,7 +1167,13 @@ function buildTomContent(rawReply, actions, opts) {
   const modeloEscreveuNota = NOTA_DO_SISTEMA_RE.test(bruto);
   NOTA_DO_SISTEMA_RE.lastIndex = 0; // regex com /g guarda estado entre chamadas
   if (modeloEscreveuNota) console.log('[GroupChat] nota honesta veio DO MODELO — arrancada');
-  const semNota = bruto
+  // O RECIBO também é voz do sistema (RECIBO-DE-ACAO-FORJADO-PELO-MODELO, Barra 03/10 14:02): o
+  // modelo releu "‹‹ACTIONS››[{situacao ok}]" no histórico e escreveu o recibo à mão, sem marcador —
+  // o app mostrou "ok" e o card nunca existiu. Tudo do delimitador em diante é descartado; o bloco
+  // verdadeiro é anexado lá embaixo, a partir de `acts`, que só o motor preenche.
+  const _kRecibo = bruto.indexOf(ACTIONS_DELIM);
+  if (_kRecibo >= 0) console.error(`[GroupChat] RECIBO FORJADO pelo modelo — arrancado: ${bruto.slice(_kRecibo, _kRecibo + 160)}`);
+  const semNota = (_kRecibo >= 0 ? bruto.slice(0, _kRecibo) : bruto)
     .replace(/<<SILENCIO>>/gi, '')
     .replace(NOTA_DO_SISTEMA_RE, '')
     .trim();
