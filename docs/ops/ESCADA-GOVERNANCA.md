@@ -3077,3 +3077,22 @@ defeito…?"* foi rebaixada por `downgradeEmptyPromise`. A reprodução de hoje 
 É a 3ª porta da oferta condicional (16/08, 31/08), e `promise-honesty.js` tem 9 commits em 60 dias.
 Não remendei. Faltam na porta de cima os vetos de pergunta/`awaitingConfirm` que a de baixo tem,
 e isso é a fronteira de 09/09. O caso foi ao grupo como pergunta de desenho.
+
+### ETAPA 3 — o RECIBO do motor reapresentado no histórico vira modelo de imitação
+
+**Ocorrência:** 1 (04/10), e é a correção da rodada. Porta nova da família `GROUPCHAT-DATE-SELF-POISONING` (06/08).
+
+Grupo Barra, 03/10. Às 12:12 BRT um `<<SITUACAO_ALUNO>>` real gravou a fala do TOM como *"Deixa eu
+confirmar quem ainda tá pendente: ‹‹ACTIONS››[{situacao ok}]"*. Às 14:02 e às 14:04 o Arthur pediu
+os alunos sem anamnese, e o modelo escreveu o recibo **à mão**, sem marcador. Não houve linha
+`situacao grupo=` no log nem card, e mesmo assim o app mostrou "ok". O WhatsApp, que corta o bloco,
+recebeu só a prosa terminando em ":".
+
+O tell estava no log, não no banco: **recibo `ok` sem a linha de log do executor no mesmo segundo.**
+População desde 01/07: 30 recibos de situação/relatório com `ok`, 2 sem entrega (os dois deste turno).
+Os 3 que pareciam órfãos eram listas do PIX, que saem como texto e não como card. Por isso o
+critério tem que conhecer os DOIS caminhos de entrega.
+
+🔑 Regra: **tudo que o motor grava junto da fala do TOM e o histórico reapresenta vira vocabulário
+do modelo.** A data foi a 1ª porta (06/08) e o recibo foi a 2ª. Antes de reapresentar uma fala
+gravada, corte o que não é fala.
