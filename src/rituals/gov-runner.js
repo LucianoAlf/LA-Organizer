@@ -165,6 +165,7 @@ async function main() {
     } catch (_) { return 0; }
   };
   const { conferirNumerosAfirmados, linhaDoAcervo, levaRodapeDoAcervo } = require('../lib/confere-numero');
+  const { contarPostagensForaDoRunner } = require('../lib/gov-postagem');
   let _rodapeAcervoSaiu = false; // uma vez por rodada (03/10 saiu duplicado em 2 mensagens)
   const { tirarFalaDeRestart } = require('../lib/restart-so-do-runner');
   const { contarCorrigidosDesde, contarAcervoAberto } = require('../lib/confere-fontes');
@@ -187,7 +188,9 @@ async function main() {
     corrigidos: await contarCorrigidosDesde(supabase, cicloInicio),
   });
 
+  let _postsDoRunner = 0; // GOV-RELATORIO-DUPLICADO (05/10): ver contarPostagensForaDoRunner
   const postar = async (txt) => {
+    _postsDoRunner++;
     // Quem fala de restart é este runner, e só ele. O agente escrevia "*Não reiniciei o TOM*"
     // (obedecendo a ETAPA 7, que só proibia AFIRMAR) e a linha "♻️ TOM reiniciado" saía logo
     // atrás: duas falas do mesmo role='tom', lidas pelo dono como contradição — e pelo auditor
@@ -226,6 +229,18 @@ async function main() {
 
   try {
     const r = await rodarCicloGovernanca(supabase, { ymd, force, postar });
+    // GOV-RELATORIO-DUPLICADO (03–05/10): o agente postava sozinho (script com postOpsResult) e o
+    // runner postava a resposta final — relatório em dobro, a 1ª cópia sem trava nenhuma. O
+    // protocolo agora proíbe; aqui fica o sensor: fala do TOM no grupo que não passou pelo runner.
+    try {
+      const { data: _falas } = await supabase.from('group_chat_messages').select('id')
+        .eq('group_id', grupo).eq('role', 'tom').gte('created_at', cicloInicio);
+      const fora = contarPostagensForaDoRunner((_falas || []).length, _postsDoRunner);
+      if (fora > 0) {
+        console.warn(`[GovRunner] AGENTE POSTOU FORA DO RUNNER: ${fora} mensagem(ns) sem as travas`);
+        try { await supabase.from('marker_logs').insert({ marker_type: 'GOV_POST_FORA_DO_RUNNER', result: 'detected', reason: `${ymd}:${fora}` }); } catch (_) {}
+      }
+    } catch (_) { /* sensor nunca quebra o ciclo */ }
     console.log(`[GovRunner] ${ymd} ${JSON.stringify(r)}`);
     // GOVRUNNER-NAO-EMPURRA: antes do restart, o que o ciclo commitou vai pro GitHub.
     if (r && r.rodou) await sincronizarComOrigin(postar);

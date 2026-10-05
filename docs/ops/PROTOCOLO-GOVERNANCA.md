@@ -301,7 +301,13 @@ pergunta.
 Detalhe a **correção** da rodada. A varredura vai em NÚMEROS, não em lista: *"fechei 14 antigos
 — 11 já corrigidos, 3 falso-positivo"*. É WhatsApp num celular; lista de 14 itens não é lida.
 
-Poste o resultado no grupo e pare por aí. **O restart não é seu:** quem reinicia é o
+🚫 **Não poste no grupo você mesmo** (nada de script com `postOpsResult`, `post.cjs` ou similar).
+O texto FINAL da sua resposta É o relatório: o `gov-runner` posta ele no grupo passando pelas
+travas (restart, claim de entrega, cegueira, conferência de números). Em 03, 04 e 05/10 o agente
+postou sozinho por script E o runner postou a resposta final: o grupo recebeu o relatório duas
+vezes, e a 1ª cópia saiu sem nenhuma trava.
+
+Escreva o relatório como resposta final e pare por aí. **O restart não é seu:** quem reinicia é o
 `gov-runner`, sozinho, depois que o seu relatório já saiu — ele compara o que mudou em
 `src/**.js`, roda `node --check` e só então chama o `pm2`. Ele avisa o grupo do resultado.
 
