@@ -3096,3 +3096,24 @@ critério tem que conhecer os DOIS caminhos de entrega.
 🔑 Regra: **tudo que o motor grava junto da fala do TOM e o histórico reapresenta vira vocabulário
 do modelo.** A data foi a 1ª porta (06/08) e o recibo foi a 2ª. Antes de reapresentar uma fala
 gravada, corte o que não é fala.
+
+### ETAPA 3 — o marker ERRADO num alvo que existe em OUTRA entidade: o not_found vira beco
+
+**Ocorrência:** 1 (05/10), e é a correção da rodada. 2ª porta da família `T2H-ONEOFF-OFFER` (21/08).
+
+Rose, 04/10 21:36 BRT: *"pode parar com essa tarefa de aviso"*, logo depois do 💊 lembrete de
+"Tomar vitaminas". Ela disse "tarefa", então o LLM emitiu `<<TASK_TO_HABIT>>`. Só que o alvo já era
+**hábito**. O resolvedor só olha `tasks`, devolveu `not_found`, e o rodapé pediu "o nome exato" de
+um nome exato. Por cima, "vou parar de te lembrar" sobreviveu ao sanitizador.
+
+O auditor catalogou como `proactive_overreach`, mas o lembrete das 21h era legítimo. O defeito é a
+resposta ao pedido de parar.
+
+🔑 Regra: **quando um resolvedor devolve `not_found` para um nome que a pessoa acabou de ver numa
+mensagem do próprio TOM, procure o nome nas entidades VIZINHAS** (`habits`, `events`, `tasks`)
+antes de concluir. O nome não estava errado, só estava em outra tabela. O `not_found` tem que
+dizer onde o nome está em vez de pedir outro nome.
+
+Fatia `delegation` (tema 5 · parser 5 · estagiou 0): as 5 perguntas são de 29/09 e o conserto
+`d872532e` é de 30/09 11:07 UTC. Desde então não houve nenhuma pergunta de delegação. É a 5ª vez
+que o caso da proposta de 13/09 aparece (veredito contra pergunta anterior ao CONSERTO).
