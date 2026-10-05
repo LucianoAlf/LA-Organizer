@@ -48,3 +48,9 @@ test('updateCollaboratorProfile corta pelo helper (os dois cortes: 200 por msg e
   assert.match(corpo, /cortarSemPartir\([^;]*8000\)/);
   assert.doesNotMatch(corpo, /\.slice\(0, 200\)/);
 });
+
+test('a consolidação semanal também corta sem partir emoji', () => {
+  const E = require('fs').readFileSync(require('path').join(__dirname, '..', 'engine.js'), 'utf8');
+  const i = E.indexOf('const historyText = _cortarC(');
+  assert.ok(i > 0, 'consolidação voltou a usar slice cru');
+});

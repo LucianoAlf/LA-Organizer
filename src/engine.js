@@ -17245,10 +17245,12 @@ async function consolidateMemoryFor(collab) {
     .gte('created_at', sevenDaysAgo)
     .order('created_at', { ascending: true })
     .limit(200);
-  const historyText = (msgs || [])
-    .map(m => String(m.content || '').slice(0, 500))
-    .join('\n')
-    .slice(0, 12000);
+  // PERFIL-400-EMOJI-PARTIDO (05/10): mesmo corte seguro do perfil — a consolidação semanal manda
+  // este texto pro modelo e um emoji partido no corte derruba o corpo inteiro com 400.
+  const { cortarSemPartir: _cortarC } = require('./lib/corte-seguro');
+  const historyText = _cortarC((msgs || [])
+    .map(m => _cortarC(String(m.content || ''), 500))
+    .join('\n'), 12000);
   if (historyText.length < 50) {
     return { collab: collab.full_name, saved: 0, skipped: 'too_thin' };
   }
