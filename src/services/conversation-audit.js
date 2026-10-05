@@ -419,6 +419,55 @@ async function auditGroupConversation(sb, chat, group, hours = 24, ateIso = null
   }
 }
 
+// AUDIT-GRUPO-DUAS-VEZES-POR-NOITE (05/10, caso Barra 04/10). O laço de grupos mora dentro do
+// slot das 03:00, e o slot de 15min × cron de 5min faz 2-3 ticks baterem nele. O Dream do 1:1
+// tem trava por colaborador (alreadySent) e a memória de grupo tem a dela (GROUP_MEMORY); a
+// AUDITORIA de grupo não tinha nenhuma. Toda noite cada grupo era julgado 2× — o rituals.log de
+// 04/10 tem "[ConvAudit] grupo Administrativo e Comercial Barra: 2 achado(s)" às 03:06 e às
+// 03:11 —, e como o LLM redige diferente na 2ª passada, o dedupe não colapsava: 4 achados
+// (4fed6d4f/330a8708 e 6cefd77b/1724d92d) pra UM episódio, e o dobro de chamadas de LLM.
+// Mesma forma da trava da memória de grupo: marker_logs aceita linha sem colaborador
+// (ritual_logs.collaborator_id é NOT NULL — ver o comentário da GROUP_MEMORY no dispatcher).
+// A marca é gravada ANTES do LLM (reserva), pra dois ticks sobrepostos não passarem juntos;
+// o resultado entra depois no mesmo `reason`. Falha AO LER a trava não cega: audita (duplicata o
+// dedupe por incidente absorve; noite sem auditoria ninguém recupera).
+const MARKER_AUDITORIA_GRUPO = 'AUDIT_GROUP';
+function chaveAuditoriaGrupo(groupId, ymd) { return `audit_group:${groupId}:${ymd}`; }
+
+async function auditarGrupoUmaVezPorDia(sb, chat, group, ymd, opts = {}) {
+  const { hours = 24, ateIso = null, force = false } = opts;
+  const chave = chaveAuditoriaGrupo(group && group.id, ymd);
+  if (!force) {
+    try {
+      const { data: ja, error } = await sb.from('marker_logs')
+        .select('id').eq('marker_type', MARKER_AUDITORIA_GRUPO).like('reason', `${chave}%`).limit(1);
+      if (!error && ja && ja.length) return { pulou: true, achados: [] };
+    } catch (_) { /* fail-open: ver comentário acima */ }
+  }
+  let markerId = null;
+  try {
+    const { data } = await sb.from('marker_logs')
+      .insert({ marker_type: MARKER_AUDITORIA_GRUPO, result: 'executed', reason: `${chave} em_curso` })
+      .select('id');
+    const linha = Array.isArray(data) ? data[0] : data;
+    markerId = (linha && linha.id) || null;
+  } catch (_) { /* sensor nunca derruba a auditoria */ }
+  const achados = await auditGroupConversation(sb, chat, group, hours, ateIso);
+  // `full_name` porque o guard de QA lê esse campo — o grupo do Replay Lab
+  // (`[QA] Financeiro Replay`) tem que cair fora das métricas igual aos perfis.
+  const sujeito = { id: group.id, full_name: group.name };
+  const destinos = [];
+  for (const f of achados) destinos.push(await upsertFinding(sb, sujeito, f, { groupId: group.id }));
+  if (markerId) {
+    try {
+      await sb.from('marker_logs')
+        .update({ reason: `${chave} achados=${achados.length} gravados=${destinos.filter((d) => d === 'inserted').length}`.slice(0, 300) })
+        .eq('id', markerId);
+    } catch (_) { /* idem */ }
+  }
+  return { pulou: false, achados, destinos };
+}
+
 /** Analisa a conversa de um colaborador. Retorna Finding[]. NUNCA lança. */
 async function auditConversation(sb, chat, collaborator, hours = 24, ateIso = null) {
   try {
@@ -687,5 +736,6 @@ module.exports = {
   normalizeSummary, signatureFor, chaveDoAchado, parseFindings, respostaDaAuditoriaValida, rankFindings,
   loadConversation, rotuloDaLinha, linhasDeMarkers, loadMarkerTrail, auditConversation, upsertFinding, resolveIncidentAt, pickProbe, ancorarEvidencia,
   formatGroupTranscript, loadGroupConversation, auditGroupConversation,
+  auditarGrupoUmaVezPorDia, chaveAuditoriaGrupo, MARKER_AUDITORIA_GRUPO,
   CLOSED_STATUSES, SEV_RANK,
 };

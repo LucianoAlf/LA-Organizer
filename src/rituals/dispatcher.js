@@ -4063,17 +4063,15 @@ async function run(opts = {}) {
     // 1:1 de propósito: critério novo criaria duas noções de "achado" e números incomparáveis.
     // Isolado: erro aqui nunca derruba o Dream nem a auditoria individual.
     try {
-      const { auditGroupConversation } = require('../services/conversation-audit');
+      const { auditarGrupoUmaVezPorDia } = require('../services/conversation-audit');
       const { data: grupos } = await supabase.from('work_groups')
         .select('id, name').eq('active', true);
       for (const g of (grupos || [])) {
         try {
-          const achados = await auditGroupConversation(supabase, aiChat, g, 24);
-          // `full_name` porque o guard de QA lê esse campo — o grupo do Replay Lab
-          // (`[QA] Financeiro Replay`) tem que cair fora das métricas igual aos perfis.
-          const sujeito = { id: g.id, full_name: g.name };
-          for (const f of achados) await upsertFinding(supabase, sujeito, f, { groupId: g.id });
-          if (achados.length) console.log(`[ConvAudit] grupo ${g.name}: ${achados.length} achado(s)`);
+          // Trava "1× por grupo por dia" (AUDIT-GRUPO-DUAS-VEZES-POR-NOITE, 05/10): sem ela o 2º
+          // tick do slot das 03:00 re-julgava cada grupo e duplicava os achados (Barra 04/10).
+          const r = await auditarGrupoUmaVezPorDia(supabase, aiChat, g, now.ymd, { force: opts.force === 'dream' });
+          if (r.achados.length) console.log(`[ConvAudit] grupo ${g.name}: ${r.achados.length} achado(s)`);
         } catch (gErr) {
           console.error(`[ConvAudit] falha no grupo ${g.name}:`, gErr.message);
         }
