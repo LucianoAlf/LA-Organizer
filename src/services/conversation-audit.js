@@ -74,6 +74,9 @@ function _resumoTokenSet(s) {
 /** Chave estável do achado — o INCIDENTE quando dá, o sentido do resumo quando não dá. */
 function chaveDoAchado(finding) {
   const f = finding || {};
+  // Achado de GRUPO ancorado numa mensagem (05/10): a chave é o ID da mensagem — mais estável
+  // que o carimbo, e é o que o resolveGroupIncident devolve. Só grupo preenche incident_msg_id.
+  if (f.incident_msg_id) return `msg:${f.incident_msg_id}`;
   if (f.incident_confidence === 'high' && f.incident_at) {
     let iso = f.incident_at;
     try { iso = new Date(f.incident_at).toISOString(); } catch (_) {}
@@ -346,7 +349,7 @@ async function loadGroupConversation(sb, groupId, hours = 24, ateIso = null) {
   const sinceIso = new Date(fimMs - hours * 3600 * 1000).toISOString();
   // `.lt` so entra QUANDO ha fim de janela: sem ele a cadeia fica identica a de sempre.
   let q = sb.from('group_chat_messages')
-    .select('content, media_extracted_text, role, created_at, wa_sender_name, sender:collaborators!group_chat_messages_sender_id_fkey(preferred_name, full_name)')
+    .select('id, content, media_extracted_text, role, created_at, wa_sender_name, sender:collaborators!group_chat_messages_sender_id_fkey(preferred_name, full_name)')
     .eq('group_id', groupId)
     .gte('created_at', sinceIso);
   if (ateIso) q = q.lt('created_at', new Date(fimMs).toISOString());
@@ -354,7 +357,63 @@ async function loadGroupConversation(sb, groupId, hours = 24, ateIso = null) {
     .order('created_at', { ascending: true })
     .limit(300);
   const rows = data || [];
-  return { text: formatGroupTranscript(rows), lastAt: rows.length ? rows[rows.length - 1].created_at : null, sinceIso };
+  return { text: formatGroupTranscript(rows), lastAt: rows.length ? rows[rows.length - 1].created_at : null, sinceIso, rows };
+}
+
+// AUDIT-GRUPO-SEM-INCIDENT-AT (05/10, caso Barra 03/10). O achado de grupo nascia sem incident_at:
+// o comentário dizia que o resolveIncidentAt era "inaplicável" (ele casa contra
+// conversation_history) e o occurred_at caía no lastAt da janela — 18:30Z, quando o Arthur tinha
+// pedido às 17:02Z. Três estragos em cadeia: o digest escrevia "hora não identificada"; o dedupe,
+// sem âncora, caía na assinatura por TOKENS do resumo (que o LLM reescreve a cada passada) e não
+// colapsava; e a sombra procurava a fala do usuário nos 15 min antes das 18:30 — janela errada,
+// "sem fala literal". O transcript do grupo JÁ ESTÁ em memória com id e created_at: basta casar
+// a evidência citada contra ele. LLM diz ONDE (cita), código acha QUANDO. Sem casar, null —
+// nunca fabrica âncora.
+const _ROTULO_GRUPO = /^\s*([^:\n]{1,40}?)\s*:\s+(.+)$/;
+function _normCasamento(s) {
+  return String(s == null ? '' : s)
+    .replace(/‹‹ACTIONS››[\s\S]*$/, '')     // recibo de ações colado no fim da fala do TOM
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function _limparLinhaEvidencia(l) {
+  return _normCasamento(String(l).replace(/^\s*\[[^\]]*\]\s*/, ''))
+    .replace(/^["“'«]+|["”'»]+$/g, '')
+    .replace(/(\.\.\.|…)$/, '')
+    .trim();
+}
+
+/** Âncora do achado de grupo: a mensagem MAIS ANTIGA da janela que a evidência cita. Pura.
+ * Linha com rótulo "Fulano:" casa só com fala de membro; "TOM:" só com fala do TOM. Linha curta
+ * ("cade") exige igualdade — `includes` com 4 letras casaria qualquer coisa.
+ * @returns {{incident_at, incident_msg_id, incident_confidence:'high'}|null} */
+function resolveGroupIncident(rows, evidence) {
+  const msgs = (Array.isArray(rows) ? rows : []).filter((m) => m && m.created_at);
+  const casadas = [];
+  for (const bruta of String(evidence == null ? '' : evidence).split(/\n+/)) {
+    const semCarimbo = String(bruta).replace(/^\s*\[[^\]]*\]\s*/, '');
+    const rot = semCarimbo.match(_ROTULO_GRUPO);
+    const candidatas = [{ texto: _limparLinhaEvidencia(semCarimbo), papel: null }];
+    if (rot) {
+      const quem = rot[1].trim();
+      candidatas.unshift({ texto: _limparLinhaEvidencia(rot[2]), papel: /^tom$/i.test(quem) ? 'tom' : 'member' });
+    }
+    for (const c of candidatas) {
+      if (!c.texto || c.texto.length < 2 || /^\[?\s*(\.\.\.|…)\s*\]?$/.test(c.texto)) continue;
+      const probe = c.texto.length >= 12 ? c.texto.slice(0, 80) : null;
+      const hit = msgs.find((m) => {
+        if (c.papel === 'tom' && m.role !== 'tom') return false;
+        if (c.papel === 'member' && m.role === 'tom') return false;
+        const hay = _normCasamento(m.content || m.media_extracted_text || '');
+        return probe ? hay.includes(probe) : hay.replace(/[?!.]+$/, '') === c.texto.replace(/[?!.]+$/, '');
+      });
+      if (hit) { casadas.push(hit); break; }
+    }
+  }
+  if (!casadas.length) return null;
+  const primeira = casadas.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))[0];
+  return { incident_at: primeira.created_at, incident_msg_id: primeira.id || null, incident_confidence: 'high' };
 }
 
 // SENSOR DE CEGUEIRA (01/09). Ate aqui, falha do provedor virava `return []` -- e zero achado
@@ -400,7 +459,7 @@ async function _refutarConfabPeloBanco(sb, collaborator, finding) {
 /** Analisa a conversa de um GRUPO. Retorna Finding[]. NUNCA lança. */
 async function auditGroupConversation(sb, chat, group, hours = 24, ateIso = null) {
   try {
-    const { text: convo, lastAt } = await loadGroupConversation(sb, group.id, hours, ateIso);
+    const { text: convo, lastAt, rows } = await loadGroupConversation(sb, group.id, hours, ateIso);
     if (convo.length < 80) return []; // conversa fina demais
     const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
     const { system, messages } = buildAuditMessages(convo);
@@ -409,9 +468,18 @@ async function auditGroupConversation(sb, chat, group, hours = 24, ateIso = null
       await registrarCegueira(sb, `grupo:${group && group.name}`, new Error(`resposta sem JSON (${(r && r.provider) || '?'})`));
       return [];
     }
-    // `resolveIncidentAt` casa evidência contra `conversation_history` — inaplicável aqui.
-    // Sem ele, occurred_at cai no lastAt da janela, que é o mesmo fallback do 1:1.
-    return parseFindings(r && r.text, lastAt);
+    // Âncora pela evidência casada contra o transcript do grupo (AUDIT-GRUPO-SEM-INCIDENT-AT).
+    // O occurred_at que era só o lastAt da janela passa a ser o instante do incidente.
+    const findings = parseFindings(r && r.text, lastAt);
+    for (const f of findings) {
+      const inc = resolveGroupIncident(rows, f.evidence);
+      if (!inc) { f.incident_at = null; f.incident_confidence = 'none'; continue; }
+      f.incident_at = inc.incident_at;
+      f.incident_msg_id = inc.incident_msg_id;
+      f.incident_confidence = inc.incident_confidence;
+      if (!f.occurred_at || f.occurred_at === lastAt) f.occurred_at = inc.incident_at;
+    }
+    return findings;
   } catch (err) {
     console.error(`[ConvAudit] erro no grupo ${group && group.name}:`, err.message);
     await registrarCegueira(sb, `grupo:${group && group.name}`, err);
@@ -575,12 +643,32 @@ async function upsertFinding(sb, collaborator, finding, opts = {}) {
     const { data: rows } = await sb.from('tom_audit_findings')
       .select('id, occurrences, status, signature')
       .in('signature', sigs);
-    const all = rows || [];
+    const all = (rows || []).slice();
+    // DEDUPE DE GRUPO POR INCIDENTE (05/10, caso Barra). O mesmo episódio pode ser citado por
+    // mensagens diferentes conforme a redação — a 1ª passada de 04/10 citou a 2ª resposta do TOM
+    // (17:04Z), a 2ª passada citou o pedido do Arthur (17:02Z). Pra grupo, "mesmo incidente" é
+    // (grupo, categoria, mesma troca): âncora a até 15 min (JANELA_TROCA_MS, a mesma régua do par
+    // usuário↔TOM do ancorarEvidencia) de um achado já gravado é o mesmo achado.
+    if (_groupId && finding.incident_confidence === 'high' && finding.incident_at) {
+      const t0 = Date.parse(finding.incident_at);
+      if (Number.isFinite(t0)) {
+        const { data: perto } = await sb.from('tom_audit_findings')
+          .select('id, occurrences, status, signature')
+          .eq('group_id', _groupId)
+          .eq('category', finding.category)
+          .gte('incident_at', new Date(t0 - JANELA_TROCA_MS).toISOString())
+          .lte('incident_at', new Date(t0 + JANELA_TROCA_MS).toISOString());
+        for (const p of (perto || [])) if (!all.some((r) => r.id === p.id)) all.push(p);
+      }
+    }
     // Convergir a assinatura pode esbarrar no índice único parcial (só cobre novo/confirmado)
     // quando duas linhas antigas colapsam na mesma chave. Falhar aí é inofensivo — a linha
     // segue com a assinatura velha e continua sendo achada pela leitura dupla —, então o erro
     // não pode derrubar o upsert nem virar insert de duplicata.
-    const _converge = (r) => (r && r.signature && r.signature !== sig ? { signature: sig } : {});
+    // Linha achada só pela PROXIMIDADE (grupo) mantém a assinatura dela: é outra mensagem do mesmo
+    // episódio, não a mesma chave em redação velha.
+    const _porAssinatura = new Set((rows || []).map((r) => r.id));
+    const _converge = (r) => (r && _porAssinatura.has(r.id) && r.signature && r.signature !== sig ? { signature: sig } : {});
     // Já triado como fechado (resolvido/falso_positivo/...) → NÃO re-surge: só
     // registra a reincidência no last_seen e mantém o status fechado.
     const closed = all.find(r => CLOSED_STATUSES.has(r.status));
@@ -736,6 +824,6 @@ module.exports = {
   normalizeSummary, signatureFor, chaveDoAchado, parseFindings, respostaDaAuditoriaValida, rankFindings,
   loadConversation, rotuloDaLinha, linhasDeMarkers, loadMarkerTrail, auditConversation, upsertFinding, resolveIncidentAt, pickProbe, ancorarEvidencia,
   formatGroupTranscript, loadGroupConversation, auditGroupConversation,
-  auditarGrupoUmaVezPorDia, chaveAuditoriaGrupo, MARKER_AUDITORIA_GRUPO,
+  auditarGrupoUmaVezPorDia, chaveAuditoriaGrupo, MARKER_AUDITORIA_GRUPO, resolveGroupIncident,
   CLOSED_STATUSES, SEV_RANK,
 };

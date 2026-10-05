@@ -143,3 +143,78 @@ test('AUDIT-GRUPO-DUAS-VEZES: grupo do Replay Lab segue fora das métricas (guar
   await A.auditarGrupoUmaVezPorDia(sb, chatQueDevolve(SAIDA_1), qa, '2026-10-04', { ateIso: ATE_0410 });
   assert.strictEqual((sb.tabelas.tom_audit_findings || []).length, 0);
 });
+
+// ── DEFEITO 2: achado de grupo nascia sem incident_at ──────────────────────────────────────
+const iso = (s) => new Date(s).toISOString();
+
+test('AUDIT-GRUPO-SEM-INCIDENT-AT: âncora vem da evidência casada no transcript, não do fim da janela (18:30Z)', async () => {
+  const sb = fakeSb({ group_chat_messages: MSGS_0310.map((m) => ({ ...m })) });
+  const [drop, frus] = await A.auditGroupConversation(sb, chatQueDevolve(SAIDA_2), BARRA, 24, ATE_0410);
+  assert.strictEqual(iso(drop.incident_at), '2026-10-03T17:02:14.145Z', 'o pedido do Arthur, não 18:30');
+  assert.strictEqual(drop.incident_confidence, 'high');
+  assert.strictEqual(drop.incident_msg_id, '0f378293-c504-478e-9eb7-6ca4f4ea749a');
+  assert.strictEqual(iso(drop.occurred_at), '2026-10-03T17:02:14.145Z', 'occurred_at deixa de ser o lastAt');
+  assert.strictEqual(frus.incident_msg_id, 'fb05b1b2-088e-4617-bcf1-c16630d58067', '"Arthur: cade" casa a fala dele');
+});
+
+test('AUDIT-GRUPO-SEM-INCIDENT-AT: evidência SEM rótulo (1ª passada de 04/10) também ancora; "cade" exige igualdade', async () => {
+  const sb = fakeSb({ group_chat_messages: MSGS_0310.map((m) => ({ ...m })) });
+  const [drop, frus] = await A.auditGroupConversation(sb, chatQueDevolve(SAIDA_1), BARRA, 24, ATE_0410);
+  assert.strictEqual(drop.incident_msg_id, '37f7ce87-c3bf-4642-a080-d5d89d8c619e', 'a 2ª resposta do TOM, citada sem o recibo ‹‹ACTIONS››');
+  assert.strictEqual(frus.incident_msg_id, 'fb05b1b2-088e-4617-bcf1-c16630d58067');
+  assert.strictEqual(A.resolveGroupIncident(MSGS_0310, 'ca'), null, 'trecho curto não casa por substring');
+});
+
+test('AUDIT-GRUPO-SEM-INCIDENT-AT: evidência que não está no transcript fica SEM âncora (nunca fabrica)', async () => {
+  const saida = JSON.stringify({ findings: [{ category: 'dropped_request', severity: 'medio', summary: 's', evidence: 'Arthur: manda o boleto do mês', occurred_at: null }] });
+  const sb = fakeSb({ group_chat_messages: MSGS_0310.map((m) => ({ ...m })) });
+  const [f] = await A.auditGroupConversation(sb, chatQueDevolve(saida), BARRA, 24, ATE_0410);
+  assert.strictEqual(f.incident_at, null);
+  assert.strictEqual(f.incident_confidence, 'none');
+});
+
+test('AUDIT-GRUPO-SEM-INCIDENT-AT: rótulo "TOM:" só casa fala do TOM; rótulo de pessoa só casa fala de membro', () => {
+  const rows = [
+    { id: 'a', role: 'tom', content: 'cade', created_at: '2026-10-03T17:00:00Z' },
+    { id: 'b', role: 'member', content: 'cade', created_at: '2026-10-03T17:01:00Z' },
+  ];
+  assert.strictEqual(A.resolveGroupIncident(rows, 'Arthur: cade').incident_msg_id, 'b');
+  assert.strictEqual(A.resolveGroupIncident(rows, 'TOM: cade').incident_msg_id, 'a');
+});
+
+test('DEDUPE DE GRUPO: as duas redações de 04/10 colapsam em 2 achados com 2 ocorrências (não 4)', async () => {
+  const sb = fakeSb({ group_chat_messages: MSGS_0310.map((m) => ({ ...m })) });
+  await A.auditarGrupoUmaVezPorDia(sb, chatQueDevolve(SAIDA_1), BARRA, '2026-10-04', { ateIso: ATE_0410 });
+  await A.auditarGrupoUmaVezPorDia(sb, chatQueDevolve(SAIDA_2), BARRA, '2026-10-04', { ateIso: '2026-10-04T06:11:00.000Z', force: true });
+  const linhas = sb.tabelas.tom_audit_findings;
+  assert.strictEqual(linhas.length, 2, linhas.map((l) => l.summary).join(' | '));
+  assert.deepStrictEqual(linhas.map((l) => l.occurrences || 1).sort(), [2, 2]);
+  assert.ok(linhas.every((l) => l.incident_confidence === 'high' && l.incident_at));
+});
+
+test('DEDUPE DE GRUPO: incidente de OUTRA troca (>15 min) ou outra categoria é achado novo', async () => {
+  const sb = fakeSb({ group_chat_messages: MSGS_0310.map((m) => ({ ...m })) });
+  await A.auditarGrupoUmaVezPorDia(sb, chatQueDevolve(SAIDA_2), BARRA, '2026-10-04', { ateIso: ATE_0410 });
+  const outra = JSON.stringify({ findings: [{ category: 'dropped_request', severity: 'medio', summary: 'outro', evidence: 'Krissya: ok, vou mandar o link da anamnese pros responsáveis', occurred_at: null }] });
+  await A.auditarGrupoUmaVezPorDia(sb, chatQueDevolve(outra), BARRA, '2026-10-04', { ateIso: ATE_0410, force: true });
+  assert.strictEqual(sb.tabelas.tom_audit_findings.length, 3);
+});
+
+test('SOMBRA: fala de grupo rotulada com NOME conta como fala do usuário (só em achado de grupo)', () => {
+  const { extrairFalasDoUsuario } = require('../governance/shadow-reproducibility');
+  const ev = JSON.parse(SAIDA_2).findings[0].evidence;
+  assert.deepStrictEqual(extrairFalasDoUsuario({ group_id: BARRA.id, evidence: ev }), ['tom, alunos de hoje sem anamnese', 'cade']);
+  assert.deepStrictEqual(extrairFalasDoUsuario({ evidence: ev }), [], '1:1 segue exigindo USUÁRIO:/Pessoa:');
+  assert.deepStrictEqual(extrairFalasDoUsuario({ group_id: BARRA.id, evidence: 'Maria: paguei o boleto\nSISTEMA: TASK_UPDATE executed\nalguém do grupo: e aí?' }), ['e aí?']);
+  assert.deepStrictEqual(extrairFalasDoUsuario({ group_id: BARRA.id, evidence: '[03/10 (sáb) 14:02] Arthur: tom, alunos de hoje sem anamnese' }), ['tom, alunos de hoje sem anamnese']);
+});
+
+test('SOMBRA: com o incident_at certo a janela de 15 min acha a fala real do Arthur no banco', async () => {
+  const { falasDoIncidente } = require('../governance/shadow-reproducibility');
+  const sb = fakeSb({ group_chat_messages: MSGS_0310.map((m) => ({ ...m })) });
+  const antes = await falasDoIncidente({ supabase: sb, finding: { group_id: BARRA.id, incident_at: null, occurred_at: '2026-10-03T18:30:12.975467+00:00' } });
+  assert.deepStrictEqual(antes, ['ok, vou mandar o link da anamnese pros responsáveis'], 'janela errada: pega outra fala, não a do pedido');
+  const [drop] = await A.auditGroupConversation(sb, chatQueDevolve(SAIDA_1), BARRA, 24, ATE_0410);
+  const depois = await falasDoIncidente({ supabase: sb, finding: { group_id: BARRA.id, ...drop } });
+  assert.deepStrictEqual(depois, ['tom, alunos de hoje sem anamnese', 'cade']);
+});

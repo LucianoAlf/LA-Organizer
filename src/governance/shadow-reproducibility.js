@@ -15,12 +15,28 @@ const MULTITURNO_RE = /fatura|parte\s*[1-9]|cruzamento|cobran[çc]a|lote|todos o
 // a mesma armadilha que já tinha cegado o pickProbe em 19/08. Só no INÍCIO da linha: colchete no
 // meio do texto é conteúdo ("manda o [relatório] hoje").
 const FALA_RE = /^\s*(?:\[[^\]]*\]\s*)?(?:USU[ÁA]RIO|Pessoa)\s*:\s*(.+)$/i;
+// FALA-DE-GRUPO-TEM-NOME (05/10, caso Barra 03/10). O transcript de GRUPO rotula cada fala com o
+// NOME de quem falou (formatGroupTranscript: "Arthur: tom, alunos de hoje sem anamnese"), e o
+// auditor cita assim. O FALA_RE só conhecia USUÁRIO/Pessoa, então todo achado de grupo saía da
+// sombra como "sem fala literal" mesmo com a fala do Arthur escrita no evidence. Vale SÓ para
+// achado de grupo (group_id): no 1:1 um "Resumo: ..." viraria fala inventada. Quem não é usuário
+// fica de fora — o TOM, a trilha do sistema, aviso automático e a MARIA (outro agente, fala no
+// grupo Financeiro com nome do WhatsApp; ver AUDIT-GROUP-OUTRO-AGENTE-VIRA-TOM).
+const FALA_GRUPO_RE = /^\s*(?:\[[^\]]*\]\s*)?([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'.-]*(?: [A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'.-]*){0,3})\s*:\s*(.+)$/;
+const NAO_E_USUARIO = /^(tom|sistema|aviso autom[áa]tico|maria)$/i;
 function extrairFalasDoUsuario(finding) {
+  const deGrupo = !!(finding && finding.group_id);
   return String((finding && finding.evidence) || '')
     .split('\n')
-    .map((l) => l.match(FALA_RE))
+    .map((l) => {
+      const m = l.match(FALA_RE);
+      if (m) return m[1];
+      if (!deGrupo) return null;
+      const g = l.match(FALA_GRUPO_RE);
+      return g && !NAO_E_USUARIO.test(g[1].trim()) ? g[2] : null;
+    })
     .filter(Boolean)
-    .map((m) => m[1].trim())
+    .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
 
