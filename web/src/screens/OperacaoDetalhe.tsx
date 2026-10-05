@@ -17,6 +17,8 @@ import { Button } from '../components/Button';
 import { RowMenu } from '../components/RowMenu';
 import { DemandaSheet } from '../components/DemandaSheet';
 import { showToast } from '../components/Toast';
+import { botoesDaEspera, modoComFallback, rotuloStatus } from '../lib/aprovacaoTarefa';
+import { useModoEspera, decidirAprovacao } from '../hooks/useTarefaAprovacao';
 
 const COMMENT_TYPE_LABEL: Record<string, string> = {
   manual: 'Comentário',
@@ -45,7 +47,8 @@ function isOverdue(due: string | null | undefined): boolean {
   return due.slice(0, 10) < today;
 }
 
-type TaskWithCreator = OperationalTask & {
+type TaskWithCreator = Omit<OperationalTask, 'request_type'> & {
+  request_type?: { id: string; slug: string; label: string; requires_approval?: boolean | null } | null;
   creator?: { id: string; full_name: string } | null;
 };
 
@@ -65,6 +68,9 @@ export function OperacaoDetalhe() {
   const navigate = useNavigate();
   const [commentBody, setCommentBody] = useState('');
   const [editOpen, setEditOpen] = useState(false);
+  // Rejeição de compra/obra: motivo opcional antes de confirmar (vai pro aviso de quem pediu).
+  const [rejeitando, setRejeitando] = useState(false);
+  const [motivoRejeicao, setMotivoRejeicao] = useState('');
 
   const { data: task, isLoading, error, refetch } = useQuery({
     queryKey: ['operacao-detail', id],
@@ -74,7 +80,7 @@ export function OperacaoDetalhe() {
         .select(`
           id, title, description, status, priority, due_date, notes, created_at,
           assigned_to, created_by, department_id, request_type_id,
-          request_type:department_request_types!tasks_request_type_id_fkey(id, slug, label),
+          request_type:department_request_types!tasks_request_type_id_fkey(id, slug, label, requires_approval),
           department:departments!tasks_department_id_fkey(id, slug, name),
           collaborator:collaborators!tasks_assigned_to_fkey(id, full_name, unit),
           creator:collaborators!tasks_created_by_fkey(id, full_name)
@@ -85,6 +91,16 @@ export function OperacaoDetalhe() {
       return data as unknown as TaskWithCreator;
     },
     enabled: !!id,
+  });
+
+  // BOTAO-APROVAR-OPERACOES (05/10): awaiting_confirmation = aprovação pra EXECUTAR (compra/obra) ou
+  // confirmação de CONCLUSÃO ("Marcar pronto"). Quem diz qual é o TOM (trilha tasks_audit); se ele
+  // não responder, cai no tipo da demanda — o POST confere de novo no servidor.
+  const modoQuery = useModoEspera(task?.id, task?.status);
+  const modoEspera = modoComFallback({
+    modoServidor: modoQuery.data,
+    falhou: modoQuery.isError,
+    requerAprovacao: task?.request_type?.requires_approval,
   });
 
   const { data: comments = [], error: commentsError } = useQuery({
@@ -108,7 +124,7 @@ export function OperacaoDetalhe() {
       if (error) throw error;
       // Audit trail: registra como task_comment status_change
       if (collaborator?.id) {
-        const fromLabel = task ? (STATUS_LABEL_OPERATIONAL[task.status] ?? task.status) : '?';
+        const fromLabel = task ? rotuloStatus(task.status, modoEspera) : '?';
         const toLabel = STATUS_LABEL_OPERATIONAL[next] ?? next;
         await supabase.from('task_comments').insert({
           task_id: id,
@@ -137,7 +153,7 @@ export function OperacaoDetalhe() {
       if (collaborator?.id && task) {
         await supabase.from('task_comments').insert({
           task_id: id,
-          content: `${STATUS_LABEL_OPERATIONAL[task.status] ?? task.status} → Cancelada`,
+          content: `${rotuloStatus(task.status, modoEspera)} → Cancelada`,
           comment_type: 'status_change',
           created_by: collaborator.id,
         });
@@ -151,6 +167,44 @@ export function OperacaoDetalhe() {
     },
     onError: (err: Error) => {
       showToast({ kind: 'error', title: 'Falha ao cancelar', msg: err.message });
+    },
+  });
+
+  // Aprovar/Rejeitar compra/obra: MESMO funil do WhatsApp (decidirAprovacaoDeTarefa no TOM) —
+  // 'pending'/'cancelled', fecha o APROV-XXXX, avisa quem pediu. Nunca 'done'.
+  const decisaoMutation = useMutation({
+    mutationFn: async (args: { decisao: 'approve' | 'reject'; motivo?: string }) => {
+      if (!id) throw new Error('sem id');
+      const r = await decidirAprovacao(id, args.decisao, args.motivo ?? null);
+      if (collaborator?.id) {
+        const motivo = args.decisao === 'reject' && args.motivo?.trim() ? ` — motivo: ${args.motivo.trim()}` : '';
+        await supabase.from('task_comments').insert({
+          task_id: id,
+          content: `Aguardando aprovação → ${args.decisao === 'approve' ? 'Aprovada (Pendente)' : 'Rejeitada (Cancelada)'}${motivo}`,
+          comment_type: 'status_change',
+          created_by: collaborator.id,
+        });
+      }
+      return r;
+    },
+    onSuccess: (r, args) => {
+      setRejeitando(false);
+      setMotivoRejeicao('');
+      showToast({
+        kind: 'success',
+        title: args.decisao === 'approve' ? 'Aprovada — vai pra execução' : 'Rejeitada e cancelada',
+        msg: r.avisou ? 'Avisei quem pediu no WhatsApp.' : 'Não consegui avisar quem pediu no WhatsApp.',
+      });
+    },
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Falha ao decidir', msg: err.message });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['operacao-detail', id] });
+      qc.invalidateQueries({ queryKey: ['operacao-comments', id] });
+      qc.invalidateQueries({ queryKey: ['operational-tasks'] });
+      qc.invalidateQueries({ queryKey: ['operational-tasks-counts'] });
+      qc.invalidateQueries({ queryKey: ['tarefa-aprovacao-modo', id] });
     },
   });
 
@@ -225,29 +279,72 @@ export function OperacaoDetalhe() {
         </Button>
       );
     }
-    if (s === 'awaiting_confirmation' && canApprove) {
+    if (s !== 'awaiting_confirmation') return null;
+    const b = botoesDaEspera(modoEspera, canApprove);
+    if (b.tipo === 'carregando') {
+      return <p className="text-body-sm text-fg-muted">Conferindo se é aprovação ou conclusão…</p>;
+    }
+    if (b.tipo === 'aviso') {
+      return <p className="text-body-sm text-fg-muted">{b.texto}</p>;
+    }
+    if (b.tipo === 'conclusao') {
+      // (b) "Marcar pronto" → confirmar conclusão (done) ou reabrir (in_progress), direto no app.
       return (
         <div className="flex gap-2 flex-wrap">
-          <Button onClick={() => statusMutation.mutate('done')} disabled={statusMutation.isPending} variant="primary">
-            Aprovar
+          <Button onClick={() => statusMutation.mutate(b.confirmar.proximo)} disabled={statusMutation.isPending} variant="primary">
+            {b.confirmar.rotulo}
           </Button>
-          <Button onClick={() => statusMutation.mutate('in_progress')} disabled={statusMutation.isPending} variant="ghost">
-            Reabrir
+          <Button onClick={() => statusMutation.mutate(b.reabrir.proximo)} disabled={statusMutation.isPending} variant="ghost">
+            {b.reabrir.rotulo}
           </Button>
         </div>
       );
     }
-    if (s === 'awaiting_confirmation') {
-      return <p className="text-body-sm text-fg-muted">Aguardando aprovação da coordenação.</p>;
+    // (a) compra/obra aguardando aprovação pra ser feita → TOM decide e avisa quem pediu.
+    const ocupado = decisaoMutation.isPending;
+    if (rejeitando) {
+      return (
+        <div className="space-y-2">
+          <textarea
+            value={motivoRejeicao}
+            onChange={(e) => setMotivoRejeicao(e.target.value)}
+            rows={2}
+            maxLength={300}
+            placeholder="Motivo (opcional) — vai no aviso pra quem pediu"
+            className="w-full rounded-lg border border-border bg-bg-app px-3 py-2 text-body resize-none focus:outline-none focus:border-brand"
+          />
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              onClick={() => decisaoMutation.mutate({ decisao: 'reject', motivo: motivoRejeicao })}
+              disabled={ocupado}
+              variant="danger"
+            >
+              {ocupado ? 'Rejeitando…' : 'Confirmar rejeição'}
+            </Button>
+            <Button onClick={() => { setRejeitando(false); setMotivoRejeicao(''); }} disabled={ocupado} variant="ghost">
+              Voltar
+            </Button>
+          </div>
+        </div>
+      );
     }
-    return null;
+    return (
+      <div className="flex gap-2 flex-wrap">
+        <Button onClick={() => decisaoMutation.mutate({ decisao: 'approve' })} disabled={ocupado} variant="primary">
+          {ocupado ? 'Aprovando…' : b.aprovar}
+        </Button>
+        <Button onClick={() => setRejeitando(true)} disabled={ocupado} variant="ghost">
+          {b.rejeitar}
+        </Button>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4">
       <PageHeader
         title={task.title}
-        subtitle={`${priorityInfo.emoji} ${PRIORITY_LABEL[task.priority]} · ${task.request_type?.label ?? '—'} · ${STATUS_LABEL_OPERATIONAL[task.status] ?? task.status}`}
+        subtitle={`${priorityInfo.emoji} ${PRIORITY_LABEL[task.priority]} · ${task.request_type?.label ?? '—'} · ${rotuloStatus(task.status, modoEspera)}`}
         backTo="/mais/operacoes"
         right={
           <RowMenu
@@ -285,7 +382,7 @@ export function OperacaoDetalhe() {
           </span>
 
           <span className="text-body-sm text-fg-muted">Status</span>
-          <span className="text-body text-fg">{STATUS_LABEL_OPERATIONAL[task.status] ?? task.status}</span>
+          <span className="text-body text-fg">{rotuloStatus(task.status, modoEspera)}</span>
 
           <span className="text-body-sm text-fg-muted">Responsável</span>
           <span className="text-body text-fg">

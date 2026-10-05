@@ -1848,6 +1848,86 @@ router.get('/internal/pix-painel', async (req, res) => {
   }
 });
 
+// BOTAO-APROVAR-OPERACOES (05/10) — GET /internal/tarefa-aprovacao?task_id= e
+// POST /internal/tarefa-aprovacao/decidir { task_id, decisao: 'approve'|'reject', motivo? }.
+// Authorization: Bearer <JWT do Supabase do usuário> — NUNCA o x-internal-secret (vai no bundle).
+// O app pergunta se a espera é APROVAÇÃO pra executar (compra/obra) ou CONFIRMAÇÃO de conclusão, e
+// decide a aprovação pelo MESMO funil do WhatsApp (decidirAprovacaoDeTarefa: pending/cancelled, fecha
+// o APROV-XXXX, avisa quem pediu e grava no histórico dela). Regra toda em
+// services/aprovacao-tarefa-app.js (testada); aqui só as dependências reais.
+function _depsAprovacaoTarefaApp() {
+  const approvalsService = require('./services/approvals');
+  const { decidirAprovacaoDeTarefa } = require('./services/aprovacao-tarefa');
+  const { registrarAviso } = require('./lib/aviso-terceiro');
+  const logAviso = async (collaboratorId, direction, content) => {
+    const { error } = await supabase.from('conversation_history')
+      .insert({ collaborator_id: collaboratorId, direction, message_type: 'text', content });
+    if (error) throw new Error(error.message);
+  };
+  const idPorTelefone = async (phone) => {
+    const { data } = await supabase.from('collaborators').select('id').eq('phone', phone).limit(1);
+    return (data && data[0] && data[0].id) || null;
+  };
+  return {
+    usuarioDoToken: async (t) => { const { data, error } = await supabase.auth.getUser(t); return error ? null : (data && data.user) || null; },
+    colaboradorPorEmail: async (email) => (await supabase.from('collaborators').select('id, role, full_name').eq('email', email).eq('is_active', true).maybeSingle()).data || null,
+    lerTarefa: async (id) => {
+      const { data, error } = await supabase.from('tasks').select('id, title, status, created_by, request_type_id').eq('id', id).maybeSingle();
+      if (error) throw new Error(error.message);
+      return data || null;
+    },
+    requerAprovacao: async (rtId) => !!((await supabase.from('department_request_types').select('requires_approval').eq('id', rtId).maybeSingle()).data || {}).requires_approval,
+    auditoria: async (taskId) => {
+      const { data, error } = await supabase.from('tasks_audit').select('op, old_status, new_status, changed_at')
+        .eq('task_id', taskId).eq('new_status', 'awaiting_confirmation').order('changed_at', { ascending: false }).limit(20);
+      if (error) throw new Error(error.message);
+      return data || [];
+    },
+    intentAberto: (taskId) => approvalsService.findOpenApprovalByRef(supabase, taskId),
+    colaborador: async (id) => (await supabase.from('collaborators').select('id, full_name, phone').eq('id', id).maybeSingle()).data || null,
+    decidir: ({ intent, decisao, motivo, aprovador }) => decidirAprovacaoDeTarefa({
+      supabase, approvals: approvalsService,
+      enviar: (ph, txt) => whatsapp.sendMessage(ph, txt),
+      registrarAviso: (id, txt, ph = null) => registrarAviso({ log: logAviso, idPorTelefone }, { collaboratorId: id, content: txt, phone: ph }),
+    }, { intent, decisao, motivo, aprovador }),
+  };
+}
+
+function _bearer(req) {
+  const auth = req.get('authorization') || '';
+  return auth.startsWith('Bearer ') ? auth.slice(7) : null;
+}
+
+router.get('/internal/tarefa-aprovacao', async (req, res) => {
+  const { atenderModo } = require('./services/aprovacao-tarefa-app');
+  try {
+    const taskId = typeof req.query.task_id === 'string' ? req.query.task_id : null;
+    const r = await atenderModo({ token: _bearer(req), taskId, deps: _depsAprovacaoTarefaApp() });
+    res.status(r.status).json(r.body);
+  } catch (e) {
+    console.error('[internal-api] /tarefa-aprovacao:', e.message);
+    res.status(500).json({ ok: false, error: 'erro_interno' });
+  }
+});
+
+router.post('/internal/tarefa-aprovacao/decidir', async (req, res) => {
+  const { atenderDecisao } = require('./services/aprovacao-tarefa-app');
+  try {
+    const b = req.body || {};
+    const r = await atenderDecisao({
+      token: _bearer(req),
+      taskId: typeof b.task_id === 'string' ? b.task_id : null,
+      decisao: typeof b.decisao === 'string' ? b.decisao : null,
+      motivo: typeof b.motivo === 'string' ? b.motivo : null,
+      deps: _depsAprovacaoTarefaApp(),
+    });
+    res.status(r.status).json(r.body);
+  } catch (e) {
+    console.error('[internal-api] /tarefa-aprovacao/decidir:', e.message);
+    res.status(500).json({ ok: false, error: 'erro_interno' });
+  }
+});
+
 module.exports = router;
 module.exports.runChecklistCompletedFlow = runChecklistCompletedFlow;
 module.exports.findUnitManager = findUnitManager;
