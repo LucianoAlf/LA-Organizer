@@ -38,7 +38,7 @@ const announcementsService = require('../services/announcements');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
 // GovQuality — auditoria de qualidade de conversa acoplada ao Dream (03h).
 const { auditConversation, upsertFinding } = require('../services/conversation-audit');
-const { chat: aiChat } = require('../ai/provider');
+const { chat: aiChat, contarFallbacks } = require('../ai/provider');
 const { runLaEducaLembretes, processarFilaNotificacoes, processarNotificacoesAtribuicao, runLaEducaEscalation, runLaEducaBriefingSexta } = require('./la-educa-lembretes');
 const {
   runLaJourneyLembreteSemanal,
@@ -4004,6 +4004,8 @@ async function run(opts = {}) {
       let dreamDedup = 0;
       const dreamErros = [];
       let dreamMagros = 0;
+      // Delta de Claude→Codex SÓ deste laço (DREAM-FALLBACK-INVISIVEL, 05/10).
+      const _fallbacksAntesDoDream = contarFallbacks();
       for (const c of (allCollabs || [])) {
         // Idempotência: slot de 15min × cron de 5min faz 3 ticks consecutivos
         // baterem o mesmo slot 03:00. Sem este gate, o Dream rodava 3× por noite
@@ -4038,16 +4040,16 @@ async function run(opts = {}) {
         }
       }
       console.log(`[Dream] concluído: ${dreamOk}/${(allCollabs || []).length} colaboradores (skipped=${dreamSkipped} ja_enviado_hoje)`);
-      // Uma linha por noite com o quadro inteiro. `fallback` quando ALGUM extrator falhou —
-      // e o unico jeito de o zero do dia ter causa lida. Espelha o marker do lado do grupo.
+      // Uma linha por noite com o quadro inteiro. `fallback` quando ALGUM extrator falhou OU o
+      // Claude caiu pro Codex no laço (DREAM-FALLBACK-INVISIVEL, 05/10) — é o único jeito de o
+      // zero do dia ter causa lida. Espelha o marker do lado do grupo.
       try {
-        await supabase.from('marker_logs').insert({
-          marker_type: 'DREAM_MEMORY',
-          result: dreamErros.length ? 'fallback' : 'executed',
-          reason: `dm:${now.ymd} colabs=${dreamOk} cand=${dreamCand} salvas=${dreamSalvas}`
-            + ` dedup=${dreamDedup} magros=${dreamMagros} erros=${dreamErros.length}`
-            + (dreamErros.length ? ` [${dreamErros.slice(0, 2).join('; ')}]` : ''),
+        const { sensorDoDream } = require('./dream-sensor');
+        const _sensor = sensorDoDream({
+          ymd: now.ymd, colabs: dreamOk, cand: dreamCand, salvas: dreamSalvas, dedup: dreamDedup,
+          magros: dreamMagros, erros: dreamErros, fallbacks: contarFallbacks() - _fallbacksAntesDoDream,
         });
+        await supabase.from('marker_logs').insert({ marker_type: 'DREAM_MEMORY', ..._sensor });
       } catch (mErr) { console.error('[Dream] sensor falhou:', mErr.message); }
     } catch (err) {
       console.error('[Dispatcher] dream-consolidation erro:', err.message);

@@ -86,7 +86,7 @@ async function triageOpenFindings(sb, chat, opts = {}) {
     const kiSinceIso = isoDaysAgo(nowIso, opts.kiLookbackDays || KI_LOOKBACK_DAYS);
 
     const { data: findings } = await sb.from('tom_audit_findings')
-      .select('id, category, summary, evidence, incident_at, incident_confidence, last_seen')
+      .select('id, category, summary, evidence, incident_at, incident_confidence, last_seen, auto_triage')
       .in('status', ['novo', 'confirmado'])
       .gte('last_seen', windowIso);
     const open = findings || [];
@@ -120,7 +120,10 @@ async function triageOpenFindings(sb, chat, opts = {}) {
       const ki = mm && mm.matched_code ? byCode[mm.matched_code] : null;
       const match = ki ? { ...ki, confidence: mm.confidence } : null;
       const verdict = decideTriage(f, match, opts);
+      // MESCLA, não sobrescreve (05/10): o jsonb já pode trazer `auditor` (modelo que escreveu o
+      // achado — DREAM-FALLBACK-INVISIVEL). Os campos do veredito são todos reescritos abaixo.
       const auto_triage = {
+        ...((f.auto_triage && typeof f.auto_triage === 'object') ? f.auto_triage : {}),
         decision: verdict.decision,
         matched_code: verdict.matched_code,
         match_confidence: mm ? mm.confidence : null,

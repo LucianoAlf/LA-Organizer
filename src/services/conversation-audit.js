@@ -102,6 +102,19 @@ function respostaDaAuditoriaValida(raw) {
   try { const obj = JSON.parse(s.slice(start, end + 1)); return Array.isArray(obj && obj.findings); } catch { return false; }
 }
 
+// DREAM-FALLBACK-INVISIVEL (05/10). Achado não dizia QUAL modelo o escreveu: o da Rose com
+// categoria errada (c6b853b6, noite de 05/10) saiu do Codex, que assumiu num timeout do Claude, e
+// nada no banco mostrava isso. Sem coluna própria (e sem migração), vai em auto_triage.auditor —
+// jsonb que a triagem das 05h passa a MESCLAR em vez de sobrescrever (finding-triage).
+function auditorDaResposta(r) {
+  const a = { provider: (r && r.provider) || 'desconhecido' };
+  if (r && r.fallbackFrom) {
+    a.fallback_de = r.fallbackFrom;
+    a.motivo = (r.primaryError && r.primaryError.kind) || 'desconhecido';
+  }
+  return a;
+}
+
 // AUDIT-OCCURRED-AT-CARIMBO-DERRUBA-INSERT (26/09, caso Clayton). O modelo copiou o carimbo do
 // transcript ("25/09 13:05") pro occurred_at; o Postgres recusou o insert e os achados sumiram.
 // Só timestamp ISO passa — o resto cai no fallback da janela, como o null.
@@ -472,6 +485,7 @@ async function auditGroupConversation(sb, chat, group, hours = 24, ateIso = null
     // O occurred_at que era só o lastAt da janela passa a ser o instante do incidente.
     const findings = parseFindings(r && r.text, lastAt);
     for (const f of findings) {
+      f.auditor = auditorDaResposta(r);
       const inc = resolveGroupIncident(rows, f.evidence);
       if (!inc) { f.incident_at = null; f.incident_confidence = 'none'; continue; }
       f.incident_at = inc.incident_at;
@@ -559,6 +573,7 @@ async function auditConversation(sb, chat, collaborator, hours = 24, ateIso = nu
       findings.push(f);
     }
     for (const f of findings) {
+      f.auditor = auditorDaResposta(r);
       const inc = await resolveIncidentAt(sb, collaborator.id, f.evidence, f.occurred_at, sinceIso);
       f.incident_at = inc.incident_at;
       f.incident_confidence = inc.incident_confidence;
@@ -707,6 +722,9 @@ async function upsertFinding(sb, collaborator, finding, opts = {}) {
       incident_confidence: finding.incident_confidence || 'none',
       signature: sig,
       status: 'novo',
+      // Modelo que escreveu o achado (DREAM-FALLBACK-INVISIVEL, 05/10). Todo leitor do veredito
+      // olha `auto_triage.decision`, que só a triagem escreve — `auditor` sozinho não é triagem.
+      ...(finding.auditor ? { auto_triage: { auditor: finding.auditor } } : {}),
     });
     if (erroInsert) {
       console.error(`[ConvAudit] INSERT FALHOU (${collaborator && collaborator.full_name || _groupId}): ${String(erroInsert.message || erroInsert).slice(0, 160)}`);
