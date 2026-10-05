@@ -716,3 +716,45 @@ test('engine: o "sim" cria o hábito diário via applyHabitActions (executor det
   assert.match(ENGINE, /userConfirm === 'yes' && target\.payload\?\.create_habit_daily\?\.name/);
   assert.match(ENGINE, /applyHabitActions\(collab, \[\{ action: 'create', name: _hn, frequency: 'daily' \}\]/);
 });
+
+// T2H-ALVO-JA-E-HABITO (Rose 04/10 21:36 BRT): "Tom, pode parar com essa tarefa de aviso ta" logo
+// depois do 💊 lembrete de "Tomar vitaminas". O LLM emitiu <<TASK_TO_HABIT>>, mas "Tomar
+// vitaminas" já É hábito (habits 6187704f, 21:00) — não existe tarefa nenhuma com esse nome. O
+// not_found respondia "não achei essa rotina… me diz o nome exato" pra um nome que estava exato:
+// o mesmo beco do T2H-ONEOFF-OFFER, por outra porta. Aqui o serviço nomeia a verdade.
+test('T2H: alvo que já é HÁBITO ativo vira already_habit (não not_found)', async () => {
+  const habits = [{ id: 'h1', collaborator_id: OWNER, name: 'Tomar vitaminas', is_active: true, reminder_time: '21:00:00', frequency: 'daily', custom_days: null }];
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks: [], habits }), collaboratorId: OWNER, taskTitle: 'Tomar vitaminas' });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'already_habit');
+  assert.strictEqual(r.habit.name, 'Tomar vitaminas');
+});
+
+test('T2H: hábito de OUTRA pessoa ou inativo não vira already_habit', async () => {
+  const habits = [
+    { id: 'h1', collaborator_id: 'outra', name: 'Tomar vitaminas', is_active: true },
+    { id: 'h2', collaborator_id: OWNER, name: 'Tomar vitaminas', is_active: false },
+  ];
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks: [], habits }), collaboratorId: OWNER, taskTitle: 'Tomar vitaminas' });
+  assert.strictEqual(r.reason, 'not_found');
+});
+
+test('renderConversionResult: already_habit diz que já é lembrete e mostra o caminho, sem beco', () => {
+  const out = renderConversionResult({ ok: false, reason: 'already_habit', habit: { name: 'Tomar vitaminas' } });
+  assert.match(out, /Tomar vitaminas/);
+  assert.match(out, /já é um lembrete/i);
+  assert.match(out, /Hábitos/);
+  assert.ok(!/nome exato|não achei/i.test(out), 'não pode cair no beco do nome exato');
+  // Frase de ramo de falha passa pelas portas de honestidade sem ser comida (regra 21/09).
+  const { sanitizeOptimisticConfirm } = require('../lib/optimistic-confirm');
+  assert.strictEqual(sanitizeOptimisticConfirm(out, 'failed', { includeWeak: true }).trim(), out.trim());
+  const { downgradeEmptyPromise } = require('../lib/promise-honesty');
+  const dg = downgradeEmptyPromise(out);
+  assert.ok(!dg || !dg.fired, 'downgradeEmptyPromise não pode disparar no caminho');
+});
+
+// O texto do LLM foi escrito sobre uma conversão que não se aplica ("vou parar de te lembrar") —
+// e a promessa sobrevive ao sanitizador. Quando TODO o lote é already_habit, a base sai inteira.
+test('engine: lote só de already_habit descarta a fala do LLM', () => {
+  assert.match(ENGINE, /already_habit[\s\S]{0,400}?baseT2H/);
+});

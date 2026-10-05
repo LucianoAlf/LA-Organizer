@@ -133,6 +133,20 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
           return { ok: false, reason: 'oneoff_task', task: { id: pool[0].id, title: pool[0].title } };
         }
       } catch (_) { /* cai no not_found honesto abaixo */ }
+      // T2H-ALVO-JA-E-HABITO (Rose 04/10): o nome é de um HÁBITO ativo dela — já é lembrete, não
+      // há tarefa pra converter. Sem isto o not_found pedia "o nome exato" de um nome que estava
+      // exato. Só nomeia a verdade; não mexe no hábito (editar hábito por conversa não existe).
+      try {
+        const { data: habs } = await supabase
+          .from('habits')
+          .select('id, name, is_active')
+          .eq('collaborator_id', collaboratorId)
+          .limit(100);
+        const hab = (habs || [])
+          .filter((h) => h.is_active !== false)
+          .find((h) => normTitle(h.name) === wantTitle);
+        if (hab) return { ok: false, reason: 'already_habit', habit: { id: hab.id, name: hab.name } };
+      } catch (_) { /* cai no not_found honesto abaixo */ }
     }
     return { ok: false, reason: 'not_found' };
   }
@@ -582,6 +596,10 @@ function renderConversionResult(r) {
     // HABIT_ACTION — capacidade que já existe; a intent é aberta no engine).
     case 'oneoff_task':
       return `_Achei *${r.task.title}*, mas ela é uma tarefa única, não uma rotina. Quer que eu crie um hábito diário *${r.task.title}* — te lembrando todo dia?_`;
+    // T2H-ALVO-JA-E-HABITO: o alvo já é hábito. Sem verbo de conclusão nem promessa (as portas
+    // de honestidade comeriam a frase); o caminho é o mesmo do habit-sem-edicao.
+    case 'already_habit':
+      return `_*${r.habit.name}* já é um lembrete (hábito), não uma tarefa — então não tem o que converter. Pra mudar ou desligar esse aviso: abre o app, aba *Hábitos*, toca nele e ajusta. Se quiser apagar o hábito de vez, me diz._`;
     case 'ambiguous': {
       const nomes = (r.candidates || []).map((c) => `*${c.title}*`).join(' / ');
       return `_tenho mais de uma rotina com esse nome (${nomes}) — qual delas?_`;

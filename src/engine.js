@@ -13793,6 +13793,7 @@ Output AGORA, apenas o marker:`;
         const itemsT2H = (Array.isArray(parsedT2H) ? parsedT2H : [parsedT2H]).slice(0, 5);
         const footersT2H = [];
         let okT2H = 0;
+        const _t2hReasons = [];
         let _t2hOfferName = null; // T2H-ONEOFF-OFFER: nome da tarefa única ofertada como hábito
         for (const it of itemsT2H) {
           if (!it || typeof it !== 'object') continue;
@@ -13817,6 +13818,7 @@ Output AGORA, apenas o marker:`;
             r = { ok: false, reason: 'db_error', detail: err.message };
           }
           if (r && r.ok) okT2H++;
+          _t2hReasons.push(r && r.reason);
           footersT2H.push(renderConversionResult(r));
           // T2H-ONEOFF-OFFER (Dudu 21/08): a conversão falhou porque o alvo é uma tarefa ÚNICA,
           // não uma rotina. renderConversionResult já ofereceu criar um hábito diário; aqui a
@@ -13834,7 +13836,12 @@ Output AGORA, apenas o marker:`;
         }
         await logMarker(collab.id, 'TASK_TO_HABIT', okT2H > 0 ? 'executed' : 'rejected',
           okT2H > 0 ? `ok=${okT2H}/${itemsT2H.length}` : `all_failed:${itemsT2H.length}`, null);
-        const baseT2H = okT2H > 0 ? cleanT2H : baseDeFalhaT2H(cleanT2H);
+        // T2H-ALVO-JA-E-HABITO (Rose 04/10): se TODO alvo do lote já era hábito, a fala do LLM foi
+        // escrita sobre uma conversão que não se aplica ("vou parar de te lembrar…") e a promessa
+        // sobrevive ao sanitizador. O rodapé already_habit diz a verdade sozinho.
+        const _t2hTodosJaHabito = okT2H === 0 && _t2hReasons.length > 0
+          && _t2hReasons.every((x) => x === 'already_habit');
+        const baseT2H = okT2H > 0 ? cleanT2H : (_t2hTodosJaHabito ? '' : baseDeFalhaT2H(cleanT2H));
         const footT2H = footersT2H.filter(Boolean).join('\n');
         // Fallback honesto, não `reply`: `reply` ainda carrega o <<TASK_TO_HABIT>> cru, e a
         // base agora pode ficar vazia (confirmação fraca removida inteira).
