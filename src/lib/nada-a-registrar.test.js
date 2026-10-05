@@ -64,7 +64,7 @@ const fs = require('fs');
 const path = require('path');
 test('1:1: ligado na porta reportedState com a fala DA PESSOA; optimistic-confirm.js intocado', () => {
   const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
-  assert.match(engine, /\|\| pedidoDeNadaARegistrar\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply\),\n/);
+  assert.match(engine, /\|\| pedidoDeNadaARegistrar\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply\)(?:\s*\|\| liberaAvisoCondicional\(reply, [^\n]*\))?,\n/);
   assert.match(engine, /require\('\.\/lib\/nada-a-registrar'\)/);
   assert.ok(!fs.readFileSync(path.join(__dirname, 'optimistic-confirm.js'), 'utf8').includes('nada-a-registrar'));
 });

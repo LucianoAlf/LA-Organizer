@@ -61,6 +61,7 @@ const { linhasAcusadasSaoPergunta } = require('./lib/pergunta-nao-e-afirmacao');
 // DECISAO-UNICA-DO-VETO-DE-PERGUNTA (03/10): a régua de "é pergunta, não acusa" das DUAS portas.
 const { vetoDePergunta } = require('./lib/veto-pergunta');
 const { pedidoDeNadaARegistrar } = require('./lib/nada-a-registrar');
+const { liberaAvisoCondicional } = require('./lib/aviso-condicional');
 const { normalizarAcaoDeTarefa } = require('./lib/acao-de-tarefa');
 const { fundeBlocosRepetidos } = require('./lib/funde-blocos-repetidos');
 const { buscarEscritasRecentes } = require('./lib/escritas-recentes');
@@ -4802,6 +4803,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   const failMessages = [];
   // Avisos de sucesso de grupos (cascata) — anexados à resposta no caminho de SUCESSO.
   const groupNotices = [];
+  // APROVACAO-DE-TAREFA-NAO-CHEGAVA (05/10): cards de aprovação que SAÍRAM neste lote — o caller soma em
+  // _metrics.envio_deterministico pra o SendHonesty não negar o "Mandei o pedido pro Luciano" do engine.
+  let _pedidosAprovEnviados = 0;
   // FALA-OMITE-CONCLUIDA (Rafinha 03/08 — 1e546ccb): o que o banco FECHOU neste lote, pra fala não esquecer.
   const _concluidasTit = [];
   // FATIA 6 (#1): horários de lembrete das tarefas CRIADAS neste lote (remind_at one-shot +
@@ -6027,12 +6031,13 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           ? a.request_type_id
           : null;
         let initialStatus = 'pending';
+        let _rtLabel = null; // APROVACAO-DE-TAREFA-NAO-CHEGAVA: vai no card do aprovador
 
         // If request_type provided: validate it exists, derive department_id if absent, check requires_approval
         if (requestTypeId) {
           const { data: rt } = await supabase
             .from('department_request_types')
-            .select('department_id, requires_approval, is_active')
+            .select('department_id, requires_approval, is_active, label')
             .eq('id', requestTypeId)
             .maybeSingle();
           if (!rt || !rt.is_active) {
@@ -6046,7 +6051,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             continue;
           }
           if (!departmentId) departmentId = rt.department_id;
-          if (rt.requires_approval) initialStatus = 'awaiting_confirmation';
+          _rtLabel = rt.label || null;
+          // APROVACAO-DE-TAREFA-NAO-CHEGAVA (05/10): mesma regra da manutenção (BUG-8, 11/06) —
+          // diretor registra direto; os demais esperam o aprovador da matriz (pedido sai logo após o insert).
+          if (rt.requires_approval) initialStatus = collaborator.role === 'director' ? 'pending' : 'awaiting_confirmation';
         }
 
         // Tarefa de grupo é SEMPRE work (decisão de spec).
@@ -6398,6 +6406,36 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         const deptSuf = departmentId ? ` dept=${departmentId.slice(0,8)}${requestTypeId ? `/rt=${requestTypeId.slice(0,8)}` : ''}` : '';
         const apprSuf = initialStatus === 'awaiting_confirmation' ? ' AWAIT_APPROVAL' : '';
         console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${sufx}${forSuf}${deptSuf}${apprSuf} (id=${String(taskId || '').slice(0, 8)})`);
+        // APROVACAO-DE-TAREFA-NAO-CHEGAVA (auditoria 05/10): awaiting_confirmation sem pedido a ninguém
+        // deixou 15 tarefas da Rafinha paradas desde 30/05 enquanto o TOM prometia "vou avisar quando
+        // aprovarem". Agora o pedido SAI pro aprovador da matriz (card APROVA/REJEITA, no histórico dele) e
+        // a pessoa ouve o que de fato aconteceu — ver services/aprovacao-tarefa.js. Nunca derruba o create.
+        if (initialStatus === 'awaiting_confirmation' && taskId) {
+          try {
+            let _deptNome = null;
+            if (departmentId) {
+              const { data: _dep } = await supabase.from('departments').select('name').eq('id', departmentId).maybeSingle();
+              _deptNome = (_dep && _dep.name) || null;
+            }
+            const _apT = require('./services/aprovacao-tarefa');
+            const _apRes = await _apT.abrirAprovacaoDeTarefa({
+              supabase, approvals: approvalsService,
+              enviar: (ph, txt) => whatsapp.sendMessage(ph, txt),
+              registrarAviso: _registrarAvisoNoHistorico,
+              resolverAprovador: (id) => approvalsService.resolveApproverFor(supabase, id),
+            }, {
+              task: { id: taskId, title: insertRow.title, description: insertRow.description || null },
+              solicitante: collaborator, departamento: _deptNome, tipo: _rtLabel,
+            });
+            const _apAviso = _apT.avisoAoSolicitante(_apRes, insertRow.title);
+            if (_apAviso) groupNotices.push(_apAviso);
+            // Veto do SendHonesty (mesma lição da manutenção, Rafinha 02/10): só conta o card que SAIU.
+            if (_apRes && _apRes.status === 'enviada') _pedidosAprovEnviados++;
+          } catch (_apErr) {
+            console.error('[Task] pedido de aprovação err (tarefa criada):', _apErr.message);
+            groupNotices.push(`⚠️ *${insertRow.title.slice(0, 80)}* ficou aguardando aprovação, mas o pedido não saiu pro aprovador — avisa quem aprova direto, por favor.`);
+          }
+        }
         // Sprint 29.4 — se task é TEMPLATE recorrente, materializa próximas instâncias imediatamente
         if (insertRow.recurrence_rule && taskId) {
           try {
@@ -7028,7 +7066,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       if (okCount === _okB && failCount > _failB) _falharam.push(a);
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, lembretesSomados: [..._somados.values()], acoesSomadas: _acoesSomadas, itensCriacao: _itensCriacao, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit, criadas: _criadasDatas };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, falharam: _falharam, lembretesSomados: [..._somados.values()], acoesSomadas: _acoesSomadas, itensCriacao: _itensCriacao, awaitingConfirm: _perguntouConfirmacao, retidos: _retidos, concluidas: _concluidasTit, criadas: _criadasDatas, pedidosAprovacaoEnviados: _pedidosAprovEnviados };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -10389,7 +10427,9 @@ async function processMessage(phone, text, raw = {}) {
           || (i.payload.short_id && scaffold.quotedText.includes(i.payload.short_id))
           || (i.payload.domain === 'announcement' && /Comunicado pendente de aprova/i.test(scaffold.quotedText)));
       }
-      if (!target && apr.token) target = openApprovals.find((i) => (i.payload.token || '').toUpperCase() === apr.token);
+      // + MANUT-XXXX digitado (05/10): a manutenção guarda o código só em short_id — sem isto o
+      // "APROVA MANUT-AB12" sem citar o card caía no caminho legado de PROJETO e não achava nada.
+      if (!target && apr.token) target = openApprovals.find((i) => (i.payload.token || (i.payload.domain === 'maintenance' ? i.payload.short_id : '') || '').toUpperCase() === apr.token);
       const candidates = target ? [target]
         : apr.domainHint ? openApprovals.filter((i) => i.payload.domain === apr.domainHint)
         : openApprovals;
@@ -10435,6 +10475,20 @@ async function processMessage(phone, text, raw = {}) {
             console.error('[Maintenance] approval execution err:', _maintErr.message);
             aprReply = `_Erro ao processar manutenção: ${_maintErr.message}_`;
           }
+        } else if (it.payload.domain === 'task') {
+          // APROVACAO-DE-TAREFA-NAO-CHEGAVA (05/10): APROVA → 'pending' (dono mantido); REJEITA → 'cancelled';
+          // quem pediu recebe ✅/❌ com registro no histórico dela. Ver services/aprovacao-tarefa.js.
+          try {
+            const r = await require('./services/aprovacao-tarefa').decidirAprovacaoDeTarefa({
+              supabase, approvals: approvalsService,
+              enviar: (ph, txt) => whatsapp.sendMessage(ph, txt),
+              registrarAviso: _registrarAvisoNoHistorico,
+            }, { intent: it, decisao: apr.decision, motivo: apr.reason, aprovador: collab });
+            aprReply = r.reply;
+          } catch (_taskApErr) {
+            console.error('[AprovacaoTarefa] decisão err:', _taskApErr.message);
+            aprReply = '_Não consegui processar essa aprovação agora — tenta de novo em instantes._';
+          }
         } else {
           const r = await applyAnnouncementApproval(collab, { action: apr.decision === 'approve' ? 'approve' : 'reject', announcement_id: it.payload.ref_id, reason: apr.reason });
           aprReply = r.ok
@@ -10446,7 +10500,7 @@ async function processMessage(phone, text, raw = {}) {
       } else if (candidates.length > 1) {
         // Ambiguidade REAL → lista numerada com os comandos exatos (nunca chuta).
         const lines = candidates.map((i, idx) => {
-          const cmd = i.payload.domain === 'project'
+          const cmd = (i.payload.domain === 'project' || i.payload.domain === 'task')
             ? `*APROVA ${i.payload.token}*`
             : i.payload.domain === 'maintenance'
             ? `*APROVA ${i.payload.short_id}*`
@@ -13378,7 +13432,8 @@ Output AGORA, apenas o marker:`;
         // 16/07). Degradar = comportamento ANTIGO (executa na hora), não sumiço.
         console.error('[StagedReschedule] err — executando direto (fail-safe):', e.message);
         const _falaTomTaskFs = (parsedTask && parsedTask.cleanText) || '';
-        const { okCount, failCount } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTaskFs });
+        const { okCount, failCount, pedidosAprovacaoEnviados: _apEnvFs } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTaskFs });
+        if (_apEnvFs) _metrics.envio_deterministico = (_metrics.envio_deterministico || 0) + _apEnvFs;
         await logMarker(collab.id, 'TASK_UPDATE', okCount > 0 ? 'executed' : 'rejected',
           `stage_failed_fallback ok=${okCount} fail=${failCount}`, null);
         reply = parsedTask.cleanText || reply;
@@ -13449,7 +13504,9 @@ Output AGORA, apenas o marker:`;
       // replyText (CANCELA-SERIE-PROMETE-TODOS): a fala do TOM que acompanha o marker — o executor usa
       // pra não cancelar UMA ocorrência quando ela promete "todos"/"fora do sistema".
       const _falaTomTask = (parsedTask && parsedTask.cleanText) || '';
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, lembretesSomados, acoesSomadas, itensCriacao, falharam, awaitingConfirm, retidos, concluidas, criadas } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices, createdReminderTimes, lembretesSomados, acoesSomadas, itensCriacao, falharam, awaitingConfirm, retidos, concluidas, criadas, pedidosAprovacaoEnviados } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text, replyText: _falaTomTask });
+      // APROVACAO-DE-TAREFA-NAO-CHEGAVA (05/10): card de aprovação que saiu é envio REAL do engine (veto do SendHonesty).
+      if (pedidosAprovacaoEnviados) _metrics.envio_deterministico = (_metrics.envio_deterministico || 0) + pedidosAprovacaoEnviados;
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -16492,6 +16549,18 @@ Output AGORA, apenas o marker:`;
       _relatosRecentes = (_inb || []).map((m) => stripReplyScaffold(String(m.content || '')).userText);
     }
   } catch (_) {}
+  // AVISO-CONDICIONAL-NAO-E-CONCLUSAO (Rafinha 03/10 15:13): "só te aviso quando o Luciano aprovar"
+  // não afirma escrita — mas só é verdade se o aviso EXISTE (pedido de aprovação aberto em que ela é
+  // a solicitante, ou recado de coordenação dela esperando resposta). I/O só quando a fala é acusada
+  // APENAS pelo aviso condicional e nada persistiu. Ver lib/aviso-condicional.js.
+  let _avisoCondLastro = false;
+  try {
+    const { soAvisoCondicional, buscarLastroDeAviso } = require('./lib/aviso-condicional');
+    if (!_metrics.marker_emitted && !_metrics.auto_retry_succeeded && !_metrics.deterministic_complete_ok
+        && !_metrics.marker_attempted && soAvisoCondicional(reply)) {
+      _avisoCondLastro = await buscarLastroDeAviso(supabase, collab.id);
+    }
+  } catch (_) {}
   try {
     const _hon = enforceNoMarkerHonesty(reply, {
       // deterministic_complete_ok: a Fatia 1 concluiu por id exato ANTES do LLM (ou idempotência
@@ -16524,9 +16593,12 @@ Output AGORA, apenas o marker:`;
       //   'nenhuma foi marcada como paga', achado 3b33aa68 Matheus 28/09) — ver lib/nada-a-registrar.js.
       // + DECISAO-UNICA-DO-VETO-DE-PERGUNTA (03/10): a mesma régua da porta de cima, por FRASE acusada —
       //   pedido de confirmação sem "?" ("Confirma que eu registro…") também não é afirmação. Ver lib/veto-pergunta.js.
+      // + AVISO-CONDICIONAL-NAO-E-CONCLUSAO (Rafinha 03/10): "só te aviso quando o Luciano aprovar" com
+      //   LASTRO no sistema (_avisoCondLastro, acima). Sem lastro segue acusado. Ver lib/aviso-condicional.js.
       reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply, { relatosRecentes: _relatosRecentes }) || linhasAcusadasSaoPergunta(reply)
         || vetoDePergunta(reply, { ehAcusada: (f) => !!(hasCompletionClaim(f) || hasWeakCompletionClaim(f)) }).veto
-        || pedidoDeNadaARegistrar(stripReplyScaffold(String(text || '')).userText, reply),
+        || pedidoDeNadaARegistrar(stripReplyScaffold(String(text || '')).userText, reply)
+        || liberaAvisoCondicional(reply, { lastro: _avisoCondLastro }),
     }, { meta: true });
     // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08) — este é O ponto que cega o maior cluster do
     // acervo. O raw_excerpt guardava o texto JÁ rebaixado ("_não consegui registrar isso agora_"),

@@ -78,6 +78,44 @@ async function openMaintenanceApproval(supabase, { approverId, shortId, requeste
   return data.id;
 }
 
+// APROVACAO-DE-TAREFA-NAO-CHEGAVA (auditoria 05/10): tarefa de request_type com requires_approval
+// nascia awaiting_confirmation e o pedido não chegava a ninguém. Mesmo formato da manutenção, com
+// token no payload.token (o funil do engine casa "APROVA <token>" digitado por ele) e o solicitante
+// no payload — é quem recebe o ✅/❌ e é o lastro de "te aviso quando aprovarem"
+// (lib/aviso-condicional.js). Quem chama confere findOpenApprovalByRef antes (não manda 2º card).
+async function openTaskApproval(supabase, { approverId, taskId, token, title = null, requesterId = null, requesterName = null, requesterPhone = null }) {
+  if (!approverId || !taskId || !token) return null;
+  const { data, error } = await supabase.from('pending_intents')
+    .insert({
+      collaborator_id: approverId,
+      kind: KIND,
+      payload: {
+        domain: 'task', ref_id: taskId, token, short_id: token, title: title ? String(title).slice(0, 200) : null,
+        requester_id: requesterId, requester_name: requesterName, requester_phone: requesterPhone,
+      },
+      question_text: `Tarefa aguardando aprovação${title ? ` (${String(title).slice(0, 80)})` : ''} — responda APROVA ${token}`.slice(0, 1000),
+    })
+    .select('id').single();
+  if (error) { console.error('[Approvals] open task err:', error.message); return null; }
+  console.log(`[Approvals] opened task ${String(taskId).slice(0, 8)} (${token}) for ${String(approverId).slice(0, 8)}`);
+  return data.id;
+}
+
+// Pendência ABERTA de um ref (qualquer aprovador), dentro da janela de 7 dias. null se não há.
+async function findOpenApprovalByRef(supabase, refId) {
+  if (!refId) return null;
+  const cutoff = new Date(Date.now() - APPROVAL_EXPIRY_DAYS * 864e5).toISOString();
+  const { data, error } = await supabase.from('pending_intents')
+    .select('id, collaborator_id, payload, asked_at')
+    .eq('kind', KIND)
+    .is('resolved_at', null)
+    .eq('payload->>ref_id', refId)
+    .gte('asked_at', cutoff)
+    .limit(1);
+  if (error) { console.warn('[Approvals] find by ref err:', error.message); return null; }
+  return (data && data[0]) || null;
+}
+
 // Aprovações ABERTAS do colaborador (janela própria de 7 dias), mais recente primeiro.
 async function listOpenApprovals(supabase, collaboratorId) {
   if (!collaboratorId) return [];
@@ -133,4 +171,4 @@ async function resolveApproverFor(supabase, creatorId) {
   return approver;
 }
 
-module.exports = { openProjectApproval, openAnnouncementApproval, openMaintenanceApproval, listOpenApprovals, resolveApprovalByRef, resolveApproverFor, APPROVAL_EXPIRY_DAYS };
+module.exports = { openProjectApproval, openAnnouncementApproval, openMaintenanceApproval, openTaskApproval, findOpenApprovalByRef, listOpenApprovals, resolveApprovalByRef, resolveApproverFor, APPROVAL_EXPIRY_DAYS };
