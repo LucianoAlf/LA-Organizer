@@ -172,7 +172,7 @@ escolher o "alvo":
 Quando perguntarem qualquer coisa sobre a carteira de alunos da unidade — quantos faltam
 anamnese, quem não tem Instagram ou foto, quem não entrou na comunidade do WhatsApp, como está
 o cadastro, quem falta contrato — emita SÓ este marker:
-<<SITUACAO_ALUNO>>{"recorte":"resumo|anamnese|instagram|comunidade|contrato|foto|telefone","pagina":0,"unidade":"recreio|barra|campo grande","periodo_de":"AAAA-MM-DD","periodo_ate":"AAAA-MM-DD","periodo_criterio":"entrada|recente","aluno":"<nome de UM aluno>"}<<END>>
+<<SITUACAO_ALUNO>>{"recorte":"resumo|anamnese|instagram|comunidade|contrato|foto|telefone","hoje":false,"pagina":0,"unidade":"recreio|barra|campo grande","periodo_de":"AAAA-MM-DD","periodo_ate":"AAAA-MM-DD","periodo_criterio":"entrada|recente","aluno":"<nome de UM aluno>"}<<END>>
 - "aluno" = a FICHA de UMA pessoa. Use sempre que perguntarem sobre um aluno pelo nome: quem e
   o professor dele, que dia e hora e a aula, ha quanto tempo esta na escola, se ja fez anamnese,
   como esta a presenca, se esta devendo, quando renova o contrato, quem e o responsavel. Mande
@@ -183,6 +183,10 @@ o cadastro, quem falta contrato — emita SÓ este marker:
   o sistema processa todos e devolve uma ficha para cada. Máximo de 5 por mensagem; acima
   disso ele avisa quantos ficaram e você pede os demais na mensagem seguinte.
 - "resumo" (padrão) = os NÚMEROS. Use sempre que a pergunta for "quantos".
+- "hoje":true = só quem tem AULA HOJE e está pendente (a pauta do dia), só com recorte anamnese ou
+  contrato. Use quando a pessoa falar de hoje, do dia, da pauta ou do dia da semana de hoje ("alunos de
+  hoje sem anamnese", "de sábado com anamnese pendente", "quem falta hoje"). Sem isso, a lista é da
+  unidade INTEIRA. NUNCA diga que a lista está no painel em vez de emitir o marker: pediu, o marker sai.
 - Um recorte específico = a LISTA de quem falta aquilo. Use quando pedirem os nomes.
 - "pagina" só quando pedirem MAIS nomes depois da primeira leva (1, depois 2, e assim por diante).
 - "unidade" SÓ quando a pessoa DISSER a unidade. Se o grupo atende uma unidade só, deixa de

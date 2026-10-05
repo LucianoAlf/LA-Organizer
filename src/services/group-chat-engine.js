@@ -834,6 +834,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       detail: `consigo puxar ${MARKER_TETO} fichas por mensagem — me manda os outros ${situTodos.excedente} numa próxima que eu trago` });
     console.warn(`[GroupChat] situacao grupo=${groupId}: ${situTodos.total} fichas pedidas, teto=${MARKER_TETO}`);
   }
+  const pautasDeHoje = []; // "hoje":true — sai como mensagem depois da fala, junto das listas do PIX
   for (const situBruto of situTodos.blocos) {
     try {
       const situ = require('./situacao-aluno');
@@ -877,6 +878,14 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
               detail: r.erro === 'termo_curto' ? 'me diz o nome do aluno'
                 : `não achei ninguém com esse nome entre os alunos ativos ${onde}${ressalva} — confere o nome pra mim?` });
           }
+        } else if ((p.hoje === true || p.hoje === 'true') && (recorte === 'anamnese' || recorte === 'contrato')) {
+          // GRUPO-PAUTA-DE-HOJE (Barra 03/10): quem tem aula HOJE e está pendente = a pauta do dia.
+          const { todayYmdSP } = require('../utils/dates');
+          const r = await require('./pauta-dm').pautaDeHojeParaOGrupo({ laReport: laReportClient, unidadeId, hoje: todayYmdSP(), recorte });
+          pautasDeHoje.push(r.texto);
+          if (r.motivo) actions.push({ kind: 'situacao', status: 'fail', label: 'Pauta de hoje', detail: 'não consegui ler a pauta de hoje agora' });
+          else actions.push({ kind: 'situacao', status: 'ok', label: `Pauta de hoje (${recorte})` });
+          console.log(`[GroupChat] situacao grupo=${groupId} hoje recorte=${recorte}${r.motivo ? ' FALHOU' : ''}`);
         } else if (recorte === 'resumo') {
           const { data } = await situ.consultarComCache({ tipo: 'resumo', unidadeId, client: laReportClient });
           html = situ.renderResumo(data, { grupoNome: ctx.group.name, unidadeNome });
@@ -917,7 +926,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   // LLM) só reconhece "lista"/"nomes"/"quem falta"; qualquer outra forma de pedir caía aqui sem
   // caminho pra lista. Agora o LLM emite <<LISTA_PIX>> e o CÓDIGO lê a fonte e escreve os nomes
   // — igual ao SITUACAO_ALUNO. As mensagens ficam guardadas e saem DEPOIS da fala e dos cards.
-  const listasPix = [];
+  const listasPix = [...pautasDeHoje];
   try {
     const rl = await atenderMarkersListaPix({
       reply, laReport: laReportClient, grupoUnidadeId: (ctx.group && ctx.group.la_report_unidade_id) || null,

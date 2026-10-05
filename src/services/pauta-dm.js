@@ -218,7 +218,19 @@ async function atenderMarkersPautaDM({ reply, laReport, unidadeIds = [], hoje, d
   return { reply: out, atendidos: brutos.length, falhas };
 }
 
+// GRUPO-PAUTA-DE-HOJE (Barra 03/10): "tom, alunos de hoje sem anamnese" (Arthur 14:02, "cade" 14:04)
+// e "alunos de sábado com anamnese pendente" (Duda 12:12). O marcador do grupo só sabia a unidade
+// INTEIRA (53): a Duda recebeu os 53 e, pro Arthur, o modelo escreveu o recibo "ok" à mão e a lista
+// nunca saiu. A pauta do dia é a MESMA conta que vai pro grupo às 06:00 e pro 1:1 — aqui só vira
+// mensagem do grupo. Fonte que caiu volta `motivo` (o motor diz a falha, nunca inventa número).
+async function pautaDeHojeParaOGrupo({ laReport, unidadeId, hoje, recorte = 'tudo', deps = {} }) {
+  const r = _recorteDoMarcador(recorte) || 'tudo';
+  const u = await lerPautaDaUnidade({ laReport, unidadeId, hoje, deps });
+  return { texto: renderPautaDM({ ...u, unidadeNome: situ.nomeDaUnidade(unidadeId), hoje, recorte: r }), motivo: u.motivo || null };
+}
+
 module.exports = {
+  pautaDeHojeParaOGrupo,
   ORDEM_UNIDADES, unidadeDoCadastro, unidadesDoColaborador, falaDeAnamneseOuContrato,
   lerPautaDaUnidade, lerPautaDasUnidades, blocoDaPautaDM, renderPautaDM, atenderMarkersPautaDM,
   _limparCache,
