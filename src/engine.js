@@ -17387,10 +17387,12 @@ REGRAS:
 - Máximo 2 linhas por campo
 maturity_level: beginner=novo no sistema, developing=usa mas oscila, proficient=consistente, advanced=autônomo.`;
 
-    const msgBlock = resolvedMsgs
-      .map(m => `[${m.direction === 'inbound' ? 'User' : 'TOM'}] ${String(m.content || '').slice(0, 200)}`)
-      .join('\n')
-      .slice(0, 8000);
+    // PERFIL-400-EMOJI-PARTIDO (05/10, Juliana 03–05/10): os dois cortes eram `.slice` cru — emoji
+    // partido no limite vira "\ud83d" solto no corpo e a OpenAI recusa com 400. Ver lib/corte-seguro.
+    const { cortarSemPartir } = require('./lib/corte-seguro');
+    const msgBlock = cortarSemPartir(resolvedMsgs
+      .map(m => `[${m.direction === 'inbound' ? 'User' : 'TOM'}] ${cortarSemPartir(String(m.content || ''), 200)}`)
+      .join('\n'), 8000);
 
     const userMsg = `PERFIL ATUAL:
 ${JSON.stringify(currentProfile, null, 2) || '(vazio)'}
