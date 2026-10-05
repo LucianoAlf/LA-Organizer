@@ -31,26 +31,27 @@ const WARN_THRESHOLDS = {
   providerFallbackPct: 10,
 };
 
-function todayBrt() {
+// `agoraMs` opcional (05/10): o replay/teste do check de atraso precisa de "hoje" num instante dado.
+function todayBrt(agoraMs = Date.now()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(new Date(agoraMs));
   const y = parts.find(p => p.type === 'year').value;
   const m = parts.find(p => p.type === 'month').value;
   const d = parts.find(p => p.type === 'day').value;
   return `${y}-${m}-${d}`;
 }
 
-function isoHoursAgo(h) {
-  return new Date(Date.now() - h * 3600_000).toISOString();
+function isoHoursAgo(h, agoraMs = Date.now()) {
+  return new Date(agoraMs - h * 3600_000).toISOString();
 }
 
 // {hour, minute, dow} em America/Sao_Paulo — formato que isQuietNow espera (dow: 0=domingo).
-function nowBrtParts() {
+function nowBrtParts(agoraMs = Date.now()) {
   const p = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false,
-  }).formatToParts(new Date());
+  }).formatToParts(new Date(agoraMs));
   const hour = parseInt(p.find(x => x.type === 'hour').value, 10) % 24;
   const minute = parseInt(p.find(x => x.type === 'minute').value, 10);
   const wd = p.find(x => x.type === 'weekday').value;
@@ -175,7 +176,47 @@ async function checkMemoriesEmbedding() {
 // ─────────────────────────────────────────────────────────────────
 // CHECK 4 — Tasks vencidas sem cobrança
 // ─────────────────────────────────────────────────────────────────
-async function checkOverdueTasks() {
+// HEALTH-CHECK-ATRASO-SEM-JANELA (05/10). O check acusava "sem cobrança" por CALENDÁRIO (venceu há
+// 2+ dias, nenhum aviso em 48h), mas o coletor de atraso não cobra por calendário: só roda 13h–19h
+// BRT (dispatcher, bloco de checkOverdueAlerts), só cobra o que venceu até ONTEM e pula o dono em
+// silêncio de trabalho — incluindo DIA FECHADO (domingo/feriado sem aula, quiet-hours.js). Numa
+// segunda às 05:00, tarefa que venceu no sábado teve como ÚNICA chance o domingo fechado: zero
+// rodadas possíveis, e mesmo assim contava como negligência. Foi o alarme de 05/10 ("6/33 ... +2
+// em silêncio", as 8 venceram 03/10; domingo 04/10 tem >1000 "alerta_atraso skipped
+// quiet:dia_fechado:sem_aula" no rituals.log) e TODOS os 5 alarmes deste check nos 30 dias
+// anteriores caíram numa segunda. Agora só conta a tarefa cujo dono teve ao menos UMA rodada do
+// coletor aberta (não-silenciosa) depois do vencimento e dentro da janela medida.
+const HORAS_DO_COLETOR_DE_ATRASO = [13, 14, 15, 16, 17, 18]; // dispatcher: now.hour >= 13 && < 19
+
+function _dowDoYmd(ymd) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** Houve ao menos UMA rodada do coletor de atraso — dia seguinte ao vencimento em diante, 13–19h
+ * BRT, dentro de [desdeMs, agoraMs] — em que o dono NÃO estava em silêncio de trabalho?
+ * Mesmo `isQuietNow` (com ymd, então o dia fechado conta) que o coletor consulta. Falha ao
+ * aferir conta como chance: erro de leitura não pode apagar alarme. */
+async function teveChanceDeCobranca(donoId, dueYmd, { desdeMs, agoraMs = Date.now(), quiet = isQuietNow } = {}) {
+  const hoje = todayBrt(agoraMs);
+  for (let d = ymdMinus(dueYmd, -1); d <= hoje; d = ymdMinus(d, -1)) {
+    for (const h of HORAS_DO_COLETOR_DE_ATRASO) {
+      // BRT é UTC-3 fixo desde 2019 (sem horário de verão).
+      const ms = Date.parse(`${d}T${String(h).padStart(2, '0')}:00:00-03:00`);
+      if (ms < desdeMs || ms > agoraMs) continue;
+      try {
+        const q = await quiet(donoId, { ymd: d, hour: h, minute: 0, dow: _dowDoYmd(d) }, 'work', { agoraMs: ms });
+        if (!q || !q.quiet) return true;
+      } catch (_) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// `deps` (05/10): sb/quiet/agoraMs injetáveis pro teste e pro replay; produção chama sem argumento.
+async function checkOverdueTasks({ sb = supabase, quiet = isQuietNow, agoraMs = Date.now() } = {}) {
   // Mede cobrança real via notifications.overdue_alert/deadline_alert.
   // `reminded_at` não serve aqui — ela é tocada pelos rituais T-1 (event/operational/personal),
   // não pelo checkOverdueAlerts que grava em `notifications`.
@@ -184,13 +225,14 @@ async function checkOverdueTasks() {
   //   • checkOverdueAlerts só cobra individualmente tasks de 1-5 dias de atraso.
   //     Tasks 6+ dias são escaladas via CEO report (não cobrança individual), então
   //     NÃO devem contar como "sem cobrança" aqui (gerava falso positivo crônico).
-  //   • Janela de notificação = 48h (não 24h): o health-check roda 07:00 e o job de
-  //     cobrança roda ~08:13; com 24h o check via sempre o buraco da madrugada.
-  const today = todayBrt();
+  //   • Janela de notificação = 48h (não 24h): o health-check roda 05:00 BRT e o coletor de
+  //     atraso só roda 13h–19h (desde a Sprint 31.17 — o "~08:13" antigo não existe mais);
+  //     com 24h o check só enxergaria a tarde de ontem.
+  const today = todayBrt(agoraMs);
   const oldest = ymdMinus(today, 5);       // limite inferior = 5 dias atrás (cap do chaser)
   const yesterday = ymdMinus(today, 1);    // Sprint 31.12 — fronteira "venceu ontem"
-  const since48h = isoHoursAgo(48);
-  const { data: overdue, error } = await supabase
+  const since48h = isoHoursAgo(48, agoraMs);
+  const { data: overdue, error } = await sb
     .from('tasks')
     .select('id, assigned_to, due_date')
     .not('assigned_to', 'is', null)        // só tarefas com dono individual: é o universo que o
@@ -200,7 +242,7 @@ async function checkOverdueTasks() {
   if (error) throw error;
   if (!overdue || overdue.length === 0) return { status: 'ok', detail: 'Nenhuma task vencida na janela de cobrança (1-5d)' };
   const ids = overdue.map(t => t.id);
-  const { data: notified, error: nErr } = await supabase
+  const { data: notified, error: nErr } = await sb
     .from('notifications')
     .select('reference_id')
     .in('reference_id', ids)
@@ -214,33 +256,45 @@ async function checkOverdueTasks() {
   // Quiet-aware (31/05): NÃO conta como "sem cobrança" a task cujo DONO está em
   // silêncio AGORA (janela horária ou dia de silêncio) — a cobrança foi adiada
   // corretamente, não perdida. Mata o falso positivo crônico (domingo, manhãs
-  // com quiet 00:00–11h). O health-check roda 07:00, quando muita gente tá em quiet.
-  const now = nowBrtParts();
+  // com quiet 00:00–11h). O health-check roda 05:00, quando muita gente tá em quiet.
+  const now = nowBrtParts(agoraMs);
   const quietByOwner = new Map();
   for (const ownerId of new Set(sem_cobranca.map(t => t.assigned_to).filter(Boolean))) {
     try {
-      const q = await isQuietNow(ownerId, now, 'work');
+      const q = await quiet(ownerId, now, 'work');
       quietByOwner.set(ownerId, !!q.quiet);
     } catch { quietByOwner.set(ownerId, false); }
   }
   const notQuiet = sem_cobranca.filter(t => !quietByOwner.get(t.assigned_to));
   const adiadas = sem_cobranca.length - notQuiet.length;
-  // Sprint 31.12 — não conta como "negligenciada" a task que venceu ONTEM: o chaser
-  // diário roda ~08:13, DEPOIS desta auditoria (~05-07h), então ela ainda terá a 1ª
+  // Sprint 31.12 — não conta como "negligenciada" a task que venceu ONTEM: o coletor
+  // roda 13h–19h, DEPOIS desta auditoria (05:00), então ela ainda terá a 1ª
   // cobrança do dia. Só é "sem cobrança" de verdade quem venceu há 2+ dias E mesmo
   // assim passou 48h sem chase (aí o chaser realmente falhou). Mata o FP recorrente
   // das 5h (caso 03/06: 8 "sem cobrança" = 8 venceram ontem, 0 negligência real).
-  const real = notQuiet.filter(t => t.due_date < yesterday);
-  const aguardando = notQuiet.length - real.length;
+  const vencidas2d = notQuiet.filter(t => t.due_date < yesterday);
+  const aguardando = notQuiet.length - vencidas2d.length;
+  // HEALTH-CHECK-ATRASO-SEM-JANELA (05/10): das 2+ dias, só é negligência quem teve rodada aberta.
+  const desdeMs = Date.parse(since48h);
+  const chance = new Map();
+  const real = [];
+  for (const t of vencidas2d) {
+    const k = `${t.assigned_to}|${t.due_date}`;
+    if (!chance.has(k)) chance.set(k, await teveChanceDeCobranca(t.assigned_to, t.due_date, { desdeMs, agoraMs, quiet }));
+    if (chance.get(k)) real.push(t);
+  }
+  const semJanela = vencidas2d.length - real.length;
   if (real.length === 0) {
     const extras = [];
-    if (aguardando > 0) extras.push(`${aguardando} venceram ontem (chase ~08:13)`);
+    if (aguardando > 0) extras.push(`${aguardando} venceram ontem (cobrança 13–19h)`);
+    if (semJanela > 0) extras.push(`${semJanela} sem janela de cobrança (dia fechado/silêncio)`);
     if (adiadas > 0) extras.push(`${adiadas} em silêncio (adiadas)`);
     const suf = extras.length ? ` — ${extras.join(', ')}` : '';
     return { status: 'ok', detail: `${overdue.length} tasks vencidas (1-5d), 0 realmente sem cobrança${suf}` };
   }
   const extras = [];
   if (aguardando > 0) extras.push(`${aguardando} venceram ontem`);
+  if (semJanela > 0) extras.push(`${semJanela} sem janela de cobrança`);
   if (adiadas > 0) extras.push(`${adiadas} em silêncio`);
   const suffix = extras.length ? ` (+${extras.join(', ')})` : '';
   return { status: 'warning', detail: `${real.length}/${overdue.length} tasks vencidas (2+ dias) sem cobrança nas últimas 48h${suffix}` };
@@ -1075,4 +1129,4 @@ async function checkSeriesFamintas() {
   return { status: 'warning', detail: `${famintas.length} série(s) recorrente(s) sem as próximas datas — o gerador não está criando: ${nomes}` };
 }
 
-module.exports = { runHealthCheck, checkRitualDbErrors, checkPortasCredenciais, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes, checkStaleProfiles, classificarPerfisParados };
+module.exports = { runHealthCheck, checkRitualDbErrors, checkPortasCredenciais, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks, teveChanceDeCobranca, checkGruposAtivos, formatarLinhaGrupo, resumirGrupos, checkLicoesPendentes, resumirLicoesPendentes, checkStaleProfiles, classificarPerfisParados };
