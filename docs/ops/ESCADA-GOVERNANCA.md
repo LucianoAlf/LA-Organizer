@@ -3117,3 +3117,27 @@ dizer onde o nome está em vez de pedir outro nome.
 Fatia `delegation` (tema 5 · parser 5 · estagiou 0): as 5 perguntas são de 29/09 e o conserto
 `d872532e` é de 30/09 11:07 UTC. Desde então não houve nenhuma pergunta de delegação. É a 5ª vez
 que o caso da proposta de 13/09 aparece (veredito contra pergunta anterior ao CONSERTO).
+
+### ETAPA 2.7 — "existe mecanismo, só não está ligado nesta porta" pela 2ª vez com a MESMA pessoa
+
+**Ocorrência:** 1 (06/10), e é a 2ª correção da rodada.
+
+Em 21/09 a Ana Paula ouviu "Não achei o evento" sobre uma série que ela tinha acabado de encerrar
+(`EVENT-CANCEL-SERIE-JA-ENCERRADA`). Em 05/10 19:11 ouviu "Não achei nenhuma tarefa aberta" sobre
+duas tarefas de PIX que ela tinha fechado 2 min antes. Mesma forma: o resolvedor filtra por "vivo",
+o LLM re-emite, e a ausência vira mentira sobre o estado. O conserto de 21/09 foi feito no helper
+de EVENTO e a porta de TAREFA ficou de fora. No mesmo dia, o achado da Rafinha (`0dcfafe9`) mostra
+a terceira porta, ainda aberta: o handler `update` disse "Não achei a tarefa" sobre uma tarefa
+`done` desde as 09:50.
+
+🔑 Regra: **quando consertar um "não achei" que era "já está no estado pedido", grep a frase de
+"não achei" de TODOS os handlers irmãos** (`complete`, `update`, `reschedule`, evento). A classe
+é o resolvedor que só vê vivos, não o handler.
+
+### ETAPA 3 — falso-fire por DIREÇÃO do verbo: "me avisando" é pedido, não envio
+
+**Ocorrência:** 1 (06/10), 1ª correção da rodada. 5ª porta de falso-fire do guard de recado.
+
+As quatro anteriores foram vocabulário (fatura, 14/07) e veto por ledger (05/08, 06/09, 03/10).
+Esta é gramatical: "Segue me avisando os outros!" tem o TOM como destinatário. Lookbehind no
+clítico resolveu sem mexer em veto. População medida: 1 de 18 disparos `nosend` em 90 dias.
