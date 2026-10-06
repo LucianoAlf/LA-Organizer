@@ -43,4 +43,27 @@ function mensagemAlvoNaoAchado(titulo, donoNome) {
   return `_Não achei nenhuma tarefa aberta chamada *${alvo}* no teu nome. Me diz qual é que eu fecho._`;
 }
 
-module.exports = { mensagemAlvoNaoAchado, LIMITE_TITULO };
+// TASK-COMPLETE-REEMIT-JA-CONCLUIDA (Ana Paula 05/10 19:11 BRT). O resolvedor do `complete` só
+// enxerga tarefa ABERTA. Quando o LLM re-emite o fechamento de algo que a própria pessoa acabou
+// de fechar ("3 tá ok / 8 tá ok", 2 min depois do ok=2), a ausência vira "Não achei nenhuma
+// tarefa aberta… me diz qual é" — FALSO sobre o estado. Porta da tarefa da família
+// EVENT-CANCEL-SERIE-JA-ENCERRADA (21/09, evento). Só conta fechamento DELA, `done`, recente.
+const JANELA_JA_CONCLUIDA_MIN = 60;
+
+function escolherJaConcluida(rows, collaboratorId, nowMs = Date.now()) {
+  const piso = nowMs - JANELA_JA_CONCLUIDA_MIN * 60000;
+  const ok = (rows || []).filter((r) => r && r.status === 'done'
+    && r.completed_by === collaboratorId
+    && Date.parse(r.completed_at) >= piso && Date.parse(r.completed_at) <= nowMs);
+  ok.sort((x, y) => Date.parse(y.completed_at) - Date.parse(x.completed_at));
+  return ok[0] || null;
+}
+
+// Afirmação de ESTADO, sem verbo de conclusão em 1ª pessoa (as portas de honestidade comem
+// "fechei/concluí" em ramo de falha).
+function mensagemJaConcluida(titulo, completedAt) {
+  const hhmm = new Date(completedAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+  return `_*${_titulo(titulo)}* já consta como concluída desde as ${hhmm} — não ficou nada aberto com esse nome._`;
+}
+
+module.exports = { mensagemAlvoNaoAchado, escolherJaConcluida, mensagemJaConcluida, JANELA_JA_CONCLUIDA_MIN, LIMITE_TITULO };

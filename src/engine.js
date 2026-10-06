@@ -5061,7 +5061,27 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
                 _donoNome = (_ow && _ow.full_name) || null;
               }
             } catch (e) { console.warn('[Task] complete dono-lookup err:', e.message); }
-            const { mensagemAlvoNaoAchado } = require('./lib/task-complete-alvo-nao-achado');
+            const { mensagemAlvoNaoAchado, escolherJaConcluida, mensagemJaConcluida, JANELA_JA_CONCLUIDA_MIN } = require('./lib/task-complete-alvo-nao-achado');
+            // TASK-COMPLETE-REEMIT-JA-CONCLUIDA (Ana Paula 05/10): re-emit do complete sobre tarefa
+            // que ELA acabou de fechar não é "não achei" — é estado já atingido.
+            let _jaC = null;
+            if (!_donoNome) {
+              try {
+                const { data: _feitas } = await supabase
+                  .from('tasks').select('id, title, status, completed_at, completed_by')
+                  .ilike('title', `%${String(a.title).slice(0, 60)}%`)
+                  .eq('status', 'done').eq('completed_by', collaborator.id)
+                  .gte('completed_at', new Date(Date.now() - JANELA_JA_CONCLUIDA_MIN * 60000).toISOString())
+                  .order('completed_at', { ascending: false }).limit(5);
+                _jaC = escolherJaConcluida(_feitas, collaborator.id);
+              } catch (e) { console.warn('[Task] complete ja-concluida lookup err:', e.message); }
+            }
+            if (_jaC) {
+              failMessages.push(mensagemJaConcluida(a.title, _jaC.completed_at));
+              console.warn(`[Task] complete re-emit: "${a.title}" ja concluida ${String(_jaC.id).slice(0, 8)} por ${last4}`);
+              failCount++;
+              continue;
+            }
             failMessages.push(mensagemAlvoNaoAchado(a.title, _donoNome));
             console.warn(`[Task] complete title-lookup failed: "${a.title}" not found for ${last4} (dono=${_donoNome || '-'})`);
             failCount++;
