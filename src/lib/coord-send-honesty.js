@@ -22,14 +22,17 @@
 // (substantivo e subjuntivo de pedido, respectivamente — cobertos pelos testes de CONTROLE).
 // Verbos INEQUÍVOCOS de recado — afirmam envio sozinhos, em qualquer contexto: avisar/
 // repassar/encaminhar/transmitir/comunicar não têm sentido financeiro.
-const SEND_STRONG_RE = /\b(avis(?:ei|ado|ada|ados|adas|amos|ando)|repass(?:ei|ado|ada|ados|adas|ando|amos)|encaminh(?:ei|ado|ada|ados|adas|ando|amos)|transmit(?:i|ido|ida|idos|idas|indo)|comuniqu(?:ei|ado|ada))\b/i;
+// COORD-HONESTY-ME-AVISANDO (Ana Paula 05/10): com o clítico "me" o TOM é o DESTINATÁRIO
+// ("Segue me avisando os outros!", "vai me mandando") — é pedido de retorno, não envio. O
+// lookbehind vale para os dois regexes; uma afirmação real na mesma linha segue casando.
+const SEND_STRONG_RE = /(?<!\bme\s+)\b(avis(?:ei|ado|ada|ados|adas|amos|ando)|repass(?:ei|ado|ada|ados|adas|ando|amos)|encaminh(?:ei|ado|ada|ados|adas|ando|amos)|transmit(?:i|ido|ida|idos|idas|indo)|comuniqu(?:ei|ado|ada))\b/i;
 
 // FALSO-FIRE FINANCE (Rose 14/07 18:00): mandar/enviar servem TANTO pra recado QUANTO pra
 // "lançar na fatura / o PDF que você enviou". No fluxo de fatura o guard casava "mandando/
 // enviado" e DESTRUÍA a lista inteira, cuspindo o disclaimer de recado num papo de cartão.
 // Verbo ambíguo só conta como envio-de-recado COM um token de recado na MESMA linha E SEM
 // contexto financeiro forte.
-const SEND_WEAK_RE = /\b(mand(?:ei|ado|ada|ados|adas|ando|amos)|envi(?:ei|ado|ada|ados|adas|ando)|j[áa]\s+(?:mandei|enviei|repassei))\b/i;
+const SEND_WEAK_RE = /(?<!\bme\s+)\b(mand(?:ei|ado|ada|ados|adas|ando|amos)|envi(?:ei|ado|ada|ados|adas|ando)|j[áa]\s+(?:mandei|enviei|repassei))\b/i;
 const RECADO_CTX_RE = /\b(recado|mensagem|msg|convites?|aviso|zap|whats?app|wpp|(?:no|pro)\s+grupo|pra\s+(?:ela|ele|eles|elas|voc[êe]s?|galera|equipe|turma|time|todos?|cada\s+um))\b/i;
 const FIN_CTX_RE = /\b(fatura|cart[ãa]o|financeiro|lan[çc]a\w*|extrato|pdf|planilha|itens?|compras?|lista)\b/i;
 
