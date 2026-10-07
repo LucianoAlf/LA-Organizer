@@ -11,6 +11,9 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { useReminders } from '../hooks/useReminders';
 import { shiftLocalReminderTimes } from '../../../lib/reminderShift';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
+import { findEventConflicts } from '../../../lib/events';
+import { preflightEventTime, hasWarnings, type TimeWarnings } from '../../../lib/eventPreflight';
+import { EventTimeWarningBanner } from '../../../components/EventTimeWarningBanner';
 
 const CATEGORIES = [
   { value: 'la_music', label: 'LA Music' }, { value: 'mentoria', label: 'Mentoria' },
@@ -32,8 +35,10 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
   const [form, setForm] = useState<EventForGrid | null>(ev);
   const [reminderTimes, setReminderTimes] = useState<string[]>([]);
   const reminders = useReminders('event', ev?.id, { pendingOnly: true });
+  const [pendingWarn, setPendingWarn] = useState<TimeWarnings | null>(null);
 
-  useEffect(() => { setForm(ev); /* eslint-disable-next-line */ }, [ev?.id]);
+  useEffect(() => { setForm(ev); setPendingWarn(null); /* eslint-disable-next-line */ }, [ev?.id]);
+  useEffect(() => { setPendingWarn(null); }, [form?.start_at, form?.end_at]);
   // Sincroniza lembretes do servidor quando o evento muda ou data chega.
   useEffect(() => {
     setReminderTimes(reminders.localTimes);
@@ -72,8 +77,21 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
 
   const error = validate(form);
 
-  const handleSave = async () => {
+  // CONFIRMACAO-DE-EVENTO (edição, 07/10): horário novo em cima de outro compromisso (dono ∪
+  // participante) ou no passado pede confirmação — antes salvava calado.
+  const handleSave = async (timeConfirmed = false) => {
     if (error) return;
+    setPendingWarn(null);
+    const startChanged = 'start_at' in patch;
+    const timeChanged = startChanged || 'end_at' in patch;
+    if (!timeConfirmed && timeChanged && collaborator) {
+      const me = collaborator.id;
+      const w = await preflightEventTime(
+        (s, en, ex) => findEventConflicts(me, s, en, { excludeId: ex, limit: 5 }),
+        { startIso: form.start_at, endIso: form.end_at, excludeId: ev.id, startChanged, timeChanged },
+      );
+      if (hasWarnings(w)) { setPendingWarn(w); return; }
+    }
     await p.onSave(ev.id, patch);
     // Sincroniza lembretes em event_reminders (DELETE-all + INSERT-new).
     try { await reminders.sync(reminderTimes); } catch (e) { console.warn('[EventEditDrawer] reminders sync err:', e); }
@@ -94,8 +112,17 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
             <Trash2 size={14} /> Deletar
           </Button>
           <div className="flex-1" />
-          <Button variant="ghost" size="sm" onClick={p.onClose}>Cancelar</Button>
-          <Button variant="primary" size="sm" onClick={handleSave} disabled={!!error}>Salvar</Button>
+          {pendingWarn ? (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => setPendingWarn(null)}>Voltar e ajustar</Button>
+              <Button variant="primary" size="sm" onClick={() => { void handleSave(true); }} disabled={!!error}>Salvar mesmo assim</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" size="sm" onClick={p.onClose}>Cancelar</Button>
+              <Button variant="primary" size="sm" onClick={() => { void handleSave(false); }} disabled={!!error}>Salvar</Button>
+            </>
+          )}
         </div>
       }
     >
@@ -213,6 +240,7 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
         </div>
 
         {error && <div className="text-[12px] text-danger">{error}</div>}
+        {pendingWarn && <EventTimeWarningBanner warnings={pendingWarn} />}
       </div>
     </DetailDrawer>
   );

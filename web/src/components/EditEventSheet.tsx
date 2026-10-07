@@ -14,6 +14,9 @@ import { useEventCategories } from '../hooks/useEventCategories';
 import { notifyEventInvites, notifyEventRescheduled } from '../lib/tomEngine';
 import { EventChecklistSection } from './EventChecklistSection';
 import type { CalendarEvent } from '../types';
+import { findEventConflicts } from '../lib/events';
+import { preflightEventTime, hasWarnings, type TimeWarnings } from '../lib/eventPreflight';
+import { EventTimeWarningBanner } from './EventTimeWarningBanner';
 
 interface Props {
   open: boolean;
@@ -179,9 +182,16 @@ export function EditEventSheet({ open, event, onClose }: Props) {
     setStartAt(next);
   };
 
-  const onSave = (e: FormEvent) => {
-    e.preventDefault();
+  // CONFIRMACAO-DE-EVENTO (edição, 07/10): mudar o horário pra cima de outro compromisso (dono ∪
+  // participante) ou pro passado salvava calado. Agora para com o banner e "Salvar mesmo assim".
+  const [pendingWarn, setPendingWarn] = useState<TimeWarnings | null>(null);
+  const [checking, setChecking] = useState(false);
+  useEffect(() => { setPendingWarn(null); }, [open, event?.id, startAt, endAt]);
+
+  const onSave = (e?: FormEvent, timeConfirmed = false) => {
+    e?.preventDefault();
     setValidationError(null);
+    setPendingWarn(null);
     if (!event) return;
     if (!title.trim()) {
       setValidationError('Título é obrigatório.');
@@ -206,6 +216,21 @@ export function EditEventSheet({ open, event, onClose }: Props) {
     const cat = eventCategories.byId(categoryId);
     if (!cat) {
       setValidationError('Categoria inválida.');
+      return;
+    }
+    const startChanged = startAt !== isoToLocalInput(event.start_at);
+    const timeChanged = startChanged || endAt !== isoToLocalInput(event.end_at);
+    if (!timeConfirmed && timeChanged && collaborator) {
+      const me = collaborator.id;
+      setChecking(true);
+      void preflightEventTime(
+        (s, en, ex) => findEventConflicts(me, s, en, { excludeId: ex, limit: 5 }),
+        { startIso: localInputToIso(startAt), endIso: localInputToIso(endAt), excludeId: event.id, startChanged, timeChanged },
+      ).then(w => {
+        setChecking(false);
+        if (hasWarnings(w)) setPendingWarn(w);
+        else onSave(undefined, true);
+      });
       return;
     }
     update.mutate({
@@ -490,10 +515,21 @@ export function EditEventSheet({ open, event, onClose }: Props) {
             </p>
           )}
 
+          {pendingWarn && <EventTimeWarningBanner warnings={pendingWarn} />}
+
           <div className="flex flex-col gap-sm pt-2">
-            <Button type="submit" loading={update.isPending} fullWidth disabled={Boolean(endBeforeStart)}>
-              Salvar
-            </Button>
+            {pendingWarn ? (
+              <div className="flex items-center gap-md">
+                <Button type="button" variant="secondary" onClick={() => setPendingWarn(null)}>Voltar e ajustar</Button>
+                <Button type="button" loading={update.isPending} fullWidth onClick={() => onSave(undefined, true)}>
+                  Salvar mesmo assim
+                </Button>
+              </div>
+            ) : (
+              <Button type="submit" loading={update.isPending || checking} fullWidth disabled={Boolean(endBeforeStart)}>
+                Salvar
+              </Button>
+            )}
             {confirmCancel ? (
               <div className="surface p-sm bg-danger/5 border-danger/30 space-y-sm" role="alert">
                 <div className="text-body-sm text-fg">

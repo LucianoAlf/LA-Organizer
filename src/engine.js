@@ -3120,6 +3120,8 @@ function parseEventUpdateMarker(text) {
   // Sprint 23.5 — normaliza campos alternativos que TOM às vezes emite
   for (const item of items) {
     if (item && typeof item === 'object') {
+      // CONFIRMACAO-DE-EVENTO (07/10): flags de confirmação são do engine — do JSON do modelo, saem.
+      require('./lib/confirmacao-evento').descartarFlagsDoModelo(item);
       // TOM às vezes usa event_id (full UUID) em vez de id (8-char short)
       if (!item.id && item.event_id) item.id = String(item.event_id).slice(0, 8);
       // Garante que id seja sempre short (primeiros 8 chars)
@@ -3632,8 +3634,10 @@ async function applyPersonalListActions(collab, actions) {
   return { okCount, failCount };
 }
 
-async function applyEventUpdates(collaborator, actions) {
+async function applyEventUpdates(collaborator, actions, opts = {}) {
   let okCount = 0, failCount = 0;
+  const _ceU = require('./lib/confirmacao-evento');
+  const _remarcSegurados = []; // CONFIRMACAO-DE-EVENTO — remarcações à espera do "sim"
   let awaitingConfirm = false; // 02/07 — turno é pergunta/relato de participant-edit → o caller
                                // seta _metrics.awaiting_user_confirm (senão ACTIONABLE_NO_MARKER rebaixa)
   const failMessages = []; // F5 — perguntas/avisos da guarda temporal sobem pro caller
@@ -3780,6 +3784,39 @@ async function applyEventUpdates(collaborator, actions) {
       // pode vir SOZINHO (sem metadados) e até vazio ([] = remover). Tratado fora do `patch`.
       const remindersEdit = (a.action === 'update' && Array.isArray(a.reminders_minutes_before));
       if (a.action === 'reschedule') {
+        // CONFIRMACAO-DE-EVENTO (remarcação, 07/10): remarcar pra cima de outro compromisso (dono ∪
+        // participante — o próprio evento não conta) ou pro passado ia direto pro banco. Mesmo
+        // mecanismo da criação: a ação vai, marcada pelo engine, pro intent event_create_confirm
+        // (payload.updates) e a pergunta sobe; o "sim" remarca pelo resume. Ver lib/confirmacao-evento.js.
+        if (!opts.semIntentDeConfirmacao) {
+          let _confR = [];
+          if (a[_ceU.FLAG_CONFLITO] !== true) {
+            try {
+              _confR = await require('./lib/agenda-conflitos').compromissosQueSobrepoem({
+                supabase, collaboratorId: collaborator.id, startIso: a.new_start_at, endIso: a.new_end_at, excluirId: ev.id,
+              });
+            } catch (cErr) { console.warn('[Event] reschedule conflitos err (fail-open):', cErr.message); }
+          }
+          const _pendR = _ceU.pendencias({
+            item: a, startIso: a.new_start_at, conflitos: _confR,
+            agoraMs: opts.agoraMs != null ? opts.agoraMs : Date.now(),
+          });
+          if (_pendR.segurar) {
+            const _itemR = {
+              acao: 'remarcar', titulo: ev.title, start_at: a.new_start_at, end_at: a.new_end_at, passado: _pendR.passado,
+              conflitos: _pendR.conflitos.map((x) => ({ id: x.id, title: x.title, start_at: x.start_at, end_at: x.end_at })),
+            };
+            // id resolvido (o "sim" não depende de casar título de novo)
+            const _acaoR = { ..._ceU.marcarConfirmado(a), id: String(ev.id).slice(0, 8) };
+            delete _acaoR.title;
+            _remarcSegurados.push(_acaoR);
+            failMessages.push(_ceU.perguntaDeConfirmacao([_itemR]));
+            awaitingConfirm = true;
+            console.warn(`[Event] reschedule SEGURADO p/ confirmação id=${String(ev.id).slice(0, 8)} passado=${_pendR.passado} conflitos=${_pendR.conflitos.length}`);
+            failCount++;
+            continue;
+          }
+        }
         patch = { start_at: a.new_start_at, end_at: a.new_end_at };
         if (ev.status === 'cancelled') patch.status = 'scheduled';
       } else if (a.action === 'cancel') {
@@ -3962,6 +3999,13 @@ async function applyEventUpdates(collaborator, actions) {
     }
   }
   _fechaItem();
+  // CONFIRMACAO-DE-EVENTO: um intent pro lote de remarcações seguradas (um "sim" cobre todas).
+  if (_remarcSegurados.length) {
+    try {
+      await pendingIntents.openIntent(collaborator.id, 'event_create_confirm', { updates: _remarcSegurados },
+        failMessages.join('\n\n').slice(0, 1000));
+    } catch (e) { console.warn('[Event] reschedule openIntent err (o "sim" não vai achar a remarcação):', e.message); }
+  }
   return { okCount, failCount, failMessages, awaitingConfirm, itens };
 }
 
@@ -10056,6 +10100,25 @@ async function processMessage(phone, text, raw = {}) {
       const _yn = pendingIntents.detectUserConfirmation(stripReplyScaffold(String(text || '')).userText);
       if (_yn === 'yes') {
         const _evs = (_ecOpen.payload && Array.isArray(_ecOpen.payload.events)) ? _ecOpen.payload.events : [];
+        // CONFIRMACAO-DE-EVENTO (07/10): remarcação segurada (conflito/passado) também mora aqui.
+        const _ups = (_ecOpen.payload && Array.isArray(_ecOpen.payload.updates)) ? _ecOpen.payload.updates : [];
+        if (_ups.length && !_evs.length) {
+          const _resU = await applyEventUpdates(collab, _ups);
+          await pendingIntents.resolveIntent(_ecOpen.id, 'confirmed', `resumed_event_update:${_ups.length}`);
+          let _outU;
+          if (_resU.okCount > 0 && !_resU.failCount) _outU = _resU.okCount === 1 ? '✅ Remarquei o compromisso.' : `✅ Remarquei os ${_resU.okCount} compromissos.`;
+          else if (_resU.failMessages && _resU.failMessages.length) _outU = _resU.failMessages.join('\n\n');
+          else _outU = '_Não consegui remarcar agora. Me manda de novo?_';
+          try {
+            await whatsapp.sendMessage(phone, _outU);
+            await logConversation(collab.id, 'outbound', _outU);
+            await logMarker(collab.id, 'EVENT_UPDATE', _resU.okCount ? 'executed' : 'rejected',
+              `resumed_event_update ok=${_resU.okCount} fail=${_resU.failCount}`,
+              _resU.okCount ? null : { actions: _ups, fails: (_resU.failMessages || []).slice(0, 3) });
+          } catch (e) { console.warn('[EventUpdateResume] post err:', e.message); }
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (event_update_confirm_resolved)`);
+          return;
+        }
         const _res = _evs.length ? await applyEventActions(collab, _evs) : { okCount: 0, failCount: 0 };
         await pendingIntents.resolveIntent(_ecOpen.id, 'confirmed', `resumed_event_create:${_evs.length}`);
         let _out;

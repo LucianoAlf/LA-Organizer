@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { shiftReminderRowsByReschedule } from '../lib/reminderShift';
+import { findEventConflicts } from '../lib/events';
+import { preflightEventTime, hasWarnings, warningsText } from '../lib/eventPreflight';
 import { useAuth } from '../contexts/AuthContext';
 import { localYmd, todaySP } from '../utils/date';
 
@@ -267,6 +269,21 @@ export function AgendaDesktop() {
     return () => window.removeEventListener('keydown', h);
   }, []);
 
+  // CONFIRMACAO-DE-EVENTO (edição, 07/10): arrastar/redimensionar pra cima de outro compromisso
+  // (dono ∪ participante) ou pro passado salvava calado. Na grade não há formulário pra banner —
+  // a pergunta vai num confirm nativo (mesmo padrão do "Deletar" do drawer).
+  const confirmTimeChange = useCallback(async (ev: EventForGrid, startIso: string, endIso: string, startChanged: boolean) => {
+    if (!collaborator) return true;
+    const me = collaborator.id;
+    const w = await preflightEventTime(
+      (s, en, ex) => findEventConflicts(me, s, en, { excludeId: ex, limit: 5 }),
+      { startIso, endIso, excludeId: ev.id, startChanged, timeChanged: true },
+    );
+    if (!hasWarnings(w)) return true;
+    // eslint-disable-next-line no-alert
+    return typeof window === 'undefined' ? true : window.confirm(`${warningsText(w)}\n\nSalvar mesmo assim?`);
+  }, [collaborator]);
+
   const onEventDrop = useCallback(async (ev: EventForGrid, newStart: Date) => {
     const oldStartIso = ev.start_at;
     const durationMs = new Date(ev.end_at).getTime() - new Date(ev.start_at).getTime();
@@ -275,6 +292,7 @@ export function AgendaDesktop() {
       start_at: newStartIso,
       end_at: new Date(newStart.getTime() + durationMs).toISOString(),
     };
+    if (!(await confirmTimeChange(ev, patch.start_at as string, patch.end_at as string, true))) return;
     try {
       await updateEvent.mutateAsync({ id: ev.id, patch });
       // EVENT-RESCHED-REMINDER-PWA — drag move: lembretes PENDENTES acompanham o novo
@@ -292,19 +310,20 @@ export function AgendaDesktop() {
     } catch {
       toast.error('Não foi possível atualizar o evento. Tente de novo.');
     }
-  }, [updateEvent]);
+  }, [updateEvent, confirmTimeChange]);
 
   const onEventResize = useCallback(async (ev: EventForGrid, newDurMs: number) => {
     const start = new Date(ev.start_at);
     const patch: Partial<EventForGrid> = {
       end_at: new Date(start.getTime() + newDurMs).toISOString(),
     };
+    if (!(await confirmTimeChange(ev, ev.start_at, patch.end_at as string, false))) return;
     try {
       await updateEvent.mutateAsync({ id: ev.id, patch });
     } catch {
       toast.error('Não foi possível redimensionar. Tente de novo.');
     }
-  }, [updateEvent]);
+  }, [updateEvent, confirmTimeChange]);
 
   const centerLabel =
     view === 'day'
