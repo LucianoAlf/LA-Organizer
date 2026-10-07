@@ -1021,9 +1021,9 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       reply = (parsed.cleanText || '').trim();
       if (!collab) { noCollab('event', parsed.events[0]?.title); }
       else {
-        // semGuardaDePassado (07/10): este caminho não lê o resultado nem faz pergunta — barrar
-        // início no passado aqui sumiria com o evento calado. A pergunta vale no 1:1 e no app.
-        await engine.applyEventActions(collab, parsed.events, { suppressNotify: true, semGuardaDePassado: true }); // suppressNotify: NUNCA dispara zap
+        // semIntentDeConfirmacao (07/10): este caminho não lê o resultado nem faz pergunta — segurar
+        // evento (passado/conflito) num intent aqui seria sumir com ele calado. A pergunta vale no 1:1 e no app.
+        await engine.applyEventActions(collab, parsed.events, { suppressNotify: true, semIntentDeConfirmacao: true }); // suppressNotify: NUNCA dispara zap
         parsed.events.forEach((ev) => actions.push({ kind: 'event', status: 'ok', label: ev.title || 'compromisso', detail: ev.recurrence_rule ? 'recorrente' : '' }));
       }
     } else if (parsed && parsed.malformed) {

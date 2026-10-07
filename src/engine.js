@@ -2009,9 +2009,9 @@ function _buildIntegrityConfirmText(payload) {
       const overlap = first.overlapMin ? ` (~${first.overlapMin}min)` : '';
       return `Tem um cruzamento leve com _"${existing}"_${overlap}. Crio assim mesmo, ou prefere ajustar?`;
     }
-    case 'past_start': {
-      // EVENTO-CRIADO-NO-PASSADO (Alf 05/10) — ver applyEventActions / lib/evento-no-passado.js.
-      const q = require('./lib/evento-no-passado').perguntaInicioNoPassado(payload.events);
+    case 'confirmar_evento': {
+      // CONFIRMACAO-DE-EVENTO (07/10) — passado e/ou conflito, uma pergunta. Ver applyEventActions.
+      const q = require('./lib/confirmacao-evento').perguntaDeConfirmacao(payload.itens);
       return payload.also ? `${q}\n\n${_buildIntegrityConfirmText(payload.also)}` : q;
     }
     default:
@@ -2586,7 +2586,7 @@ function parseEventCreateMarker(text) {
       if ('bypass_integrity' in item) delete item.bypass_integrity;
       // EVENTO-CRIADO-NO-PASSADO (Alf 05/10): idem pra confirmação de início no passado — só o
       // engine marca, ao guardar o evento barrado no intent (lib/evento-no-passado.js).
-      require('./lib/evento-no-passado').descartarFlagDoModelo(item);
+      require('./lib/confirmacao-evento').descartarFlagsDoModelo(item);
       if ((!item.start_at || !ISO_DATETIME_RE.test(item.start_at)) && item.event_date && item.start_time) {
         const base = String(item.event_date).slice(0, 10); // YYYY-MM-DD
         const st = String(item.start_time).padStart(5, '0'); // HH:MM
@@ -2619,28 +2619,18 @@ async function applyEventActions(collaborator, events, opts = {}) {
   let okCount = 0, failCount = 0;
   let integrityPayload = null;
   const last4 = String(collaborator.phone || '').slice(-4);
-  // EVENTO-CRIADO-NO-PASSADO (Alf 05/10 19:14): "Mentoria Levi" nasceu com início 05/10 09:00,
-  // já passado, sem pergunta nenhuma (era pra 07/10). Início no passado (>15 min) NÃO cria
-  // calado: o evento barrado vai, já marcado como confirmado, pro intent event_create_confirm
-  // e a pessoa ouve "Esse horário já passou (05/10 09:00)… É isso mesmo?". O "sim" cria pelo
-  // resume determinístico (~10000); "não, é quinta" volta pro LLM, que re-propõe com outra data.
-  // Chat de grupo fica de fora (opts.semGuardaDePassado): ele não lê o resultado daqui e não
-  // tem como fazer a pergunta — barrar lá seria sumir com o evento calado.
-  let _passadosPayload = null;
-  if (!opts.semGuardaDePassado) {
-    const _np = require('./lib/evento-no-passado');
-    const _sep = _np.separarPassados(events);
-    if (_sep.passados.length) {
-      events = _sep.liberados;
-      failCount += _sep.passados.length;
-      _passadosPayload = { severity: 'soft', type: 'past_start', candidateTitle: _sep.passados[0].title, events: _sep.passados };
-      console.warn(`[IntegrityCheck] PAST_START ${_sep.passados.length} evento(s) — "${String(_sep.passados[0].title).slice(0, 40)}" start=${_sep.passados[0].start_at}`);
-      try {
-        await pendingIntents.openIntent(collaborator.id, 'event_create_confirm', { events: _sep.passados },
-          _np.perguntaInicioNoPassado(_sep.passados));
-      } catch (e) { console.warn('[IntegrityCheck] PAST_START openIntent err (o "sim" não vai achar o evento):', e.message); }
-    }
-  }
+  // CONFIRMACAO-DE-EVENTO (07/10) — início no passado (EVENTO-CRIADO-NO-PASSADO, Alf 05/10:
+  // "Mentoria Levi" nasceu 05/10 09:00 às 19:14) e conflito de horário (CONFLITO-SO-DO-DONO, Alf
+  // 06/10) NÃO criam calados e NÃO perguntam no vazio: o evento barrado vai, já marcado com as
+  // flags do que a pessoa está confirmando, pro intent event_create_confirm; a pergunta é UMA só
+  // (lista passado + conflitos); o "sim" cria pelo resume determinístico (~10000) e "não/outro
+  // horário" volta pro LLM. Antes o "Crio assim mesmo?" do conflito não guardava nada e o "sim"
+  // re-emitido batia no mesmo conflito pra sempre. Ver lib/confirmacao-evento.js.
+  // Chat de grupo fica de fora (opts.semIntentDeConfirmacao): ele não lê o resultado daqui e não
+  // tem como fazer a pergunta — lá vale o comportamento antigo.
+  const _semIntent = opts.semIntentDeConfirmacao === true;
+  const _ce = require('./lib/confirmacao-evento');
+  const _segurados = [];
   // Sprint 22.34b — Habit redirect (titles que batem habito ativo do user)
   // acontece no caller, ANTES de chegar aqui. Aqui só processa events reais.
   for (const e of events) {
@@ -2680,8 +2670,9 @@ async function applyEventActions(collaborator, events, opts = {}) {
         console.warn('[IntegrityCheck] event detectors err (non-fatal):', detErr.message);
       }
 
-      // HARD conflict (A2: bloqueia até confirmação explícita, 1 rodada)
-      if (temporalResult.hardConflicts.length > 0) {
+      // HARD conflict (A2: bloqueia até confirmação explícita, 1 rodada). No 1:1 entra na pergunta
+      // única lá embaixo (com intent — o "sim" é a confirmação explícita); aqui só o chat de grupo.
+      if (_semIntent && temporalResult.hardConflicts.length > 0) {
         const c = temporalResult.hardConflicts[0];
         const startStr = new Date(c.start_at).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
         const endStr   = new Date(c.end_at).toLocaleTimeString('pt-BR',   { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
@@ -2712,8 +2703,29 @@ async function applyEventActions(collaborator, events, opts = {}) {
         continue;
       }
 
-      // A2: SOFT temporal — NÃO cria silenciosamente; microconfirm via skill
-      if (temporalResult.softConflicts.length > 0) {
+      // CONFIRMACAO-DE-EVENTO (07/10): passado e/ou conflito (forte ou leve) → segura com intent.
+      if (!_semIntent) {
+        const _pend = _ce.pendencias({
+          item: e, startIso: e.start_at,
+          conflitos: [...temporalResult.hardConflicts, ...temporalResult.softConflicts],
+          agoraMs: opts.agoraMs != null ? opts.agoraMs : Date.now(),
+        });
+        if (_pend.segurar) {
+          console.warn(`[IntegrityCheck] CONFIRMAR_EVENTO "${String(e.title).slice(0, 40)}" passado=${_pend.passado} conflitos=${_pend.conflitos.length}`);
+          _segurados.push({
+            evento: _ce.marcarConfirmado(e),
+            item: {
+              acao: 'criar', titulo: e.title, start_at: e.start_at, end_at: e.end_at, passado: _pend.passado,
+              conflitos: _pend.conflitos.map((x) => ({ id: x.id, title: x.title, start_at: x.start_at, end_at: x.end_at, reason: x.reason, location_text: x.location_text })),
+            },
+          });
+          failCount++;
+          continue;
+        }
+      }
+
+      // A2: SOFT temporal — NÃO cria silenciosamente; microconfirm via skill (só chat de grupo agora)
+      if (_semIntent && temporalResult.softConflicts.length > 0) {
         const c = temporalResult.softConflicts[0];
         console.log(`[IntegrityCheck] SOFT temporal conflict "${String(e.title).slice(0,40)}" ~ "${String(c.title).slice(0,40)}" overlap=${c.overlapMin}min (${c.reason})`);
         integrityPayload = {
@@ -3018,10 +3030,17 @@ async function applyEventActions(collaborator, events, opts = {}) {
       failCount++;
     }
   }
-  // A pergunta do passado não pode ser engolida por outro achado do lote (o intent dela já está
-  // aberto: um "sim" dado a outra pergunta criaria o evento sem a pessoa ter visto a data).
-  if (_passadosPayload) {
-    integrityPayload = integrityPayload ? { ..._passadosPayload, also: integrityPayload } : _passadosPayload;
+  // CONFIRMACAO-DE-EVENTO: um intent pro lote todo (um "sim" cobre tudo) e a pergunta não pode ser
+  // engolida por outro achado do lote — o intent já está aberto, e um "sim" dado a outra pergunta
+  // criaria o evento sem a pessoa ter visto o motivo.
+  if (_segurados.length) {
+    const itens = _segurados.map((s) => s.item);
+    try {
+      await pendingIntents.openIntent(collaborator.id, 'event_create_confirm',
+        { events: _segurados.map((s) => s.evento) }, _ce.perguntaDeConfirmacao(itens));
+    } catch (e) { console.warn('[IntegrityCheck] CONFIRMAR_EVENTO openIntent err (o "sim" não vai achar o evento):', e.message); }
+    const _p = { severity: 'soft', type: 'confirmar_evento', candidateTitle: itens[0].titulo, itens };
+    integrityPayload = integrityPayload ? { ..._p, also: integrityPayload } : _p;
   }
   return { okCount, failCount, integrityPayload };
 }
@@ -18670,5 +18689,6 @@ module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamS
 
 // LIDER-FECHA-TAREFA-DE-OUTRO: exposto pro teste de ponta a ponta do resolvedor.
 module.exports.resolveTaskParaLider = resolveTaskParaLider;
+module.exports._buildIntegrityConfirmText = _buildIntegrityConfirmText; // testes (CONFIRMACAO-DE-EVENTO)
 module.exports.parseCoordinationRequestMarker = parseCoordinationRequestMarker;
 module.exports.despacharRecadoAgendado = despacharRecadoAgendado;

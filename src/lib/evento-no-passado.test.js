@@ -32,32 +32,3 @@ test('rótulo no fuso de SP', () => {
   assert.equal(p.rotuloInicio(MENTORIA.start_at), '05/10 09:00');
   assert.equal(p.rotuloInicio('2026-10-05T12:00:00+00:00'), '05/10 09:00');
 });
-
-test('separarPassados: o passado sai marcado pra confirmação; o resto segue', () => {
-  const futuro = { title: 'Outro', start_at: '2026-10-08T10:00:00-03:00' };
-  const r = p.separarPassados([MENTORIA, futuro], CRIADO_EM);
-  assert.deepEqual(r.liberados.map((e) => e.title), ['Outro']);
-  assert.deepEqual(r.passados.map((e) => e.title), ['Mentoria Levi']);
-  assert.equal(r.passados[0][p.FLAG_CONFIRMADO], true);
-  assert.equal(MENTORIA[p.FLAG_CONFIRMADO], undefined, 'não muta o original');
-});
-
-test('separarPassados: já confirmado (flag do engine) passa', () => {
-  const r = p.separarPassados([{ ...MENTORIA, [p.FLAG_CONFIRMADO]: true }], CRIADO_EM);
-  assert.equal(r.passados.length, 0);
-  assert.equal(r.liberados.length, 1);
-});
-
-test('pergunta: horário + título + saída pra corrigir o dia', () => {
-  assert.equal(
-    p.perguntaInicioNoPassado([MENTORIA]),
-    'Esse horário já passou (05/10 09:00) — *Mentoria Levi*. É isso mesmo? Se era pra outro dia, me diz qual.',
-  );
-  assert.match(p.perguntaInicioNoPassado([MENTORIA, { title: 'B', start_at: '2026-10-05T08:00:00-03:00' }]), /Esses horários já passaram/);
-});
-
-test('flag vinda do LLM é descartada (privilégio do engine)', () => {
-  const item = { title: 'x', [p.FLAG_CONFIRMADO]: true };
-  p.descartarFlagDoModelo(item);
-  assert.equal(p.FLAG_CONFIRMADO in item, false);
-});
