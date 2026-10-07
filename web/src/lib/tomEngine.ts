@@ -256,13 +256,15 @@ export async function notifyChecklistCompleted(completionId: string): Promise<No
 
 // Sprint 22.33 — notifica TOM pra disparar WhatsApp pra cada participant de um
 // evento (so participants com notified_at IS NULL — idempotente p/ edicao).
-export async function notifyEventInvites(eventId: string): Promise<NotifyResult> {
+// CONVITE-SO-NA-PRIMEIRA-VEZ (07/10): passe QUEM acabou de entrar — o backend convida por
+// (evento, participante); sem a lista, vale o comportamento antigo (1x por evento).
+export async function notifyEventInvites(eventId: string, collaboratorIds?: string[]): Promise<NotifyResult> {
   if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
   try {
     const r = await fetch(`${TOM_BASE}/internal/event-invites`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
-      body: JSON.stringify({ event_id: eventId }),
+      body: JSON.stringify(collaboratorIds ? { event_id: eventId, collaborator_ids: collaboratorIds } : { event_id: eventId }),
     });
     if (!r.ok) return { ok: false, reason: `http_${r.status}` };
     const json = await r.json().catch(() => ({}));

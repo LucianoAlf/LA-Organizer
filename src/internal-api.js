@@ -1058,23 +1058,15 @@ router.post('/internal/cobranca-status', requireInternalSecret, async (req, res)
 });
 
 // Sprint 22.33 — convidados em compromisso → notifica cada participant.
-// PWA envia { event_id } depois do INSERT (evento + participants).
+// PWA envia { event_id, collaborator_ids } depois do INSERT (evento + participants).
+// CONVITE-SO-NA-PRIMEIRA-VEZ (achado 07/10): a idempotência era por EVENTO — quem era adicionado
+// depois (EditEventSheet) caía em "already_notified" e nunca era convidado. Agora é por (evento,
+// participante): reivindicação atômica de notified_at, só pra quem o app diz que acabou de entrar.
+// Cliente antigo (sem collaborator_ids) mantém o marcador por evento. Ver services/event-invites.js.
 router.post('/internal/event-invites', requireInternalSecret, async (req, res) => {
   const eventId = String(req.body?.event_id || '').trim();
   if (!eventId) return res.status(400).json({ error: 'missing_event_id' });
-
-  // Idempotencia por event (assume mandar so 1x na criacao; updates futuros
-  // poderiam ter outro endpoint).
-  const dedupeKey = `event-invites:${eventId}`;
-  const { data: prior } = await supabase
-    .from('marker_logs')
-    .select('id')
-    .eq('marker_type', 'EVENT_INVITES')
-    .eq('raw_excerpt', dedupeKey)
-    .limit(1);
-  if (prior && prior.length > 0) {
-    return res.json({ status: 'already_notified', key: dedupeKey });
-  }
+  const collaboratorIds = Array.isArray(req.body?.collaborator_ids) ? req.body.collaborator_ids.slice(0, 100) : undefined;
 
   const { data: event } = await supabase
     .from('events')
@@ -1089,27 +1081,17 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
     .eq('id', event.created_by)
     .single();
 
-  // Sprint 22.34l — FIX: event_participants tem 2 FKs pra collaborators
-  // (collaborator_id + invited_by), entao supabase-js nao sabe qual join
-  // usar com `collaborators(...)`. Disambiguar via hint explicito.
-  const { data: participants, error: pErr } = await supabase
-    .from('event_participants')
-    .select('id, collaborator_id, status, collaborators!event_participants_collaborator_id_fkey(id, full_name, phone, is_active)')
-    .eq('event_id', eventId)
-    .is('notified_at', null);
-  if (pErr) {
-    console.error(`[InternalAPI] event-invites participants query err: ${pErr.message}`);
-    return res.status(500).json({ error: 'participants_query_failed', detail: pErr.message });
+  let claim;
+  try {
+    const { reivindicarConvidados } = require('./services/event-invites');
+    claim = await reivindicarConvidados({ supabase, eventId, collaboratorIds });
+  } catch (e) {
+    console.error(`[InternalAPI] event-invites participants err: ${e.message}`);
+    return res.status(500).json({ error: 'participants_query_failed', detail: e.message });
   }
-
-  const recipients = (participants || [])
-    .map(p => {
-      const c = Array.isArray(p.collaborators) ? p.collaborators[0] : p.collaborators;
-      return c && c.phone && c.is_active
-        ? { participantId: p.id, id: c.id, name: c.full_name, phone: c.phone }
-        : null;
-    })
-    .filter(Boolean);
+  const dedupeKey = claim.key;
+  if (claim.status === 'already_notified') return res.json({ status: 'already_notified', key: dedupeKey });
+  const recipients = claim.recipients;
 
   if (recipients.length === 0) {
     // Sprint 22.34l — marker_logs.result CHECK só aceita 'executed'/'rejected'.
@@ -1163,11 +1145,7 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
     if (logErr) console.warn(`[InternalAPI] event-invite log err pra ${r.id}: ${logErr.message}`);
   }
 
-  // Marca notified_at (best-effort)
-  const ids = recipients.map(r => r.participantId);
-  await supabase.from('event_participants')
-    .update({ notified_at: new Date().toISOString() })
-    .in('id', ids);
+  // notified_at já foi marcado na reivindicação (antes do envio — é o que impede o duplo convite).
 
   await supabase.from('marker_logs').insert({
     marker_type: 'EVENT_INVITES', result: 'executed',

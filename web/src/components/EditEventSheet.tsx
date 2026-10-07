@@ -271,9 +271,10 @@ export function EditEventSheet({ open, event, onClose }: Props) {
                   .in('collaborator_id', toRemove);
               }
               qc.invalidateQueries({ queryKey: ['event-participants', event.id] });
-              // Sprint 22.33 — endpoint filtra participants com notified_at NULL,
-              // entao chamar sempre eh idempotente. So ressoa pra novos add.
-              if (toAdd.length > 0) void notifyEventInvites(event.id);
+              // Sprint 22.33 — endpoint filtra participants com notified_at NULL.
+              // CONVITE-SO-NA-PRIMEIRA-VEZ (07/10): manda QUEM entrou — antes o dedupe era por
+              // evento e o adicionado depois nunca recebia convite.
+              if (toAdd.length > 0) void notifyEventInvites(event.id, toAdd);
               // CONFLITO-DO-CONVIDADO (07/10): quem entrou e já tem compromisso no horário — informativo.
               if (toAdd.length > 0) {
                 const linhas = await fetchInviteeConflicts(event.id, toAdd);

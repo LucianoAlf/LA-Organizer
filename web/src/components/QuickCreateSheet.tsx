@@ -456,7 +456,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
           showToast({ kind: 'error', title: 'Compromisso criado', msg: 'Mas não consegui salvar os participantes.' });
         } else {
           // Sprint 22.34j — awaited + toast feedback.
-          const r = await notifyEventInvites(inserted.id as string);
+          const r = await notifyEventInvites(inserted.id as string, participantIds);
           if (r.ok) {
             const n = r.sent ?? participantIds.length;
             showToast({
