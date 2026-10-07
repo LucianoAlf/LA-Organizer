@@ -28,8 +28,11 @@ test('a lista numerada (<<LISTA_PIX>>) e o resultado do aviso entram ANTES do ca
   assert.ok(idx('_pixDmResultado.linhas.join') < idx('CONFAB-NOMARKER-CHOKEPOINT (Camada 1)'));
 });
 
-test('a lista guardada (PIX_LISTA_DM) é META: não conta como marcador de domínio tentado', () => {
-  assert.match(pm, /_NON_DOMAIN_MARKERS = \[[^\]]*'PIX_LISTA_DM'/);
+test('a numeração mora em pix_dm_numeracao: nada de PIX_LISTA_DM no marker_logs nem no engine', () => {
+  assert.ok(!src.includes('PIX_LISTA_DM'), 'engine.js não conhece mais o marcador provisório');
+  const num = fs.readFileSync(path.join(__dirname, 'pix-dm-numeracao.js'), 'utf8');
+  assert.ok(num.includes("const TABELA = 'pix_dm_numeracao'"));
+  assert.ok(!/from\(\s*'marker_logs'/.test(num));
 });
 
 test('a fala DELA decide pauta x lista completa, e as partes seguintes saem DEPOIS do reply', () => {

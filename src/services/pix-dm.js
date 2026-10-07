@@ -351,6 +351,6 @@ function tirarConclusaoDePix(reply) {
 }
 
 module.exports = {
-  MARCADOR_LISTA: numeracao.MARCADOR_LISTA, falaDePix, talvezAvisoDePix, lerRespostaPorNumero, pedeListaCompleta, blocoPixDM, atenderMarkersListaPixDM,
+  falaDePix, talvezAvisoDePix, lerRespostaPorNumero, pedeListaCompleta, blocoPixDM, atenderMarkersListaPixDM,
   resolverPixDoTurno, hintDoResultado, tirarConclusaoDePix,
 };

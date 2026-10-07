@@ -15875,7 +15875,7 @@ Output AGORA, apenas o marker:`;
 
   // ---- PIX-NO-1A1 (Ana Paula 05/10) — <<LISTA_PIX>> no 1:1 e o resultado do aviso ----
   // O MESMO marcador do grupo: o LLM pede, o CÓDIGO escreve a lista NUMERADA da mesma fonte
-  // (services/pix-dm.js) e guarda o número -> cliente (marker_logs PIX_LISTA_DM, tipo META). Roda
+  // (services/pix-dm.js) e guarda o número -> cliente (tabela pix_dm_numeracao). Roda
   // ANTES do catch-all (senão o marcador some e sobra a linha prometendo a lista).
   // Padrão = a PAUTA do dia do grupo; "lista completa" (na fala DELA, `text`) = a unidade inteira,
   // em partes do tamanho das do grupo — a parte 1 vai no reply, as outras em _pixDmExtras.
@@ -16237,7 +16237,7 @@ Output AGORA, apenas o marker:`;
     // CREDENCIAL_INBOUND_APAGADA e faxina de historico, nao acao de dominio: deixa-la aqui
     // fora encheria `marker_emitted` e desarmaria o chokepoint num turno em que NADA foi
     // persistido (o executor de credencial so abre a confirmacao).
-    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT','CREDENCIAL_INBOUND_APAGADA','REACT','VOICE_SENT','PIX_LISTA_DM'];
+    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT','CREDENCIAL_INBOUND_APAGADA','REACT','VOICE_SENT'];
     const _isDomainMarker = (t) => t && !_NON_DOMAIN_MARKERS.includes(t);
     const fired = (recentMarkers || []).filter(r => r.result === 'executed' && _isDomainMarker(r.marker_type)).map(r => r.marker_type);
     // FATIA 2 (falso-fire composição): houve marker de DOMÍNIO tentado — executado OU rejeitado —

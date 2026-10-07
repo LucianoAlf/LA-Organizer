@@ -206,22 +206,60 @@ test('lista completa grande: sai em PARTES do tamanho do grupo, numeração cont
 }));
 
 // ── a numeração guardada (um módulo só, troca de casa sem mexer em quem chama) ────────────────
-test('numeração: salvar e carregar devolvem a mesma lista (n, chave, nome)', async () => {
-  const num = require('./pix-dm-numeracao');
+// 07/10 (dono autorizou): a casa da numeração é a tabela public.pix_dm_numeracao (itens jsonb),
+// não mais marker_logs. Banco falso que só responde por ESSA tabela e confere os filtros da leitura.
+function bancoDaNumeracao() {
   const linhas = [];
+  const consultas = [];
   const fake = {
-    from: () => ({
-      insert: async (row) => { linhas.push({ ...row, created_at: new Date().toISOString() }); return { error: null }; },
-      select: () => {
-        const q = { eq: () => q, gte: () => q, order: () => q, limit: () => q,
-          maybeSingle: async () => ({ data: linhas[linhas.length - 1] || null, error: null }) };
-        return q;
-      },
-    }),
+    from: (tabela) => {
+      assert.strictEqual(tabela, 'pix_dm_numeracao', 'a numeração mora em pix_dm_numeracao');
+      return {
+        insert: async (row) => { linhas.push({ ...row, created_at: new Date().toISOString() }); return { error: null }; },
+        select: (cols) => {
+          const f = { cols, eq: {}, gte: {} };
+          const q = {
+            eq: (c, v) => { f.eq[c] = v; return q; },
+            gte: (c, v) => { f.gte[c] = v; return q; },
+            order: (c, o) => { f.order = [c, o]; return q; },
+            limit: (n) => { f.limit = n; return q; },
+            maybeSingle: async () => {
+              consultas.push(f);
+              const achada = [...linhas].reverse().find((l) => l.collaborator_id === f.eq.collaborator_id && l.created_at >= f.gte.created_at);
+              return { data: achada || null, error: null };
+            },
+          };
+          return q;
+        },
+      };
+    },
   };
+  return { fake, linhas, consultas };
+}
+
+test('numeração: salvar e carregar devolvem a mesma lista (n, chave, nome), na tabela própria', async () => {
+  const num = require('./pix-dm-numeracao');
+  const { fake, linhas, consultas } = bancoDaNumeracao();
   const itens = [{ n: 1, chave: `${CG}:8`, nome: 'Joyce Lima' }, { n: 2, chave: null, nome: 'Zé Sem Vínculo' }];
   assert.strictEqual(await num.salvarNumeracao({ supabase: fake, collaboratorId: 'ana', itens }), true);
+  assert.deepStrictEqual(Object.keys(linhas[0]).sort(), ['collaborator_id', 'created_at', 'itens']);
+  assert.deepStrictEqual(linhas[0].itens, itens, 'itens vão como jsonb (array de objetos), sem JSON em texto');
   assert.deepStrictEqual(await num.carregarNumeracao({ supabase: fake, collaboratorId: 'ana', desdeIso: '2026-10-05T00:00:00Z' }), itens);
+  assert.deepStrictEqual(consultas[0].order, ['created_at', { ascending: false }], 'a MAIS RECENTE');
+  assert.strictEqual(consultas[0].limit, 1);
+  // de outra pessoa, ou mais velha que a janela, não volta
+  assert.strictEqual(await num.carregarNumeracao({ supabase: fake, collaboratorId: 'outra', desdeIso: '2026-10-05T00:00:00Z' }), null);
+  assert.strictEqual(await num.carregarNumeracao({ supabase: fake, collaboratorId: 'ana', desdeIso: '2999-01-01T00:00:00Z' }), null);
+});
+
+test('numeração: a lista mais nova vence; falha de escrita vira false (nunca lança)', async () => {
+  const num = require('./pix-dm-numeracao');
+  const { fake } = bancoDaNumeracao();
+  await num.salvarNumeracao({ supabase: fake, collaboratorId: 'ana', itens: [{ n: 1, chave: 'u:1', nome: 'Velha' }] });
+  await num.salvarNumeracao({ supabase: fake, collaboratorId: 'ana', itens: [{ n: 1, chave: 'u:2', nome: 'Nova' }] });
+  assert.deepStrictEqual(await num.carregarNumeracao({ supabase: fake, collaboratorId: 'ana', desdeIso: '2000-01-01T00:00:00Z' }), [{ n: 1, chave: 'u:2', nome: 'Nova' }]);
+  const quebrado = { from: () => ({ insert: async () => ({ error: { message: 'rls' } }) }) };
+  assert.strictEqual(await num.salvarNumeracao({ supabase: quebrado, collaboratorId: 'ana', itens: [] }), false);
 });
 
 // ── a resposta por número (o turno seguinte) ────────────────────────────────────────────────
