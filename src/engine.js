@@ -2009,6 +2009,11 @@ function _buildIntegrityConfirmText(payload) {
       const overlap = first.overlapMin ? ` (~${first.overlapMin}min)` : '';
       return `Tem um cruzamento leve com _"${existing}"_${overlap}. Crio assim mesmo, ou prefere ajustar?`;
     }
+    case 'past_start': {
+      // EVENTO-CRIADO-NO-PASSADO (Alf 05/10) — ver applyEventActions / lib/evento-no-passado.js.
+      const q = require('./lib/evento-no-passado').perguntaInicioNoPassado(payload.events);
+      return payload.also ? `${q}\n\n${_buildIntegrityConfirmText(payload.also)}` : q;
+    }
     default:
       return `Encontrei algo que pode conflitar com _"${cand}"_. Quer que eu siga ou prefere revisar?`;
   }
@@ -2579,6 +2584,9 @@ function parseEventCreateMarker(text) {
       // fluxo determinístico 1/2/3 (DupBypass ~7222 injeta o flag PÓS-parse, no objeto JS —
       // não passa por aqui). Vindo do JSON do marker, é dropado sempre.
       if ('bypass_integrity' in item) delete item.bypass_integrity;
+      // EVENTO-CRIADO-NO-PASSADO (Alf 05/10): idem pra confirmação de início no passado — só o
+      // engine marca, ao guardar o evento barrado no intent (lib/evento-no-passado.js).
+      require('./lib/evento-no-passado').descartarFlagDoModelo(item);
       if ((!item.start_at || !ISO_DATETIME_RE.test(item.start_at)) && item.event_date && item.start_time) {
         const base = String(item.event_date).slice(0, 10); // YYYY-MM-DD
         const st = String(item.start_time).padStart(5, '0'); // HH:MM
@@ -2611,6 +2619,28 @@ async function applyEventActions(collaborator, events, opts = {}) {
   let okCount = 0, failCount = 0;
   let integrityPayload = null;
   const last4 = String(collaborator.phone || '').slice(-4);
+  // EVENTO-CRIADO-NO-PASSADO (Alf 05/10 19:14): "Mentoria Levi" nasceu com início 05/10 09:00,
+  // já passado, sem pergunta nenhuma (era pra 07/10). Início no passado (>15 min) NÃO cria
+  // calado: o evento barrado vai, já marcado como confirmado, pro intent event_create_confirm
+  // e a pessoa ouve "Esse horário já passou (05/10 09:00)… É isso mesmo?". O "sim" cria pelo
+  // resume determinístico (~10000); "não, é quinta" volta pro LLM, que re-propõe com outra data.
+  // Chat de grupo fica de fora (opts.semGuardaDePassado): ele não lê o resultado daqui e não
+  // tem como fazer a pergunta — barrar lá seria sumir com o evento calado.
+  let _passadosPayload = null;
+  if (!opts.semGuardaDePassado) {
+    const _np = require('./lib/evento-no-passado');
+    const _sep = _np.separarPassados(events);
+    if (_sep.passados.length) {
+      events = _sep.liberados;
+      failCount += _sep.passados.length;
+      _passadosPayload = { severity: 'soft', type: 'past_start', candidateTitle: _sep.passados[0].title, events: _sep.passados };
+      console.warn(`[IntegrityCheck] PAST_START ${_sep.passados.length} evento(s) — "${String(_sep.passados[0].title).slice(0, 40)}" start=${_sep.passados[0].start_at}`);
+      try {
+        await pendingIntents.openIntent(collaborator.id, 'event_create_confirm', { events: _sep.passados },
+          _np.perguntaInicioNoPassado(_sep.passados));
+      } catch (e) { console.warn('[IntegrityCheck] PAST_START openIntent err (o "sim" não vai achar o evento):', e.message); }
+    }
+  }
   // Sprint 22.34b — Habit redirect (titles que batem habito ativo do user)
   // acontece no caller, ANTES de chegar aqui. Aqui só processa events reais.
   for (const e of events) {
@@ -2987,6 +3017,11 @@ async function applyEventActions(collaborator, events, opts = {}) {
       console.error('[Event] throw err:', err.message);
       failCount++;
     }
+  }
+  // A pergunta do passado não pode ser engolida por outro achado do lote (o intent dela já está
+  // aberto: um "sim" dado a outra pergunta criaria o evento sem a pessoa ter visto a data).
+  if (_passadosPayload) {
+    integrityPayload = integrityPayload ? { ..._passadosPayload, also: integrityPayload } : _passadosPayload;
   }
   return { okCount, failCount, integrityPayload };
 }

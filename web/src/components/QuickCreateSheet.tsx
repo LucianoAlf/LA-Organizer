@@ -7,6 +7,7 @@ import { ListTodo, CalendarClock, UserPlus, FolderKanban, X } from 'lucide-react
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { findEventConflicts } from '../lib/events';
+import { isStartInPast, pastStartLabel } from '../lib/eventStartGuard';
 import { todaySP } from '../utils/date';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
@@ -137,6 +138,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
   // Sprint 22.34i — detecção de conflito de horário antes de criar evento.
   // null = sem conflito pendente; array = lista de eventos sobrepondo o horário.
   const [pendingConflict, setPendingConflict] = useState<Array<{ id: string; title: string; range: string }> | null>(null);
+  // EVENTO-CRIADO-NO-PASSADO (Alf 05/10) — rótulo "05/10 09:00" do início que já passou; null = ok.
+  const [pendingPast, setPendingPast] = useState<string | null>(null);
   // Sprint 29.4 — recorrência opcional (RRULE iCalendar)
   const [recurrenceRule, setRecurrenceRule] = useState<string | null>(null);
   // Guardrail anti-footgun (2026-07-02): recorrência sem-fim que floda o horizonte
@@ -190,6 +193,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
       setEditingChildIdx(null);
     }
   }, [open, today, defaultKind, defaultGroupId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mexeu no início (ou reabriu): a pergunta de "já passou" era sobre o valor antigo.
+  useEffect(() => { setPendingPast(null); }, [startAt, open]);
 
   // Auto-extend end_at to start_at + 60min if user changes start_at past end_at
   useEffect(() => {
@@ -599,6 +605,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
     e.preventDefault();
     setError(null);
     setPendingConflict(null);
+    setPendingPast(null);
     setPendingRecurrenceWarn(null);
     if (!title.trim()) {
       setError('Coloca um título.');
@@ -647,17 +654,33 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
       // Guardrail (2026-07-02): recorrência sem-fim que floda? confirma antes.
       const warn = shouldWarnUnboundedRecurrence(recurrenceRule, startAt.slice(0, 10));
       if (warn) { setPendingRecurrenceWarn(warn); return; }
-      // Sprint 22.34i — checa conflito antes de criar.
-      const startIso = `${startAt}:00-03:00`;
-      const endIso = `${endAt}:00-03:00`;
-      checkEventConflict(startIso, endIso).then(conflicts => {
-        if (conflicts.length > 0) {
-          setPendingConflict(conflicts);
-        } else {
-          createEvent.mutate();
-        }
-      });
+      continueEventCreate(false);
     }
+  };
+
+  // Etapas do evento depois das validações: início no passado → conflito → cria.
+  // EVENTO-CRIADO-NO-PASSADO (Alf 05/10 19:14): "Mentoria Levi" saiu com o padrão do form
+  // (hoje 09:00), dez horas no passado, sem pergunta — era pra 07/10. Agora para e pergunta.
+  const continueEventCreate = (pastConfirmed: boolean) => {
+    const startIso = `${startAt}:00-03:00`;
+    const endIso = `${endAt}:00-03:00`;
+    if (!pastConfirmed && isStartInPast(startIso)) {
+      setPendingPast(pastStartLabel(startIso));
+      return;
+    }
+    // Sprint 22.34i — checa conflito antes de criar.
+    checkEventConflict(startIso, endIso).then(conflicts => {
+      if (conflicts.length > 0) {
+        setPendingConflict(conflicts);
+      } else {
+        createEvent.mutate();
+      }
+    });
+  };
+
+  const onConfirmPast = () => {
+    setPendingPast(null);
+    continueEventCreate(true);
   };
 
   // Sprint 22.34i — confirma criação ignorando conflito.
@@ -672,14 +695,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
     setPendingRecurrenceWarn(null);
     if (kind === 'task') { createTask.mutate(); return; }
     if (kind === 'delegated') { createDelegated.mutate(); return; }
-    if (kind === 'event') {
-      const startIso = `${startAt}:00-03:00`;
-      const endIso = `${endAt}:00-03:00`;
-      checkEventConflict(startIso, endIso).then(conflicts => {
-        if (conflicts.length > 0) setPendingConflict(conflicts);
-        else createEvent.mutate();
-      });
-    }
+    if (kind === 'event') continueEventCreate(false);
   };
 
   const submitting = createTask.isPending || createEvent.isPending || createDelegated.isPending || createGroupMut.isPending;
@@ -1340,6 +1356,21 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
           </div>
         )}
 
+        {/* EVENTO-CRIADO-NO-PASSADO (Alf 05/10) — início que já passou pede confirmação. */}
+        {pendingPast && (
+          <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2" role="alert">
+            <div className="text-body-sm font-semibold text-warning">
+              ⚠ Horário no passado
+            </div>
+            <div className="text-body-sm text-fg">
+              Esse horário já passou (<span className="tabular-nums">{pendingPast}</span>). É isso mesmo?
+            </div>
+            <div className="text-body-sm text-fg-muted pt-1">
+              Se era pra outro dia, volta e ajusta a data do início.
+            </div>
+          </div>
+        )}
+
         {/* Sprint 22.34i — banner de conflito de horário. */}
         {pendingConflict && pendingConflict.length > 0 && (
           <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2" role="alert">
@@ -1367,6 +1398,15 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
                 Voltar e ajustar
               </Button>
               <Button type="button" loading={submitting} fullWidth onClick={onConfirmRecurrence}>
+                Criar mesmo assim
+              </Button>
+            </>
+          ) : pendingPast ? (
+            <>
+              <Button type="button" variant="secondary" onClick={() => setPendingPast(null)}>
+                Voltar e ajustar
+              </Button>
+              <Button type="button" loading={submitting} fullWidth onClick={onConfirmPast}>
                 Criar mesmo assim
               </Button>
             </>

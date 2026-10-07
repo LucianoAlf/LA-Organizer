@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { findEventConflicts, formatEventTimeRange } from '../lib/events';
 import type { ConflictEvent } from '../lib/eventConflicts';
+import { isStartInPast, pastStartLabel } from '../lib/eventStartGuard';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { DateTimeInput } from './DateTimeInput';
@@ -56,12 +57,20 @@ export function ConvertToEventSheet({ open, task, onClose }: Props) {
   // banner + "Criar mesmo assim". Falha da consulta não trava (fail-open, como lá).
   const [pendingConflict, setPendingConflict] = useState<ConflictEvent[] | null>(null);
   const [checking, setChecking] = useState(false);
-  useEffect(() => { setPendingConflict(null); }, [open, task?.id, startAt, endAt]);
+  // EVENTO-CRIADO-NO-PASSADO (Alf 05/10): o padrão aqui também é "dia da tarefa 09:00" — tarefa
+  // atrasada ou de hoje à tarde vira compromisso no passado. Mesma pergunta do QuickCreateSheet.
+  const [pendingPast, setPendingPast] = useState<string | null>(null);
+  useEffect(() => { setPendingConflict(null); setPendingPast(null); }, [open, task?.id, startAt, endAt]);
 
-  async function onSubmit() {
+  async function onSubmit(pastConfirmed = false) {
     setError(null);
     setPendingConflict(null);
+    setPendingPast(null);
     if (!collaborator || !startAt || !endAt) { convert.mutate(); return; }
+    if (!pastConfirmed && isStartInPast(`${startAt}:00-03:00`)) {
+      setPendingPast(pastStartLabel(`${startAt}:00-03:00`));
+      return;
+    }
     setChecking(true);
     let conflicts: ConflictEvent[] = [];
     try {
@@ -201,6 +210,16 @@ export function ConvertToEventSheet({ open, task, onClose }: Props) {
 
           {error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
 
+          {pendingPast && (
+            <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2" role="alert">
+              <div className="text-body-sm font-semibold text-warning">⚠ Horário no passado</div>
+              <div className="text-body-sm text-fg">
+                Esse horário já passou (<span className="tabular-nums">{pendingPast}</span>). É isso mesmo?
+              </div>
+              <div className="text-body-sm text-fg-muted pt-1">Se era pra outro dia, volta e ajusta a data do início.</div>
+            </div>
+          )}
+
           {pendingConflict && pendingConflict.length > 0 && (
             <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2" role="alert">
               <div className="text-body-sm font-semibold text-warning">⚠ Conflito de horário</div>
@@ -217,7 +236,14 @@ export function ConvertToEventSheet({ open, task, onClose }: Props) {
           )}
 
           <div className="flex items-center gap-md pt-2">
-            {pendingConflict && pendingConflict.length > 0 ? (
+            {pendingPast ? (
+              <>
+                <Button type="button" variant="secondary" onClick={() => setPendingPast(null)}>Voltar e ajustar</Button>
+                <Button type="button" loading={convert.isPending || checking} fullWidth onClick={() => { void onSubmit(true); }}>
+                  Criar mesmo assim
+                </Button>
+              </>
+            ) : pendingConflict && pendingConflict.length > 0 ? (
               <>
                 <Button type="button" variant="secondary" onClick={() => setPendingConflict(null)}>Voltar e ajustar</Button>
                 <Button type="button" loading={convert.isPending} fullWidth onClick={() => { setPendingConflict(null); convert.mutate(); }}>
@@ -227,7 +253,7 @@ export function ConvertToEventSheet({ open, task, onClose }: Props) {
             ) : (
               <>
                 <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
-                <Button type="button" loading={convert.isPending || checking} fullWidth onClick={onSubmit}>
+                <Button type="button" loading={convert.isPending || checking} fullWidth onClick={() => { void onSubmit(false); }}>
                   Criar compromisso
                 </Button>
               </>
