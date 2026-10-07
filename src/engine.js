@@ -13587,7 +13587,25 @@ Output AGORA, apenas o marker:`;
 
   // 2.5) Task update (complete / reschedule / create) — defense-in-depth na resolução de IDs.
   {
-    const parsedTask = parseTaskUpdateMarker(reply);
+    let parsedTask = parseTaskUpdateMarker(reply);
+    // TASK-UPDATE-EM-ID-DE-EVENTO (Alf 07/10 19:39): ação de tarefa sobre um compromisso que o
+    // EVENT_UPDATE deste turno já trata é duplicata do modelo — sai antes de executar, senão a falha
+    // dela vira "não consegui registrar" por cima do que deu certo. Ver lib/tarefa-que-e-evento.js.
+    if (parsedTask && !parsedTask.malformed && Array.isArray(parsedTask.actions) && parsedTask.actions.length) {
+      try {
+        const _peu = parseEventUpdateMarker(parsedTask.cleanText || '');
+        if (_peu && !_peu.malformed) {
+          const { separarTarefaQueEEvento } = require('./lib/tarefa-que-e-evento');
+          const _sep = separarTarefaQueEEvento(parsedTask.actions, _peu.actions);
+          if (_sep.duplicadas.length) {
+            console.log(`[Task] ${_sep.duplicadas.length} ação(ões) de tarefa sobre compromisso já tratado pelo EVENT_UPDATE — fora do lote`);
+            try { await logMarker(collab.id, 'TASK_UPDATE', 'skipped', `alvo_e_evento:${_sep.duplicadas.length}`, null); } catch (_) {}
+            if (_sep.ficam.length) parsedTask = { ...parsedTask, actions: _sep.ficam };
+            else { reply = parsedTask.cleanText || reply; parsedTask = null; }
+          }
+        }
+      } catch (e) { console.warn('[Task] separação tarefa×evento falhou (segue o lote como veio):', e.message); }
+    }
     if (parsedTask && parsedTask.malformed) {
       console.warn('[Task] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'TASK_UPDATE', 'rejected', 'schema_invalid', reply);

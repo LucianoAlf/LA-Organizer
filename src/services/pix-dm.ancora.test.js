@@ -19,7 +19,7 @@ test('o aviso de quem já foi do PIX é resolvido ANTES do prompt e do LLM', () 
 });
 
 test('o TASK_UPDATE em tarefa do PIX sai do marcador ANTES de o marcador executar', () => {
-  assert.ok(idx('tirarConclusaoDePix(reply)') < idx('const parsedTask = parseTaskUpdateMarker(reply)'));
+  assert.ok(idx('tirarConclusaoDePix(reply)') < idx('let parsedTask = parseTaskUpdateMarker(reply)'));
 });
 
 test('a lista numerada (<<LISTA_PIX>>) e o resultado do aviso entram ANTES do catch-all e do chokepoint', () => {
