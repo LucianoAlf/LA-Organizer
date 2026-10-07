@@ -143,6 +143,14 @@ function _rotuloDaSecao(chave, n, presos = 0, noCartao = 0) {
   return `${r.emoji} *${r.nome}* (${n})${fim ? ` · ${fim} no fim` : ''}${chave === 'autorizacao_pendente' ? ' — resolver primeiro' : ''}`;
 }
 
+// O resumo do topo ("✅ *23 de 98 já migraram* · faltam 75" + dias pra meta) — o MESMO da lista
+// do grupo e da pauta do 1:1.
+function _resumoDe(linhas, hoje) {
+  const hojeYmd = hoje || _ymdBrt(new Date().toISOString());
+  const d = dadosDaUnidadeParaRelatorio(linhas, { nome: '', hojeYmd });
+  return pura.resumoDaMigracao({ migrados: d.migrados, total: d.total, hojeYmd });
+}
+
 // -> { itens: [{ pagador, alunos, secao? }], resumo }
 // `comChave` (só o 1:1, pix-dm.js): o item leva a pagador_chave pra o número da lista virar o
 // cliente certo na resposta seguinte. A chave NUNCA vai pro texto, e a API pública (itensDaLista)
@@ -151,8 +159,7 @@ async function _lerPix({ retry, rpcPix, alvo, hoje, comChave = false }) {
   const r = await retry(rpcPix);
   if (r && r.error) throw new Error(`get_pix_migracao_v1: ${r.error.message}`);
   const linhas = (r && r.data) || [];
-  const d = dadosDaUnidadeParaRelatorio(linhas, { nome: '', hojeYmd: hoje || _ymdBrt(new Date().toISOString()) });
-  const resumo = pura.resumoDaMigracao({ migrados: d.migrados, total: d.total, hojeYmd: hoje || _ymdBrt(new Date().toISOString()) });
+  const resumo = _resumoDe(linhas, hoje);
   if (alvo === 'ja_migrou') {
     // Mesmo formato da lista de quem falta (nome recuado, alunos entre parênteses) — as duas saem
     // juntas no "quem já foi e quem falta" e não podem ter cara diferente.
@@ -234,6 +241,39 @@ async function blocoNumeravel({ laReport, unidadeId, alvo, deps = {} }) {
   const { retry, rpcPix } = _rpcs({ laReport, unidadeId, deps });
   return _lerPix({ retry, rpcPix, alvo, hoje: deps.hoje, comChave: true });
 }
+// blocoDaPauta (07/10): a PAUTA do dia do grupo (filhas pendentes do pacote do ritual, já
+// resolvidas em { pagador, alunos, chave }) organizada IGUAL à lista do grupo — seção pela forma
+// de pagamento que a FONTE mostra agora, 💳 e 🔒 no fim, mesmo resumo no topo. Quem a fonte já
+// mostra migrado (ou que saiu da fonte) não some: vai pra uma seção própria no fim, dizendo isso.
+const SECAO_MIGROU_NA_FONTE = 'migrou_na_fonte';
+const SECAO_FORA_DA_FONTE = 'fora_da_fonte';
+const _ORDEM_SECOES_PAUTA = [...FATIAS, SECAO_CARTAO, SECAO_BLOQUEIO, SECAO_MIGROU_NA_FONTE, SECAO_FORA_DA_FONTE];
+async function blocoDaPauta({ laReport, unidadeId, pauta, deps = {} }) {
+  const { retry, rpcPix } = _rpcs({ laReport, unidadeId, deps });
+  const r = await retry(rpcPix);
+  if (r && r.error) throw new Error(`get_pix_migracao_v1: ${r.error.message}`);
+  const linhas = (r && r.data) || [];
+  const porChave = new Map(linhas.filter(Boolean).map((l) => [l.pagador_chave, l]));
+  const secaoDe = (it) => {
+    const l = it.chave ? porChave.get(it.chave) : null;
+    if (!l) return SECAO_FORA_DA_FONTE;
+    if (l.categoria === 'ja_migrou') return SECAO_MIGROU_NA_FONTE;
+    return NA_PAUTA(l) ? _chaveDaSecao(l) : SECAO_FORA_DA_FONTE;
+  };
+  const comSecao = (pauta || []).map((it) => ({ it, s: secaoDe(it) }));
+  comSecao.sort((a, b) => (_ORDEM_SECOES_PAUTA.indexOf(a.s) - _ORDEM_SECOES_PAUTA.indexOf(b.s))
+    || String(a.it.pagador).localeCompare(String(b.it.pagador), 'pt-BR'));
+  const conta = new Map();
+  for (const { s } of comSecao) conta.set(s, (conta.get(s) || 0) + 1);
+  const rotulo = (s) => {
+    if (s === SECAO_MIGROU_NA_FONTE) return `✅ *Já aparece como migrado no Emusys* (${conta.get(s)}) — sai da pauta na próxima`;
+    if (s === SECAO_FORA_DA_FONTE) return `⚪ *Fora da lista do Emusys agora* (${conta.get(s)})`;
+    return _rotuloDaSecao(s, conta.get(s));
+  };
+  const itens = comSecao.map(({ it, s }) => ({ pagador: it.pagador, alunos: it.alunos || [], secao: rotulo(s), chave: it.chave || null }));
+  return { itens, resumo: _resumoDe(linhas, deps.hoje) };
+}
+
 async function linhasDaUnidade({ laReport, unidadeId, deps = {} }) {
   const { retry, rpcPix } = _rpcs({ laReport, unidadeId, deps });
   const r = await retry(rpcPix);
@@ -411,5 +451,5 @@ module.exports = {
   numerosDaUnidade, itensDaLista, blocosDaLista, atenderPedidoNoGrupo,
   numerosDeTodasUnidades, blocosDeTodasUnidades,
   mensagensDaListaPix, atenderMarkersListaPix,
-  blocoNumeravel, linhasDaUnidade,
+  blocoNumeravel, linhasDaUnidade, blocoDaPauta,
 };

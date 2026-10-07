@@ -31,3 +31,8 @@ test('a lista numerada (<<LISTA_PIX>>) e o resultado do aviso entram ANTES do ca
 test('a lista guardada (PIX_LISTA_DM) é META: não conta como marcador de domínio tentado', () => {
   assert.match(pm, /_NON_DOMAIN_MARKERS = \[[^\]]*'PIX_LISTA_DM'/);
 });
+
+test('a fala DELA decide pauta x lista completa, e as partes seguintes saem DEPOIS do reply', () => {
+  assert.ok(pm.includes('textoDoUsuario: text'), 'atenderMarkersListaPixDM recebe a fala da pessoa');
+  assert.ok(idx('const _sent = await whatsapp.sendMessage(phone, reply)') < idx('for (const _parte of _pixDmExtras)'));
+});

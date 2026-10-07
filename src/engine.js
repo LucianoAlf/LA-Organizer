@@ -15877,13 +15877,17 @@ Output AGORA, apenas o marker:`;
   // O MESMO marcador do grupo: o LLM pede, o CÓDIGO escreve a lista NUMERADA da mesma fonte
   // (services/pix-dm.js) e guarda o número -> cliente (marker_logs PIX_LISTA_DM, tipo META). Roda
   // ANTES do catch-all (senão o marcador some e sobra a linha prometendo a lista).
+  // Padrão = a PAUTA do dia do grupo; "lista completa" (na fala DELA, `text`) = a unidade inteira,
+  // em partes do tamanho das do grupo — a parte 1 vai no reply, as outras em _pixDmExtras.
+  let _pixDmExtras = [];
   try {
     if (typeof reply === 'string' && /<<LISTA_PIX>>/i.test(reply)) {
       const _pixDm = require('./services/pix-dm');
       const { laReportClient: _lrcLp } = require('./services/la-report-client');
       const _idsLp = _pixDmUnidades || await require('./services/pauta-dm').unidadesDoColaborador({ supabase, collab, incluirCadastro: true });
-      const _rLp = await _pixDm.atenderMarkersListaPixDM({ reply, laReport: _lrcLp, supabase, unidadeIds: _idsLp, collaboratorId: collab.id });
+      const _rLp = await _pixDm.atenderMarkersListaPixDM({ reply, laReport: _lrcLp, supabase, unidadeIds: _idsLp, collaboratorId: collab.id, textoDoUsuario: text });
       reply = _rLp.reply;
+      _pixDmExtras = _rLp.extras || [];
       console.log(`[PixDM] marcador LISTA_PIX atendidos=${_rLp.atendidos} itens=${_rLp.itens.length} falhas=${_rLp.falhas}`);
     }
   } catch (e) {
@@ -17050,6 +17054,25 @@ Output AGORA, apenas o marker:`;
   } else if (_reactionsToSend && _reactionsToSend.length && !_voiceSent) {
     console.log(`[Engine] reply vazio pós-REACT — só reação enviada (${_reactionsToSend[0]})`);
     await logConversation(collab.id, 'outbound', `[reação: ${_reactionsToSend[0]}]`);
+  }
+
+  // PIX-NO-1A1 (07/10): as partes seguintes da lista do PIX, uma por vez, em ordem — SÓ se a parte 1
+  // saiu de fato no texto (um guard que trocou o reply, ou a resposta em áudio, não pode deixar
+  // "parte 2/4" solta no WhatsApp). Já depois da fronteira de entrega: falha vira log, nunca retry.
+  if (_pixDmExtras.length && !_voiceSent && typeof reply === 'string' && /— parte 1\//.test(reply)) {
+    for (const _parte of _pixDmExtras) {
+      try {
+        // eslint-disable-next-line no-await-in-loop -- ordem importa
+        const _sp = await whatsapp.sendMessage(phone, _parte);
+        let _wp = null;
+        try { _wp = extractSentMessageId(_sp); } catch (_) { _wp = null; }
+        // eslint-disable-next-line no-await-in-loop
+        try { await logConversation(collab.id, 'outbound', _parte, _wp); } catch (e) { console.error('[PixDM] histórico da parte falhou APÓS entrega:', e.message); }
+      } catch (e) {
+        console.error('[PixDM] parte da lista não saiu (paro aqui):', e.message);
+        break;
+      }
+    }
   }
 
   // STICKER follow-up — depois do reply de texto, manda figurinha(s) extraída(s)

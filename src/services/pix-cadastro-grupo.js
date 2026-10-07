@@ -89,7 +89,9 @@ async function _filhasPixPadrao(sb, { groupId }) {
     }
     for (const f of fs || []) filhas.push({ id: f.id, title: f.title, pagador_chave: porTask.get(f.id) || null });
   }
-  return { pacotes: (containers || []).length, filhas };
+  // `datas`: o "06/10" do título do pacote — a pauta do 1:1 (pix-dm.js) diz de quando é.
+  const datas = (containers || []).map((c) => String(c.title || '').slice(PREFIXO_CONTAINER.length).trim()).filter(Boolean);
+  return { pacotes: (containers || []).length, filhas, datas };
 }
 
 // Só fecha se ainda está 'pending' (evita corrida com quem já fechou por fora). Nunca lança —
@@ -207,4 +209,7 @@ async function tratarCadastroInformadoNoGrupo({
   return { tratou: true, texto: textoCadastroInformado(_pagadorDoTitulo(filha.title)) };
 }
 
-module.exports = { tratarCadastroInformadoNoGrupo, registrarCadastroInformado, _pagadorDoTitulo, _casaPorPalavraInteira };
+// A pauta do PIX aberta no grupo — a MESMA leitura do atalho acima, exposta pro 1:1 (pix-dm.js).
+const filhasPixDoGrupo = (sb, arg) => _filhasPixPadrao(sb, arg);
+
+module.exports = { tratarCadastroInformadoNoGrupo, registrarCadastroInformado, filhasPixDoGrupo, _pagadorDoTitulo, _casaPorPalavraInteira };

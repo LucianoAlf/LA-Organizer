@@ -54,14 +54,27 @@ const semInterruptor = async (fn) => {
 };
 
 // Memória falsa: a lista guardada e as escritas do registro.
-function mundo({ fonte = { [CG]: FONTE_CG }, filhas = [], marcadorOk = true, fecharOk = true } = {}) {
+// Pauta do dia do grupo ADM CG (o pacote aberto do ritual): 4 filhas, uma delas (Kiko) a fonte já
+// mostra como migrada, e uma (Zé) sem vínculo gravado.
+const PAUTA_CG = {
+  pacotes: 1, datas: ['05/10'],
+  filhas: [
+    { id: 'f-joyce', title: 'PIX automático — Joyce Lima (Heitor)', pagador_chave: `${CG}:8` },
+    { id: 'f-caio', title: 'PIX automático — Caio Cartao (C1, C2)', pagador_chave: `${CG}:3` },
+    { id: 'f-ana', title: 'PIX automático — Ana Um (A1)', pagador_chave: `${CG}:1` },
+    { id: 'f-kiko', title: 'PIX automático — Kiko Ja Foi', pagador_chave: `${CG}:11` },
+  ],
+};
+function mundo({ fonte = { [CG]: FONTE_CG }, filhas = [], marcadorOk = true, fecharOk = true, pauta = { [CG]: PAUTA_CG } } = {}) {
   const w = { listas: [], marcadores: [], fechadas: [] };
   w.deps = {
     rpcPixDaUnidade: rpcDe(fonte),
     retry: (fn) => fn(),
     hoje: '2026-10-05',
-    guardarLista: async ({ collaboratorId, itens }) => { w.listas.push({ collaboratorId, itens }); return true; },
-    ultimaLista: async () => (w.listas.length ? w.listas[w.listas.length - 1].itens : null),
+    salvarNumeracao: async ({ collaboratorId, itens }) => { w.listas.push({ collaboratorId, itens }); return true; },
+    carregarNumeracao: async () => (w.listas.length ? w.listas[w.listas.length - 1].itens : null),
+    gruposPix: async ({ unidadeIds }) => unidadeIds.filter((u) => pauta[u]).map((u) => ({ groupId: `g-${u}`, unidadeId: u })),
+    filhasPixDoGrupo: async ({ groupId }) => pauta[groupId.slice(2)] || { pacotes: 0, filhas: [] },
     gravarMarcador: async (arg) => { w.marcadores.push(arg); return marcadorOk; },
     filhasPendentesDaChave: async (chave) => filhas.filter((x) => x.chave === chave).map((x) => x.id),
     fecharFilha: async (id) => { w.fechadas.push(id); return fecharOk; },
@@ -69,6 +82,7 @@ function mundo({ fonte = { [CG]: FONTE_CG }, filhas = [], marcadorOk = true, fec
   return w;
 }
 const marker = (obj) => `Puxei da fonte agora 👇\n<<LISTA_PIX>>${JSON.stringify(obj)}<<END>>`;
+const COMPLETA = 'me manda a lista completa do pix';
 const numeroDe = (w, nome) => w.listas[0].itens.find((i) => i.nome === nome).n;
 
 // ── gate e leitura da resposta (puro) ───────────────────────────────────────────────────────
@@ -100,7 +114,7 @@ test('resposta por número: o que NÃO é aviso de cadastro não vira escrita', 
 // ── a lista no 1:1 ──────────────────────────────────────────────────────────────────────────
 test('lista no 1:1: o marcador vira a lista NUMERADA da fonte, com os MESMOS nomes e ordem do grupo', () => semInterruptor(async () => {
   const w = mundo();
-  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', deps: w.deps });
+  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', textoDoUsuario: COMPLETA, deps: w.deps });
   assert.strictEqual(r.atendidos, 1);
   assert.ok(!/<<LISTA_PIX>>/.test(r.reply));
   const grupo = (await f.blocosDaLista({ unidadeId: CG, alvo: 'pix', deps: { rpcPix: () => w.deps.rpcPixDaUnidade(CG), retry: (fn) => fn(), hoje: '2026-10-05' } })).blocos[0];
@@ -118,26 +132,101 @@ test('lista no 1:1: o marcador vira a lista NUMERADA da fonte, com os MESMOS nom
 
 test('lista no 1:1: unidade dita vence as da pessoa; sem nenhuma, as unidades da pessoa em sequência', () => semInterruptor(async () => {
   const w = mundo({ fonte: { [CG]: FONTE_CG, [RECREIO]: [L({ id: 99, pagador_chave: `${RECREIO}:99`, pagador_nome: 'Rui Recreio' })] } });
-  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix', unidade: 'recreio' }), unidadeIds: [CG], collaboratorId: 'ana', deps: w.deps });
+  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix', unidade: 'recreio' }), unidadeIds: [CG], collaboratorId: 'ana', textoDoUsuario: COMPLETA, deps: w.deps });
   assert.match(r.reply, /Recreio\* \(1 clientes\)/);
   assert.ok(!r.reply.includes('Ana Um'));
-  const r2 = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG, RECREIO], collaboratorId: 'ana', deps: w.deps });
-  assert.ok(r2.reply.indexOf('Campo Grande') < r2.reply.indexOf('Recreio'));
-  assert.ok(r2.reply.includes('   11. Rui Recreio'), 'numeração continua de uma unidade pra outra');
+  const r2 = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG, RECREIO], collaboratorId: 'ana', textoDoUsuario: COMPLETA, deps: w.deps });
+  const tudo2 = [r2.reply, ...r2.extras].join('\n\n');
+  assert.strictEqual(r2.extras.length, 1, 'cada unidade na sua mensagem, como no grupo');
+  assert.ok(tudo2.indexOf('Campo Grande') < tudo2.indexOf('Recreio'));
+  assert.ok(tudo2.includes('   11. Rui Recreio'), 'numeração continua de uma unidade pra outra');
 }));
 
 test('lista no 1:1: fonte fora -> linha honesta, nenhuma lista guardada, nenhum nome inventado', async () => {
   const w = mundo();
   w.deps.rpcPixDaUnidade = async () => ({ data: null, error: { message: 'timeout' } });
-  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', deps: w.deps });
+  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', textoDoUsuario: COMPLETA, deps: w.deps });
   assert.strictEqual(r.falhas, 1);
   assert.match(r.reply, /não consegui ler/i);
   assert.strictEqual(w.listas.length, 0);
 });
 
+// ── PADRÃO DO 1:1 = A PAUTA DO DIA (coordenação 07/10) ──────────────────────────────────────
+// "Atualiza a lista" (a fala real da Ana) é a pauta do PIX do grupo dela — as filhas pendentes do
+// pacote do ritual, a MESMA que o grupo recebe —, não os 178 da unidade. A lista inteira só quando
+// a pessoa pede "lista completa/toda/inteira".
+test('Ana 05/10: "atualiza a lista" manda a PAUTA do dia do grupo, numerada — não a unidade inteira', () => semInterruptor(async () => {
+  const w = mundo();
+  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', textoDoUsuario: PEDIDO_REAL, deps: w.deps });
+  assert.match(r.reply, /💠 \*PIX automático — pauta de 05\/10 — Campo Grande\* \(4 clientes\)/);
+  const nomes = w.listas[0].itens.map((i) => i.nome);
+  assert.deepStrictEqual([...nomes].sort(), ['Ana Um', 'Caio Cartao', 'Joyce Lima', 'Kiko Ja Foi']);
+  for (const it of w.listas[0].itens) assert.ok(r.reply.includes(`   ${it.n}. ${it.nome}`), `${it.n}. ${it.nome}`);
+  assert.deepStrictEqual(w.listas[0].itens.map((i) => i.n), [1, 2, 3, 4]);
+  for (const fora of ['Bia Dois', 'Dora Quatro', 'Ivo Nove']) assert.ok(!r.reply.includes(fora), `${fora} não está na pauta`);
+  // organizada como a lista do grupo: forma de pagamento da fonte, quem a fonte já mostra migrado à parte
+  assert.match(r.reply, /🔴 \*Pix avulso\* \(1\)\n   \d+\. Ana Um \(A1\)/);
+  assert.match(r.reply, /✅ \*Já aparece como migrado no Emusys\* \(1\)[^\n]*\n   4\. Kiko Ja Foi/);
+  assert.match(r.reply, /✅ \*1 de 11 já migraram\* · faltam 10/, 'mesmo resumo da lista do grupo');
+  assert.match(r.reply, /lista completa/i, 'diz como pedir a unidade inteira');
+  assert.deepStrictEqual(r.extras, []);
+  // o número da pauta resolve pro cliente certo no turno seguinte (Joyce = PIX -> registro)
+  const nJoyce = numeroDe(w, 'Joyce Lima');
+  const res = await dm.resolverPixDoTurno({ collaboratorId: 'ana', text: `${nJoyce} - Pix recorrente já cadastrado`, unidadeIds: [CG], deps: { ...w.deps, filhasPendentesDaChave: async () => ['f-joyce'] } });
+  assert.strictEqual(res.gravou, true);
+  assert.deepStrictEqual(w.fechadas, ['f-joyce']);
+}));
+
+test('pauta: grupo sem pacote aberto -> diz isso e oferece a lista completa; nada guardado, nome nenhum', () => semInterruptor(async () => {
+  const w = mundo({ pauta: {} });
+  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', textoDoUsuario: PEDIDO_REAL, deps: w.deps });
+  assert.match(r.reply, /não tem pauta do PIX aberta/i);
+  assert.match(r.reply, /lista completa/i);
+  assert.strictEqual(w.listas.length, 0);
+  assert.ok(!r.reply.includes('Ana Um'));
+}));
+
+test('pedido explícito ("lista completa/toda/inteira") manda a unidade inteira; recorte nomeado também', () => {
+  for (const t of ['me manda a lista completa do pix', 'quero a lista inteira', 'manda toda a lista do pix']) assert.strictEqual(dm.pedeListaCompleta(t), true, t);
+  for (const t of [PEDIDO_REAL, 'atualiza a lista do pix', 'quem falta hoje?']) assert.strictEqual(dm.pedeListaCompleta(t), false, t);
+});
+
+test('lista completa grande: sai em PARTES do tamanho do grupo, numeração contínua entre as partes', () => semInterruptor(async () => {
+  const muitos = Array.from({ length: 100 }, (_, i) => L({ id: 1000 + i, pagador_nome: `Cliente ${String(i + 1).padStart(3, '0')}` }));
+  const w = mundo({ fonte: { [CG]: muitos } });
+  const r = await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', textoDoUsuario: COMPLETA, deps: w.deps });
+  const partes = [r.reply, ...r.extras];
+  const porParte = require('./pix-consulta').LIMITE_POR_MENSAGEM;
+  assert.strictEqual(partes.length, Math.ceil(100 / porParte));
+  assert.match(partes[0], /— parte 1\/3/);
+  assert.match(partes[1], new RegExp(`— parte 2/3[\\s\\S]*\\n   ${porParte + 1}\\. Cliente`));
+  assert.match(partes[2], /\n   100\. Cliente 100/);
+  assert.match(partes[2], /responde com o número/i, 'o rodapé vai na ÚLTIMA parte');
+  assert.strictEqual(w.listas[0].itens.length, 100);
+}));
+
+// ── a numeração guardada (um módulo só, troca de casa sem mexer em quem chama) ────────────────
+test('numeração: salvar e carregar devolvem a mesma lista (n, chave, nome)', async () => {
+  const num = require('./pix-dm-numeracao');
+  const linhas = [];
+  const fake = {
+    from: () => ({
+      insert: async (row) => { linhas.push({ ...row, created_at: new Date().toISOString() }); return { error: null }; },
+      select: () => {
+        const q = { eq: () => q, gte: () => q, order: () => q, limit: () => q,
+          maybeSingle: async () => ({ data: linhas[linhas.length - 1] || null, error: null }) };
+        return q;
+      },
+    }),
+  };
+  const itens = [{ n: 1, chave: `${CG}:8`, nome: 'Joyce Lima' }, { n: 2, chave: null, nome: 'Zé Sem Vínculo' }];
+  assert.strictEqual(await num.salvarNumeracao({ supabase: fake, collaboratorId: 'ana', itens }), true);
+  assert.deepStrictEqual(await num.carregarNumeracao({ supabase: fake, collaboratorId: 'ana', desdeIso: '2026-10-05T00:00:00Z' }), itens);
+});
+
 // ── a resposta por número (o turno seguinte) ────────────────────────────────────────────────
 async function comLista(w) {
-  await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', deps: w.deps });
+  await dm.atenderMarkersListaPixDM({ reply: marker({ alvo: 'pix' }), unidadeIds: [CG], collaboratorId: 'ana', textoDoUsuario: COMPLETA, deps: w.deps });
   return w.listas[0].itens;
 }
 

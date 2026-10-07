@@ -11,7 +11,8 @@
 // RAIZ: o 1:1 não tinha a lista do PIX nem o caminho do "cadastrei". Agora, igual ao grupo:
 //   LISTA   — o LLM emite o MESMO <<LISTA_PIX>> do grupo; o CÓDIGO lê a MESMA fonte
 //             (pix-consulta-fontes, mesma conta da lista do grupo) e escreve a lista NUMERADA.
-//             O número -> cliente fica guardado (marker_logs PIX_LISTA_DM) pra resposta seguinte.
+//             Padrão = a PAUTA do dia do grupo; a unidade inteira só com "lista completa".
+//             O número -> cliente fica guardado (pix-dm-numeracao.js) pra resposta seguinte.
 //   AVISO   — "8 já cadastrado", "o 3 e o 8 já foram", "cadastrei <nome> no automático": o código
 //             resolve o número contra a lista que ele MESMO mandou, relê a fonte e registra pelo
 //             MESMO caminho do grupo (pix-cadastro-grupo.registrarCadastroInformado: marcador
@@ -26,9 +27,9 @@ const situ = require('./situacao-aluno');
 const { detectarCadastroInformado } = require('../lib/pix-cadastro-informado');
 const { stripReplyScaffold } = require('../events/detect-approval-reply');
 const cadastro = require('./pix-cadastro-grupo');
+const numeracao = require('./pix-dm-numeracao');
 
 const ORDEM_UNIDADES = ['campo grande', 'recreio', 'barra'].map((a) => situ.resolverUnidade(a));
-const MARCADOR_LISTA = 'PIX_LISTA_DM';
 const JANELA_LISTA_MS = 24 * 3600 * 1000;
 const RE_CARTAO = /cart[aã]o/i;
 
@@ -86,13 +87,18 @@ function blocoPixDM({ porUnidade = [] } = {}) {
   const L = ['## 💠 PIX AUTOMÁTICO NO 1:1 — fonte: LA Report, a MESMA lista dos grupos'];
   for (const u of porUnidade) L.push(pura.blocoDeNumeros(u));
   L.push('REGRAS:');
-  L.push('- Pediram a lista / os nomes / "atualiza a lista" do PIX? Escreva UMA linha curta de abertura e emita <<LISTA_PIX>>{"alvo":"pix","unidade":"campo grande|recreio|barra"}<<END>> (unidade só se a pessoa disser; os mesmos alvos do grupo: "pix", "pix_avulso", "cheque", "cartao_cadastrado", "ja_migrou"…). O sistema escreve a lista NUMERADA, da fonte. NUNCA escreva os nomes você mesmo — nem a partir das tarefas "PIX automático — …" que aparecem no seu contexto.');
+  L.push('- Pediram a lista / os nomes / "atualiza a lista" do PIX? Escreva UMA linha curta de abertura e emita <<LISTA_PIX>>{"alvo":"pix","unidade":"campo grande|recreio|barra"}<<END>> (unidade só se a pessoa disser; os mesmos alvos do grupo: "pix", "pix_avulso", "cheque", "cartao_cadastrado", "ja_migrou"…). Com "pix", o sistema manda a PAUTA do dia do grupo da pessoa; a unidade inteira só se ela pedir a "lista completa" — quem decide é o sistema, pela fala dela. A lista sai NUMERADA, da fonte. NUNCA escreva os nomes você mesmo — nem a partir das tarefas "PIX automático — …" que aparecem no seu contexto.');
   L.push('- Quem já foi a pessoa diz pelo NÚMERO da lista ou com "cadastrei <nome> no automático" — quem registra é o SISTEMA. NUNCA emita TASK_UPDATE em tarefa "PIX automático — …" e nunca diga que marcou/anotou/fechou alguém do PIX por conta própria.');
   L.push('- Cartão recorrente (crédito) NÃO é PIX automático: a lista lê o Emusys, então a forma de pagamento tem que ser atualizada LÁ; quando a cobrança passar no cartão, a pessoa sai da lista sozinha.');
   return L.join('\n');
 }
 
 // ── A LISTA NUMERADA ──────────────────────────────────────────────────────────────────────────
+// PADRÃO DO 1:1 = A PAUTA DO DIA (coordenação 07/10). "Atualiza a lista" (Ana, 05/10) é a pauta do
+// PIX do grupo dela — as filhas pendentes do pacote aberto pelo ritual, a MESMA que o grupo recebe
+// e a MESMA que o "cadastrei" do grupo lê (pix-cadastro-grupo.filhasPixDoGrupo). A unidade inteira
+// só quando a pessoa pede "lista completa/toda/inteira" (ou nomeia um recorte: cheque, 💳…) — e aí
+// em PARTES do tamanho das do grupo, com a numeração contínua entre as partes.
 function _rpcPadrao(laReport) {
   return (unidadeId) => laReport.rpc('get_pix_migracao_v1', { p_unidade_id: unidadeId, p_fatia: null });
 }
@@ -101,32 +107,42 @@ function _depsDaUnidade(deps, laReport, unidadeId) {
   return { ...deps, rpcPix: () => rpc(unidadeId) };
 }
 
-async function _guardarListaPadrao(supabase, { collaboratorId, itens }) {
-  const { error } = await supabase.from('marker_logs').insert({
-    collaborator_id: collaboratorId, marker_type: MARCADOR_LISTA, result: 'skipped',
-    reason: `lista:${itens.length}`, raw_excerpt: JSON.stringify({ v: 1, itens: itens.map((i) => [i.n, i.chave, i.nome]) }),
-  });
-  if (error) { console.error(`[PixDM] guardar lista falhou: ${error.message}`); return false; }
-  return true;
-}
-async function _ultimaListaPadrao(supabase, { collaboratorId, desdeIso }) {
-  const { data, error } = await supabase.from('marker_logs').select('raw_excerpt, created_at')
-    .eq('collaborator_id', collaboratorId).eq('marker_type', MARCADOR_LISTA)
-    .gte('created_at', desdeIso).order('created_at', { ascending: false }).limit(1).maybeSingle();
-  if (error) throw new Error(`ultimaLista: ${error.message}`);
-  if (!data) return null;
-  const j = JSON.parse(data.raw_excerpt || '{}');
-  return (j.itens || []).map(([n, chave, nome]) => ({ n, chave, nome }));
+const RE_COMPLETA = /\blista (completa|inteira|toda)\b|\btoda a lista\b|\b(completa|inteira)\b|\btod[oa]s os (clientes|nomes|alunos)\b/;
+function pedeListaCompleta(texto) {
+  return RE_COMPLETA.test(_norm(stripReplyScaffold(String(texto || '')).userText));
 }
 
+// Grupos da pessoa amarrados a uma unidade (é neles que o ritual abre a pauta do PIX).
+async function _gruposPixPadrao(supabase, { collaboratorId, unidadeIds }) {
+  const { data: mem, error } = await supabase.from('work_group_members').select('group_id').eq('collaborator_id', collaboratorId);
+  if (error) throw new Error(`gruposPix (membros): ${error.message}`);
+  if (!(mem || []).length) return [];
+  const { data: gs, error: e2 } = await supabase.from('work_groups').select('id, la_report_unidade_id')
+    .in('id', mem.map((m) => m.group_id)).eq('active', true).not('la_report_unidade_id', 'is', null);
+  if (e2) throw new Error(`gruposPix (grupos): ${e2.message}`);
+  return (gs || []).filter((g) => unidadeIds.includes(g.la_report_unidade_id)).map((g) => ({ groupId: g.id, unidadeId: g.la_report_unidade_id }));
+}
+
+// "PIX automático — Pagador (A, B)" -> { pagador, alunos } — o formato de tituloDaFilha.
+function _itemDaFilha(f) {
+  const pagador = cadastro._pagadorDoTitulo(f.title);
+  const m = /\(([^()]*)\)\s*$/.exec(String(f.title || ''));
+  return { pagador, alunos: m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [], chave: f.pagador_chave || null };
+}
+
+const RODAPE_NUMERO = '_Me responde com o número de quem já foi (ex.: "8 já cadastrado no PIX") que eu registro._';
+const RODAPE_SEM_NUMERO = '_Não consegui guardar a numeração desta lista — pra me dizer quem já foi, usa "cadastrei <nome> no automático"._';
+const RODAPE_PAUTA = '_Essa é a pauta aberta do teu grupo. Pra unidade inteira, me pede a "lista completa"._';
 const RE_MARKER = /<<LISTA_PIX>>([\s\S]*?)<<END>>/gi;
 
-// -> { reply, atendidos, falhas, itens }
-async function atenderMarkersListaPixDM({ reply, laReport, supabase, unidadeIds = [], collaboratorId, deps = {} }) {
+// -> { reply, extras: [mensagens seguintes], atendidos, falhas, itens }
+async function atenderMarkersListaPixDM({ reply, laReport, supabase, unidadeIds = [], collaboratorId, textoDoUsuario = '', deps = {} }) {
   const texto = String(reply == null ? '' : reply);
   const brutos = Array.from(texto.matchAll(RE_MARKER)).map((m) => m[1]);
-  if (!brutos.length) return { reply: texto, atendidos: 0, falhas: 0, itens: [] };
-  const guardar = deps.guardarLista || ((arg) => _guardarListaPadrao(supabase, arg));
+  if (!brutos.length) return { reply: texto, extras: [], atendidos: 0, falhas: 0, itens: [] };
+  const salvar = deps.salvarNumeracao || ((arg) => numeracao.salvarNumeracao({ supabase, ...arg }));
+  const gruposPix = deps.gruposPix || ((arg) => _gruposPixPadrao(supabase, arg));
+  const filhasDoGrupo = deps.filhasPixDoGrupo || ((arg) => cadastro.filhasPixDoGrupo(supabase, arg));
 
   let p = {};
   try { p = JSON.parse(String(brutos[0]).trim()) || {}; } catch (_) { p = {}; }
@@ -135,23 +151,60 @@ async function atenderMarkersListaPixDM({ reply, laReport, supabase, unidadeIds 
   if (!alvos.length) alvos = ['pix'];
   const citada = situ.resolverUnidade(p.unidade);
   const unidades = citada ? [citada] : (unidadeIds.length ? unidadeIds : ORDEM_UNIDADES);
+  // Recorte nomeado (cheque, 💳, já migraram…) é pedido explícito; "pix" sozinho é a pauta do dia.
+  const pauta = alvos.length === 1 && alvos[0] === 'pix' && !pedeListaCompleta(textoDoUsuario);
 
   const blocos = [];
   const itens = [];
   const avisos = [];
+  const semPauta = [];
   let falhas = 0;
+  const numerar = (b) => b.itens.map((it) => {
+    const n = itens.length + 1;
+    itens.push({ n, chave: it.chave || null, nome: it.pagador });
+    return { pagador: it.pagador, alunos: it.alunos, secao: it.secao, numero: n };
+  });
+
+  let grupos = [];
+  if (pauta) {
+    try { grupos = await gruposPix({ collaboratorId, unidadeIds: unidades }); } catch (e) {
+      falhas++;
+      console.warn(`[PixDM] grupos da pessoa: ${e.message}`);
+      avisos.push('Não consegui ler a pauta dos teus grupos agora — me pede de novo daqui a pouco.');
+    }
+  }
   for (const unidadeId of unidades) {
     const unidadeNome = situ.nomeDaUnidade(unidadeId);
+    const dU = _depsDaUnidade(deps, laReport, unidadeId);
+    if (pauta) {
+      const gs = grupos.filter((g) => g.unidadeId === unidadeId);
+      try {
+        const filhas = [];
+        const datas = [];
+        for (const g of gs) {
+          // eslint-disable-next-line no-await-in-loop
+          const r = await filhasDoGrupo({ groupId: g.groupId });
+          if (!r || !(r.pacotes > 0)) continue;
+          for (const d of r.datas || []) if (!datas.includes(d)) datas.push(d);
+          for (const f of r.filhas || []) if (!filhas.some((x) => x.title === f.title)) filhas.push(f);
+        }
+        if (!filhas.length) { semPauta.push(unidadeNome); continue; }
+        // eslint-disable-next-line no-await-in-loop
+        const b = await fontes.blocoDaPauta({ laReport, unidadeId, pauta: filhas.map(_itemDaFilha), deps: dU });
+        const quando = datas.length ? `pauta de ${datas.join(', ')}` : 'pauta aberta';
+        blocos.push({ titulo: `PIX automático — ${quando} — ${unidadeNome}`, substantivo: 'clientes', itens: numerar(b), resumo: b.resumo });
+      } catch (e) {
+        falhas++;
+        console.warn(`[PixDM] pauta unidade=${unidadeNome}: ${e.message}`);
+        avisos.push(`A pauta de ${unidadeNome} eu não consegui ler agora — me pede de novo daqui a pouco.`);
+      }
+      continue;
+    }
     for (const alvo of alvos) {
       try {
         // eslint-disable-next-line no-await-in-loop -- ordem importa (CG, Recreio, Barra)
-        const b = await fontes.blocoNumeravel({ laReport, unidadeId, alvo, deps: _depsDaUnidade(deps, laReport, unidadeId) });
-        const numerados = b.itens.map((it) => {
-          const n = itens.length + 1;
-          itens.push({ n, chave: it.chave, nome: it.pagador });
-          return { pagador: it.pagador, alunos: it.alunos, secao: it.secao, numero: n };
-        });
-        blocos.push({ titulo: `${pura.tituloDoAlvo(alvo)} — ${unidadeNome}`, substantivo: 'clientes', itens: numerados, resumo: b.resumo });
+        const b = await fontes.blocoNumeravel({ laReport, unidadeId, alvo, deps: dU });
+        blocos.push({ titulo: `${pura.tituloDoAlvo(alvo)} — ${unidadeNome}`, substantivo: 'clientes', itens: numerar(b), resumo: b.resumo });
       } catch (e) {
         falhas++;
         console.warn(`[PixDM] lista ${alvo} unidade=${unidadeNome}: ${e.message}`);
@@ -159,32 +212,40 @@ async function atenderMarkersListaPixDM({ reply, laReport, supabase, unidadeIds 
       }
     }
   }
-  let corpo;
+
+  let msgs;
   if (!blocos.length) {
-    corpo = 'Não consegui ler a lista do PIX agora — me pede de novo daqui a pouco. Não vou te mandar nome que eu não medi.';
+    msgs = [semPauta.length && !falhas
+      ? `Hoje não tem pauta do PIX aberta no teu grupo (${semPauta.join(', ')}). Se quiser a unidade inteira, me pede a "lista completa" que eu mando numerada.`
+      : 'Não consegui ler a lista do PIX agora — me pede de novo daqui a pouco. Não vou te mandar nome que eu não medi.'];
+    if (semPauta.length && falhas) msgs[0] += `\n_${avisos.join(' ')}_`;
   } else {
-    const msgs = pura.mensagensDeVariasListas({ unidadeNome: null, blocos, avisos, limitePorMensagem: 1000, tetoMensagens: 20 });
-    corpo = msgs.join('\n\n');
-    if (itens.length) {
-      const ok = await guardar({ collaboratorId, itens });
-      corpo += ok
-        ? '\n\n_Me responde com o número de quem já foi (ex.: "8 já cadastrado no PIX") que eu registro._'
-        : '\n\n_Não consegui guardar a numeração desta lista — pra me dizer quem já foi, usa "cadastrei <nome> no automático"._';
+    if (semPauta.length) avisos.push(`Sem pauta do PIX aberta hoje em: ${semPauta.join(', ')}.`);
+    // Mesmo tamanho de parte do grupo (pura.LIMITE_POR_MENSAGEM); o teto do 1:1 é folgado pra a
+    // numeração guardada nunca ter número que a pessoa não viu (ver o filtro logo abaixo).
+    msgs = pura.mensagensDeVariasListas({ unidadeNome: null, blocos, avisos, tetoMensagens: 20 });
+    const vistos = new Set();
+    for (const m of msgs) for (const x of m.matchAll(/\n {3}(\d+)\. /g)) vistos.add(Number(x[1]));
+    const guardados = itens.filter((i) => vistos.has(i.n));
+    if (guardados.length) {
+      const ok = await salvar({ collaboratorId, itens: guardados });
+      msgs[msgs.length - 1] += `\n\n${ok ? RODAPE_NUMERO : RODAPE_SEM_NUMERO}`;
     }
+    if (pauta) msgs[msgs.length - 1] += `\n${RODAPE_PAUTA}`;
   }
   let primeiro = true;
   const out = texto.replace(RE_MARKER, () => {
     if (!primeiro) return '';
     primeiro = false;
-    return `\n\n${corpo}\n\n`;
+    return `\n\n${msgs[0]}\n\n`;
   }).replace(/\n{3,}/g, '\n\n').trim();
-  return { reply: out, atendidos: brutos.length, falhas, itens };
+  return { reply: out, extras: msgs.slice(1), atendidos: brutos.length, falhas, itens };
 }
 
 // ── O AVISO DE QUEM JÁ FOI (antes do LLM) ─────────────────────────────────────────────────────
 // -> null (não é comigo) | { linhas: [texto], gravou: bool }
 async function resolverPixDoTurno({ supabase, laReport, collaboratorId, text, unidadeIds = [], deps = {} }) {
-  const ultima = deps.ultimaLista || ((arg) => _ultimaListaPadrao(supabase, arg));
+  const carregar = deps.carregarNumeracao || ((arg) => numeracao.carregarNumeracao({ supabase, ...arg }));
   const agora = deps.agora || Date.now;
 
   // 1) Por número, contra a última lista que o TOM mandou NESTE 1:1.
@@ -193,7 +254,7 @@ async function resolverPixDoTurno({ supabase, laReport, collaboratorId, text, un
   const userText = stripReplyScaffold(String(text || '')).userText;
   if (/\d/.test(userText)) {
     try {
-      mapa = await ultima({ collaboratorId, desdeIso: new Date(agora() - JANELA_LISTA_MS).toISOString() });
+      mapa = await carregar({ collaboratorId, desdeIso: new Date(agora() - JANELA_LISTA_MS).toISOString() });
     } catch (e) {
       console.warn(`[PixDM] última lista não leu: ${e.message}`);
       mapa = null;
@@ -213,7 +274,7 @@ async function resolverPixDoTurno({ supabase, laReport, collaboratorId, text, un
 
   // Relê a fonte: o que a pessoa diz é confrontado com o que o Emusys mostra AGORA.
   const unidades = pedidos
-    ? [...new Set(pedidos.map((p) => String(p.chave).split(':')[0]))]
+    ? [...new Set(pedidos.filter((p) => p.chave).map((p) => String(p.chave).split(':')[0]))]
     : (unidadeIds.length ? unidadeIds : ORDEM_UNIDADES);
   const linhasFonte = [];
   for (const unidadeId of unidades) {
@@ -238,6 +299,7 @@ async function resolverPixDoTurno({ supabase, laReport, collaboratorId, text, un
   let gravou = false;
   for (const p of pedidos) {
     const rotulo = p.n ? `${p.n}. ${p.nome}` : p.nome;
+    if (!p.chave) { linhas.push(`• ${rotulo} — esse item da pauta não tem o vínculo com o Emusys, não consigo registrar pelo número: me manda "cadastrei ${p.nome} no automático".`); continue; }
     const l = porChave.get(p.chave);
     if (!l) { linhas.push(`• ${rotulo} — já saiu da lista do Emusys, nada a fazer.`); continue; }
     if (l.categoria === 'ja_migrou') { linhas.push(`• ${rotulo} — já aparece como migrado pro PIX automático no Emusys ✅, nada a fazer.`); continue; }
@@ -289,6 +351,6 @@ function tirarConclusaoDePix(reply) {
 }
 
 module.exports = {
-  MARCADOR_LISTA, falaDePix, talvezAvisoDePix, lerRespostaPorNumero, blocoPixDM, atenderMarkersListaPixDM,
+  MARCADOR_LISTA: numeracao.MARCADOR_LISTA, falaDePix, talvezAvisoDePix, lerRespostaPorNumero, pedeListaCompleta, blocoPixDM, atenderMarkersListaPixDM,
   resolverPixDoTurno, hintDoResultado, tirarConclusaoDePix,
 };
