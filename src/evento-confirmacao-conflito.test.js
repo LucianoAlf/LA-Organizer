@@ -148,10 +148,12 @@ test('sem conflito e no futuro: cria direto, sem intent', async () => {
   assert.strictEqual(abertos().length, 0);
 });
 
-test('chat de grupo (semIntentDeConfirmacao): não abre intent, conflito segue barrando como antes', async () => {
+test('chat de grupo (confirmacaoPeloChamador): segura igual, NÃO abre intent do 1:1 e devolve o segurado', async () => {
   reset();
-  const r = await engine.applyEventActions(ALF_COLLAB, [{ ...REUNIAO_MARKER }], { agoraMs: AGORA, semIntentDeConfirmacao: true, suppressNotify: true });
+  const r = await engine.applyEventActions(ALF_COLLAB, [{ ...REUNIAO_MARKER }], { agoraMs: AGORA, confirmacaoPeloChamador: true, suppressNotify: true });
   assert.strictEqual(r.okCount, 0);
   assert.strictEqual(abertos().length, 0);
-  assert.strictEqual(r.integrityPayload.type, 'temporal_soft');
+  assert.strictEqual(r.integrityPayload.type, 'confirmar_evento');
+  assert.strictEqual(r.segurados.length, 1);
+  assert.strictEqual(r.segurados[0].evento._conflito_confirmado, true);
 });

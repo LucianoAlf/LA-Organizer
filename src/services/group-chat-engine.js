@@ -418,6 +418,19 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     }
   } catch (e) { console.error('[GroupChat] pré-passo confirm:', e.message); }
 
+  // EVENTO-NO-GRUPO-HONESTO (07/10): mesmo pré-passo pra compromisso segurado (passado/conflito).
+  // Consulta própria (op 'create_event'): a de cima é .maybeSingle() sobre as outras ops e não pode
+  // passar a ver duas linhas do mesmo remetente.
+  try {
+    if (podeExecutar) {
+      const { resolverConfirmacaoDeEvento } = require('./group-chat-eventos');
+      const _rEv = await resolverConfirmacaoDeEvento({
+        supabase, engine: require('../engine'), groupId, senderCollabId, text, decideConfirm: groupNotes.decideConfirm,
+      });
+      if (_rEv) return await postTomText(supabase, groupId, _rEv.texto);
+    }
+  } catch (e) { console.error('[GroupChat] pré-passo evento:', e.message); }
+
   // ── PRÉ-PASSO: "cadastrei o fulano no PIX automático" (roda ANTES do LLM, Tarefa 7) ────────
   // A equipe dá baixa informada num pagador da pauta do PIX diretamente no grupo — determinístico,
   // sem LLM, mesmo espírito do pré-passo de confirmação logo acima. Mesma porta de escrita
@@ -1021,10 +1034,11 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       reply = (parsed.cleanText || '').trim();
       if (!collab) { noCollab('event', parsed.events[0]?.title); }
       else {
-        // semIntentDeConfirmacao (07/10): este caminho não lê o resultado nem faz pergunta — segurar
-        // evento (passado/conflito) num intent aqui seria sumir com ele calado. A pergunta vale no 1:1 e no app.
-        await engine.applyEventActions(collab, parsed.events, { suppressNotify: true, semIntentDeConfirmacao: true }); // suppressNotify: NUNCA dispara zap
-        parsed.events.forEach((ev) => actions.push({ kind: 'event', status: 'ok', label: ev.title || 'compromisso', detail: ev.recurrence_rule ? 'recorrente' : '' }));
+        // EVENTO-NO-GRUPO-HONESTO (07/10): o card dizia "ok" pra todo evento sem ler o resultado.
+        // Agora lê (criado / segurado pra confirmar / falhou) e o segurado vira pergunta com
+        // pendência por remetente. Ver services/group-chat-eventos.js.
+        const { aplicarEventosDoGrupo } = require('./group-chat-eventos');
+        actions.push(...await aplicarEventosDoGrupo({ supabase, engine, collab, groupId, senderCollabId, events: parsed.events }));
       }
     } else if (parsed && parsed.malformed) {
       stripBlock(/<<EVENT_CREATE>>[\s\S]*?<<END>>/i);
@@ -1220,6 +1234,14 @@ function buildTomContent(rawReply, actions, opts) {
   if (!hasFailure && asks.length) {
     const perguntas = asks.map((a) => a.detail).filter(Boolean).join(' · ');
     prose = prose.trim() ? `${prose.trim()}\n\n${perguntas}` : perguntas;
+  }
+  // EVENTO-NO-GRUPO-HONESTO (07/10): compromisso SEGURADO pra confirmar (passado/conflito). A prosa
+  // do modelo foi escrita achando que marcou ("Marcado! ✅") — não pode sair: a fala vira a pergunta
+  // única do engine. Com falha no mesmo turno, a falha honesta fica e a pergunta vem depois.
+  const _evSegurados = acts.filter((a) => a && a.kind === 'event' && a.status === 'pending' && a.pergunta);
+  if (_evSegurados.length) {
+    const _qs = _evSegurados.map((a) => a.pergunta).join('\n\n');
+    prose = hasFailure && prose.trim() ? `${prose.trim()}\n\n${_qs}` : _qs;
   }
 
   // GROUP-NOTE-CONFAB (Clayton, Recreio 02/09): a regra acima só cobre ação que FALHOU. Quando

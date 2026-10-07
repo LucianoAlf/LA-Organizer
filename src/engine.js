@@ -2626,9 +2626,10 @@ async function applyEventActions(collaborator, events, opts = {}) {
   // (lista passado + conflitos); o "sim" cria pelo resume determinístico (~10000) e "não/outro
   // horário" volta pro LLM. Antes o "Crio assim mesmo?" do conflito não guardava nada e o "sim"
   // re-emitido batia no mesmo conflito pra sempre. Ver lib/confirmacao-evento.js.
-  // Chat de grupo fica de fora (opts.semIntentDeConfirmacao): ele não lê o resultado daqui e não
-  // tem como fazer a pergunta — lá vale o comportamento antigo.
-  const _semIntent = opts.semIntentDeConfirmacao === true;
+  // Chat de grupo (opts.confirmacaoPeloChamador, 07/10): segura igual, mas NÃO abre o intent do 1:1 —
+  // devolve `segurados` e o grupo faz a pergunta e guarda a pendência dele (group_chat_pending_confirms,
+  // o "sim" do MESMO remetente cria). Ver services/group-chat-eventos.js.
+  const _peloChamador = opts.confirmacaoPeloChamador === true;
   const _ce = require('./lib/confirmacao-evento');
   const _segurados = [];
   // CONFLITO-DO-CONVIDADO (07/10): quem entra no evento (attendees ou dono via to_name) e já tem
@@ -2673,23 +2674,6 @@ async function applyEventActions(collaborator, events, opts = {}) {
         console.warn('[IntegrityCheck] event detectors err (non-fatal):', detErr.message);
       }
 
-      // HARD conflict (A2: bloqueia até confirmação explícita, 1 rodada). No 1:1 entra na pergunta
-      // única lá embaixo (com intent — o "sim" é a confirmação explícita); aqui só o chat de grupo.
-      if (_semIntent && temporalResult.hardConflicts.length > 0) {
-        const c = temporalResult.hardConflicts[0];
-        const startStr = new Date(c.start_at).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
-        const endStr   = new Date(c.end_at).toLocaleTimeString('pt-BR',   { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
-        console.warn(`[IntegrityCheck] HARD temporal conflict for "${String(e.title).slice(0,40)}" — overlaps "${String(c.title).slice(0,40)}" ${startStr}–${endStr} (${c.reason})`);
-        integrityPayload = {
-          severity: 'hard',
-          type: 'temporal_hard',
-          conflicts: temporalResult.hardConflicts.slice(0, 2).map(x => ({ id: x.id, title: x.title, start_at: x.start_at, end_at: x.end_at, overlapMin: x.overlapMin, reason: x.reason })),
-          candidateTitle: e.title,
-        };
-        failCount++;
-        continue;
-      }
-
       // A1: DUP semântico provável — NUNCA bloqueia auto; retorna suspect-payload para skill decidir
       if (dupResult.probable.length > 0) {
         const d = dupResult.probable[0];
@@ -2706,8 +2690,9 @@ async function applyEventActions(collaborator, events, opts = {}) {
         continue;
       }
 
-      // CONFIRMACAO-DE-EVENTO (07/10): passado e/ou conflito (forte ou leve) → segura com intent.
-      if (!_semIntent) {
+      // CONFIRMACAO-DE-EVENTO (07/10): passado e/ou conflito (forte ou leve) → segura (intent no 1:1;
+      // no chat de grupo, quem pergunta é o chamador — opts.confirmacaoPeloChamador).
+      {
         const _pend = _ce.pendencias({
           item: e, startIso: e.start_at,
           conflitos: [...temporalResult.hardConflicts, ...temporalResult.softConflicts],
@@ -2725,20 +2710,6 @@ async function applyEventActions(collaborator, events, opts = {}) {
           failCount++;
           continue;
         }
-      }
-
-      // A2: SOFT temporal — NÃO cria silenciosamente; microconfirm via skill (só chat de grupo agora)
-      if (_semIntent && temporalResult.softConflicts.length > 0) {
-        const c = temporalResult.softConflicts[0];
-        console.log(`[IntegrityCheck] SOFT temporal conflict "${String(e.title).slice(0,40)}" ~ "${String(c.title).slice(0,40)}" overlap=${c.overlapMin}min (${c.reason})`);
-        integrityPayload = {
-          severity: 'soft',
-          type: 'temporal_soft',
-          conflicts: temporalResult.softConflicts.slice(0, 2).map(x => ({ id: x.id, title: x.title, start_at: x.start_at, end_at: x.end_at, overlapMin: x.overlapMin, reason: x.reason })),
-          candidateTitle: e.title,
-        };
-        failCount++;
-        continue;
       }
 
       // Sprint 28 — create-for-other (event): opt-in via to_name/to_phone.
@@ -3052,14 +3023,16 @@ async function applyEventActions(collaborator, events, opts = {}) {
   // criaria o evento sem a pessoa ter visto o motivo.
   if (_segurados.length) {
     const itens = _segurados.map((s) => s.item);
-    try {
-      await pendingIntents.openIntent(collaborator.id, 'event_create_confirm',
-        { events: _segurados.map((s) => s.evento) }, _ce.perguntaDeConfirmacao(itens));
-    } catch (e) { console.warn('[IntegrityCheck] CONFIRMAR_EVENTO openIntent err (o "sim" não vai achar o evento):', e.message); }
+    if (!_peloChamador) {
+      try {
+        await pendingIntents.openIntent(collaborator.id, 'event_create_confirm',
+          { events: _segurados.map((s) => s.evento) }, _ce.perguntaDeConfirmacao(itens));
+      } catch (e) { console.warn('[IntegrityCheck] CONFIRMAR_EVENTO openIntent err (o "sim" não vai achar o evento):', e.message); }
+    }
     const _p = { severity: 'soft', type: 'confirmar_evento', candidateTitle: itens[0].titulo, itens };
     integrityPayload = integrityPayload ? { ..._p, also: integrityPayload } : _p;
   }
-  return { okCount, failCount, integrityPayload, avisosConvidados };
+  return { okCount, failCount, integrityPayload, avisosConvidados, segurados: _segurados };
 }
 
 // Parse <<EVENT_UPDATE>>[...]<<END>> — reagendar / cancelar / completar event existente.
@@ -3805,7 +3778,7 @@ async function applyEventUpdates(collaborator, actions, opts = {}) {
         // participante — o próprio evento não conta) ou pro passado ia direto pro banco. Mesmo
         // mecanismo da criação: a ação vai, marcada pelo engine, pro intent event_create_confirm
         // (payload.updates) e a pergunta sobe; o "sim" remarca pelo resume. Ver lib/confirmacao-evento.js.
-        if (!opts.semIntentDeConfirmacao) {
+        {
           let _confR = [];
           if (a[_ceU.FLAG_CONFLITO] !== true) {
             try {
