@@ -2510,16 +2510,14 @@ async function checkOverdueWorkEvents(now = new Date()) {
     if (!collab || !collab.is_active || !collab.phone) continue;
     const q = await isQuietNow(collab.user_preferences, sp);
     if (q.quiet) continue; // defer; volta no próximo tick fora do quiet
-    const days = Math.max(1, Math.floor((Date.now() - new Date(ev.end_at).getTime()) / 86400000));
+    // COBRANCA-ONTEM-ERRADO (Alf 07/10 08:14): "como foi *Mentoria Levi* ontem?" pra evento de
+    // 05/10 — o dia era floor(horas desde o fim / 24). Agora é dia de CALENDÁRIO (SP) e a palavra
+    // (hoje cedo/ontem/anteontem/no dia DD/MM) sai da data real. Ver lib/cobranca-evento-dia.js.
     const firstName = (collab.full_name || '').split(' ')[0];
-    let text;
-    if (days === 1) {
-      text = `🔵 ${firstName}, como foi *${ev.title}* ontem? Me diz "feito" pra fechar, ou conta o que rolou.`;
-    } else if (days <= 3) {
-      text = `🟠 ${firstName}, *${ev.title}* (há ${days} dias) ficou aberta. Já rolou? Manda "feito" ou me conta — texto/áudio.`;
-    } else {
-      text = `🚨 ${firstName}, *${ev.title}* (há ${days} dias) sem fechamento. Fecha ou reagenda? Não dá pra ignorar — qualquer resposta serve.`;
-    }
+    const { textoCobranca } = require('../lib/cobranca-evento-dia');
+    const _cob = textoCobranca({ nome: firstName, titulo: ev.title, startIso: ev.start_at || ev.end_at, hojeYmd: sp.ymd });
+    const days = _cob.dias;
+    const text = _cob.texto;
     try {
       await whatsapp.sendMessage(collab.phone, text);
       await supabase.from('events').update({ followup_sent_at: now.toISOString() }).eq('id', ev.id);
@@ -2531,9 +2529,7 @@ async function checkOverdueWorkEvents(now = new Date()) {
       });
       // Sprint 31.1 — rastro pra fechamento via id exato
       try {
-        const kind = days === 1 ? 'closure_check'
-                   : days <= 3 ? 'overdue_check'
-                   : 'staleness_check';
+        const kind = _cob.kind;
         await pendingFollowups.createOrRefresh({
           collaboratorId: ev.collaborator_id,
           targetType: 'event',

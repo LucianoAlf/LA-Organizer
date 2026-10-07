@@ -16,7 +16,8 @@
 'use strict';
 
 // Select com join de collaborators+prefs — a escalação precisa (is_active/phone/quiet).
-const SELECT_FULL = 'id, title, end_at, collaborator_id, followup_sent_at, recurrence_rule, recurrence_parent_id, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(*))';
+// start_at (07/10): a cobrança diz o dia pelo INÍCIO do evento (lib/cobranca-evento-dia.js).
+const SELECT_FULL = 'id, title, start_at, end_at, collaborator_id, followup_sent_at, recurrence_rule, recurrence_parent_id, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(*))';
 // Select enxuto — o planejador só precisa do compromisso em si.
 const SELECT_BASIC = 'id, title, end_at, collaborator_id, recurrence_rule, recurrence_parent_id';
 

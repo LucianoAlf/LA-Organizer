@@ -3483,7 +3483,8 @@ async function buildSystemPrompt(collaborator, opts = {}) {
           timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
         }).format(new Date(iso));
         const linhas = staleWork.map((ev) => {
-          const dias = Math.max(1, Math.floor((Date.now() - new Date(ev.end_at).getTime()) / 86400000));
+          // COBRANCA-ONTEM-ERRADO (07/10): dia de calendário (SP), não horas/24 — "era 05/10, há 1d" no dia 07.
+          const dias = Math.max(1, require('../lib/cobranca-evento-dia').diasCorridos(ev.end_at, todaySaoPaulo()));
           return `- *${ev.title}* (era ${fmtDia(ev.end_at)}, há ${dias}d sem fechamento)`;
         });
         systemPrompt += `\n\n---\n\n## ⏳ Compromissos passados sem fechamento\n${linhas.join('\n')}\n\n> Compromissos de trabalho que JÁ passaram e seguem ABERTOS (sem "feito"/cancelado). Contam como pendência: NÃO diga "semana limpa" enquanto existirem — puxe-os no planejamento.`;
