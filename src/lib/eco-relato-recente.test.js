@@ -49,6 +49,6 @@ test('sem fala atual mas com relato recente ainda funciona (boa-noite puxado pel
 
 const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
 test('engine busca as falas DELA das últimas 6h e passa pro detector', () => {
-  assert.match(engine, /reportedState: ecoDoRelatoDoUsuario\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply, \{ relatosRecentes: _relatosRecentes \}\)( \|\| linhasAcusadasSaoPergunta\(reply\))?(?:\s*\|\| vetoDePergunta\(reply, [^\n]*\)\.veto)?(?:\s*\|\| pedidoDeNadaARegistrar\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply\))?(?:\s*\|\| liberaAvisoCondicional\(reply, [^\n]*\))?,/);
+  assert.match(engine, /reportedState: ecoDoRelatoDoUsuario\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply, \{ relatosRecentes: _relatosRecentes \}\)( \|\| linhasAcusadasSaoPergunta\(reply\))?(?:\s*\|\| vetoDePergunta\(reply, [^\n]*\)\.veto)?(?:\s*\|\| pedidoDeNadaARegistrar\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply\))?(?:\s*\|\| _reafirmaLote)?(?:\s*\|\| liberaAvisoCondicional\(reply, [^\n]*\))?,/);
   assert.match(engine, /\.eq\('direction', 'inbound'\)\s*\n\s*\.gte\('created_at', new Date\(_t0 - 6 \* 3600_000\)\.toISOString\(\)\)/);
 });

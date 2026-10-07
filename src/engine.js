@@ -16690,6 +16690,23 @@ Output AGORA, apenas o marker:`;
   // não afirma escrita — mas só é verdade se o aviso EXISTE (pedido de aprovação aberto em que ela é
   // a solicitante, ou recado de coordenação dela esperando resposta). I/O só quando a fala é acusada
   // APENAS pelo aviso condicional e nada persistiu. Ver lib/aviso-condicional.js.
+  // CHOKEPOINT-NEGA-LOTE-RECEM-FECHADO (Duda 06/10): reafirmar um LOTE gravado há pouco não é
+  // confabulação — ver lib/reafirma-lote-recente.js. I/O só quando há claim sem persistência no turno.
+  let _reafirmaLote = false;
+  try {
+    if (!_metrics.marker_emitted && !_metrics.auto_retry_succeeded && !_metrics.deterministic_complete_ok
+        && !_metrics.marker_attempted && (hasCompletionClaim(reply) || hasWeakCompletionClaim(reply))) {
+      const { reafirmaLoteRecente, JANELA_MS } = require('./lib/reafirma-lote-recente');
+      const { data: _escR } = await supabase.from('marker_logs').select('reason, created_at')
+        .eq('collaborator_id', collab.id).eq('result', 'executed')
+        .in('marker_type', ['TASK_UPDATE', 'TASK_CREATE', 'EVENT_CREATE', 'EVENT_UPDATE'])
+        .gte('created_at', new Date(Date.now() - JANELA_MS).toISOString());
+      const _ok = (_escR || []).reduce((s, m) => s + (Number((String(m.reason || '').match(/ok=(\d+)/) || [])[1]) || 0), 0);
+      const _ult = (_escR || []).reduce((mx, m) => Math.max(mx, Date.parse(m.created_at) || 0), 0) || null;
+      _reafirmaLote = reafirmaLoteRecente(reply, stripReplyScaffold(String(text || '')).userText, { executadas: _ok, maisRecenteMs: _ult });
+      if (_reafirmaLote) console.log('[Chokepoint] reafirmação de lote recém-gravado — veto (lib/reafirma-lote-recente)');
+    }
+  } catch (_) {}
   let _avisoCondLastro = false;
   try {
     const { soAvisoCondicional, buscarLastroDeAviso } = require('./lib/aviso-condicional');
@@ -16735,6 +16752,7 @@ Output AGORA, apenas o marker:`;
       reportedState: ecoDoRelatoDoUsuario(stripReplyScaffold(String(text || '')).userText, reply, { relatosRecentes: _relatosRecentes }) || linhasAcusadasSaoPergunta(reply)
         || vetoDePergunta(reply, { ehAcusada: (f) => !!(hasCompletionClaim(f) || hasWeakCompletionClaim(f)) }).veto
         || pedidoDeNadaARegistrar(stripReplyScaffold(String(text || '')).userText, reply)
+        || _reafirmaLote
         || liberaAvisoCondicional(reply, { lastro: _avisoCondLastro }),
     }, { meta: true });
     // CHOKEPOINT-APAGA-A-PROPRIA-EVIDENCIA (19/08) — este é O ponto que cega o maior cluster do
