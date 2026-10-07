@@ -1177,6 +1177,24 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
   return res.json({ status: 'ok', sent: recipients.length, key: dedupeKey });
 });
 
+// CONFLITO-DO-CONVIDADO (07/10, aprovado pelo Alf): o app adicionou participantes (criação ou
+// edição) e quer avisar quem convidou se algum convidado já tem compromisso no horário. O PWA não
+// lê a agenda alheia (RLS), então o cálculo é daqui, com a definição única (lib/agenda-conflitos.js).
+// Informativo: não muda nada no banco. Evento pessoal do convidado sai sem título.
+router.post('/internal/event-invitee-conflicts', requireInternalSecret, async (req, res) => {
+  const eventId = String(req.body?.event_id || '').trim();
+  const ids = Array.isArray(req.body?.collaborator_ids) ? req.body.collaborator_ids.map(String).slice(0, 50) : [];
+  if (!eventId) return res.status(400).json({ error: 'missing_event_id' });
+  try {
+    const { avisosDoEventoParaConvidados } = require('./lib/agenda-conflitos');
+    const linhas = await avisosDoEventoParaConvidados({ supabase, eventId, collaboratorIds: ids });
+    return res.json({ linhas });
+  } catch (e) {
+    console.error(`[InternalAPI] event-invitee-conflicts ${eventId} err: ${e.message}`);
+    return res.json({ linhas: [] }); // informativo: falha não vira erro na tela de quem criou
+  }
+});
+
 // EVENT-APP-RESCHEDULE-NO-RENOTIFY (audit John 17/08): reagendar evento NO APP (PWA) não avisava
 // os participantes existentes — só o caminho TOM (EVENT_UPDATE) fazia o fan-out "remarcada". Este
 // endpoint dá paridade: o app chama após persistir a nova data e reusamos a MESMA lógica/fila do

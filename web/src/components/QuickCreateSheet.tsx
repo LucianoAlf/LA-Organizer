@@ -22,7 +22,8 @@ import { RemindersField } from './RemindersField';
 import { useEventCategories } from '../hooks/useEventCategories';
 import { useWorkGroups, useMyGroupIds } from '../hooks/useWorkGroups';
 import { visibleWorkGroups } from '../lib/workGroupAccess';
-import { notifyTaskDelegated, notifyEventInvites, notifyWatchersAdded } from '../lib/tomEngine';
+import { notifyTaskDelegated, notifyEventInvites, notifyWatchersAdded, fetchInviteeConflicts } from '../lib/tomEngine';
+import { inviteeConflictsMessage } from '../lib/eventConflicts';
 import { WatchersPicker } from './WatchersPicker';
 import { ChecklistTemplatePicker } from './ChecklistTemplatePicker';
 import { TaskTemplatePicker } from './TaskTemplatePicker';
@@ -469,6 +470,12 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
               title: 'Compromisso criado',
               msg: `Mas convite por WhatsApp falhou (${r.reason}). Tenta de novo no menu do compromisso.`,
             });
+          }
+          // CONFLITO-DO-CONVIDADO (07/10): convidado que já tem compromisso no horário — informativo
+          // (a agenda é dele); quem convidou fica sabendo na mesma tela. Ex. real: Yuri × Ensaio.
+          const conflitosConvidados = await fetchInviteeConflicts(inserted.id as string, participantIds);
+          if (conflitosConvidados.length > 0) {
+            showToast({ kind: 'info', title: 'Conflito na agenda de convidado', msg: inviteeConflictsMessage(conflitosConvidados) });
           }
         }
       } else {

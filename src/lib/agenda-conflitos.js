@@ -126,11 +126,89 @@ function anexarConflitosAoTexto(texto, linhas) {
   return `${base.trimEnd()}\n\n${novas.join('\n')}`;
 }
 
+// ── Lado do CONVIDADO ───────────────────────────────────────────────────────
+// CONFLITO-DO-CONVIDADO (07/10, aprovado pelo Alf). O replay de 30 dias achou o Yuri com o
+// "Ensaio banda Rosário" (15:00–17:00, 07/10) e convidado depois pela reunião do Alf (15:30–16:30)
+// — ninguém foi avisado. O checador da criação olha a agenda de QUEM CRIA; a de quem entra como
+// participante (ou recebe o evento via to_name) não era olhada. Aqui é INFORMATIVO, não trava: a
+// agenda do convidado é dele — quem cria fica sabendo no mesmo turno/tela e decide.
+// Evento PESSOAL do convidado não tem o título exposto (vira "um compromisso pessoal").
+const COLUNAS_CONVIDADO = 'id, title, start_at, end_at, status, collaborator_id, context';
+
+function nomeCurto(c) {
+  if (!c) return 'Convidado';
+  return c.preferred_name || String(c.full_name || '').trim().split(/\s+/)[0] || 'Convidado';
+}
+
+// Bloco de vários dias (replay real 07/10: um pessoal de 06/10 11:00 a 13/10 12:00) mostrado só
+// com as horas virava "11:00–12:00" — parecia não bater com a reunião das 15:30. Com data quando
+// atravessa o dia.
+const _diaMes = new Intl.DateTimeFormat('pt-BR', { timeZone: FUSO, day: '2-digit', month: '2-digit' });
+function _faixaComDia(c) {
+  const s = new Date(c.start_at), f = new Date(c.end_at);
+  if (_fmtDia.format(s) === _fmtDia.format(f)) return _faixa(c);
+  return `${_diaMes.format(s)} ${_fmtHora.format(s)} → ${_diaMes.format(f)} ${_fmtHora.format(f)}`;
+}
+
+function linhaConflitoDoConvidado(nome, conflitos) {
+  const lista = (conflitos || []).filter(Boolean);
+  if (!lista.length) return null;
+  const partes = lista.slice(0, 3).map((c) => (c.context === 'personal'
+    ? `um compromisso pessoal (${_faixaComDia(c)})`
+    : `*${c.title}* (${_faixaComDia(c)})`));
+  const juntas = partes.length > 1 ? `${partes.slice(0, -1).join(', ')} e ${partes[partes.length - 1]}` : partes[0];
+  return `⚠️ ${nome} já tem ${juntas} nesse horário.`;
+}
+
+// convidados: rows de collaborators ({ id, preferred_name, full_name }); evento: { id, start_at, end_at }.
+// Fail-open POR convidado: consulta que falha não derruba o aviso dos outros nem a criação.
+async function avisosDosConvidados({ supabase, convidados, evento }) {
+  const linhas = [];
+  if (!evento || !evento.start_at || !evento.end_at) return linhas;
+  const vistos = new Set();
+  for (const c of (convidados || [])) {
+    if (!c || !c.id || vistos.has(c.id)) continue;
+    vistos.add(c.id);
+    try {
+      const conf = await compromissosQueSobrepoem({
+        supabase, collaboratorId: c.id, startIso: evento.start_at, endIso: evento.end_at,
+        excluirId: evento.id || null, colunas: COLUNAS_CONVIDADO,
+      });
+      const l = linhaConflitoDoConvidado(nomeCurto(c), conf);
+      if (l) linhas.push(l);
+    } catch (e) {
+      console.warn(`[ConflitoConvidado] ${String(c.id).slice(0, 8)} err (fail-open):`, e.message);
+    }
+  }
+  return linhas;
+}
+
+// Porta do APP (/internal/event-invitee-conflicts): o PWA não enxerga a agenda de outra pessoa (RLS
+// só mostra a própria, a de convite e a de quem é coord), então quem calcula é o backend, com a
+// mesma definição. Só convidados que REALMENTE estão no evento (não confia na lista do cliente).
+async function avisosDoEventoParaConvidados({ supabase, eventId, collaboratorIds }) {
+  if (!eventId || !Array.isArray(collaboratorIds) || !collaboratorIds.length) return [];
+  const { data: ev, error: evErr } = await supabase.from('events')
+    .select('id, start_at, end_at, status').eq('id', eventId).maybeSingle();
+  if (evErr || !ev || ev.status === 'cancelled') return [];
+  const { data: parts } = await supabase.from('event_participants')
+    .select('collaborator_id, status').eq('event_id', eventId).in('collaborator_id', collaboratorIds);
+  const ids = (parts || []).filter((p) => p.status !== 'declined').map((p) => p.collaborator_id);
+  if (!ids.length) return [];
+  const { data: convidados } = await supabase.from('collaborators')
+    .select('id, full_name, preferred_name').in('id', ids);
+  return avisosDosConvidados({ supabase, convidados: convidados || [], evento: ev });
+}
+
 module.exports = {
+  avisosDoEventoParaConvidados,
   sobrepoe,
   unirCompromissos,
   compromissosQueSobrepoem,
   conflitosDoDia,
   linhasDeConflitoDoDia,
   anexarConflitosAoTexto,
+  nomeCurto,
+  linhaConflitoDoConvidado,
+  avisosDosConvidados,
 };

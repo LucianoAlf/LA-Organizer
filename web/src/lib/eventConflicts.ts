@@ -65,6 +65,15 @@ export function mergeOwnedAndParticipating(
 const COLS = 'id, title, start_at, end_at, status, collaborator_id';
 
 /**
+ * CONFLITO-DO-CONVIDADO (07/10): as linhas vêm do backend no formato do WhatsApp
+ * ("⚠️ Yuri já tem *Ensaio banda Rosário* (15:00–17:00) nesse horário."); no toast saem sem
+ * o emoji (o toast já tem ícone) e sem os asteriscos de negrito.
+ */
+export function inviteeConflictsMessage(linhas: string[]): string {
+  return linhas.map(l => l.replace(/^⚠️\s*/u, '').replace(/\*/g, '')).join('\n');
+}
+
+/**
  * Compromissos meus (dono ∪ participante) que sobrepõem [startIso, endIso).
  * `excludeId` tira o próprio evento (edição). Erro de consulta sobe.
  */

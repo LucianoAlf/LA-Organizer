@@ -11,7 +11,9 @@ import { RemindersField } from './RemindersField';
 import { shiftLocalReminderTimes } from '../lib/reminderShift';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
-import { notifyEventInvites, notifyEventRescheduled } from '../lib/tomEngine';
+import { notifyEventInvites, notifyEventRescheduled, fetchInviteeConflicts } from '../lib/tomEngine';
+import { inviteeConflictsMessage } from '../lib/eventConflicts';
+import { showToast } from './Toast';
 import { EventChecklistSection } from './EventChecklistSection';
 import type { CalendarEvent } from '../types';
 import { findEventConflicts } from '../lib/events';
@@ -272,6 +274,11 @@ export function EditEventSheet({ open, event, onClose }: Props) {
               // Sprint 22.33 — endpoint filtra participants com notified_at NULL,
               // entao chamar sempre eh idempotente. So ressoa pra novos add.
               if (toAdd.length > 0) void notifyEventInvites(event.id);
+              // CONFLITO-DO-CONVIDADO (07/10): quem entrou e já tem compromisso no horário — informativo.
+              if (toAdd.length > 0) {
+                const linhas = await fetchInviteeConflicts(event.id, toAdd);
+                if (linhas.length > 0) showToast({ kind: 'info', title: 'Conflito na agenda de convidado', msg: inviteeConflictsMessage(linhas) });
+              }
             } catch (e) {
               console.warn('[EditEventSheet] participants diff err:', e instanceof Error ? e.message : e);
             }

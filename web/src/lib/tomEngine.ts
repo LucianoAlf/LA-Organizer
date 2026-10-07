@@ -274,6 +274,24 @@ export async function notifyEventInvites(eventId: string): Promise<NotifyResult>
   }
 }
 
+// CONFLITO-DO-CONVIDADO (07/10): convidados recém-adicionados que já têm compromisso no horário.
+// O app não lê a agenda alheia (RLS) — o backend calcula. Informativo: falha devolve [] (não trava).
+export async function fetchInviteeConflicts(eventId: string, collaboratorIds: string[]): Promise<string[]> {
+  if (!INTERNAL_SECRET || !collaboratorIds.length) return [];
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/event-invitee-conflicts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ event_id: eventId, collaborator_ids: collaboratorIds }),
+    });
+    if (!r.ok) return [];
+    const json = await r.json().catch(() => ({}));
+    return Array.isArray(json.linhas) ? json.linhas.filter((l: unknown) => typeof l === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 // Notifica TOM quando um evento é REAGENDADO via PWA — avisa os participantes existentes do novo
 // horário (paridade com o caminho TOM; audit John 17/08). Passe actorId (quem editou) pra excluí-lo.
 export async function notifyEventRescheduled(eventId: string, actorId?: string | null): Promise<NotifyResult> {

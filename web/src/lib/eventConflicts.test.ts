@@ -2,7 +2,7 @@
 // Alf participante confirmado).
 import { describe, it, expect } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { overlaps, mergeOwnedAndParticipating, findOverlappingCommitments } from './eventConflicts';
+import { overlaps, mergeOwnedAndParticipating, findOverlappingCommitments, inviteeConflictsMessage } from './eventConflicts';
 
 const ALF = '0576f4b6-183d-4cf1-980e-5c8d5da0177f';
 const JORNADA = {
@@ -57,6 +57,13 @@ describe('mergeOwnedAndParticipating', () => {
     expect(mergeOwnedAndParticipating([], [{ status: 'declined', event: JORNADA }])).toEqual([]);
     expect(mergeOwnedAndParticipating([], [{ status: 'confirmed', event: { ...JORNADA, status: 'cancelled' } }])).toEqual([]);
     expect(mergeOwnedAndParticipating([JORNADA], [{ status: 'confirmed', event: JORNADA }])).toHaveLength(1);
+  });
+});
+
+describe('inviteeConflictsMessage (CONFLITO-DO-CONVIDADO 07/10)', () => {
+  it('linha real do backend vira texto de toast', () => {
+    expect(inviteeConflictsMessage(['⚠️ Yuri já tem *Ensaio banda Rosário* (15:00–17:00) nesse horário.']))
+      .toBe('Yuri já tem Ensaio banda Rosário (15:00–17:00) nesse horário.');
   });
 });
 

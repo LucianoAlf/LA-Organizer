@@ -2631,6 +2631,9 @@ async function applyEventActions(collaborator, events, opts = {}) {
   const _semIntent = opts.semIntentDeConfirmacao === true;
   const _ce = require('./lib/confirmacao-evento');
   const _segurados = [];
+  // CONFLITO-DO-CONVIDADO (07/10): quem entra no evento (attendees ou dono via to_name) e já tem
+  // compromisso no horário vira aviso pra QUEM CRIA — informativo, não trava. Ver lib/agenda-conflitos.js.
+  const avisosConvidados = [];
   // Sprint 22.34b — Habit redirect (titles que batem habito ativo do user)
   // acontece no caller, ANTES de chegar aqui. Aqui só processa events reais.
   for (const e of events) {
@@ -2877,6 +2880,13 @@ async function applyEventActions(collaborator, events, opts = {}) {
           console.warn('[Event] recurrence initial materialize failed:', re.message);
         }
       }
+      // CONFLITO-DO-CONVIDADO: evento posto na agenda de OUTRA pessoa (to_name) — a agenda dela
+      // nunca foi checada; quem criou fica sabendo se ela já tinha algo no horário.
+      if (eventRecipient && data?.id && collaborator.id !== eventOwnerId) {
+        avisosConvidados.push(...await require('./lib/agenda-conflitos').avisosDosConvidados({
+          supabase, convidados: [eventRecipient], evento: { id: data.id, start_at: row.start_at, end_at: row.end_at },
+        }));
+      }
       // Sprint 29.x — Quando evento é criado para outro (to_name/to_phone), registra
       // o criador como participante confirmado — evento aparece na agenda de ambos.
       if (eventRecipient && data?.id && collaborator.id !== eventOwnerId) {
@@ -2933,6 +2943,7 @@ async function applyEventActions(collaborator, events, opts = {}) {
           );
           let invited = 0;
           const inviteRows = [];
+          const convidadosInseridos = [];
           for (const { collaborator: part } of resolved) {
             if (!part || part.id === collaborator.id || part.is_active === false) continue;
             const { error: partErr } = await supabase.from('event_participants').insert({
@@ -2941,6 +2952,7 @@ async function applyEventActions(collaborator, events, opts = {}) {
             });
             if (partErr) { console.warn(`[Event] attendee insert err ${String(part.id).slice(0, 8)}: ${partErr.message}`); continue; }
             invited++;
+            convidadosInseridos.push(part);
             if (!opts.suppressNotify && part.phone) {
               const senderName = (collaborator.preferred_name || collaborator.full_name || '').split(' ')[0];
               const whenStr = (() => { try { const d = safeDate(e.start_at); return d ? d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : e.start_at; } catch { return e.start_at; } })();
@@ -2952,6 +2964,11 @@ async function applyEventActions(collaborator, events, opts = {}) {
             }
           }
           if (inviteRows.length) await enqueueOutbound(supabase, inviteRows, {});
+          if (convidadosInseridos.length) {
+            avisosConvidados.push(...await require('./lib/agenda-conflitos').avisosDosConvidados({
+              supabase, convidados: convidadosInseridos, evento: { id: data.id, start_at: row.start_at, end_at: row.end_at },
+            }));
+          }
           console.log(`[Event] attendees event=${String(data.id).slice(0, 8)}: ${invited} convidados${unresolved.length ? `, ${unresolved.length} não resolvidos (${unresolved.join(', ')})` : ''} (${inviteRows.length} convites enfileirados)`);
         } catch (attErr) {
           console.warn('[Event] attendees branch err (non-fatal):', attErr.message);
@@ -3042,7 +3059,7 @@ async function applyEventActions(collaborator, events, opts = {}) {
     const _p = { severity: 'soft', type: 'confirmar_evento', candidateTitle: itens[0].titulo, itens };
     integrityPayload = integrityPayload ? { ..._p, also: integrityPayload } : _p;
   }
-  return { okCount, failCount, integrityPayload };
+  return { okCount, failCount, integrityPayload, avisosConvidados };
 }
 
 // Parse <<EVENT_UPDATE>>[...]<<END>> — reagendar / cancelar / completar event existente.
@@ -10129,6 +10146,8 @@ async function processMessage(phone, text, raw = {}) {
         // o mesmo menu do caminho normal (o compromisso que colide + 1/2/3).
         else if (_res.integrityPayload) _out = _buildIntegrityConfirmText(_res.integrityPayload);
         else _out = '_Não consegui marcar agora. Me manda de novo?_';
+        // CONFLITO-DO-CONVIDADO (07/10): convidado com compromisso no horário — informativo.
+        if (_res.avisosConvidados && _res.avisosConvidados.length) _out = require('./lib/agenda-conflitos').anexarConflitosAoTexto(_out, _res.avisosConvidados);
         try {
           await whatsapp.sendMessage(phone, _out);
           await logConversation(collab.id, 'outbound', _out);
@@ -10688,6 +10707,7 @@ async function processMessage(phone, text, raw = {}) {
         const pe = _peIntent.payload.participant_edit;
         const evId = pe.event_id;
         let okN = 0, failN = 0;
+        let _avisosAdd = [];
         try {
           if (pe.op === 'add') {
             const { enqueueOutbound } = require('./lib/outbound-queue');
@@ -10712,6 +10732,18 @@ async function processMessage(phone, text, raw = {}) {
               }
             }
             if (inviteRows.length) await enqueueOutbound(supabase, inviteRows, {});
+            // CONFLITO-DO-CONVIDADO (07/10): quem entrou e já tem compromisso no horário → aviso pro
+            // organizador, na mesma resposta. Informativo (a agenda do convidado é dele).
+            if (okN > 0 && evRow) {
+              try {
+                const { data: _novos } = await supabase.from('collaborators')
+                  .select('id, full_name, preferred_name').in('id', pe.ids);
+                const { data: _evFim } = await supabase.from('events').select('end_at').eq('id', evId).maybeSingle();
+                _avisosAdd = await require('./lib/agenda-conflitos').avisosDosConvidados({
+                  supabase, convidados: _novos || [], evento: { id: evId, start_at: evRow.start_at, end_at: _evFim && _evFim.end_at },
+                });
+              } catch (avErr) { console.warn('[ParticipantEdit] aviso de conflito err:', avErr.message); }
+            }
           } else { // remove — silencioso (o convidado só some da agenda dele)
             const { error: delErr } = await supabase.from('event_participants')
               .delete().eq('event_id', evId).in('collaborator_id', pe.ids);
@@ -10728,6 +10760,7 @@ async function processMessage(phone, text, raw = {}) {
           out = pe.op === 'add'
             ? `✅ Adicionei *${nomes}* à reunião — ${okN === 1 ? 'convite na fila' : 'convites na fila'}.`
             : `✅ Removi *${nomes}* da reunião.`;
+          if (_avisosAdd.length) out = require('./lib/agenda-conflitos').anexarConflitosAoTexto(out, _avisosAdd);
         } else if (okN > 0) {
           out = `Consegui ${pe.op === 'add' ? 'adicionar' : 'remover'} ${okN}, mas ${failN} deu erro. Quer tentar de novo os que faltaram?`;
         } else {
@@ -14242,7 +14275,7 @@ Output AGORA, apenas o marker:`;
         reply = parsedEv.cleanText || reply;
       }
     } else if (parsedEv && parsedEv.events && parsedEv.events.length > 0) {
-      const { okCount, failCount, integrityPayload } = await applyEventActions(collab, parsedEv.events);
+      const { okCount, failCount, integrityPayload, avisosConvidados } = await applyEventActions(collab, parsedEv.events);
       console.log(`[Event] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         // Sprint 18: integrity finding — NÃO persiste; skill apresenta ao user e aguarda confirmação
@@ -14290,6 +14323,10 @@ Output AGORA, apenas o marker:`;
           base = (base ? base + '\n\n' : '') + `_⚠️ Salvei ${okCount} de ${okCount + failCount} compromissos. Algum falhou — me chama se algo ficar faltando._`;
         }
         reply = base || reply;
+      }
+      // CONFLITO-DO-CONVIDADO (07/10): informativo, depois da fala (o evento já foi criado).
+      if (Array.isArray(avisosConvidados) && avisosConvidados.length) {
+        reply = require('./lib/agenda-conflitos').anexarConflitosAoTexto(reply, avisosConvidados);
       }
     }
   }
