@@ -3141,3 +3141,24 @@ a terceira porta, ainda aberta: o handler `update` disse "Não achei a tarefa" s
 As quatro anteriores foram vocabulário (fatura, 14/07) e veto por ledger (05/08, 06/09, 03/10).
 Esta é gramatical: "Segue me avisando os outros!" tem o TOM como destinatário. Lookbehind no
 clítico resolveu sem mexer em veto. População medida: 1 de 18 disparos `nosend` em 90 dias.
+
+### ETAPA 1 — trava de commits num detector de VOCABULÁRIO: medir os `null`, não só contar commits
+
+**Ocorrência:** 1 (07/10), e é a correção da rodada.
+
+`src/services/user-confirmation.js` tinha 4 commits em 60 dias (tripwire 3) quando chegou a Duda
+(06/10 18:24 BRT): *"Confirma o fechamento destas 8 tarefas?"* → **"todassss"** → `null` → a mesma
+pergunta voltou 21s depois. Antes de mexer, medi a fronteira do jeito que a regra de 09/09 pede:
+todas as intents com `allowDone` desde 08/08 (45), a 1ª resposta em até 20 min, e o detector de
+hoje sobre ela. **16 `null`, e 12 deles estão CERTOS** (negação, "cancela", "pode excluir", "nao
+nao .. deixa tudo em aberto"). As 4 afirmativas perdidas são cauda de vocabulário (`todassss`,
+`Fecha`, `Já liguei`, `Onfirmado`), não conflito entre duas portas.
+
+🔑 O tripwire foi escrito para a FRONTEIRA entre guards (`downgradeEmptyPromise` × chokepoint).
+Num detector de lista fechada, commits aditivos e zero-regressão por construção são o crescimento
+normal. O que decide é a medição: se os `null` fossem majoritariamente afirmativas, a lista é que
+estaria errada (aí o conserto é de desenho). Entrou só a regra do quantificador, a do incidente.
+O `Fecha` ficou de fora porque não tem incidente: o turno de 05/10 confirmou por outro caminho.
+
+Fatia `delegation` (tema 5 · parser 5 · estagiou 0): as mesmas 5 perguntas de 29/09, anteriores
+ao conserto `d872532e` (30/09). É a 6ª rodada pagando o caso da proposta de 13/09.
