@@ -163,6 +163,7 @@ escolher o "alvo":
 - A linha antes do marker NÃO leva número nem nome: a lista chega com as contagens certas da fonte, organizada por forma, com quantos já migraram e quantos dias faltam pra meta.
 - Mais de uma forma na mesma pergunta? "alvo" vira lista: ["pix_avulso","cheque"] (até 3). Um marker por mensagem.
 - "unidade" só quando a pessoa DISSER; sem ela o sistema usa a do grupo, e num grupo sem unidade manda as três.
+- "cartao_cadastrado" = SÓ os 💳 ("quem tem cartão cadastrado mas paga PIX", "quem são esses 5 com cartão cadastrado pagando pix", "os do 💳", "cartão recorrente cadastrado e pagou por pix"). Cartão cadastrado mas paga PIX ≠ maquininha: a maquininha ("cartao_avulso") é cartão passado no balcão, mês a mês, sem recorrência — NUNCA use "cartao_avulso" pra pergunta de 💳, e "maquininha" continua sendo "cartao_avulso".
 - 💳 = cartão recorrente cadastrado no Emusys, mas a última mensalidade foi por PIX. Pode ser que já trocou pro cartão (e a cobrança ainda não passou) ou que o cartão falhou: diga pra CONFERIR no Emusys — nunca afirme que já resolveu. Continua na lista e no "faltam"; vai pro fim da fila (antes dos 🔒).
 - Nome com 🔒 = aguardando o Emusys: cliente com 2+ matrículas (família ou aluno com 2+ cursos) — o Emusys só liga o PIX automático a UMA fatura por enquanto. Continua na lista e no "faltam"; só vai pro fim da fila. Não diga que "não dá pra migrar": diga que depende do Emusys liberar.
 - A fonte TEM todos os nomes. NUNCA peça planilha, relatório ou "card" pra montar essa lista, e NUNCA escreva os nomes você mesmo.

@@ -62,7 +62,10 @@ const temAssuntoForte = (t) => TOKEN_PIX_FORTE.test(t) || TOKEN_ANAMNESE.test(t)
 // FATIAS E CATEGORIAS — só refinam o alvo DENTRO da família PIX. `cartao_avulso` vem antes de
 // `pix_avulso` de propósito: "cartão avulso"/"maquininha" contém "avulso", e sem a precedência a
 // mesma fala casaria as duas fatias e o alvo desandava pra 'pix' (lista errada no grupo).
+// 💳 (Recreio 06/10): "cartão cadastrado" = cartão RECORRENTE cadastrado no Emusys, mas a última
+// mensalidade foi por PIX — a seção 💳 da lista. NÃO é a maquininha (cartão passado no balcão).
 const RECORTES_PIX = [
+  ['cartao_cadastrado', /\bcartao (recorrente |de credito )?cadastrados?\b|\bcartoes (recorrentes )?cadastrados\b|\bcadastrad[oa]s? no cartao\b/],
   ['cartao_avulso', /\bmaquininha\b|\bcartao avulso\b/],
   ['pix_avulso', /\bpix avulso\b|\bavulso\b/],
   ['cartao_com_falha', /\bcartao (com )?falha\b|\bcartao falhando\b|\bfalha no cartao\b|\bcartao recusado\b/],
@@ -80,7 +83,7 @@ const RE_TUDO = /\bde tudo\b|\btudo\b/;
 const RE_LISTA = /\blista\b|\bnomes?\b|\brelacao\b|\bquem (ainda )?(falta|esta faltando)\b|\b(resto|restante)\b|\btod[oa]s os (clientes|alunos)\b/;
 const RE_NUMEROS = /\bquant[oa]s?\b|\bquanto falta\b|\btotal\b|\bnumeros?\b|\bquantidade\b/;
 
-function _alvoDoTexto(t) {
+function _alvoDoTexto(t, bruto = '') {
   const pix = TOKEN_PIX.test(t);
   const ana = TOKEN_ANAMNESE.test(t);
   const con = TOKEN_CONTRATO.test(t);
@@ -91,7 +94,12 @@ function _alvoDoTexto(t) {
   // família PIX: a fatia/categoria citada refina o alvo; "tudo" pede o panorama inteiro.
   let achados = [];
   for (const [nome, re] of RECORTES_PIX) if (re.test(t)) achados.push(nome);
+  // O 💳 some no _norm (emoji não é letra): procurado na fala crua.
+  if (String(bruto).includes('💳') && !achados.includes('cartao_cadastrado')) achados.push('cartao_cadastrado');
   if (achados.includes('cartao_avulso')) achados = achados.filter((a) => a !== 'pix_avulso');
+  // "cartão cadastrado e paga pix avulso" é a pergunta do 💳 (a forma é sempre Pix avulso/outra
+  // não-cartão) — o Pix avulso ali descreve o 💳, não pede a fatia inteira.
+  if (achados.includes('cartao_cadastrado')) achados = achados.filter((a) => a !== 'pix_avulso');
   if (RE_TUDO.test(t)) return 'tudo';
   return achados.length === 1 ? achados[0] : 'pix';
 }
@@ -107,7 +115,7 @@ function detectarPedido(texto) {
   if (pareceFalaDeCadastro(texto)) return null;
   const t = _norm(texto);
   if (!t) return null;
-  const alvo = _alvoDoTexto(t);
+  const alvo = _alvoDoTexto(t, texto);
   if (!alvo) return null;
   if (RE_LISTA.test(t)) return { tipo: 'lista', alvo };
   if (RE_NUMEROS.test(t)) return { tipo: 'numeros', alvo };
@@ -162,6 +170,7 @@ const TITULO_EXTRA = {
   pix: 'PIX automático — quem falta migrar',
   tudo: 'PIX automático — quem falta migrar',
   ja_migrou: 'Já migraram',
+  cartao_cadastrado: 'Cartão cadastrado, pagando PIX',
   anamnese: 'Anamnese — quem falta preencher',
   contrato: 'Contrato — quem falta assinar',
 };
@@ -370,7 +379,7 @@ function blocoDeNumeros({ unidadeNome, pix, anamnese, contrato, dadoEm, dadoDeHo
     // entra na migração. A base aqui é a MESMA do relatório de segunda: já migraram + faltam.
     L.push(`PIX automático: ${pix.ja_migrou + pix.faltam} clientes na migração (a mesma base do relatório de segunda) · já migraram ${pix.ja_migrou} · faltam migrar ${pix.faltam} (${pix.migrar} a migrar + ${pix.autorizacao_pendente} cadastrados sem cobrança)`);
     if (pix.bloqueado_emusys) L.push(`  dos que faltam, ${pix.bloqueado_emusys} estão aguardando o Emusys (2+ matrículas: ele só liga o PIX automático a uma fatura) — continuam contados, vão pro fim da fila`);
-    if (pix.cartao_cadastrado) L.push(`  dos que faltam, ${pix.cartao_cadastrado} têm cartão recorrente cadastrado mas pagaram por PIX (💳) — conferir no Emusys: se já estão no cartão, saem da lista quando a cobrança passar; vão pro fim da fila`);
+    if (pix.cartao_cadastrado) L.push(`  dos que faltam, ${pix.cartao_cadastrado} têm cartão recorrente cadastrado mas pagaram por PIX (💳) — conferir no Emusys: se já estão no cartão, saem da lista quando a cobrança passar; vão pro fim da fila. Se pedirem os NOMES deles: <<LISTA_PIX>> com alvo "cartao_cadastrado" (nunca "cartao_avulso", que é a maquininha)`);
     const fat = FATIAS.map((f) => [ROTULO[f], (pix.fatias || {})[f] || 0])
       .filter(([, n]) => n > 0).map(([r, n]) => `${r.emoji} ${r.nome} ${n}`);
     L.push(`Fatias de quem falta: ${fat.length ? fat.join(' · ') : 'nenhuma'}`);
@@ -457,13 +466,17 @@ function blocoDeNumerosTodasUnidades({ unidades }) {
 // `alvosDoMarker` normaliza o que o LLM mandou: alvo fora da lista vira 'pix' (todo mundo que
 // falta migrar — responder a mais é melhor que calar), no máximo 3 formas por pedido (o teto de
 // mensagens é do pedido inteiro) e 'tudo' engole o resto.
-const ALVOS_DO_MARKER = new Set([...FATIAS, 'pix', 'ja_migrou', 'anamnese', 'contrato', 'tudo']);
+// 06/10 (Recreio): "cartao_cadastrado" = só a seção 💳 da lista (ver pix-consulta-fontes._lerPix);
+// "cartao_pix" é o apelido que o modelo tende a escrever.
+const ALVOS_DO_MARKER = new Set([...FATIAS, 'pix', 'ja_migrou', 'cartao_cadastrado', 'anamnese', 'contrato', 'tudo']);
+const APELIDOS_DO_MARKER = { cartao_pix: 'cartao_cadastrado' };
 const TETO_ALVOS_DO_MARKER = 3;
 function alvosDoMarker(alvo) {
   const brutos = Array.isArray(alvo) ? alvo : [alvo];
   const vistos = [];
   for (const a of brutos) {
-    const n = String(a == null ? '' : a).trim().toLowerCase();
+    const cru = String(a == null ? '' : a).trim().toLowerCase();
+    const n = APELIDOS_DO_MARKER[cru] || cru;
     if (ALVOS_DO_MARKER.has(n) && !vistos.includes(n)) vistos.push(n);
   }
   if (vistos.includes('tudo')) return ['tudo'];

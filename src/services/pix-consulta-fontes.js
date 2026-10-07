@@ -157,6 +157,10 @@ async function _lerPix({ retry, rpcPix, alvo, hoje }) {
     const itens = ja.map((l) => ({ pagador: l.pagador_nome, alunos: l.alunos || [], secao: `✅ *Já no PIX automático* (${ja.length})` }));
     return { itens, resumo };
   }
+  // 💳 SÓ (Recreio 06/10): "quem são esses 5 com cartão cadastrado pagando pix?" — o recorte é a
+  // seção 💳 da lista INTEIRA, montada pela MESMA conta logo abaixo (mesmos nomes, mesma ordem,
+  // mesmo cabeçalho com o mesmo número). Nada de filtro paralelo: um 🔒 com cartão continua 🔒.
+  const soCartao = alvo === 'cartao_cadastrado';
   let escolhidas;
   if (alvo === 'autorizacao_pendente') escolhidas = linhas.filter((l) => l && l.categoria === 'autorizacao_pendente');
   else if (FATIAS.includes(alvo)) escolhidas = linhas.filter((l) => NA_PAUTA(l) && fatiaDoCliente(l) === alvo);
@@ -170,7 +174,7 @@ async function _lerPix({ retry, rpcPix, alvo, hoje }) {
     if (bloqueadoNoEmusys(l)) presosPorForma.set(fatiaDoCliente(l), (presosPorForma.get(fatiaDoCliente(l)) || 0) + 1);
     if (cartaoCadastradoPagandoPix(l)) cartaoPorForma.set(fatiaDoCliente(l), (cartaoPorForma.get(fatiaDoCliente(l)) || 0) + 1);
   }
-  const itens = ordenadas.map((l) => {
+  const itens = ordenadas.filter((l) => !soCartao || _chaveDaSecao(l) === SECAO_CARTAO).map((l) => {
     const chave = _chaveDaSecao(l);
     return { pagador: l.pagador_nome, alunos: l.alunos || [], secao: _rotuloDaSecao(chave, porSecao.get(chave), presosPorForma.get(chave) || 0, cartaoPorForma.get(chave) || 0) };
   });
