@@ -6,6 +6,8 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { findEventConflicts, formatEventTimeRange } from '../lib/events';
+import type { ConflictEvent } from '../lib/eventConflicts';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { DateTimeInput } from './DateTimeInput';
@@ -48,6 +50,30 @@ export function ConvertToEventSheet({ open, task, onClose }: Props) {
   }, [open, task?.id, defaultCategoryId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showMeetingUrl = modality === 'online' || modality === 'hibrido';
+
+  // CONFLITO-SO-DO-DONO (Alf 06/10): este caminho de criação não checava conflito nenhum. Mesma
+  // definição do QuickCreateSheet (dono ∪ participante, lib/eventConflicts.ts) e mesmo padrão:
+  // banner + "Criar mesmo assim". Falha da consulta não trava (fail-open, como lá).
+  const [pendingConflict, setPendingConflict] = useState<ConflictEvent[] | null>(null);
+  const [checking, setChecking] = useState(false);
+  useEffect(() => { setPendingConflict(null); }, [open, task?.id, startAt, endAt]);
+
+  async function onSubmit() {
+    setError(null);
+    setPendingConflict(null);
+    if (!collaborator || !startAt || !endAt) { convert.mutate(); return; }
+    setChecking(true);
+    let conflicts: ConflictEvent[] = [];
+    try {
+      conflicts = await findEventConflicts(collaborator.id, `${startAt}:00-03:00`, `${endAt}:00-03:00`, { limit: 5 });
+    } catch {
+      conflicts = [];
+    } finally {
+      setChecking(false);
+    }
+    if (conflicts.length > 0) { setPendingConflict(conflicts); return; }
+    convert.mutate();
+  }
 
   const convert = useMutation({
     mutationFn: async () => {
@@ -175,11 +201,37 @@ export function ConvertToEventSheet({ open, task, onClose }: Props) {
 
           {error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
 
+          {pendingConflict && pendingConflict.length > 0 && (
+            <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2" role="alert">
+              <div className="text-body-sm font-semibold text-warning">⚠ Conflito de horário</div>
+              <div className="text-body-sm text-fg">
+                Você já tem {pendingConflict.length === 1 ? 'um compromisso' : `${pendingConflict.length} compromissos`} nesse horário:
+              </div>
+              <ul className="text-body-sm text-fg-secondary space-y-0.5">
+                {pendingConflict.map(c => (
+                  <li key={c.id}>• <span className="tabular-nums">{formatEventTimeRange(c.start_at, c.end_at)}</span> — {c.title}</li>
+                ))}
+              </ul>
+              <div className="text-body-sm text-fg-muted pt-1">Quer ajustar o horário ou marcar mesmo assim?</div>
+            </div>
+          )}
+
           <div className="flex items-center gap-md pt-2">
-            <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
-            <Button type="button" loading={convert.isPending} fullWidth onClick={() => { setError(null); convert.mutate(); }}>
-              Criar compromisso
-            </Button>
+            {pendingConflict && pendingConflict.length > 0 ? (
+              <>
+                <Button type="button" variant="secondary" onClick={() => setPendingConflict(null)}>Voltar e ajustar</Button>
+                <Button type="button" loading={convert.isPending} fullWidth onClick={() => { setPendingConflict(null); convert.mutate(); }}>
+                  Criar mesmo assim
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
+                <Button type="button" loading={convert.isPending || checking} fullWidth onClick={onSubmit}>
+                  Criar compromisso
+                </Button>
+              </>
+            )}
           </div>
         </div>
       )}

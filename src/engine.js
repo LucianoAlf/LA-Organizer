@@ -8186,16 +8186,16 @@ async function buildActiveCoordinationContext(collab) {
 async function detectTemporalConflict(collab, candidate) {
   try {
     if (!candidate.start_at || !candidate.end_at) return { hardConflicts: [], softConflicts: [] };
-    const { data: overlaps, error } = await supabase
-      .from('events')
-      .select('id, title, start_at, end_at, modality, location_text, category, status')
-      .eq('collaborator_id', collab.id)
-      .neq('status', 'cancelled')
-      .lt('start_at', candidate.end_at)
-      .gt('end_at', candidate.start_at)
-      .limit(20);
-    if (error) {
-      console.error('[detectTemporalConflict] query err:', error.message);
+    // CONFLITO-SO-DO-DONO (Alf 06/10 17:52): a consulta era só `collaborator_id = eu` e deixava
+    // passar o compromisso em que a pessoa é PARTICIPANTE (Reunião 15:30 por cima da Jornada de
+    // Cordas do Quintela, 07/10). Definição única dono ∪ participante: lib/agenda-conflitos.js.
+    let overlaps;
+    try {
+      overlaps = await require('./lib/agenda-conflitos').compromissosQueSobrepoem({
+        supabase, collaboratorId: collab.id, startIso: candidate.start_at, endIso: candidate.end_at,
+      });
+    } catch (qErr) {
+      console.error('[detectTemporalConflict] query err:', qErr.message);
       return { hardConflicts: [], softConflicts: [] };
     }
     const hardConflicts = [], softConflicts = [];
@@ -17036,6 +17036,22 @@ ${secaoDoBriefing(_briefItems, { falhou: _briefFalhou })}`;
     const { aplicarGuardaDeAgenda } = require('./lib/ritual-agenda-guard');
     const _rag = await aplicarGuardaDeAgenda({ supabase, collaboratorId: collab.id, ritual: ritualKey, texto: finalText, hojeYmd: todaySaoPaulo() });
     finalText = _rag.texto;
+  }
+
+  // CONFLITO-SO-DO-DONO (Alf 06/10): a Reunião semana da crianças (15:30–16:30) caiu dentro da
+  // Jornada de Cordas (13:00–17:00, ele participante) e o bom dia de 07/10 não disse nada. O
+  // conflito é FATO de agenda — sai do código, não do modelo: compromissos de hoje (dono ∪
+  // participante sem recusa = ctx.todayEvents) sobrepostos viram uma linha no fim do texto.
+  // Depois da guarda de agenda de propósito (a linha cita eventos que existem; não precisa dela).
+  if (['briefing_diario', 'briefing_pessoal', 'briefing_trabalho'].includes(ritualKey) && typeof finalText === 'string' && finalText) {
+    try {
+      const _ac = require('./lib/agenda-conflitos');
+      const _linhasConf = _ac.linhasDeConflitoDoDia((ctx && ctx.todayEvents) || [], todaySaoPaulo());
+      if (_linhasConf.length) {
+        finalText = _ac.anexarConflitosAoTexto(finalText, _linhasConf);
+        console.log(`[Briefing] conflitos de agenda: ${_linhasConf.length}`);
+      }
+    } catch (e) { console.warn('[Briefing] conflitos de agenda err (non-fatal):', e.message); }
   }
 
   await whatsapp.sendMessage(collab.phone, finalText);

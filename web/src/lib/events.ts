@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { CalendarEvent } from '../types';
+import { findOverlappingCommitments, type ConflictEvent } from './eventConflicts';
 
 // Sprint 22.26 — events.category virou events.category_id (FK pra event_categories).
 // JOIN traz a categoria sob a chave `category` (mesmo nome anterior, agora objeto).
@@ -133,10 +134,24 @@ export async function fetchEventsForCollabRange(
 }
 
 /**
- * Sprint 22.42 — checa se ja existe evento ativo do colaborador que sobrepoe
- * a janela [startIso, endIso). Sobrepoe = (existente.start < novo.end) AND
- * (existente.end > novo.start). Retorna o primeiro conflito (titulo + horario)
- * ou null se livre. Quando excludeId passado, ignora esse id (caso de edicao).
+ * Compromissos que sobrepõem [startIso, endIso): os que sou DONO ∪ os que PARTICIPO
+ * (event_participants ≠ declined). Definição única em lib/eventConflicts.ts —
+ * CONFLITO-SO-DO-DONO (Alf 06/10): só o dono era checado e a Jornada de Cordas (ele
+ * participante) não acusou conflito com a reunião criada por cima.
+ */
+export async function findEventConflicts(
+  collabId: string,
+  startIso: string,
+  endIso: string,
+  opts: { excludeId?: string; limit?: number } = {},
+): Promise<ConflictEvent[]> {
+  return findOverlappingCommitments(supabase, collabId, startIso, endIso, opts);
+}
+
+/**
+ * Sprint 22.42 — primeiro conflito (titulo + horario) ou null se livre. Quando
+ * excludeId passado, ignora esse id (caso de edicao). Mesma definição de
+ * findEventConflicts (dono ∪ participante).
  */
 export async function findConflictingEvent(
   collabId: string,
@@ -144,19 +159,8 @@ export async function findConflictingEvent(
   endIso: string,
   excludeId?: string,
 ): Promise<{ id: string; title: string; start_at: string; end_at: string } | null> {
-  let query = supabase
-    .from('events')
-    .select('id, title, start_at, end_at')
-    .eq('collaborator_id', collabId)
-    .neq('status', 'cancelled')
-    .lt('start_at', endIso)
-    .gt('end_at', startIso)
-    .order('start_at', { ascending: true })
-    .limit(1);
-  if (excludeId) query = query.neq('id', excludeId);
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data?.[0] ?? null) as { id: string; title: string; start_at: string; end_at: string } | null;
+  const list = await findEventConflicts(collabId, startIso, endIso, { excludeId });
+  return list[0] ?? null;
 }
 
 /** YYYY-MM-DD em SP a partir de um ISO timestamp. */

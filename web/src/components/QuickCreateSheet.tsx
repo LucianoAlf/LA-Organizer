@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ListTodo, CalendarClock, UserPlus, FolderKanban, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { findEventConflicts } from '../lib/events';
 import { todaySP } from '../utils/date';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
@@ -573,17 +574,18 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
 
   // Sprint 22.34i — checa se há outros eventos do user que sobrepõem o horário.
   // Retorna array dos conflitos (vazio = sem conflito).
+  // CONFLITO-SO-DO-DONO (Alf 06/10): consultava só `collaborator_id = eu` — a Jornada de Cordas
+  // (ele participante) não acusou a reunião criada por cima. Agora dono ∪ participante, pela
+  // definição única (lib/eventConflicts.ts). Falha de consulta segue fail-open (como antes).
   async function checkEventConflict(startIso: string, endIso: string) {
     if (!collaborator) return [];
-    const { data } = await supabase
-      .from('events')
-      .select('id, title, start_at, end_at')
-      .eq('collaborator_id', collaborator.id)
-      .neq('status', 'cancelled')
-      .lt('start_at', endIso)
-      .gt('end_at', startIso)
-      .limit(5);
-    return (data || []).map(ev => {
+    let data: Array<{ id: string; title: string; start_at: string; end_at: string }> = [];
+    try {
+      data = await findEventConflicts(collaborator.id, startIso, endIso, { limit: 5 });
+    } catch {
+      data = [];
+    }
+    return data.map(ev => {
       const s = new Date(ev.start_at);
       const e = new Date(ev.end_at);
       const fmt = (d: Date) => new Intl.DateTimeFormat('pt-BR', {
