@@ -114,6 +114,57 @@ async function _gravarMarcadorPadrao(sb, { collaboratorId, pagadorChave }) {
   return true;
 }
 
+// Filhas PENDENTES da pauta (em qualquer grupo) vinculadas a esta chave — o 1:1 tem a chave da
+// FONTE, não a filha. Lança em erro do Supabase.
+async function _filhasPendentesDaChavePadrao(sb, chave) {
+  const { data: vinc, error } = await sb.from('pix_pauta_vinculo').select('task_id').eq('pagador_chave', chave);
+  if (error) throw new Error(`filhasPendentesDaChave (vínculo): ${error.message}`);
+  const ids = (vinc || []).map((v) => v.task_id).filter(Boolean);
+  if (!ids.length) return [];
+  const { data: ts, error: e2 } = await sb.from('tasks').select('id').in('id', ids).eq('status', 'pending');
+  if (e2) throw new Error(`filhasPendentesDaChave (tarefas): ${e2.message}`);
+  return (ts || []).map((t) => t.id);
+}
+
+// O REGISTRO do "já cadastrei no PIX automático" — UM caminho pro grupo e pro 1:1 (pix-dm.js):
+// marcador PIX_CADASTRO PRIMEIRO (M3: é ele que a reconferência de 7 dias lê), depois a baixa da(s)
+// filha(s) pendente(s). `filhaIds` ausente = procura pela chave (1:1). Sem filha pendente, o
+// marcador sozinho já registra (o ritual não põe o cliente num lote novo e reconfere em 7 dias).
+// Nunca lança. -> { ok, motivo? }
+async function registrarCadastroInformado({ supabase, collaboratorId, pagadorChave, filhaIds, deps = {} }) {
+  const fecharFilha = deps.fecharFilha || ((id) => _fecharFilhaPadrao(supabase, id));
+  const gravarMarcador = deps.gravarMarcador || ((arg) => _gravarMarcadorPadrao(supabase, arg));
+  const filhasDaChave = deps.filhasPendentesDaChave || ((chave) => _filhasPendentesDaChavePadrao(supabase, chave));
+  let ids = filhaIds;
+  if (!ids) {
+    try { ids = await filhasDaChave(pagadorChave); } catch (e) {
+      console.warn(`[PixCadastro] filhas da chave não leram (${pagadorChave}): ${e.message}`);
+      return { ok: false, motivo: 'leitura' };
+    }
+  }
+  let marcou = false;
+  try {
+    marcou = await gravarMarcador({ collaboratorId, pagadorChave });
+  } catch (e) {
+    console.error(`[PixCadastroGrupo] gravarMarcador lançou (chave=${pagadorChave}): ${(e && e.message) || String(e)}`);
+    marcou = false;
+  }
+  if (!marcou) {
+    console.warn(`[PixCadastroGrupo] marcador não gravou (chave=${pagadorChave}) — não dou baixa`);
+    return { ok: false, motivo: 'marcador' };
+  }
+  for (const id of ids || []) {
+    // eslint-disable-next-line no-await-in-loop
+    const fechou = await fecharFilha(id);
+    if (!fechou) {
+      // O marcador ficou, mas a filha continua pendente — o ritual a carrega (ver o topo do arquivo).
+      console.warn(`[PixCadastroGrupo] marcador gravou mas a baixa falhou (id=${id})`);
+      return { ok: false, motivo: 'baixa' };
+    }
+  }
+  return { ok: true };
+}
+
 async function tratarCadastroInformadoNoGrupo({
   supabase, groupId, senderCollabId, text, deps = {},
 }) {
@@ -147,25 +198,13 @@ async function tratarCadastroInformadoNoGrupo({
   }
 
   const [filha] = candidatas;
-  // M3: marcador PRIMEIRO. Lançar conta como falha (nunca derruba o turno).
-  let marcou = false;
-  try {
-    marcou = await gravarMarcador({ collaboratorId: senderCollabId, pagadorChave: filha.pagador_chave });
-  } catch (e) {
-    console.error(`[PixCadastroGrupo] gravarMarcador lançou (id=${filha.id}): ${(e && e.message) || String(e)}`);
-    marcou = false;
-  }
-  if (!marcou) {
-    console.warn(`[PixCadastroGrupo] marcador não gravou (id=${filha.id}) — não dou baixa`);
-    return { tratou: true, texto: textoCadastroNaoRegistrado() };
-  }
-  const fechou = await fecharFilha(filha.id);
-  if (!fechou) {
-    // O marcador ficou, mas a filha continua pendente — o ritual a carrega (ver o topo do arquivo).
-    console.warn(`[PixCadastroGrupo] marcador gravou mas a baixa falhou (id=${filha.id})`);
-    return { tratou: true, texto: textoCadastroNaoRegistrado() };
-  }
+  // M3: marcador PRIMEIRO, depois a baixa — mesmo registro do 1:1 (registrarCadastroInformado).
+  const r = await registrarCadastroInformado({
+    supabase, collaboratorId: senderCollabId, pagadorChave: filha.pagador_chave, filhaIds: [filha.id],
+    deps: { fecharFilha, gravarMarcador },
+  });
+  if (!r.ok) return { tratou: true, texto: textoCadastroNaoRegistrado() };
   return { tratou: true, texto: textoCadastroInformado(_pagadorDoTitulo(filha.title)) };
 }
 
-module.exports = { tratarCadastroInformadoNoGrupo, _pagadorDoTitulo };
+module.exports = { tratarCadastroInformadoNoGrupo, registrarCadastroInformado, _pagadorDoTitulo, _casaPorPalavraInteira };

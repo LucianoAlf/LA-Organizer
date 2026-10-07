@@ -12648,6 +12648,33 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[HabitoConfirmado] non-fatal:', e.message);
   }
 
+  // PIX-NO-1A1 (Ana Paula, DM 05/10 19:09): "3 - crédito recorrente já cadastrado / 8 - Pix
+  // recorrente já cadastrado" virou TASK_UPDATE nas filhas da pauta do grupo — sem o marcador
+  // PIX_CADASTRO e com o 3 sendo CARTÃO. Agora o aviso (por número da lista que o TOM mandou neste
+  // 1:1, ou "cadastrei <nome> no automático") é resolvido AQUI, antes do LLM, pelo MESMO registro
+  // do grupo (services/pix-dm.js -> pix-cadastro-grupo.registrarCadastroInformado). O resultado item
+  // a item é ANEXADO pelo código depois da fala (o LLM só abre). Flag de persistência só quando
+  // gravou de verdade (freio #4). Erro degrada pro fluxo de hoje.
+  let _pixDmResultado = null;
+  try {
+    const _pixDm = require('./services/pix-dm');
+    if (!_remCompleteHint && _pixDm.talvezAvisoDePix(text)) {
+      const { laReportClient: _lrcPx, isLaReportConfigured: _lrOkPx } = require('./services/la-report-client');
+      if (_lrOkPx()) {
+        const _idsPx = await require('./services/pauta-dm').unidadesDoColaborador({ supabase, collab, incluirCadastro: true });
+        _pixDmResultado = await _pixDm.resolverPixDoTurno({ supabase, laReport: _lrcPx, collaboratorId: collab.id, text, unidadeIds: _idsPx });
+        if (_pixDmResultado) {
+          if (_pixDmResultado.gravou) _metrics.deterministic_complete_ok = true;
+          _remCompleteHint = _pixDm.hintDoResultado();
+          console.log(`[PixDM] aviso tratado: ${_pixDmResultado.linhas.length} item(ns) gravou=${_pixDmResultado.gravou}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[PixDM] aviso non-fatal:', e.message);
+    _pixDmResultado = null;
+  }
+
   let { systemPrompt, ctx } = await buildSystemPrompt(collab, _promptOpts);
   _metrics.skill_active = _promptOpts.activeSkill || 'none'; // Fatia J: telemetria da skill ativa (era coluna morta)
   const _tt = ctx.todayTasks || {};
@@ -12692,6 +12719,29 @@ async function processMessage(phone, text, raw = {}) {
       }
     }
   } catch (err) { console.warn('[PautaDM] non-fatal:', err.message); }
+
+  // PIX-NO-1A1 (Ana Paula 05/10 19:08): "atualiza a lista pra mim" e o TOM escreveu 10 nomes de
+  // cabeça. Com o assunto na fala, o prompt ganha os números da MESMA fonte do grupo e a regra: a
+  // lista sai pelo <<LISTA_PIX>> (o código escreve, numerada), nunca da cabeça do LLM. Gate barato.
+  let _pixDmUnidades = null;
+  try {
+    const _pixDm = require('./services/pix-dm');
+    if (_pixDm.falaDePix(text)) {
+      const { laReportClient: _lrcPx2, isLaReportConfigured: _lrOkPx2 } = require('./services/la-report-client');
+      if (_lrOkPx2()) {
+        const _citadaPx = require('./services/pix-consulta').detectarUnidade(text);
+        _pixDmUnidades = _citadaPx ? [_citadaPx] : await require('./services/pauta-dm').unidadesDoColaborador({ supabase, collab, incluirCadastro: true });
+        const _fontesPx = require('./services/pix-consulta-fontes');
+        const _porUnidadePx = [];
+        for (const _uPx of _pixDmUnidades) {
+          // eslint-disable-next-line no-await-in-loop -- ordem importa (CG, Recreio, Barra)
+          _porUnidadePx.push(await _fontesPx.numerosDaUnidade({ laReport: _lrcPx2, unidadeId: _uPx, unidadeNome: require('./services/situacao-aluno').nomeDaUnidade(_uPx), hoje: todaySaoPaulo() }));
+        }
+        systemPrompt += '\n\n' + _pixDm.blocoPixDM({ porUnidade: _porUnidadePx });
+        console.log(`[PixDM] bloco injetado unidades=${_porUnidadePx.map((u) => `${u.unidadeNome}:${u.pix ? u.pix.faltam : 'falha'}`).join(',')}`);
+      }
+    }
+  } catch (err) { console.warn('[PixDM] bloco non-fatal:', err.message); }
 
   // Fatia 1: dica de voz da conclusão/desambiguação resolvida acima (mesmo padrão do relayHint).
   if (_remCompleteHint) systemPrompt += '\n\n' + _remCompleteHint;
@@ -13514,6 +13564,20 @@ Output AGORA, apenas o marker:`;
       }
     }
   }
+
+  // PIX-NO-1A1 (05/10): a baixa do PIX tem dono (pix-cadastro-grupo.registrarCadastroInformado,
+  // marcador PIX_CADASTRO + filha). TASK_UPDATE complete em "PIX automático — …" fechava a filha
+  // sem o marcador (e o cliente de cartão junto) — sai do marcador antes de executar.
+  try {
+    if (typeof reply === 'string' && /<<TASK_UPDATE>>/i.test(reply)) {
+      const _tp = require('./services/pix-dm').tirarConclusaoDePix(reply);
+      if (_tp.tirados) {
+        reply = _tp.reply;
+        console.warn(`[PixDM] TASK_UPDATE em tarefa do PIX tirado do marcador: ${_tp.tirados}`);
+        if (!_pixDmResultado) reply = `${reply}\n\n_Baixa do PIX eu não faço fechando tarefa: me diz o número da lista (ou "cadastrei <nome> no automático") que eu registro certo._`.trim();
+      }
+    }
+  } catch (e) { console.warn('[PixDM] rede TASK_UPDATE err:', e.message); }
 
   // 2.5) Task update (complete / reschedule / create) — defense-in-depth na resolução de IDs.
   {
@@ -15809,6 +15873,29 @@ Output AGORA, apenas o marker:`;
     }
   }
 
+  // ---- PIX-NO-1A1 (Ana Paula 05/10) — <<LISTA_PIX>> no 1:1 e o resultado do aviso ----
+  // O MESMO marcador do grupo: o LLM pede, o CÓDIGO escreve a lista NUMERADA da mesma fonte
+  // (services/pix-dm.js) e guarda o número -> cliente (marker_logs PIX_LISTA_DM, tipo META). Roda
+  // ANTES do catch-all (senão o marcador some e sobra a linha prometendo a lista).
+  try {
+    if (typeof reply === 'string' && /<<LISTA_PIX>>/i.test(reply)) {
+      const _pixDm = require('./services/pix-dm');
+      const { laReportClient: _lrcLp } = require('./services/la-report-client');
+      const _idsLp = _pixDmUnidades || await require('./services/pauta-dm').unidadesDoColaborador({ supabase, collab, incluirCadastro: true });
+      const _rLp = await _pixDm.atenderMarkersListaPixDM({ reply, laReport: _lrcLp, supabase, unidadeIds: _idsLp, collaboratorId: collab.id });
+      reply = _rLp.reply;
+      console.log(`[PixDM] marcador LISTA_PIX atendidos=${_rLp.atendidos} itens=${_rLp.itens.length} falhas=${_rLp.falhas}`);
+    }
+  } catch (e) {
+    console.warn('[PixDM] marcador err:', e.message);
+    if (typeof reply === 'string') {
+      reply = reply.replace(/<<LISTA_PIX>>[\s\S]*?<<END>>/gi, '\n\nNão consegui ler a lista do PIX agora — me pede de novo daqui a pouco.').replace(/\n{3,}/g, '\n\n').trim();
+    }
+  }
+  if (_pixDmResultado && _pixDmResultado.linhas && _pixDmResultado.linhas.length) {
+    reply = `${typeof reply === 'string' ? reply : ''}\n\n${_pixDmResultado.linhas.join('\n')}`.trim();
+  }
+
   // ---- DM-ANAMNESE-CONTA-TAREFA (30/09) — <<SITUACAO_ALUNO>> no 1:1 ----
   // O MESMO marcador do grupo: o LLM pede a lista, o CÓDIGO escreve os nomes (services/pauta-dm.js).
   // Roda ANTES do catch-all (senão o marcador seria removido como desconhecido e sobraria só a
@@ -16146,7 +16233,7 @@ Output AGORA, apenas o marker:`;
     // CREDENCIAL_INBOUND_APAGADA e faxina de historico, nao acao de dominio: deixa-la aqui
     // fora encheria `marker_emitted` e desarmaria o chokepoint num turno em que NADA foi
     // persistido (o executor de credencial so abre a confirmacao).
-    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT','CREDENCIAL_INBOUND_APAGADA','REACT','VOICE_SENT'];
+    const _NON_DOMAIN_MARKERS = ['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER','ACTIONABLE_NO_MARKER','CHOKEPOINT','CREDENCIAL_INBOUND_APAGADA','REACT','VOICE_SENT','PIX_LISTA_DM'];
     const _isDomainMarker = (t) => t && !_NON_DOMAIN_MARKERS.includes(t);
     const fired = (recentMarkers || []).filter(r => r.result === 'executed' && _isDomainMarker(r.marker_type)).map(r => r.marker_type);
     // FATIA 2 (falso-fire composição): houve marker de DOMÍNIO tentado — executado OU rejeitado —

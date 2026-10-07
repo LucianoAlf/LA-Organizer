@@ -248,8 +248,10 @@ function mensagensDeVariasListas({
 // entre seções e nome recuado — igual à pauta. Parte que começa no meio de uma seção repete o
 // cabeçalho com "(continuação)". Item SEM `secao` sai plano, como antes (desde 30/09 anamnese e
 // contrato também têm seção — ver listaDeAlunosOrganizada, logo abaixo).
+// `numero` (só a lista do 1:1, pix-dm.js): a pessoa responde "8 já foi" — o número É a âncora.
+const _marcaDoItem = (it) => (it && it.numero ? `${it.numero}.` : '•');
 function _linhaPlana(it) {
-  return `• ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`;
+  return `${_marcaDoItem(it)} ${it.pagador}${(it.alunos || []).length ? ` — ${it.alunos.join(', ')}` : ''}`;
 }
 function _corpoDaParte(fatia, anterior) {
   if (!fatia.some((it) => it && it.secao)) return { texto: fatia.map(_linhaPlana).join('\n'), secionado: false };
@@ -265,7 +267,7 @@ function _corpoDaParte(fatia, anterior) {
     // `detalhe` (anamnese/contrato: "responsável: X") vence a lista de alunos — no aluno, o nome
     // já é a linha; repetir o próprio nome entre parênteses é o "Nome — Nome" de 30/09.
     const extra = it.detalhe || ((it.alunos || []).length ? it.alunos.join(', ') : '');
-    linhas.push(`   • ${it.pagador}${extra ? ` (${extra})` : ''}`);
+    linhas.push(`   ${_marcaDoItem(it)} ${it.pagador}${extra ? ` (${extra})` : ''}`);
   });
   return { texto: linhas.join('\n'), secionado: true };
 }

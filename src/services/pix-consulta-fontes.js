@@ -144,7 +144,10 @@ function _rotuloDaSecao(chave, n, presos = 0, noCartao = 0) {
 }
 
 // -> { itens: [{ pagador, alunos, secao? }], resumo }
-async function _lerPix({ retry, rpcPix, alvo, hoje }) {
+// `comChave` (só o 1:1, pix-dm.js): o item leva a pagador_chave pra o número da lista virar o
+// cliente certo na resposta seguinte. A chave NUNCA vai pro texto, e a API pública (itensDaLista)
+// e o grupo seguem só com pagador+alunos — ver o teste de privacidade.
+async function _lerPix({ retry, rpcPix, alvo, hoje, comChave = false }) {
   const r = await retry(rpcPix);
   if (r && r.error) throw new Error(`get_pix_migracao_v1: ${r.error.message}`);
   const linhas = (r && r.data) || [];
@@ -154,7 +157,7 @@ async function _lerPix({ retry, rpcPix, alvo, hoje }) {
     // Mesmo formato da lista de quem falta (nome recuado, alunos entre parênteses) — as duas saem
     // juntas no "quem já foi e quem falta" e não podem ter cara diferente.
     const ja = ordenarPorPrioridade(linhas.filter((l) => l && l.categoria === 'ja_migrou'));
-    const itens = ja.map((l) => ({ pagador: l.pagador_nome, alunos: l.alunos || [], secao: `✅ *Já no PIX automático* (${ja.length})` }));
+    const itens = ja.map((l) => ({ pagador: l.pagador_nome, alunos: l.alunos || [], secao: `✅ *Já no PIX automático* (${ja.length})`, ...(comChave ? { chave: l.pagador_chave } : {}) }));
     return { itens, resumo };
   }
   // 💳 SÓ (Recreio 06/10): "quem são esses 5 com cartão cadastrado pagando pix?" — o recorte é a
@@ -176,7 +179,7 @@ async function _lerPix({ retry, rpcPix, alvo, hoje }) {
   }
   const itens = ordenadas.filter((l) => !soCartao || _chaveDaSecao(l) === SECAO_CARTAO).map((l) => {
     const chave = _chaveDaSecao(l);
-    return { pagador: l.pagador_nome, alunos: l.alunos || [], secao: _rotuloDaSecao(chave, porSecao.get(chave), presosPorForma.get(chave) || 0, cartaoPorForma.get(chave) || 0) };
+    return { pagador: l.pagador_nome, alunos: l.alunos || [], secao: _rotuloDaSecao(chave, porSecao.get(chave), presosPorForma.get(chave) || 0, cartaoPorForma.get(chave) || 0), ...(comChave ? { chave: l.pagador_chave } : {}) };
   });
   return { itens, resumo };
 }
@@ -221,6 +224,21 @@ async function blocosDaLista({ laReport, unidadeId, alvo, deps = {} }) {
   }
   if (!blocos.length) throw new Error(`nenhuma fonte respondeu (${falhas.length} falha(s))`);
   return { blocos, falhas };
+}
+
+// ── 1:1 (pix-dm.js) — a MESMA leitura do grupo, sem caminho paralelo ───────────────────────────
+// blocoNumeravel: um alvo do PIX de UMA unidade, item com a chave (pra numerar e lembrar).
+// linhasDaUnidade: as linhas cruas da fonte (pra conferir, na resposta "8 já foi", o que o Emusys
+// mostra agora). As duas LANÇAM quando a fonte falha — quem chama diz a verdade.
+async function blocoNumeravel({ laReport, unidadeId, alvo, deps = {} }) {
+  const { retry, rpcPix } = _rpcs({ laReport, unidadeId, deps });
+  return _lerPix({ retry, rpcPix, alvo, hoje: deps.hoje, comChave: true });
+}
+async function linhasDaUnidade({ laReport, unidadeId, deps = {} }) {
+  const { retry, rpcPix } = _rpcs({ laReport, unidadeId, deps });
+  const r = await retry(rpcPix);
+  if (r && r.error) throw new Error(`get_pix_migracao_v1: ${r.error.message}`);
+  return (r && r.data) || [];
 }
 
 // ── C4: as TRÊS unidades juntas (grupo sem unidade E fala sem unidade citada) ───────────────────
@@ -393,4 +411,5 @@ module.exports = {
   numerosDaUnidade, itensDaLista, blocosDaLista, atenderPedidoNoGrupo,
   numerosDeTodasUnidades, blocosDeTodasUnidades,
   mensagensDaListaPix, atenderMarkersListaPix,
+  blocoNumeravel, linhasDaUnidade,
 };
