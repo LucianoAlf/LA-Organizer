@@ -128,6 +128,11 @@ function classify(t, opts = {}) {
     // valendo pra "todas foram feitas ontem", onde a frase continua): só converte null
     // em 'yes', nenhum resultado existente muda.
     if (/^(j[áa]\s+)?(?:foram|foi)(?:\s+(?:sim|mesmo|tudo|tod[oa]s))?\s*[.!]*$/.test(t)) return 'yes';
+    // CONFIRM-QUANT-PELADO (Duda 06/10 18:24 BRT): "Confirma o fechamento destas 8 tarefas?"
+    // → "todassss" → null → o LLM re-perguntou a mesma coisa. O quantificador SOZINHO é a
+    // resposta a "fecho as N?". Mesma forma da linha acima: só quando ele FECHA a frase
+    // ("todas menos a 2" e "todas?" seguem null). Aditivo: só converte null em 'yes'.
+    if (/^(?:tudo|tod[oa]s|tds|td)(?:\s+(?:elas|eles|sim|mesmo))?\s*[.!]*$/.test(t)) return 'yes';
   }
   return null;
 }

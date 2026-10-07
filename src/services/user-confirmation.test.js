@@ -217,3 +217,22 @@ test('as afirmações de sempre continuam sim, e o "não" do começo continua n�
 test('palavra que só CONTÉM "nao" não é negação ("canção", "nãozinho" não travam)', () => {
   assert.strictEqual(detectUserConfirmation('pode a canção'), 'yes');
 });
+
+// ── CONFIRM-QUANT-PELADO (Duda 06/10 18:24 BRT) ─────────────────────────────
+// "Confirma o fechamento destas 8 tarefas: …?" (intent com batch_complete[8]) →
+// ela respondeu "todassss" → null → turno no LLM → a MESMA pergunta voltou 21s
+// depois (intent superseded). Só fechou no "confirmo" seguinte. O QUANT do
+// CONFIRM-QUANTIFIER-BLIND só existia como PREFIXO de verbo ("todas feitas");
+// o quantificador SOZINHO é a resposta mais curta a "fecho as N?".
+test('FIX Duda: quantificador pelado confirma fechamento sob allowDone', () => {
+  for (const t of ['todassss', 'todas', 'Todas!', 'todos', 'tudo', 'tds', 'todas elas', 'todas sim']) {
+    assert.strictEqual(detectUserConfirmation(t, { allowDone: true }), 'yes', t);
+  }
+});
+
+test('FIX Duda: gated em allowDone, e quantificador com resto da frase não entra', () => {
+  for (const t of ['todas', 'todos', 'tudo']) assert.strictEqual(detectUserConfirmation(t, {}), null, t);
+  for (const t of ['todas?', 'toda', 'todas menos a 2', 'tudo amanhã', 'todas não']) {
+    assert.notStrictEqual(detectUserConfirmation(t, { allowDone: true }), 'yes', t);
+  }
+});
