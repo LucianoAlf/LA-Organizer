@@ -13,9 +13,10 @@
 // antes do LLM, decideConfirm do group-notes). Só o "sim" do MESMO remetente cria; o delete com
 // retorno antes de criar garante que dois "sim" não criam duas vezes.
 //
-// Sem migration: a tabela não tem coluna de payload (só target_id uuid + summary text), então o
-// evento já marcado pelo engine vai serializado em `summary` (JSON versionado). As flags de
-// confirmação nascem no engine e nunca do texto do grupo.
+// O evento já marcado pelo engine vai em `payload` (jsonb, coluna criada em 07/10 com aval do Alf —
+// migrations/20261007_group_chat_pending_confirms_payload.sql); `summary` fica só com o
+// texto humano (título), como nas outras ops. As flags de confirmação nascem no engine e nunca do
+// texto do grupo.
 
 const OP = 'create_event';
 const TTL_MS = 10 * 60 * 1000;
@@ -30,16 +31,12 @@ function _detalheDaFalha(engine, payload) {
   return 'não consegui salvar';
 }
 
-function serializar(eventos, itens) {
-  return JSON.stringify({ v: 1, events: eventos, itens });
+function montarPayload(eventos, itens) {
+  return { v: 1, events: eventos, itens };
 }
 
-function desserializar(summary) {
-  try {
-    const o = JSON.parse(String(summary || ''));
-    if (o && o.v === 1 && Array.isArray(o.events)) return o;
-  } catch (_) { /* summary de outra op */ }
-  return null;
+function lerPayload(payload) {
+  return (payload && payload.v === 1 && Array.isArray(payload.events) && Array.isArray(payload.itens)) ? payload : null;
 }
 
 // Aplica os EVENT_CREATE do grupo e devolve as ações do card (uma por evento), com a verdade.
@@ -78,7 +75,7 @@ async function aplicarEventosDoGrupo({ supabase, engine, collab, groupId, sender
     const titulo = itens.map((i) => i.titulo).join(', ');
     const { error } = await supabase.from('group_chat_pending_confirms').upsert({
       group_id: groupId, sender_collab_id: senderCollabId, op: OP, target_id: null,
-      summary: serializar(segurados.map((s) => s.evento), itens), expires_at: expires,
+      summary: titulo.slice(0, 200), payload: montarPayload(segurados.map((s) => s.evento), itens), expires_at: expires,
     }, { onConflict: 'group_id,sender_collab_id,op' });
     if (error) {
       // Sem a pendência gravada o "sim" não acharia nada: falha honesta em vez de pergunta morta.
@@ -106,8 +103,8 @@ async function resolverConfirmacaoDeEvento({ supabase, engine, groupId, senderCo
   const { data: consumidos } = await supabase.from('group_chat_pending_confirms')
     .delete().eq('id', pend.id).select('id');
   if (!consumidos || !consumidos.length) return null;
-  const dados = desserializar(pend.summary);
-  const titulo = dados ? dados.itens.map((i) => i.titulo).join(', ') : 'o compromisso';
+  const dados = lerPayload(pend.payload);
+  const titulo = dados ? dados.itens.map((i) => i.titulo).join(', ') : (pend.summary || 'o compromisso');
   if (verdict === 'cancel') return { texto: `Ok, não marquei *${titulo}*. Se for em outro horário, me diz qual. 👍` };
   if (!dados) return { texto: '_Perdi o compromisso que tava esperando confirmação — me manda de novo?_' };
   const { data: collab } = await supabase.from('collaborators').select('*').eq('id', senderCollabId).maybeSingle();
@@ -122,4 +119,4 @@ async function resolverConfirmacaoDeEvento({ supabase, engine, groupId, senderCo
   return { texto, okCount: (r && r.okCount) || 0 };
 }
 
-module.exports = { OP, aplicarEventosDoGrupo, resolverConfirmacaoDeEvento, serializar, desserializar };
+module.exports = { OP, aplicarEventosDoGrupo, resolverConfirmacaoDeEvento, montarPayload, lerPayload };

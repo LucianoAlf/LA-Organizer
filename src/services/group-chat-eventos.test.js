@@ -111,6 +111,20 @@ test('caso real no grupo: conflito → card "pendente" + pergunta única, nada c
   assert.strictEqual(criados().length, 0);
   assert.strictEqual(DB.group_chat_pending_confirms.length, 1);
   assert.strictEqual(DB.pending_intents.length, 0, 'não abre o intent do 1:1');
+  // payload jsonb (07/10, coluna nova) guarda o evento; summary é só o texto humano
+  const row = DB.group_chat_pending_confirms[0];
+  assert.strictEqual(row.summary, 'Reuniao semana da crianças');
+  assert.strictEqual(row.payload.v, 1);
+  assert.strictEqual(row.payload.events[0].title, 'Reuniao semana da crianças');
+  assert.strictEqual(row.payload.events[0]._conflito_confirmado, true, 'flag nasce no engine');
+});
+
+test('pendência sem payload (não deveria existir): não cria nada e pede de novo', async () => {
+  reset();
+  DB.group_chat_pending_confirms.push({ id: 'velha', group_id: GRUPO, sender_collab_id: ALF, op: 'create_event', summary: 'Reuniao semana da crianças', payload: null, expires_at: new Date(Date.now() + 60000).toISOString() });
+  const r = await resolver(ALF, 'sim');
+  assert.ok(/Perdi o compromisso/.test(r.texto), r.texto);
+  assert.strictEqual(criados().length, 0);
 });
 
 test('"sim" de OUTRO membro não cria; "sim" de quem pediu cria UMA vez; 2º "sim" não duplica', async () => {
