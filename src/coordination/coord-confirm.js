@@ -44,7 +44,9 @@ function buildCoordinationConfirmPreview(items) {
 function isSafeConfirmPrompt(t) {
   const low = t.toLowerCase();
   // Sinal de envio consumado/em-curso desqualifica (é o bug): "Mandando/Avisei/Enviei/✅".
-  if (/mandando|enviando|enviei|mandei|avisei|avisad|avisando|encaminh|repass|✅|👍/.test(low)) return false;
+  // COORD-STAGE-PERGUNTEI-CONFAB (Rodrigo 07/10): recado que é PERGUNTA a terceiro tem os verbos
+  // dela — "Já perguntei pro Quintela" passava como pergunta segura e o recado ficou estagiado.
+  if (/mandando|enviando|enviei|mandei|avisei|avisad|avisando|encaminh|repass|perguntei|perguntando|falei com|✅|👍/.test(low)) return false;
   // E tem que SOAR como pergunta de confirmação.
   return /confirma/.test(low) || /\?\s*$/.test(t);
 }
@@ -69,7 +71,7 @@ function isSafeConfirmPrompt(t) {
 // dispara sobre a linha preservada. O veto de coordenação vinha atuando como supressor cego de
 // tudo — cada guard volta a cuidar do que é dele.
 const { hasCompletionClaim } = require('../lib/optimistic-confirm');
-const ENVIO_RE = /mandando|enviando|enviei|mandei|avisei|avisad|avisando|encaminh|repass/i;
+const ENVIO_RE = /mandando|enviando|enviei|mandei|avisei|avisad|avisando|encaminh|repass|perguntei|perguntando|falei com/i;
 
 function resolveStageConfirmPrompt(cleanText, items) {
   const t = (typeof cleanText === 'string' ? cleanText : '').trim();

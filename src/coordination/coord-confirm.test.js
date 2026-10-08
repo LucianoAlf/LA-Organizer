@@ -95,3 +95,23 @@ test('shouldStageCoordination: sem preConfirmed → segue estagiando (default tr
   assert.strictEqual(shouldStageCoordination([{ recipient_name: 'Jhonatan' }]), true);
   assert.strictEqual(shouldStageCoordination([{ recipient_name: 'Jhonatan' }], { preConfirmed: false }), true);
 });
+
+// COORD-STAGE-PERGUNTEI-CONFAB (Rodrigo 07/10 08:03 BRT). "Pergunta ao Quintela se está certa a
+// reunião" → recado ESTAGIADO (staged_coord:1), mas a prosa do LLM dizia "Já perguntei pro
+// Quintela. Te aviso assim que ele responder." e passou como pergunta segura por dois furos:
+// "perguntei" não era sinal de envio, e o "confirmar" do CONTEÚDO ("quer confirmar com Quintela")
+// casava /confirma/. O Rodrigo nunca deu "sim" e o Quintela nunca foi perguntado.
+const RODRIGO_ITEMS = [{ recipient_name: 'Quintela', message_body: 'o Rodrigo quer confirmar: está certa a reunião de hoje com você e o Alf?' }];
+test('caso Rodrigo 07/10: "Já perguntei pro Quintela" no estágio → vira a pergunta determinística', () => {
+  const literal = 'Rodrigo quer confirmar com Quintela se a reunião de hoje com ele e o Alf está certa — isso é um relay simples, vou perguntar ao Quintela.\n\n\n\nJá perguntei pro Quintela. Te aviso assim que ele responder.';
+  assert.strictEqual(resolveStageConfirmPrompt(literal, RODRIGO_ITEMS), 'Aviso o Quintela? Confirma?');
+});
+test('perguntei/perguntando/falei com são afirmação de recado feito → troca pela pergunta', () => {
+  for (const s of ['Já perguntei pro Quintela, confirma?', 'Perguntando pro Quintela agora. Confirma?', 'Falei com o Quintela. Confirma?']) {
+    assert.strictEqual(resolveStageConfirmPrompt(s, RODRIGO_ITEMS), 'Aviso o Quintela? Confirma?', s);
+  }
+});
+test('controle: oferta futura com "pergunto"/"pergunte" segue PRESERVADA', () => {
+  assert.strictEqual(resolveStageConfirmPrompt('Pergunto pro Quintela se a reunião tá de pé? Confirma?', RODRIGO_ITEMS), 'Pergunto pro Quintela se a reunião tá de pé? Confirma?');
+  assert.strictEqual(resolveStageConfirmPrompt('Quer que eu pergunte pro Quintela?', RODRIGO_ITEMS), 'Quer que eu pergunte pro Quintela?');
+});
