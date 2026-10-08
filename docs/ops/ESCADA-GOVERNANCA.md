@@ -3162,3 +3162,27 @@ O `Fecha` ficou de fora porque não tem incidente: o turno de 05/10 confirmou po
 
 Fatia `delegation` (tema 5 · parser 5 · estagiou 0): as mesmas 5 perguntas de 29/09, anteriores
 ao conserto `d872532e` (30/09). É a 6ª rodada pagando o caso da proposta de 13/09.
+
+### ETAPA 3 — a lista de verbos de um guard é escrita pelo caso que o criou: recado-PERGUNTA não usa "avisei"
+
+**Ocorrência:** 1 (08/10), e é a 1ª correção da rodada.
+
+`isSafeConfirmPrompt` (11/07) nasceu do caso Fabi ("Mandando agora ✅") e listou os verbos de
+AVISO. Recado que é PERGUNTA a terceiro tem outros verbos: Rodrigo 07/10, *"Já perguntei pro
+Quintela. Te aviso assim que ele responder."*, sobre recado só estagiado. E o desempate por
+`/confirma/` casou o CONTEÚDO do recado ("quer confirmar com Quintela"), não um pedido de ok.
+
+🔑 Regra: **quando um guard decide por lista de verbos, pergunte quais MODOS do domínio a lista
+cobre** (recado = avisar, perguntar, cobrar, pedir). Lista nascida de um caso cobre o modo daquele
+caso.
+
+### ETAPA 3 — o prefixo do regex de linha também é vocabulário: emoji abre a fala do TOM
+
+**Ocorrência:** 1 (08/10), 2ª correção da rodada. Bianca 07/10: o veto de proposta de 27/09
+reconhecia `Fechando:` e não `📋 Fechando:`. Lá o teste usava o literal do Quintela, sem emoji.
+É a regra de 20/08 (*o fixture do teste não substitui o literal do banco*) na forma mais barata:
+**antes de ancorar um regex em `^`, olhe como as falas reais do TOM começam.** Ele abre com ícone
+com frequência.
+
+Fatia `delegation` (tema 5 · parser 5 · estagiou 0): as mesmas 5 perguntas de 29/09, anteriores
+ao conserto `d872532e`. 7ª rodada pagando o caso da proposta de 13/09.
