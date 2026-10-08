@@ -51,3 +51,17 @@ test('ligado no 1:1 e no grupo, somado ao veto de eco', () => {
   assert.match(engine, /reportedState: ecoDoRelatoDoUsuario\([^\n]*\) \|\| linhasAcusadasSaoPergunta\(reply\)(?:\s*\|\| vetoDePergunta\(reply, [^\n]*\)\.veto)?(?:\s*\|\| pedidoDeNadaARegistrar\(stripReplyScaffold\(String\(text \|\| ''\)\)\.userText, reply\))?(?:\s*\|\| _reafirmaLote)?(?:\s*\|\| liberaAvisoCondicional\(reply, [^\n]*\))?,/);
   assert.match(grupo, /\|\| linhasAcusadasSaoPergunta\(prose\)(?:\s*\|\| vetoDePergunta\(prose, [^\n]*\)\.veto)?(?:\s*\|\| pedidoDeNadaARegistrar\(\(opts && opts\.userText\) \|\| '', prose\))?;/);
 });
+
+// CHOKEPOINT-PROPOSTA-COM-EMOJI (Bianca 07/10 11:00 BRT). Mesma proposta do Quintela, mas com o
+// cabeçalho "📋 Fechando:" — o prefixo do regex não aceitava emoji, a linha virou afirmação e a
+// pessoa recebeu "Confirmo e já aviso os três?" + "Na real não consegui registrar".
+const BIANCA = '📋 Fechando: *Reunião Núcleo de Inclusão* — 13/10 (terça) às 10h, online, com Luciano, Juliana e Quintela.\n\nConfirmo e já aviso os três?';
+test('Bianca 07/10: "📋 Fechando: …" + "Confirmo e já aviso os três?" é proposta', () => {
+  assert.strictEqual(linhasAcusadasSaoPergunta(BIANCA), true);
+});
+test('controle: "📋 Fechando: …" SEM pedido de confirmação segue acusado', () => {
+  assert.strictEqual(linhasAcusadasSaoPergunta('📋 Fechando: *Reunião Núcleo de Inclusão* — 13/10 às 10h.'), false);
+});
+test('controle: emoji de feito na frente ("✅ Marquei…") segue afirmação mesmo com pergunta', () => {
+  assert.strictEqual(linhasAcusadasSaoPergunta('✅ Marquei a reunião pra 13/10.\nConfirma?'), false);
+});

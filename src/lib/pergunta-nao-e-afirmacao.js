@@ -17,7 +17,8 @@
 // Liga na porta `reportedState` de enforceNoMarkerHonesty (optimistic-confirm.js intocado).
 const { hasCompletionClaim, hasWeakCompletionClaim } = require('./optimistic-confirm');
 
-const CABECALHO_DE_PROPOSTA_RE = /^[\s*_•\-–—>"']*(?:fechando|registrando|anotando|agendando|marcando|criando|montando|resumindo)\s*:/iu;
+// Emoji no prefixo (Bianca 07/10: "📋 Fechando:") — o TOM abre proposta com ícone; sem isto a linha virava afirmação.
+const CABECALHO_DE_PROPOSTA_RE = /^[\s*_•\-–—>"'\p{Extended_Pictographic}\uFE0F\u200D]*(?:fechando|registrando|anotando|agendando|marcando|criando|montando|resumindo)\s*:/iu;
 const PEDE_CONFIRMACAO_RE = /\b(confirma|confirmo|pode ser|fechado|t[áa] certo|certo|ok|posso|quer que eu|sim ou n[ãa]o)\b[^\n]*\?|\?\s*$/iu;
 const TOM_ESCREVEU_RE = /(?<![\p{L}])(?:criei|registrei|anotei|agendei|marquei|salvei|lancei|cadastrei|atualizei|conclu[íi]|finalizei|fechei|dei\s+baixa)(?![\p{L}])/iu;
 
