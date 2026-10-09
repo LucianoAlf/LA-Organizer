@@ -3186,3 +3186,29 @@ com frequência.
 
 Fatia `delegation` (tema 5 · parser 5 · estagiou 0): as mesmas 5 perguntas de 29/09, anteriores
 ao conserto `d872532e`. 7ª rodada pagando o caso da proposta de 13/09.
+
+### ETAPA 3 — o diagnóstico ESCRITO no achado também é artefato datado: a "janela" não era a porta
+
+**Ocorrência:** 1 (09/10). Prima da regra de 21/09 (*nota da escada que nomeia alvo vivo é artefato datado*).
+
+A nota de 08/10 em `fccceb0a` (Rafinha 07/10 22:21, "só o recesso… Já está registrado assim")
+dizia *"porta: janela temporal"*: a tarefa tinha 11min40s e o veto `restatesRecentWrite` olha
+600s. Parecia conserto de uma constante. Rodado com a tarefa DENTRO da lista:
+`restatesRecentWrite(original, [tarefa]) = false`. "piso estufou" não casa "pisos danificados pelo
+ralo estufado". Esticar a janela não teria vetado nada, e o comentário do engine já dizia isso
+(medição de 18 disparos, curva estável de 10 min a 24 h).
+
+🔑 Regra: **antes de mexer num limiar que uma nota anterior apontou, rode o caso com o limiar
+satisfeito.** Se o veredito não muda, o limiar nunca foi a porta.
+
+### ETAPA 2.7 — a 3ª porta do "resolvedor só vê vivos" fechou, e a família tem agora UMA forma
+
+**Ocorrência:** 1 (09/10), e é a correção da rodada (`1b7489d9`, TASK-UPDATE-ALVO-JA-FECHADO).
+
+Evento (21/09), `complete` (05/10) e agora `update` (Rafinha 05/10, "me diz o nome certinho" sobre
+tarefa done desde a manhã). Cada porta ganhou um helper próprio porque o predicado muda: o
+`complete` exige janela de 60 min e `completed_by`, porque ali é re-emit. O `update` não exige
+nenhum dos dois, porque ali é contexto velho do LLM, e a tarefa da Rafinha tinha `completed_by` NULL.
+Ainda sem cobertura: `reschedule`/lembretes (`engine.js` ~5921) e tirar da cópia (~7004) têm a
+mesma frase "Não achei a tarefa … Me diz o nome certinho?", ainda sem incidente.
+Fatia `delegation`: 0 perguntas desde o conserto `d872532e` (controle: 155 intents no período). 8ª rodada.
