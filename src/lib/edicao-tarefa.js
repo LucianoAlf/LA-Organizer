@@ -78,4 +78,35 @@ function montarPatch(edicao, atual, grupo = null) {
   return { patch, mudancas };
 }
 
-module.exports = { lerEdicao, montarPatch };
+// TASK-UPDATE-ALVO-JA-FECHADO (Rafinha 05/10 18:21 BRT, finding 0dcfafe9). O resolvedor do
+// `update` só enxerga tarefa aberta; quando o nome casa uma tarefa JÁ fechada, o "Não achei …
+// me diz o nome certinho?" é falso (o nome estava certo) e é beco. Terceira porta da família
+// EVENT-CANCEL-SERIE-JA-ENCERRADA (evento 21/09) / TASK-COMPLETE-REEMIT-JA-CONCLUIDA (05/10).
+// Sem janela de tempo e sem exigir completed_by: aqui não é re-emit, é contexto velho do LLM, e a
+// tarefa da Rafinha foi fechada 8h antes com completed_by NULL.
+function _quando(r) { return Date.parse(r.completed_at || r.updated_at) || 0; }
+
+function escolherFechadaParaEdicao(rows, collaboratorId) {
+  const ok = (rows || []).filter((r) => r && (r.status === 'done' || r.status === 'cancelled')
+    && (r.assigned_to === collaboratorId || r.created_by === collaboratorId));
+  ok.sort((x, y) => _quando(y) - _quando(x));
+  return ok[0] || null;
+}
+
+// Afirmação de ESTADO, sem verbo de conclusão em 1ª pessoa (as portas de honestidade comem
+// "fechei/concluí" em ramo de falha).
+function mensagemEdicaoFechada(titulo, row) {
+  const t = (_t(titulo) || _t(row && row.title) || 'essa tarefa').slice(0, 60);
+  const estado = row && row.status === 'cancelled' ? 'cancelada' : 'concluída';
+  const ms = _quando(row || {});
+  let quando = '';
+  if (ms) {
+    const d = new Date(ms);
+    const dia = d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' });
+    const hora = d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+    quando = ` desde ${dia} às ${hora}`;
+  }
+  return `_*${t}* já consta como ${estado}${quando} — não tem tarefa aberta com esse nome pra editar._`;
+}
+
+module.exports = { lerEdicao, montarPatch, escolherFechadaParaEdicao, mensagemEdicaoFechada };

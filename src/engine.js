@@ -5627,6 +5627,27 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           }
           t = (_c && _c[0]) || null;
         }
+        if (!t && ed.busca) {
+          // TASK-UPDATE-ALVO-JA-FECHADO (Rafinha 05/10): o nome casa uma tarefa JÁ fechada — diz o
+          // estado em vez de pedir "o nome certinho" (que estava certo).
+          const { escolherFechadaParaEdicao, mensagemEdicaoFechada } = require('./lib/edicao-tarefa');
+          let _fech = null;
+          try {
+            const { data: _f } = await supabase.from('tasks')
+              .select('id, title, status, completed_at, updated_at, assigned_to, created_by')
+              .or(`assigned_to.eq.${collaborator.id},created_by.eq.${collaborator.id}`)
+              .ilike('title', `%${ed.busca.slice(0, 60)}%`)
+              .in('status', ['done', 'cancelled'])
+              .order('updated_at', { ascending: false }).limit(5);
+            _fech = escolherFechadaParaEdicao(_f, collaborator.id);
+          } catch (e) { console.warn('[Task] update ja-fechada lookup err:', e.message); }
+          if (_fech) {
+            failMessages.push(mensagemEdicaoFechada(ed.busca, _fech));
+            console.warn(`[Task] update alvo ja fechado: "${ed.busca.slice(0, 60)}" ${String(_fech.id).slice(0, 8)} (${_fech.status}) por ${last4}`);
+            failCount++;
+            continue;
+          }
+        }
         if (!t) {
           failMessages.push(`Não achei a tarefa _"${String(ed.busca || ed.id).slice(0, 60)}"_ pra atualizar. Me diz o nome certinho?`);
           failCount++;
