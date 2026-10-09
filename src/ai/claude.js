@@ -16,6 +16,7 @@ const { spawn } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const { cwdDoCli } = require('./cli-cwd'); // cwd próprio e vazio — nunca /tmp (AGENTS.md do Mike, 04–09/10)
 const { classifyClaudeExit } = require('./classify-claude-exit');
 const { buildUserPrompt } = require('./prompt');
 const { sanitizeOutput } = require('./sanitize');
@@ -186,9 +187,10 @@ function _spawnCanonKeepAlive() {
     const finish = (ok, info) => { if (done) return; done = true; resolve({ ok, info }); };
     let child;
     try {
+      const _cwd = cwdDoCli(); if (_cwd.erro) throw _cwd.erro;
       child = spawn(CLAUDE_BIN, ['-p', 'ping', '--model', CLAUDE_MODEL, '--output-format', 'json',
         '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--tools', ''],
-      { stdio: ['ignore', 'ignore', 'ignore'], env: buildEnv(CLAUDE_USER_HOME), cwd: os.tmpdir() });
+      { stdio: ['ignore', 'ignore', 'ignore'], env: buildEnv(CLAUDE_USER_HOME), cwd: _cwd.dir });
     } catch (e) { return finish(false, 'spawn:' + e.message); }
     const t = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} finish(false, 'timeout'); }, KEEPALIVE_TIMEOUT_MS);
     child.on('error', (e) => { clearTimeout(t); finish(false, 'err:' + e.message); });
@@ -275,6 +277,8 @@ async function _chatInner(systemPrompt, messages, enqueuedAt, home = CLAUDE_USER
     // não dava direção suficiente, vazando "preciso de permissão pra Supabase"
     // ao usuário e estourando latência (58s vs 4s típico).
     const args = buildArgs(userPrompt, tmpFile);
+    const _cwd = cwdDoCli();
+    if (_cwd.erro) { cleanup(); _cwd.erro.provider = 'claude'; reject(_cwd.erro); return; }
 
     const child = spawn(CLAUDE_BIN, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -285,8 +289,10 @@ async function _chatInner(systemPrompt, messages, enqueuedAt, home = CLAUDE_USER
       // carregamento de CLAUDE.md (o CLI sobe pelos ancestrais do cwd — um subdir de
       // /opt/LA-Organizer não resolveria). sysprompt e tmp são absolutos; tools/MCP já
       // estão off → o cwd não importa pra mais nada.
+      // 09/10: /tmp também não serve — é compartilhado e um AGENTS.md de outro agente entrou
+      // em todo turno (04–09/10). Pasta própria, vazia, conferida a cada spawn (lib cli-cwd).
       env: buildEnv(home),
-      cwd: os.tmpdir(),
+      cwd: _cwd.dir,
     });
 
     let stdout = '';
@@ -408,7 +414,9 @@ function _spawnRaw(systemPrompt, userPrompt, home = CLAUDE_USER_HOME) {
   return new Promise((resolve, reject) => {
     const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (_) {} };
     const args = buildArgs(userPrompt, tmpFile);
-    const child = spawn(CLAUDE_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv(home), cwd: os.tmpdir() });
+    const _cwd = cwdDoCli();
+    if (_cwd.erro) { cleanup(); _cwd.erro.provider = 'claude'; reject(_cwd.erro); return; }
+    const child = spawn(CLAUDE_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv(home), cwd: _cwd.dir });
     let stdout = '';
     let stderr = '';
     let settled = false;

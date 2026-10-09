@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const os = require('os');
+const { cwdDoCli } = require('./cli-cwd'); // cwd próprio e vazio — o Codex lê AGENTS.md do cwd (incidente 04–09/10)
 const { buildUserPrompt } = require('./prompt');
 const { sanitizeOutput } = require('./sanitize');
 // LATÊNCIA (15/06): Codex é a REDE de segurança (só roda quando o Claude falha/hang).
@@ -27,13 +28,15 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
     // disso). Resultado: Codex não recebe argumento e fica eternamente em
     // "Reading additional input from stdin..." até timeout 120s. Solução:
     // mandar prompt via stdin (passando '-' como prompt arg).
+    const _cwd = cwdDoCli();
+    if (_cwd.erro) { _cwd.erro.provider = 'openai'; return reject(_cwd.erro); }
     const proc = spawn('codex', [
       'exec',
       '--model', 'gpt-5.5',
       '-c', 'model_reasoning_effort=medium',
       '--skip-git-repo-check',
       '-',
-    ], { env: { ...process.env, TZ: process.env.TOM_TZ || 'America/Sao_Paulo' }, stdio: ['pipe', 'pipe', 'pipe'], cwd: os.tmpdir() }); // mesmo envelope de data do claude.js (raiz da rajada noturna)
+    ], { env: { ...process.env, TZ: process.env.TOM_TZ || 'America/Sao_Paulo' }, stdio: ['pipe', 'pipe', 'pipe'], cwd: _cwd.dir }); // mesmo envelope de data do claude.js (raiz da rajada noturna)
     proc.stdin.write(prompt);
     proc.stdin.end();
     let out = '', err = '';
