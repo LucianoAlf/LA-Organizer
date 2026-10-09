@@ -17157,6 +17157,12 @@ Output AGORA, apenas o marker:`;
   // Sprint 10: grava telemetria. Fire-and-forget — falha de metric não quebra fluxo.
   _metrics.latency_ms = Date.now() - _t0;
   metricsService.recordMessage(_metrics).catch(() => {});
+  // JEV-SOMBRA (Alf 09/10): o Jev decide em paralelo assunto/ação e só REGISTRA (logs/jev-sombra.jsonl) — nunca
+  // muda a resposta. SEM await: o turno já terminou; falha/timeout = nada muda. TOM_JEV_SOMBRA=1 liga.
+  if (process.env.TOM_JEV_SOMBRA === '1') {
+    const _jevMetrics = { ..._metrics };
+    setImmediate(() => { require('./lib/jev-sombra').registrarSombra(collab && collab.id, _jevMetrics).catch(() => {}); });
+  }
   console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${_metrics.latency_ms}ms`);
 }
 
