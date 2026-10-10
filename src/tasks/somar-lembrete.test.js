@@ -42,6 +42,8 @@ function banco(inicial = {}) {
   return { T, sb: { from: (t) => q(t) } };
 }
 
+// Relógio fixado no turno da Ana: o executor recusa horário que já passou (Yuri 09/10, abaixo).
+const AGORA_ANA = new Date('2026-09-11T00:38:00Z');
 const ID = '440fcc1b-c3a8-47a6-9f02-20b42f0fc1b3';
 const TAREFA = { id: ID, title: 'Semana de provas - Faculdade', due_date: '2026-09-30', remind_at: null, reminded_at: null, status: 'pending' };
 // Marker real (reconstruído dos task_comments de 11/09 00:39): 5 reschedule, 20h de 26 a 30/09.
@@ -59,7 +61,7 @@ async function aplicaComoEngine(sb, fala, acoes) {
     jaNoLote = true;
     modos.push(d.modo);
     if (d.modo !== 'somar') continue;
-    const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: a.new_remind_at });
+    const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: a.new_remind_at, now: AGORA_ANA });
     it.titulo = it.titulo || r.titulo;
     if (r.horarios.length) it.horarios = r.horarios.slice();
     if (r.status === 'teto') it.recusados.push(a.new_remind_at);
@@ -88,7 +90,7 @@ test('"me lembra também às 20h" com 12h já marcado: o 12h FICA e o 20h entra 
   const { T, sb } = banco({ tasks: [{ ...TAREFA, remind_at: '2026-09-26T15:00:00+00:00' }] });
   const a = { action: 'reschedule', title: TAREFA.title, new_remind_at: '2026-09-26T20:00:00-03:00' };
   assert.strictEqual(decidirHorarioNovo({ texto: 'me lembra também às 20h', acao: a }).modo, 'somar');
-  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: a.new_remind_at });
+  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: a.new_remind_at, now: AGORA_ANA });
   assert.strictEqual(r.status, 'somou');
   assert.strictEqual(T.tasks[0].remind_at, '2026-09-26T15:00:00+00:00', 'o 12h foi sobrescrito');
   assert.deepStrictEqual(T.task_reminders.map((x) => [x.task_id, x.remind_at]), [[ID, '2026-09-26T23:00:00.000Z']]);
@@ -97,7 +99,7 @@ test('"me lembra também às 20h" com 12h já marcado: o 12h FICA e o 20h entra 
 
 test('mesmo horário de novo: não duplica', async () => {
   const { T, sb } = banco({ tasks: [{ ...TAREFA, remind_at: '2026-09-26T23:00:00Z' }] });
-  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: '2026-09-26T20:00:00-03:00' });
+  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: '2026-09-26T20:00:00-03:00', now: AGORA_ANA });
   assert.strictEqual(r.status, 'jaTinha');
   assert.strictEqual(T.task_reminders.length, 0);
 });
@@ -105,11 +107,11 @@ test('mesmo horário de novo: não duplica', async () => {
 test('teto: 4º horário, ou a menos de 30 min de outro, NÃO é gravado', async () => {
   const cheio = banco({ tasks: [{ ...TAREFA, remind_at: '2026-09-26T12:00:00Z' }],
     task_reminders: [{ id: 'r1', task_id: ID, remind_at: '2026-09-26T15:00:00Z', sent_at: null }, { id: 'r2', task_id: ID, remind_at: '2026-09-26T18:00:00Z', sent_at: null }] });
-  const r1 = await somarLembreteNaTarefa({ supabase: cheio.sb, taskId: ID, iso: '2026-09-26T23:00:00Z' });
+  const r1 = await somarLembreteNaTarefa({ supabase: cheio.sb, taskId: ID, iso: '2026-09-26T23:00:00Z', now: AGORA_ANA });
   assert.strictEqual(r1.status, 'teto');
   assert.strictEqual(cheio.T.task_reminders.length, 2);
   const perto = banco({ tasks: [{ ...TAREFA, remind_at: '2026-09-26T15:00:00Z' }] });
-  const r2 = await somarLembreteNaTarefa({ supabase: perto.sb, taskId: ID, iso: '2026-09-26T15:20:00Z' });
+  const r2 = await somarLembreteNaTarefa({ supabase: perto.sb, taskId: ID, iso: '2026-09-26T15:20:00Z', now: AGORA_ANA });
   assert.strictEqual(r2.status, 'teto');
   assert.strictEqual(perto.T.task_reminders.length, 0);
 });
@@ -125,7 +127,7 @@ test('remind_at que JÁ disparou não conta: o horário novo re-arma a tarefa', 
 test('linha de task_reminders já enviada não conta pro teto', async () => {
   const { T, sb } = banco({ tasks: [{ ...TAREFA, remind_at: '2026-09-27T12:00:00Z' }],
     task_reminders: [{ id: 'r1', task_id: ID, remind_at: '2026-09-26T12:00:00Z', sent_at: '2026-09-26T12:00:30Z' }, { id: 'r2', task_id: ID, remind_at: '2026-09-26T15:00:00Z', sent_at: '2026-09-26T15:00:30Z' }] });
-  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: '2026-09-27T23:00:00Z' });
+  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID, iso: '2026-09-27T23:00:00Z', now: AGORA_ANA });
   assert.strictEqual(r.status, 'somou');
   assert.strictEqual(T.task_reminders.length, 3);
 });
@@ -146,4 +148,40 @@ test('engine: o reschedule decide SOMA antes de montar o update que sobrescreve'
 test('engine: a resposta do lote de somas é o texto do que ficou gravado', () => {
   assert.match(ENGINE, /lembretesSomados: \[\.\.\._somados\.values\(\)\]/);
   assert.match(ENGINE, /base = _soSomas \? _txtSoma : /);
+});
+
+// LEMBRETE-SOMADO-NO-PASSADO (Yuri, 1:1, 09/10/2026 12:22 BRT): "melembre nos dias 9, 23 e 28 desse
+// mes sobre as postagens do time center". Tarefa real 03ce8d20 já tinha remind_at 09/10 13h (pendente).
+// O marker trouxe 3 reschedule add_reminder às 10h: 09/10, 23/10, 28/10. O de 09/10 10h já tinha
+// passado havia 2h23 — foi gravado (task_reminders 527db223), o dispatcher o consumiu em silêncio como
+// "nasceu vencido" (REMINDER-STALE-PAST), e ele OCUPOU a 3ª vaga do teto: o 28/10, que era futuro, foi
+// recusado. A confirmação listou "09/10 10h" como gravado — um lembrete que nunca ia tocar.
+const ID_YURI = '03ce8d20-38ec-4c29-a387-1706315bb61f';
+const AGORA_YURI = new Date('2026-10-09T15:23:14Z'); // 12:23:14 BRT
+test('REPLAY Yuri 09/10: horário que JÁ PASSOU não é gravado e não ocupa vaga do teto', async () => {
+  const { T, sb } = banco({ tasks: [{ id: ID_YURI, title: 'Agendar postagens do Time Center', due_date: '2026-10-09',
+    remind_at: '2026-10-09T16:00:00+00:00', reminded_at: null, status: 'pending' }] });
+  const res = [];
+  for (const iso of ['2026-10-09T10:00:00-03:00', '2026-10-23T10:00:00-03:00', '2026-10-28T10:00:00-03:00']) {
+    res.push(await somarLembreteNaTarefa({ supabase: sb, taskId: ID_YURI, iso, now: AGORA_YURI }));
+  }
+  assert.deepStrictEqual(res.map((r) => r.status), ['passado', 'somou', 'somou']);
+  assert.deepStrictEqual(T.task_reminders.map((r) => r.remind_at).sort(), ['2026-10-23T13:00:00.000Z', '2026-10-28T13:00:00.000Z']);
+  const txt = textoLembretesSomados([{ titulo: 'Agendar postagens do Time Center', horarios: res[2].horarios,
+    recusados: [], falhas: [], passados: ['2026-10-09T10:00:00-03:00'] }]);
+  assert.match(txt, /3 lembretes gravados: 09\/10 13h, 23\/10 10h e 28\/10 10h/);
+  assert.match(txt, /09\/10 às 10h já passou — não gravei esse\./);
+});
+
+test('controle: horário futuro sem pendente segue definindo o remind_at (o piso não morde o futuro)', async () => {
+  const { T, sb } = banco({ tasks: [{ id: ID_YURI, title: 'x', remind_at: null, reminded_at: null, status: 'pending' }] });
+  const r = await somarLembreteNaTarefa({ supabase: sb, taskId: ID_YURI, iso: '2026-10-09T15:30:00Z', now: AGORA_YURI });
+  assert.strictEqual(r.status, 'definiu');
+  const r2 = await somarLembreteNaTarefa({ supabase: sb, taskId: ID_YURI, iso: '2026-10-09T15:00:00Z', now: AGORA_YURI });
+  assert.strictEqual(r2.status, 'passado');
+  assert.strictEqual(T.task_reminders.length, 0);
+});
+
+test('engine: status passado vai pra lista própria, não pra falhas nem pra gravados', () => {
+  assert.match(ENGINE, /_r\.status === 'passado'\) _it\.passados\.push\(a\.new_remind_at\)/);
 });

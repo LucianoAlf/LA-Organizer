@@ -112,7 +112,7 @@ function listaDeHorarios(isos) {
 
 /**
  * Uma linha por tarefa. `itens`: [{ titulo, horarios: [iso gravado], recusados: [iso barrado pelo teto],
- * falhas: [iso que o banco recusou] }].
+ * falhas: [iso que o banco recusou], passados: [iso que já tinha passado — não gravado] }].
  */
 function textoLembretesSomados(itens) {
   const linhas = [];
@@ -126,8 +126,13 @@ function textoLembretesSomados(itens) {
       const nr = (Array.isArray(it.recusados) ? it.recusados : []).length;
       linhas.push(`⚠️ ${rec} não entr${nr === 1 ? "ou" : "aram"}${grav ? "" : ` em *${titulo}*`} — no máximo 3 lembretes por tarefa, com 30 min entre eles.`);
     }
+    const pas = listaDeHorarios(it.passados);
+    if (pas) {
+      const np = (Array.isArray(it.passados) ? it.passados : []).length;
+      linhas.push(`⚠️ ${pas} já ${np === 1 ? "passou" : "passaram"} — não ${np === 1 ? "gravei esse" : "gravei esses"}${grav || rec ? "" : ` em *${titulo}*`}.`);
+    }
     const fal = listaDeHorarios(it.falhas);
-    if (fal) linhas.push(`⚠️ Não consegui gravar o lembrete de ${fal}${grav || rec ? "" : ` em *${titulo}*`} — me pede de novo?`);
+    if (fal) linhas.push(`⚠️ Não consegui gravar o lembrete de ${fal}${grav || rec || pas ? "" : ` em *${titulo}*`} — me pede de novo?`);
   }
   return linhas.join("\n");
 }

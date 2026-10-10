@@ -5779,9 +5779,10 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             _acoesSomadas++;
             const { somarLembreteNaTarefa } = require('./tasks/somar-lembrete');
             const _r = await somarLembreteNaTarefa({ supabase, taskId: t.id, iso: a.new_remind_at });
-            const _it = _somados.get(t.id) || { titulo: _r.titulo || t.title, horarios: [], recusados: [], falhas: [] };
+            const _it = _somados.get(t.id) || { titulo: _r.titulo || t.title, horarios: [], recusados: [], falhas: [], passados: [] };
             if (Array.isArray(_r.horarios) && _r.horarios.length) _it.horarios = _r.horarios.slice();
             if (_r.status === 'teto') _it.recusados.push(a.new_remind_at);
+            else if (_r.status === 'passado') _it.passados.push(a.new_remind_at);
             else if (!['somou', 'definiu', 'jaTinha'].includes(_r.status)) _it.falhas.push(a.new_remind_at);
             _somados.set(t.id, _it);
             console.log(`[Task] reschedule SOMA ${String(t.id).slice(0, 8)} motivo=${_dec.motivo} status=${_r.status} gravados=${(_r.horarios || []).length}`);

@@ -5,6 +5,9 @@
 // Pendentes = tasks.remind_at ainda não disparado + linhas de task_reminders com sent_at nulo.
 //   - nenhum pendente → o horário novo vira o remind_at da tarefa (re-armado: reminded_at = null);
 //   - já existe o mesmo instante → nada a gravar ("jaTinha");
+//   - horário que JÁ PASSOU → NÃO grava ("passado"): o dispatcher o consumiria calado como "nasceu
+//     vencido" (REMINDER-STALE-PAST) e ele ainda ocuparia vaga do teto (Yuri 09/10: "dia 9 às 10h"
+//     pedido às 12h22 tomou a vaga do 28/10);
 //   - estoura o teto (lib/teto-lembretes: 3 por tarefa, 30 min entre eles) → NÃO grava ("teto");
 //   - senão → linha nova em task_reminders ("somou").
 // Devolve SEMPRE `horarios` = o que ficou gravado de verdade (a confirmação fala disso, e só disso).
@@ -32,6 +35,11 @@ async function somarLembreteNaTarefa({ supabase, taskId, iso, now = new Date() }
   if (atual && !disparou) pend.add(atual);
   for (const l of linhas || []) { const x = _iso(l.remind_at); if (x) pend.add(x); }
   const existentes = [...pend].sort();
+
+  // Mesma tolerância de 60s do guard REMINDER-STALE-PAST do dispatcher.
+  if (new Date(novo).getTime() < new Date(now).getTime() - 60_000) {
+    return { status: "passado", titulo: t.title, horarios: existentes };
+  }
 
   if (!existentes.length) {
     const { rearmaAoRemarcar } = require("../lib/rearma-lembrete");
