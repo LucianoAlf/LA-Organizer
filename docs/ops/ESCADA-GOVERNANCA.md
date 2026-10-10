@@ -3212,3 +3212,22 @@ nenhum dos dois, porque ali é contexto velho do LLM, e a tarefa da Rafinha tinh
 Ainda sem cobertura: `reschedule`/lembretes (`engine.js` ~5921) e tirar da cópia (~7004) têm a
 mesma frase "Não achei a tarefa … Me diz o nome certinho?", ainda sem incidente.
 Fatia `delegation`: 0 perguntas desde o conserto `d872532e` (controle: 155 intents no período). 8ª rodada.
+
+### ETAPA 2 — acervo sem alvo: a correção saiu do `marker_logs` das últimas 48h, não do auditor
+
+**Ocorrência:** 1 (10/10), e é a correção da rodada.
+
+Os 2 achados abertos já estavam investigados e parados em desenho. O alvo saiu de listar os
+`rejected`/`redirected` das últimas 48h. Uma linha `REMINDER_ADD_HONESTY` do Yuri (09/10 12:23)
+trazia a confirmação "3 lembretes gravados: 09/10 10h…" pedida às 12h22. O dispatcher tinha
+logado `skip stale 527db223` dois minutos depois. O guard de "nasceu vencido" existia na ENTREGA
+e não na ESCRITA da soma, então o horário morto contou no teto de 3 e derrubou o 28/10.
+
+🔑 Regra: **guard que descarta na entrega não protege o que a escrita já contou.** Quando houver
+teto ou limite na escrita, o filtro de validade tem que rodar antes dele. É a forma de 22/09
+(`continue` sem expiração), vista do outro lado.
+
+Medido e não corrigido: 7 de 240 `task_reminders` desde 30/09 nasceram vencidos, e não só pela
+soma. As outras portas são a mesma raiz e ficam para outra rodada.
+
+Fatia `delegation`: 0 perguntas desde o conserto `d872532e` (controle: 175 intents). 9ª rodada.
